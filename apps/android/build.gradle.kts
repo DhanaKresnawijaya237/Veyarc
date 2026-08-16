@@ -24,8 +24,7 @@ spotless {
         )
     }
     kotlinGradle {
-        target("**/*.gradle.kts")
-        targetExclude("**/build/**")
+        target("build.gradle.kts", "settings.gradle.kts", "*/build.gradle.kts")
         ktlint(libs.versions.ktlint.get()).editorConfigOverride(
             mapOf("ktlint_standard_chain-method-continuation" to "disabled"),
         )

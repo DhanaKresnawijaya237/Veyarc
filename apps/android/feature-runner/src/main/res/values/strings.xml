@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_spike_title">Accessibility gesture feasibility</string>
+    <string name="accessibility_spike_explanation">Enable Veyarc gesture control, then use this surface to prove tap, hold, and arbitrary-path dispatch. Veyarc does not read the UI hierarchy.</string>
+    <string name="accessibility_enabled">Accessibility setting: enabled</string>
+    <string name="accessibility_disabled">Accessibility setting: disabled</string>
+    <string name="accessibility_connected">Service connection: ready</string>
+    <string name="accessibility_disconnected">Service connection: not ready</string>
+    <string name="open_accessibility_settings">Open accessibility settings</string>
+    <string name="refresh_accessibility_status">Refresh status</string>
+    <string name="gesture_test_surface">Gesture test surface</string>
+    <string name="gesture_test_hint">Dispatched input will appear here.</string>
+    <string name="dispatch_tap">Dispatch tap</string>
+    <string name="dispatch_long_press">Dispatch hold</string>
+    <string name="dispatch_rectangle">Dispatch rectangle</string>
+    <string name="gesture_surface_unavailable">The gesture surface has not been measured yet.</string>
+    <string name="gesture_completed">Gesture dispatch completed.</string>
+    <string name="gesture_cancelled">Gesture dispatch was cancelled.</string>
+    <string name="gesture_service_unavailable">Enable the service and return to Veyarc first.</string>
+    <string name="gesture_already_running">Another gesture is still active.</string>
+    <string name="gesture_rejected">Android rejected the gesture.</string>
+    <string name="gesture_invalid">Invalid gesture: %1$s</string>
+    <string name="settings_unavailable">Accessibility settings are unavailable on this device.</string>
+    <string name="tap_received">Tap input received by the test surface.</string>
+    <string name="long_press_received">Long-press input received by the test surface.</string>
+    <plurals name="path_received">
+        <item quantity="one">Path input received with %1$d sampled point.</item>
+        <item quantity="other">Path input received with %1$d sampled points.</item>
+    </plurals>
+</resources>
