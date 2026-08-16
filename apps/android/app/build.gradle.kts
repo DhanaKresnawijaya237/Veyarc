@@ -5,12 +5,12 @@ plugins {
 
 android {
     namespace = "com.veyarc.app"
-    compileSdk = 37
+    compileSdk = libs.versions.compile.sdk.get().toInt()
 
     defaultConfig {
         applicationId = "com.veyarc.app"
-        minSdk = 24
-        targetSdk = 37
+        minSdk = libs.versions.min.sdk.get().toInt()
+        targetSdk = libs.versions.compile.sdk.get().toInt()
         versionCode = 1
         versionName = "0.1.0-dev"
     }
@@ -33,6 +33,11 @@ android {
 
 dependencies {
     val composeBom = platform(libs.androidx.compose.bom)
+
+    implementation(project(":feature-assistant"))
+    implementation(project(":feature-editor"))
+    implementation(project(":feature-recorder"))
+    implementation(project(":feature-runner"))
 
     implementation(composeBom)
     implementation(libs.androidx.activity.compose)

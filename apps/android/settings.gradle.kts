@@ -15,4 +15,15 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "VeyarcAndroid"
-include(":app")
+include(
+    ":app",
+    ":automation-android",
+    ":core-engine",
+    ":core-model",
+    ":core-recording",
+    ":data",
+    ":feature-assistant",
+    ":feature-editor",
+    ":feature-recorder",
+    ":feature-runner",
+)
