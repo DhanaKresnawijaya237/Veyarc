@@ -85,6 +85,14 @@ object AccessibilityGestureDispatcher {
         dispatch(points, durationMillis, onResult, minimumPoints = 2)
     }
 
+    internal fun dispatchRecordedGesture(
+        points: List<ScreenPoint>,
+        durationMillis: Long,
+        onResult: (GestureDispatchResult) -> Unit,
+    ) {
+        dispatch(points, durationMillis, onResult)
+    }
+
     internal fun attach(accessibilityService: AccessibilityService) {
         service = accessibilityService
     }

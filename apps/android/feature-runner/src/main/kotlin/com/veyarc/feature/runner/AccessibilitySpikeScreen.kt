@@ -45,6 +45,8 @@ import androidx.compose.ui.unit.dp
 import com.veyarc.automation.android.AccessibilityGestureDispatcher
 import com.veyarc.automation.android.GestureDispatchResult
 import com.veyarc.automation.android.ScreenPoint
+import com.veyarc.automation.android.TouchCaptureUpdate
+import com.veyarc.automation.android.TouchInterceptionRecorder
 import kotlin.math.hypot
 
 @Composable
@@ -65,6 +67,7 @@ fun AccessibilitySpikeScreen(
     var statusMessage by remember { mutableStateOf("") }
     var observedMessage by remember { mutableStateOf("") }
     var observedPath by remember { mutableStateOf(emptyList<Offset>()) }
+    var captureMessage by remember { mutableStateOf("") }
     val viewConfiguration = LocalViewConfiguration.current
 
     fun updateDispatchResult(result: GestureDispatchResult) {
@@ -206,6 +209,58 @@ fun AccessibilitySpikeScreen(
             text = observedMessage.ifEmpty { stringResource(R.string.gesture_test_hint) },
             style = MaterialTheme.typography.bodyMedium,
         )
+        Text(
+            text = stringResource(R.string.touch_capture_title),
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Text(
+            text = stringResource(R.string.touch_capture_explanation),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Button(
+            enabled = !TouchInterceptionRecorder.isArmed,
+            onClick = {
+                TouchInterceptionRecorder.arm { update ->
+                    captureMessage =
+                        when (update) {
+                            TouchCaptureUpdate.UnsupportedApi -> resources.getString(R.string.touch_capture_unsupported)
+
+                            TouchCaptureUpdate.ServiceUnavailable -> resources.getString(R.string.gesture_service_unavailable)
+
+                            TouchCaptureUpdate.AlreadyArmed -> resources.getString(R.string.touch_capture_already_armed)
+
+                            TouchCaptureUpdate.Arming -> resources.getString(R.string.touch_capture_arming)
+
+                            TouchCaptureUpdate.Armed -> resources.getString(R.string.touch_capture_armed)
+
+                            TouchCaptureUpdate.Capturing -> resources.getString(R.string.touch_capture_capturing)
+
+                            is TouchCaptureUpdate.Replaying ->
+                                resources.getQuantityString(
+                                    R.plurals.touch_capture_replaying,
+                                    update.gesture.samples.size,
+                                    update.gesture.samples.size,
+                                )
+
+                            is TouchCaptureUpdate.Completed ->
+                                resources.getString(
+                                    R.string.touch_capture_completed,
+                                    update.gesture.samples.size,
+                                    update.gesture.durationMillis,
+                                )
+
+                            TouchCaptureUpdate.Cancelled -> resources.getString(R.string.touch_capture_cancelled)
+
+                            is TouchCaptureUpdate.Failed -> resources.getString(R.string.touch_capture_failed, update.reason)
+                        }
+                }
+            },
+        ) {
+            Text(stringResource(R.string.arm_touch_capture))
+        }
+        if (captureMessage.isNotEmpty()) {
+            Text(captureMessage, color = MaterialTheme.colorScheme.primary)
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
