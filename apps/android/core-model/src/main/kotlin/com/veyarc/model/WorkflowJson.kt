@@ -2,7 +2,9 @@
 
 package com.veyarc.model
 
+import kotlinx.serialization.DeserializationStrategy
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.SerializationStrategy
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -31,14 +33,20 @@ object WorkflowJson {
             assets = document.assets.sortedBy { it.assetId.value },
             variables = document.variables.toSortedMap(),
         )
-        val element = format.encodeToJsonElement(WorkflowDocument.serializer(), canonicalDocument)
+        return encodeCanonical(WorkflowDocument.serializer(), canonicalDocument)
+    }
+
+    fun <T> encodeCanonical(serializer: SerializationStrategy<T>, value: T): String {
+        val element = format.encodeToJsonElement(serializer, value)
         return format.encodeToString(JsonElement.serializer(), canonicalize(element))
     }
 
-    fun decode(json: String): WorkflowDocument {
+    fun decode(json: String): WorkflowDocument = decodeStrict(WorkflowDocument.serializer(), json)
+
+    fun <T> decodeStrict(serializer: DeserializationStrategy<T>, json: String): T {
         val element = format.parseToJsonElement(json)
         rejectNulls(element, "")
-        return format.decodeFromJsonElement(WorkflowDocument.serializer(), element)
+        return format.decodeFromJsonElement(serializer, element)
     }
 
     fun decodeAndValidate(json: String): WorkflowValidationResult {

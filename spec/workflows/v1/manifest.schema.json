@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://veyarc.dev/spec/workflows/v1/manifest.schema.json",
+  "title": "Veyarc bundle manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "bundleVersion",
+    "workflowSchemaVersion",
+    "workflowId",
+    "workflowRevision",
+    "producerVersion",
+    "assets"
+  ],
+  "properties": {
+    "bundleVersion": { "type": "integer", "const": 1 },
+    "workflowSchemaVersion": { "type": "integer", "const": 1 },
+    "workflowId": { "type": "string", "format": "uuid" },
+    "workflowRevision": { "type": "integer", "minimum": 1 },
+    "producerVersion": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "assets": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/asset" }
+    }
+  },
+  "$defs": {
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assetId",
+        "kind",
+        "entryName",
+        "sha256",
+        "byteLength",
+        "mimeType",
+        "encrypted"
+      ],
+      "properties": {
+        "assetId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "kind": { "const": "imageTemplate" },
+        "entryName": { "type": "string", "pattern": "^assets/[A-Za-z0-9._-]+\\.bin$" },
+        "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+        "byteLength": { "type": "integer", "minimum": 1 },
+        "mimeType": { "type": "string", "pattern": "^image/" },
+        "encrypted": { "const": true }
+      }
+    }
+  }
+}
