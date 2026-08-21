@@ -146,8 +146,8 @@ Every workflow declares allowed packages. `LaunchApp` may switch only to a decla
    - Configure the Android SDK/toolchain and scaffold `com.veyarc.app`; install Android Studio only if its IDE, profiler, or device-management workflows are needed.
    - Build a minimal Accessibility Service.
    - Prove tap, hold and arbitrary-path playback.
-   - Prove Android 13+ intercept-and-replay recording on at least one Pixel-class and one Samsung-class physical device.
-   - Measure replay delay and document unsupported OEM behavior before building the full UI.
+   - Prove Android 13+ intercept-and-replay recording on the physical target selected for the first beta. The current target is the vivo V50; other OEM families remain future validation targets.
+   - Validate replay timing and service lifecycle restoration on the selected target, then document unsupported or unverified OEM behavior before building the full UI.
 
 2. **Portable core**
    - Implement the workflow schema, JSON serialization, `.veyarc` bundle format and migration chain.
