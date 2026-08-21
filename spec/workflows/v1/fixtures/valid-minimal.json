@@ -1,0 +1,33 @@
+{
+  "allowedPackages": ["com.example.app"],
+  "assets": [],
+  "id": "00000000-0000-4000-8000-000000000001",
+  "name": "Minimal workflow",
+  "revision": 1,
+  "runLimits": {
+    "maxLoopIterations": 10,
+    "maxNestingDepth": 4,
+    "maxPathPoints": 8,
+    "maxRuntimeMs": 60000,
+    "maxStepDurationMs": 5000,
+    "maxTotalSteps": 100
+  },
+  "schemaVersion": 1,
+  "steps": [
+    {
+      "type": "tapPoint",
+      "id": "00000000-0000-4000-8000-000000000011",
+      "point": { "x": 0.1, "y": 0.1 }
+    }
+  ],
+  "variables": {},
+  "viewport": {
+    "coordinateSpace": "fullDisplayNormalized",
+    "orientationMode": "currentScreenRelative",
+    "recordedDensityDpi": 420,
+    "recordedHeightPx": 2392,
+    "recordedOrientation": "portrait",
+    "recordedWidthPx": 1080,
+    "windowMode": "fullDisplayOnly"
+  }
+}

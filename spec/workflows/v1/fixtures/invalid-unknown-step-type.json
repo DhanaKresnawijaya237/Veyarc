@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "00000000-0000-4000-8000-000000000003",
+  "revision": 1,
+  "name": "Unknown step",
+  "allowedPackages": ["com.example.app"],
+  "viewport": {
+    "coordinateSpace": "fullDisplayNormalized",
+    "orientationMode": "currentScreenRelative",
+    "windowMode": "fullDisplayOnly",
+    "recordedWidthPx": 1080,
+    "recordedHeightPx": 2392,
+    "recordedDensityDpi": 420,
+    "recordedOrientation": "portrait"
+  },
+  "runLimits": {
+    "maxTotalSteps": 100,
+    "maxRuntimeMs": 60000,
+    "maxLoopIterations": 10,
+    "maxNestingDepth": 4,
+    "maxPathPoints": 8,
+    "maxStepDurationMs": 5000
+  },
+  "variables": {},
+  "assets": [],
+  "steps": [
+    { "type": "teleport", "id": "00000000-0000-4000-8000-000000000031" }
+  ]
+}

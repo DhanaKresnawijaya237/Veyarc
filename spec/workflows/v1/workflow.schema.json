@@ -1,0 +1,395 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://veyarc.dev/spec/workflows/v1/workflow.schema.json",
+  "title": "Veyarc workflow document",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "revision",
+    "name",
+    "allowedPackages",
+    "viewport",
+    "runLimits",
+    "variables",
+    "assets",
+    "steps"
+  ],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "id": { "$ref": "#/$defs/uuid" },
+    "revision": { "type": "integer", "minimum": 1 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "allowedPackages": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/packageName" }
+    },
+    "viewport": { "$ref": "#/$defs/viewport" },
+    "runLimits": { "$ref": "#/$defs/runLimits" },
+    "variables": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+      "additionalProperties": { "$ref": "#/$defs/variableDeclaration" }
+    },
+    "assets": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/assetReference" }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/step" }
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "packageName": {
+      "type": "string",
+      "maxLength": 255,
+      "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$"
+    },
+    "assetId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "durationMs": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "coordinate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "number", "minimum": 0, "maximum": 1 },
+        "y": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "rect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "number", "minimum": 0, "maximum": 1 },
+        "y": { "type": "number", "minimum": 0, "maximum": 1 },
+        "width": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "height": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+      }
+    },
+    "anchor": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": { "type": { "const": "center" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "x", "y"],
+          "properties": {
+            "type": { "const": "offset" },
+            "x": { "type": "number", "minimum": 0, "maximum": 1 },
+            "y": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        }
+      ]
+    },
+    "viewport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "coordinateSpace",
+        "orientationMode",
+        "windowMode",
+        "recordedWidthPx",
+        "recordedHeightPx",
+        "recordedDensityDpi",
+        "recordedOrientation"
+      ],
+      "properties": {
+        "coordinateSpace": { "const": "fullDisplayNormalized" },
+        "orientationMode": { "const": "currentScreenRelative" },
+        "windowMode": { "const": "fullDisplayOnly" },
+        "recordedWidthPx": { "type": "integer", "minimum": 1 },
+        "recordedHeightPx": { "type": "integer", "minimum": 1 },
+        "recordedDensityDpi": { "type": "integer", "minimum": 1 },
+        "recordedOrientation": { "enum": ["portrait", "landscape"] }
+      }
+    },
+    "runLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxTotalSteps",
+        "maxRuntimeMs",
+        "maxLoopIterations",
+        "maxNestingDepth",
+        "maxPathPoints",
+        "maxStepDurationMs"
+      ],
+      "properties": {
+        "maxTotalSteps": { "type": "integer", "minimum": 1 },
+        "maxRuntimeMs": { "type": "integer", "minimum": 1 },
+        "maxLoopIterations": { "type": "integer", "minimum": 1 },
+        "maxNestingDepth": { "type": "integer", "minimum": 1 },
+        "maxPathPoints": { "type": "integer", "minimum": 2 },
+        "maxStepDurationMs": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "assetReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assetId", "kind"],
+      "properties": {
+        "assetId": { "$ref": "#/$defs/assetId" },
+        "kind": { "const": "imageTemplate" }
+      }
+    },
+    "scalarValue": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": { "type": { "const": "boolean" }, "value": { "type": "boolean" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": { "type": { "const": "number" }, "value": { "type": "number" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": { "const": "string" },
+            "value": { "type": "string", "maxLength": 4096 }
+          }
+        }
+      ]
+    },
+    "variableDeclaration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "initialValue"],
+      "properties": {
+        "type": { "enum": ["boolean", "number", "string"] },
+        "initialValue": { "$ref": "#/$defs/scalarValue" }
+      }
+    },
+    "operand": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": { "type": { "const": "literal" }, "value": { "$ref": "#/$defs/scalarValue" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "name"],
+          "properties": {
+            "type": { "const": "variable" },
+            "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" }
+          }
+        }
+      ]
+    },
+    "timedPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["point", "offsetMs"],
+      "properties": {
+        "point": { "$ref": "#/$defs/coordinate" },
+        "offsetMs": { "$ref": "#/$defs/durationMs" }
+      }
+    },
+    "condition": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "point", "expectedArgb", "tolerance"],
+          "properties": {
+            "type": { "const": "pixelColor" },
+            "point": { "$ref": "#/$defs/coordinate" },
+            "expectedArgb": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+            "tolerance": { "type": "integer", "minimum": 0, "maximum": 255 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "assetId", "region", "matchThreshold"],
+          "properties": {
+            "type": { "const": "imagePresent" },
+            "assetId": { "$ref": "#/$defs/assetId" },
+            "region": { "$ref": "#/$defs/rect" },
+            "matchThreshold": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "assetId", "region", "matchThreshold"],
+          "properties": {
+            "type": { "const": "imageAbsent" },
+            "assetId": { "$ref": "#/$defs/assetId" },
+            "region": { "$ref": "#/$defs/rect" },
+            "matchThreshold": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "packageName"],
+          "properties": { "type": { "const": "foregroundPackage" }, "packageName": { "$ref": "#/$defs/packageName" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "orientation"],
+          "properties": { "type": { "const": "orientation" }, "orientation": { "enum": ["portrait", "landscape"] } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "left", "operator", "right"],
+          "properties": {
+            "type": { "const": "variableComparison" },
+            "left": { "$ref": "#/$defs/operand" },
+            "operator": { "enum": ["equals", "notEquals", "lessThan", "lessThanOrEqual", "greaterThan", "greaterThanOrEqual"] },
+            "right": { "$ref": "#/$defs/operand" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "stepId", "outcome"],
+          "properties": {
+            "type": { "const": "stepResult" },
+            "stepId": { "$ref": "#/$defs/uuid" },
+            "outcome": { "enum": ["completed", "failed", "cancelled", "timedOut", "stopped", "notExecuted"] }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "conditions"],
+          "properties": { "type": { "const": "and" }, "conditions": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/condition" } } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "conditions"],
+          "properties": { "type": { "const": "or" }, "conditions": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/condition" } } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "condition"],
+          "properties": { "type": { "const": "not" }, "condition": { "$ref": "#/$defs/condition" } }
+        }
+      ]
+    },
+    "stepBase": {
+      "type": "object",
+      "required": ["type", "id"],
+      "properties": { "type": { "type": "string" }, "id": { "$ref": "#/$defs/uuid" } }
+    },
+    "step": {
+      "oneOf": [
+        {
+          "allOf": [
+            { "$ref": "#/$defs/stepBase" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "id", "point"],
+              "properties": { "type": { "const": "tapPoint" }, "id": { "$ref": "#/$defs/uuid" }, "point": { "$ref": "#/$defs/coordinate" } }
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "id", "region", "anchor"],
+          "properties": { "type": { "const": "tapRegion" }, "id": { "$ref": "#/$defs/uuid" }, "region": { "$ref": "#/$defs/rect" }, "anchor": { "$ref": "#/$defs/anchor" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "id", "point", "durationMs"],
+          "properties": { "type": { "const": "longPress" }, "id": { "$ref": "#/$defs/uuid" }, "point": { "$ref": "#/$defs/coordinate" }, "durationMs": { "type": "integer", "exclusiveMinimum": 0 } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "id", "durationMs", "points"],
+          "properties": { "type": { "const": "swipePath" }, "id": { "$ref": "#/$defs/uuid" }, "durationMs": { "type": "integer", "exclusiveMinimum": 0 }, "points": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/timedPoint" } } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "id", "durationMs"],
+          "properties": { "type": { "const": "wait" }, "id": { "$ref": "#/$defs/uuid" }, "durationMs": { "$ref": "#/$defs/durationMs" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "id", "condition", "timeoutMs", "pollIntervalMs"],
+          "properties": { "type": { "const": "waitUntil" }, "id": { "$ref": "#/$defs/uuid" }, "condition": { "$ref": "#/$defs/condition" }, "timeoutMs": { "$ref": "#/$defs/durationMs" }, "pollIntervalMs": { "type": "integer", "exclusiveMinimum": 0 } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "id", "condition", "thenSteps", "elseSteps"],
+          "properties": { "type": { "const": "if" }, "id": { "$ref": "#/$defs/uuid" }, "condition": { "$ref": "#/$defs/condition" }, "thenSteps": { "type": "array", "items": { "$ref": "#/$defs/step" } }, "elseSteps": { "type": "array", "items": { "$ref": "#/$defs/step" } } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "id", "count", "bodySteps"],
+          "properties": { "type": { "const": "repeat" }, "id": { "$ref": "#/$defs/uuid" }, "count": { "type": "integer", "minimum": 0 }, "bodySteps": { "type": "array", "items": { "$ref": "#/$defs/step" } } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "id", "condition", "maxIterations", "bodySteps"],
+          "properties": { "type": { "const": "while" }, "id": { "$ref": "#/$defs/uuid" }, "condition": { "$ref": "#/$defs/condition" }, "maxIterations": { "type": "integer", "exclusiveMinimum": 0 }, "bodySteps": { "type": "array", "items": { "$ref": "#/$defs/step" } } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "id", "packageName", "foregroundTimeoutMs"],
+          "properties": { "type": { "const": "launchApp" }, "id": { "$ref": "#/$defs/uuid" }, "packageName": { "$ref": "#/$defs/packageName" }, "foregroundTimeoutMs": { "type": "integer", "exclusiveMinimum": 0 } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "id", "reason"],
+          "properties": { "type": { "const": "stop" }, "id": { "$ref": "#/$defs/uuid" }, "reason": { "enum": ["userRequested", "safety", "workflow", "condition"] }, "message": { "type": "string", "maxLength": 512 } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "id", "name", "value"],
+          "properties": { "type": { "const": "setVariable" }, "id": { "$ref": "#/$defs/uuid" }, "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" }, "value": { "$ref": "#/$defs/scalarValue" } }
+        }
+      ]
+    }
+  }
+}
