@@ -156,12 +156,17 @@ fun AccessibilitySpikeScreen(
                 }.pointerInput(viewConfiguration) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
+                        // Keep the test surface gesture local. Without consuming the pointer
+                        // changes, the surrounding verticalScroll modifier receives the same
+                        // swipe and scrolls the page while we are recording it.
+                        down.consume()
                         val startedAt = SystemClock.uptimeMillis()
                         val samples = mutableListOf(down.position)
                         var pressed = true
                         while (pressed) {
                             val event = awaitPointerEvent()
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            change.consume()
                             samples += change.position
                             pressed = change.pressed
                         }
