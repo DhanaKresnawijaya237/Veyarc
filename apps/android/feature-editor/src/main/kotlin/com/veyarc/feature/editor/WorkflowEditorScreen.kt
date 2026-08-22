@@ -81,6 +81,7 @@ fun WorkflowEditorScreen(
     var isBusy by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var refreshGeneration by remember { mutableIntStateOf(0) }
+    var geometryTarget by remember { mutableStateOf<GeometryTarget?>(null) }
 
     LaunchedEffect(refreshGeneration) {
         isBusy = true
@@ -150,14 +151,36 @@ fun WorkflowEditorScreen(
             statusMessage = statusMessage,
             onDraftChange = { editingDraft = it },
             onBack = {
+                geometryTarget = null
                 editingDraft = null
                 refreshGeneration += 1
             },
             onSave = ::saveWorkflow,
+            onEditGeometry = { path, index -> geometryTarget = GeometryTarget(path, index) },
             modifier = modifier,
         )
+        geometryTarget?.let { target ->
+            val targetStep = draft.stepsAt(target.path).getOrNull(target.index)
+            if (targetStep != null) {
+                GeometryEditorDialog(
+                    step = targetStep,
+                    viewport = draft.viewport,
+                    maxPathPoints = draft.runLimits.maxPathPoints,
+                    onDismiss = { geometryTarget = null },
+                    onApply = { updatedStep ->
+                        editingDraft = draft.updateStep(target.path, target.index) { updatedStep }
+                        geometryTarget = null
+                    },
+                )
+            }
+        }
     }
 }
+
+private data class GeometryTarget(
+    val path: StepListPath,
+    val index: Int,
+)
 
 @Composable
 private fun WorkflowLibraryScreen(
@@ -260,6 +283,7 @@ private fun WorkflowDraftScreen(
     onDraftChange: (WorkflowDraft) -> Unit,
     onBack: () -> Unit,
     onSave: (com.veyarc.model.bundle.WorkflowBundle) -> Unit,
+    onEditGeometry: (StepListPath, Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Scaffold(
@@ -316,6 +340,7 @@ private fun WorkflowDraftScreen(
                 path = StepListPath(),
                 heading = "Main sequence",
                 onDraftChange = onDraftChange,
+                onEditGeometry = onEditGeometry,
             )
             statusMessage?.let { message ->
                 Text(message, color = MaterialTheme.colorScheme.primary)
@@ -357,6 +382,7 @@ private fun StepListEditor(
     path: StepListPath,
     heading: String,
     onDraftChange: (WorkflowDraft) -> Unit,
+    onEditGeometry: (StepListPath, Int) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(heading, style = MaterialTheme.typography.titleMedium)
@@ -374,6 +400,7 @@ private fun StepListEditor(
                 index = index,
                 step = step,
                 onDraftChange = onDraftChange,
+                onEditGeometry = onEditGeometry,
             )
         }
         AddBlockMenu(
@@ -390,6 +417,7 @@ private fun StepCard(
     index: Int,
     step: WorkflowStep,
     onDraftChange: (WorkflowDraft) -> Unit,
+    onEditGeometry: (StepListPath, Int) -> Unit,
 ) {
     val expanded = step.id !in draft.collapsedStepIds
     Card(
@@ -433,6 +461,7 @@ private fun StepCard(
                     index = index,
                     step = step,
                     onDraftChange = onDraftChange,
+                    onEditGeometry = onEditGeometry,
                 )
             }
         }
@@ -446,6 +475,7 @@ private fun StepEditorFields(
     index: Int,
     step: WorkflowStep,
     onDraftChange: (WorkflowDraft) -> Unit,
+    onEditGeometry: (StepListPath, Int) -> Unit,
 ) {
     when (step) {
         is Wait -> {
@@ -479,6 +509,7 @@ private fun StepEditorFields(
                 path = path.child(step.id, NestedBranch.REPEAT_BODY),
                 heading = "Repeat body",
                 onDraftChange = onDraftChange,
+                onEditGeometry = onEditGeometry,
             )
         }
 
@@ -497,6 +528,7 @@ private fun StepEditorFields(
                 path = path.child(step.id, NestedBranch.WHILE_BODY),
                 heading = "While body",
                 onDraftChange = onDraftChange,
+                onEditGeometry = onEditGeometry,
             )
         }
 
@@ -510,12 +542,14 @@ private fun StepEditorFields(
                 path = path.child(step.id, NestedBranch.IF_THEN),
                 heading = "Then branch",
                 onDraftChange = onDraftChange,
+                onEditGeometry = onEditGeometry,
             )
             StepListEditor(
                 draft = draft,
                 path = path.child(step.id, NestedBranch.IF_ELSE),
                 heading = "Else branch",
                 onDraftChange = onDraftChange,
+                onEditGeometry = onEditGeometry,
             )
         }
 
@@ -523,6 +557,12 @@ private fun StepEditorFields(
         is TapRegion,
         is LongPress,
         is SwipePath,
+        -> {
+            OutlinedButton(onClick = { onEditGeometry(path, index) }) {
+                Text("Edit geometry")
+            }
+        }
+
         is WaitUntil,
         is LaunchApp,
         is Stop,
@@ -545,10 +585,11 @@ private fun StepEditorFields(
 }
 
 @Composable
-private fun LongEditorField(
+internal fun LongEditorField(
     label: String,
     value: Long,
     onValueChange: (Long) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     var text by remember(value) { mutableStateOf(value.toString()) }
     OutlinedTextField(
@@ -557,7 +598,7 @@ private fun LongEditorField(
             text = candidate
             candidate.toLongOrNull()?.let(onValueChange)
         },
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         label = { Text(label) },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         singleLine = true,
