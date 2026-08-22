@@ -131,22 +131,38 @@ class WorkflowRunner {
 
     private fun executeStepBody(step: ExecutionStep, state: RunState): StepExecution = when (step) {
         is ExecutionStep.TapPoint -> {
-            state.driver.tap(step.point)
+            dispatchAtViewport(
+                state = state,
+                map = { viewport -> ViewportMapper.map(step.point, viewport) },
+                dispatch = { point -> state.driver.tap(point) },
+            )
             StepExecution(StepOutcome.COMPLETED)
         }
 
         is ExecutionStep.TapRegion -> {
-            state.driver.tap(step.resolvedPoint)
+            dispatchAtViewport(
+                state = state,
+                map = { viewport -> ViewportMapper.map(step.resolvedPoint, viewport) },
+                dispatch = { point -> state.driver.tap(point) },
+            )
             StepExecution(StepOutcome.COMPLETED)
         }
 
         is ExecutionStep.LongPress -> {
-            state.driver.longPress(step.point, step.durationMs.value)
+            dispatchAtViewport(
+                state = state,
+                map = { viewport -> ViewportMapper.map(step.point, viewport) },
+                dispatch = { point -> state.driver.longPress(point, step.durationMs.value) },
+            )
             StepExecution(StepOutcome.COMPLETED)
         }
 
         is ExecutionStep.SwipePath -> {
-            state.driver.swipePath(step.points, step.durationMs.value)
+            dispatchAtViewport(
+                state = state,
+                map = { viewport -> ViewportMapper.map(step.points, viewport) },
+                dispatch = { points -> state.driver.swipePath(points, step.durationMs.value) },
+            )
             StepExecution(StepOutcome.COMPLETED)
         }
 
@@ -388,8 +404,64 @@ class WorkflowRunner {
                 stopReason = null,
             )
         }
+        currentViewportOrAbort(state)
         ensureForeground(state)
     }
+
+    private inline fun <T> dispatchAtViewport(
+        state: RunState,
+        map: (ActiveViewport) -> T,
+        dispatch: (T) -> Unit,
+    ) {
+        val before = currentViewportOrAbort(state)
+        dispatch(map(before))
+        val after = state.driver.currentViewport()
+            ?: throw viewportAbort(
+                state = state,
+                code = RunFailureCode.VIEWPORT_UNAVAILABLE,
+                message = "Active viewport became unavailable during a gesture",
+            )
+        if (after != before) {
+            throw viewportAbort(
+                state = state,
+                code = RunFailureCode.VIEWPORT_CHANGED_DURING_GESTURE,
+                message = "Active viewport changed during a gesture",
+            )
+        }
+    }
+
+    private fun currentViewportOrAbort(state: RunState): ActiveViewport {
+        val viewport = state.driver.currentViewport()
+            ?: throw viewportAbort(
+                state = state,
+                code = RunFailureCode.VIEWPORT_UNAVAILABLE,
+                message = "Active viewport is unavailable",
+            )
+        if (viewport.windowMode != ActiveWindowMode.FULL_DISPLAY) {
+            throw viewportAbort(
+                state = state,
+                code = RunFailureCode.UNSUPPORTED_WINDOW_MODE,
+                message = "Workflow playback requires full-display mode",
+            )
+        }
+        return viewport
+    }
+
+    private fun viewportAbort(
+        state: RunState,
+        code: RunFailureCode,
+        message: String,
+    ): RunAbort = RunAbort(
+        outcome = RunOutcome.FAILED,
+        stepOutcome = StepOutcome.FAILED,
+        failure = RunFailure(
+            code = code,
+            stepId = state.currentStepId,
+            path = state.currentPath,
+            message = message,
+        ),
+        stopReason = null,
+    )
 
     private fun checkStepDuration(stepId: String, startedAtMs: Long, state: RunState) {
         val now = state.nowMs()

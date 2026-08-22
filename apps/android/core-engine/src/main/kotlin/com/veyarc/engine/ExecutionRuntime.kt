@@ -1,21 +1,19 @@
 package com.veyarc.engine
 
 import com.veyarc.model.Condition
-import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.PackageName
 import com.veyarc.model.ScalarValue
 import com.veyarc.model.StepOutcome
 import com.veyarc.model.StopReason
-import com.veyarc.model.TimedPoint
 import java.util.Collections
 
 /** Sends platform-neutral touch actions to the active device adapter. */
 interface GestureDispatcher {
-    fun tap(point: NormalizedCoordinate)
+    fun tap(point: DisplayCoordinate)
 
-    fun longPress(point: NormalizedCoordinate, durationMs: Long)
+    fun longPress(point: DisplayCoordinate, durationMs: Long)
 
-    fun swipePath(points: List<TimedPoint>, durationMs: Long)
+    fun swipePath(points: List<DisplayTimedPoint>, durationMs: Long)
 }
 
 /** Starts an explicitly declared application. */
@@ -28,6 +26,11 @@ interface ForegroundPackageSource {
     fun currentForegroundPackage(): PackageName?
 }
 
+/** Reports the current full-display geometry and windowing mode. */
+interface ViewportSource {
+    fun currentViewport(): ActiveViewport?
+}
+
 /** Observes conditions that require platform state, such as pixels or orientation. */
 interface ConditionObserver {
     fun observe(condition: Condition): Boolean
@@ -38,6 +41,7 @@ interface AutomationDriver :
     GestureDispatcher,
     AppLauncher,
     ForegroundPackageSource,
+    ViewportSource,
     ConditionObserver
 
 /** Monotonic time and sleeping are injected so tests do not depend on wall-clock timing. */
@@ -72,6 +76,9 @@ enum class RunFailureCode {
     FOREGROUND_TIMEOUT,
     FOREGROUND_UNAVAILABLE,
     UNEXPECTED_FOREGROUND_PACKAGE,
+    VIEWPORT_UNAVAILABLE,
+    UNSUPPORTED_WINDOW_MODE,
+    VIEWPORT_CHANGED_DURING_GESTURE,
     DRIVER_ERROR,
 }
 

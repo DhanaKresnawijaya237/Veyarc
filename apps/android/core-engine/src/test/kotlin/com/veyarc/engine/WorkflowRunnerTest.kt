@@ -50,7 +50,7 @@ class WorkflowRunnerTest {
 
         assertTrue(result.isSuccess)
         assertEquals(RunOutcome.COMPLETED, result.outcome)
-        assertEquals(listOf("tap:0.1,0.2"), driver.actions)
+        assertEquals(listOf("tap:10.0,40.0"), driver.actions)
         assertEquals(100L, clock.nowMs())
         assertEquals(NumberValue(2.0), result.variables["count"])
         assertTrue(result.events.first() is RunEvent.Started)
@@ -97,7 +97,7 @@ class WorkflowRunnerTest {
         val result = WorkflowRunner().run(plan, driver, clock)
 
         assertTrue(result.isSuccess)
-        assertEquals(listOf("tap:0.1,0.1"), driver.actions)
+        assertEquals(listOf("tap:10.0,20.0"), driver.actions)
         assertEquals(20L, clock.nowMs())
         assertEquals(NumberValue(0.0), result.variables["count"])
         assertEquals(StepOutcome.NOT_EXECUTED, result.stepOutcomes[STEP_4])
@@ -231,6 +231,61 @@ class WorkflowRunnerTest {
         assertNotNull(result.events.filterIsInstance<RunEvent.Finished>().single().failure)
     }
 
+    @Test
+    fun remapsCoordinatesAgainstTheViewportAtEachStepBoundary() {
+        val driver = FakeDriver()
+        val clock = FakeClock(onSleep = {
+            driver.viewport = ActiveViewport(
+                widthPx = 201,
+                heightPx = 101,
+                orientation = DisplayOrientation.LANDSCAPE,
+            )
+        })
+        val plan = plan(
+            steps = listOf(
+                Wait(STEP_1, DurationMillis(100)),
+                TapPoint(STEP_2, NormalizedCoordinate(0.5, 0.5)),
+            ),
+        )
+
+        val result = WorkflowRunner().run(plan, driver, clock)
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf("tap:100.0,50.0"), driver.actions)
+    }
+
+    @Test
+    fun failsIfTheViewportChangesDuringAgesture() {
+        val driver = FakeDriver(changeViewportAfterTap = true)
+        val plan = plan(
+            steps = listOf(
+                TapPoint(STEP_1, NormalizedCoordinate(0.5, 0.5)),
+                TapPoint(STEP_2, NormalizedCoordinate(0.5, 0.5)),
+            ),
+        )
+
+        val result = WorkflowRunner().run(plan, driver, FakeClock())
+
+        assertEquals(RunOutcome.FAILED, result.outcome)
+        assertEquals(RunFailureCode.VIEWPORT_CHANGED_DURING_GESTURE, result.failure?.code)
+        assertEquals(StepOutcome.FAILED, result.stepOutcomes[STEP_1])
+        assertEquals(StepOutcome.NOT_EXECUTED, result.stepOutcomes[STEP_2])
+    }
+
+    @Test
+    fun rejectsSplitScreenBeforeDispatchingInput() {
+        val driver = FakeDriver()
+        driver.viewport = driver.viewport.copy(windowMode = ActiveWindowMode.SPLIT_SCREEN)
+        val plan = plan(steps = listOf(TapPoint(STEP_1, NormalizedCoordinate(0.5, 0.5))))
+
+        val result = WorkflowRunner().run(plan, driver, FakeClock())
+
+        assertEquals(RunOutcome.FAILED, result.outcome)
+        assertEquals(RunFailureCode.UNSUPPORTED_WINDOW_MODE, result.failure?.code)
+        assertTrue(driver.actions.isEmpty())
+        assertEquals(StepOutcome.NOT_EXECUTED, result.stepOutcomes[STEP_1])
+    }
+
     private fun plan(
         steps: List<com.veyarc.model.WorkflowStep>,
         variables: Map<String, VariableDeclaration> = emptyMap(),
@@ -287,20 +342,29 @@ class WorkflowRunnerTest {
         private val observations: List<Boolean> = emptyList(),
         private val launchUpdatesForeground: Boolean = true,
         private val failOnTap: Boolean = false,
+        private val changeViewportAfterTap: Boolean = false,
     ) : AutomationDriver {
         val actions = mutableListOf<String>()
+        var viewport: ActiveViewport = DEFAULT_VIEWPORT
         private val conditionResults = ArrayDeque(observations)
 
-        override fun tap(point: NormalizedCoordinate) {
+        override fun tap(point: DisplayCoordinate) {
             if (failOnTap) throw IllegalStateException("fake tap failed")
             actions += "tap:${point.x},${point.y}"
+            if (changeViewportAfterTap) {
+                viewport = ActiveViewport(
+                    widthPx = 201,
+                    heightPx = 101,
+                    orientation = DisplayOrientation.LANDSCAPE,
+                )
+            }
         }
 
-        override fun longPress(point: NormalizedCoordinate, durationMs: Long) {
+        override fun longPress(point: DisplayCoordinate, durationMs: Long) {
             actions += "longPress:${point.x},${point.y}:$durationMs"
         }
 
-        override fun swipePath(points: List<com.veyarc.model.TimedPoint>, durationMs: Long) {
+        override fun swipePath(points: List<DisplayTimedPoint>, durationMs: Long) {
             actions += "swipe:${points.size}:$durationMs"
         }
 
@@ -311,10 +375,17 @@ class WorkflowRunnerTest {
 
         override fun currentForegroundPackage(): PackageName = foreground
 
+        override fun currentViewport(): ActiveViewport = viewport
+
         override fun observe(condition: com.veyarc.model.Condition): Boolean = if (conditionResults.isEmpty()) false else conditionResults.removeFirst()
     }
 
     private companion object {
+        val DEFAULT_VIEWPORT = ActiveViewport(
+            widthPx = 101,
+            heightPx = 201,
+            orientation = DisplayOrientation.PORTRAIT,
+        )
         val APP_PACKAGE = PackageName("com.example.app")
         val OTHER_PACKAGE = PackageName("com.example.other")
         const val DOCUMENT_ID = "00000000-0000-4000-8000-000000000201"
