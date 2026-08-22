@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="accessibility_service_label">Veyarc gesture control</string>
-    <string name="accessibility_service_description">Allows Veyarc to perform user-approved touch workflows. This service does not read the screen hierarchy.</string>
+    <string name="accessibility_service_description">Allows Veyarc to perform user-approved touch workflows and identify the active app package for safety checks. It does not inspect child views or screen content.</string>
 </resources>

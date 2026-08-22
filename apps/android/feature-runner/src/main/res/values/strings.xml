@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="accessibility_spike_title">Accessibility gesture feasibility</string>
-    <string name="accessibility_spike_explanation">Enable Veyarc gesture control, then use this surface to prove tap, hold, and arbitrary-path dispatch. Veyarc does not read the UI hierarchy.</string>
+    <string name="accessibility_spike_explanation">Enable Veyarc gesture control, then use this surface to prove tap, hold, and arbitrary-path dispatch. Veyarc reads only active-app package metadata for safety checks, not the UI hierarchy.</string>
     <string name="accessibility_enabled">Accessibility setting: enabled</string>
     <string name="accessibility_disabled">Accessibility setting: disabled</string>
     <string name="accessibility_connected">Service connection: ready</string>

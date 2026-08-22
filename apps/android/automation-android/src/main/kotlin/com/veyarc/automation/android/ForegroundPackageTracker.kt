@@ -5,7 +5,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import com.veyarc.model.PackageName
 
-/** Keeps the last application package reported by Android's window-state events. */
+/** Tracks the active application package without inspecting child view content. */
 internal object ForegroundPackageTracker {
     @Volatile
     private var attachedService: AccessibilityService? = null
@@ -17,7 +17,7 @@ internal object ForegroundPackageTracker {
 
     fun attach(service: AccessibilityService) {
         attachedService = service
-        currentPackage = null
+        currentPackage = readActiveApplicationPackage(service)
     }
 
     fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -47,13 +47,18 @@ internal object ForegroundPackageTracker {
         // edge-to-edge application windows as not full-screen even though they are the
         // active app window.
         // The service opts into interactive-window metadata so it can distinguish an
-        // application window from an overlay. It never requests a root node or reads
-        // the view hierarchy.
+        // application window from an overlay. When an event is unavailable at service
+        // startup, attach() reads only the active root's package and window id. It never
+        // traverses child nodes or inspects the screen's view hierarchy.
         val window = runCatching {
             service.windows.firstOrNull { it.id == event.windowId }
         }.getOrNull()
         if (window != null && !isApplicationWindow(window.type)) {
-            currentPackage = null
+            // Veyarc's emergency stop control is a non-focusable accessibility overlay
+            // owned by this service. It must not replace the application underneath it.
+            if (!isOwnAccessibilityOverlay(window.type, packageName, service.packageName)) {
+                currentPackage = null
+            }
             return
         }
 
@@ -67,10 +72,26 @@ internal object ForegroundPackageTracker {
 
     internal fun isApplicationWindow(windowType: Int?): Boolean = windowType == AccessibilityWindowInfo.TYPE_APPLICATION
 
+    internal fun isOwnAccessibilityOverlay(windowType: Int?, eventPackage: PackageName, servicePackage: String): Boolean = windowType == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY && eventPackage.value == servicePackage
+
     fun detach(service: AccessibilityService) {
         if (attachedService === service) {
             attachedService = null
             currentPackage = null
         }
     }
+
+    private fun readActiveApplicationPackage(service: AccessibilityService): PackageName? {
+        val root = runCatching { service.rootInActiveWindow }.getOrNull() ?: return null
+        val packageName = packageNameOf(root.packageName) ?: return null
+        val window = runCatching {
+            service.windows.firstOrNull { it.id == root.windowId }
+        }.getOrNull()
+        return packageName.takeIf { window == null || isApplicationWindow(window.type) }
+    }
+
+    private fun packageNameOf(value: CharSequence?): PackageName? = value
+        ?.toString()
+        ?.takeIf { it.isNotBlank() }
+        ?.let { packageValue -> runCatching { PackageName(packageValue) }.getOrNull() }
 }
