@@ -24,8 +24,10 @@ android {
 dependencies {
     val composeBom = platform(libs.androidx.compose.bom)
 
+    implementation(project(":data"))
     implementation(project(":core-model"))
     implementation(composeBom)
+    implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.tooling.preview)
