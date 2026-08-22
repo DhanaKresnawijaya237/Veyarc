@@ -1,6 +1,7 @@
 package com.veyarc.feature.runner
 
 import android.os.SystemClock
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -22,6 +23,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -52,8 +54,10 @@ import kotlin.math.hypot
 @Composable
 fun AccessibilitySpikeScreen(
     resumeGeneration: Int,
+    onBack: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    BackHandler(onBack = onBack)
     val context = LocalContext.current
     val resources = LocalResources.current
     var statusGeneration by remember { mutableIntStateOf(resumeGeneration) }
@@ -98,10 +102,16 @@ fun AccessibilitySpikeScreen(
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(
-            text = stringResource(R.string.accessibility_spike_title),
-            style = MaterialTheme.typography.headlineSmall,
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            TextButton(onClick = onBack) { Text("Back") }
+            Text(
+                text = stringResource(R.string.accessibility_spike_title),
+                style = MaterialTheme.typography.headlineSmall,
+            )
+        }
         Text(
             text = stringResource(R.string.accessibility_spike_explanation),
             style = MaterialTheme.typography.bodyMedium,

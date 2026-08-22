@@ -10,6 +10,7 @@ import com.veyarc.data.storage.StoredRunStatus
 import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.engine.MutableExecutionControl
 import com.veyarc.engine.RunEvent
+import com.veyarc.engine.RunFailureCode
 import com.veyarc.engine.RunOutcome
 import com.veyarc.engine.WorkflowCompilationResult
 import com.veyarc.engine.WorkflowCompiler
@@ -206,9 +207,19 @@ class WorkflowRunController(
                     RunOutcome.FAILED,
                     RunOutcome.TIMED_OUT,
                     -> {
+                        val failure = run.failure
                         terminalStatus = StoredRunStatus.FAILED
-                        terminalReason = run.failure?.code?.name ?: "Execution failed"
-                        updateTerminal(WorkflowRunPhase.FAILED, terminalReason)
+                        terminalReason = failure?.code?.name ?: "EXECUTION_FAILED"
+                        val displayMessage = when (failure?.code) {
+                            RunFailureCode.UNEXPECTED_FOREGROUND_PACKAGE ->
+                                "${failure.message}. Add that app's package to Allowed Android packages, or make Launch app the first block."
+
+                            RunFailureCode.FOREGROUND_UNAVAILABLE ->
+                                "The foreground app could not be identified. Return to the target app and refresh the run checks."
+
+                            else -> terminalReason
+                        }
+                        updateTerminal(WorkflowRunPhase.FAILED, displayMessage)
                     }
                 }
             }

@@ -253,6 +253,29 @@ class WorkflowRunnerTest {
     }
 
     @Test
+    fun allowsTheControllerPackageForAnInitialDeclaredLaunchHandoff() {
+        val targetPackage = OTHER_PACKAGE
+        val plan = plan(
+            allowedPackages = listOf(targetPackage),
+            steps = listOf(LaunchApp(STEP_1, targetPackage, DurationMillis(100))),
+        )
+        val driver = FakeDriver(
+            foreground = CONTROLLER_PACKAGE,
+            launchUpdatesForeground = true,
+        )
+
+        val result = WorkflowRunner().run(
+            plan = plan,
+            driver = driver,
+            clock = FakeClock(),
+            startupPackage = CONTROLLER_PACKAGE,
+        )
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf("launch:${targetPackage.value}"), driver.actions)
+    }
+
+    @Test
     fun driverFailureBecomesAStableFailureResult() {
         val plan = plan(steps = listOf(TapPoint(STEP_1, NormalizedCoordinate(0.1, 0.1))))
         val driver = FakeDriver(failOnTap = true)
@@ -422,6 +445,7 @@ class WorkflowRunnerTest {
         )
         val APP_PACKAGE = PackageName("com.example.app")
         val OTHER_PACKAGE = PackageName("com.example.other")
+        val CONTROLLER_PACKAGE = PackageName("com.veyarc.app")
         const val DOCUMENT_ID = "00000000-0000-4000-8000-000000000201"
         const val STEP_1 = "00000000-0000-4000-8000-000000000211"
         const val STEP_2 = "00000000-0000-4000-8000-000000000212"

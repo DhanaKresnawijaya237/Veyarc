@@ -21,9 +21,10 @@ internal object ForegroundPackageTracker {
 
     fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null || attachedService == null) return
-        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            event.eventType != AccessibilityEvent.TYPE_WINDOWS_CHANGED
-        ) {
+        // TYPE_WINDOWS_CHANGED is emitted for transient overlays and system-window
+        // bookkeeping; it is not a reliable foreground-app signal. Only a window-state
+        // transition should replace the package used by the fail-closed runner.
+        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             return
         }
 

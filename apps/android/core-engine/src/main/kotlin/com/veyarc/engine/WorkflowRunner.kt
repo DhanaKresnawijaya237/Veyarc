@@ -11,6 +11,7 @@ import com.veyarc.model.NotCondition
 import com.veyarc.model.NumberValue
 import com.veyarc.model.Operand
 import com.veyarc.model.OrientationCondition
+import com.veyarc.model.PackageName
 import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.StepOutcome
 import com.veyarc.model.StepResultCondition
@@ -32,6 +33,7 @@ class WorkflowRunner {
         cancellation: CancellationSignal = CancellationSignals.NONE,
         pause: PauseSignal = PauseSignals.NONE,
         eventSink: (RunEvent) -> Unit = {},
+        startupPackage: PackageName? = null,
     ): WorkflowRunResult {
         if (!active.compareAndSet(false, true)) {
             val failure = RunFailure(
@@ -57,6 +59,7 @@ class WorkflowRunner {
             cancellation = cancellation,
             pause = pause,
             eventSink = eventSink,
+            startupPackage = startupPackage,
             startedAtMs = clock.nowMs(),
         )
         state.emit(
@@ -220,6 +223,7 @@ class WorkflowRunner {
         is ExecutionStep.LaunchApp -> {
             state.driver.launchApp(step.packageName)
             awaitForeground(step.packageName, step.foregroundTimeoutMs.value, state)
+            state.startupHandoffPending = false
             StepExecution(StepOutcome.COMPLETED)
         }
 
@@ -540,6 +544,7 @@ class WorkflowRunner {
                 stopReason = null,
             )
         if (current !in state.plan.allowedPackages) {
+            if (state.startupHandoffPending && current == state.startupPackage) return
             throw RunAbort(
                 outcome = RunOutcome.FAILED,
                 stepOutcome = StepOutcome.FAILED,
@@ -580,6 +585,7 @@ class WorkflowRunner {
         val cancellation: CancellationSignal,
         val pause: PauseSignal,
         val eventSink: (RunEvent) -> Unit,
+        val startupPackage: PackageName?,
         val startedAtMs: Long,
     ) {
         val events = mutableListOf<RunEvent>()
@@ -587,6 +593,7 @@ class WorkflowRunner {
         val variables = LinkedHashMap(plan.variables.mapValues { it.value.initialValue })
         var currentStepId: String? = null
         var currentPath: String = "/"
+        var startupHandoffPending: Boolean = startupPackage != null && plan.steps.firstOrNull() is ExecutionStep.LaunchApp
         var pauseEventPublished = false
 
         fun nowMs(): Long = clock.nowMs()

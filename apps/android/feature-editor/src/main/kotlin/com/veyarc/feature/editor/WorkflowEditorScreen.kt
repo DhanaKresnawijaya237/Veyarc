@@ -377,7 +377,7 @@ private fun WorkflowDraftScreen(
                 onValueChange = { onDraftChange(draft.copy(allowedPackagesText = it)) },
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("Allowed Android packages") },
-                supportingText = { Text("Separate packages with commas or spaces.") },
+                supportingText = { Text("Separate packages with commas or spaces. If opening another app, make Launch app the first block.") },
                 singleLine = true,
             )
             Text(

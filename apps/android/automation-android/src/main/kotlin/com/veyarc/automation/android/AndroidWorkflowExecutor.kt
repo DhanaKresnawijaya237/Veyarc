@@ -12,6 +12,7 @@ import com.veyarc.engine.WorkflowCompilationResult
 import com.veyarc.engine.WorkflowCompiler
 import com.veyarc.engine.WorkflowRunResult
 import com.veyarc.engine.WorkflowRunner
+import com.veyarc.model.PackageName
 import com.veyarc.model.WorkflowDocument
 
 /** Compiles and executes a workflow through the current Android capability snapshot. */
@@ -26,6 +27,7 @@ class AndroidWorkflowExecutor private constructor(
             driverProvider = { AndroidAutomationDriver(context.applicationContext) },
             clock = AndroidExecutionClock,
             runner = WorkflowRunner(),
+            startupPackage = PackageName(context.applicationContext.packageName),
         ),
     )
 
@@ -34,12 +36,14 @@ class AndroidWorkflowExecutor private constructor(
         driver: () -> AutomationDriver,
         clock: ExecutionClock,
         runner: WorkflowRunner,
+        startupPackage: PackageName? = null,
     ) : this(
         dependencies = Dependencies(
             capabilitiesProvider = capabilities,
             driverProvider = driver,
             clock = clock,
             runner = runner,
+            startupPackage = startupPackage,
         ),
     )
 
@@ -64,6 +68,7 @@ class AndroidWorkflowExecutor private constructor(
             cancellation = cancellation,
             pause = pause,
             eventSink = eventSink,
+            startupPackage = dependencies.startupPackage,
         )
         return AndroidWorkflowExecution(capabilities, compilation, run)
     }
@@ -73,6 +78,7 @@ class AndroidWorkflowExecutor private constructor(
         val driverProvider: () -> AutomationDriver,
         val clock: ExecutionClock,
         val runner: WorkflowRunner,
+        val startupPackage: PackageName?,
     )
 }
 

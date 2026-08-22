@@ -58,7 +58,10 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val bundle = workflowToRun
                     when {
-                        showAccessibilityHarness -> AccessibilitySpikeScreen(resumeGeneration = resumeGeneration)
+                        showAccessibilityHarness -> AccessibilitySpikeScreen(
+                            resumeGeneration = resumeGeneration,
+                            onBack = { showAccessibilityHarness = false },
+                        )
 
                         bundle != null -> WorkflowRunScreen(
                             bundle = bundle,
