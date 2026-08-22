@@ -39,19 +39,23 @@ internal object ForegroundPackageTracker {
                 return
             }
 
-        // Vivo and other OEMs report their screenshot/edge-panel windows as state
-        // changes. Keep the last application package while these short-lived overlays
-        // are visible, so a normal workflow is not aborted by the overlay itself.
-        if (isTransientSystemPackage(packageName)) return
-
-        // A persistent system window, keyboard, or accessibility overlay is not a safe
-        // target for workflow input. Clear the value so the runner fails closed until an
-        // application window becomes foreground again. If the event window is not
-        // available on an OEM build, retain the package event as a compatibility fallback.
-        val windowType = runCatching {
-            service.windows.firstOrNull { it.id == event.windowId }?.type
+        // Only a full-screen application window is a foreground target. Screenshot,
+        // edge-panel, keyboard, system, and accessibility-overlay windows are not safe
+        // targets for workflow input. Keep the last app for a short-lived application
+        // dialog, but clear it for a known non-application window so the runner fails
+        // closed until an application window becomes foreground again.
+        // The service opts into interactive-window metadata so it can distinguish an
+        // application window from an overlay. It never requests a root node or reads
+        // the view hierarchy.
+        val window = runCatching {
+            service.windows.firstOrNull { it.id == event.windowId }
         }.getOrNull()
-        if (windowType != null && windowType != AccessibilityWindowInfo.TYPE_APPLICATION) {
+        if (window != null && window.type != AccessibilityWindowInfo.TYPE_APPLICATION) {
+            currentPackage = null
+            return
+        }
+        if (window != null && !isFullScreenApplicationWindow(window.type, event.isFullScreen)) return
+        if (window == null && !event.isFullScreen) {
             currentPackage = null
             return
         }
@@ -59,7 +63,7 @@ internal object ForegroundPackageTracker {
         currentPackage = packageName
     }
 
-    internal fun isTransientSystemPackage(packageName: PackageName): Boolean = transientSystemPackagePrefixes.any(packageName.value::startsWith)
+    internal fun isFullScreenApplicationWindow(windowType: Int?, isFullScreen: Boolean): Boolean = windowType == AccessibilityWindowInfo.TYPE_APPLICATION && isFullScreen
 
     fun detach(service: AccessibilityService) {
         if (attachedService === service) {
@@ -67,14 +71,4 @@ internal object ForegroundPackageTracker {
             currentPackage = null
         }
     }
-
-    private val transientSystemPackagePrefixes = listOf(
-        "com.vivo.upslide",
-        "com.vivo.smartshot",
-        "com.coloros.screenshot",
-        "com.oplus.screenshot",
-        "com.oppo.screenshot",
-        "com.miui.screenshot",
-        "com.samsung.android.app.smartcapture",
-    )
 }

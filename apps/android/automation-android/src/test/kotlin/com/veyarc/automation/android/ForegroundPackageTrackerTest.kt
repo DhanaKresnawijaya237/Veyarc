@@ -1,21 +1,20 @@
 package com.veyarc.automation.android
 
-import com.veyarc.model.PackageName
+import android.view.accessibility.AccessibilityWindowInfo
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ForegroundPackageTrackerTest {
     @Test
-    fun recognizesKnownOemTransientOverlayPackages() {
-        assertTrue(ForegroundPackageTracker.isTransientSystemPackage(PackageName("com.vivo.upslide")))
-        assertTrue(ForegroundPackageTracker.isTransientSystemPackage(PackageName("com.vivo.smartshot")))
-        assertTrue(ForegroundPackageTracker.isTransientSystemPackage(PackageName("com.coloros.screenshot")))
-        assertTrue(ForegroundPackageTracker.isTransientSystemPackage(PackageName("com.oplus.screenshot")))
+    fun acceptsOnlyFullScreenApplicationWindows() {
+        assertTrue(ForegroundPackageTracker.isFullScreenApplicationWindow(AccessibilityWindowInfo.TYPE_APPLICATION, true))
+        assertFalse(ForegroundPackageTracker.isFullScreenApplicationWindow(AccessibilityWindowInfo.TYPE_SYSTEM, true))
+        assertFalse(ForegroundPackageTracker.isFullScreenApplicationWindow(AccessibilityWindowInfo.TYPE_APPLICATION, false))
     }
 
     @Test
-    fun doesNotIgnoreDeclaredApplicationPackages() {
-        assertFalse(ForegroundPackageTracker.isTransientSystemPackage(PackageName("com.example.target")))
+    fun doesNotAcceptAnUnknownWindowTypeAsAnApplication() {
+        assertFalse(ForegroundPackageTracker.isFullScreenApplicationWindow(null, true))
     }
 }
