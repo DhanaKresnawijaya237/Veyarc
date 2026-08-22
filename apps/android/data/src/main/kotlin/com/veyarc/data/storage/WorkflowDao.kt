@@ -66,4 +66,25 @@ internal interface WorkflowDao {
 
     @Query("SELECT * FROM run_records ORDER BY startedAtMs DESC LIMIT :limit")
     fun listAllRunRecords(limit: Int): List<RunRecordEntity>
+
+    @Query(
+        "SELECT COUNT(*) FROM run_records " +
+            "WHERE workflowId = :workflowId AND status = :status",
+    )
+    fun countRuns(workflowId: String, status: String): Int
+
+    @Query("DELETE FROM run_records WHERE workflowId = :workflowId")
+    fun deleteRunsForWorkflow(workflowId: String): Int
+
+    @Query("DELETE FROM workflow_revisions WHERE workflowId = :workflowId")
+    fun deleteRevisionsForWorkflow(workflowId: String): Int
+
+    @Query("DELETE FROM workflows WHERE workflowId = :workflowId")
+    fun deleteWorkflow(workflowId: String): Int
+
+    @Query(
+        "DELETE FROM run_records " +
+            "WHERE runId = :runId AND status != :runningStatus",
+    )
+    fun deleteRun(runId: String, runningStatus: String): Int
 }

@@ -23,7 +23,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -102,16 +101,10 @@ fun AccessibilitySpikeScreen(
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            TextButton(onClick = onBack) { Text("Back") }
-            Text(
-                text = stringResource(R.string.accessibility_spike_title),
-                style = MaterialTheme.typography.headlineSmall,
-            )
-        }
+        Text(
+            text = stringResource(R.string.accessibility_spike_title),
+            style = MaterialTheme.typography.headlineSmall,
+        )
         Text(
             text = stringResource(R.string.accessibility_spike_explanation),
             style = MaterialTheme.typography.bodyMedium,

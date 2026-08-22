@@ -4,6 +4,7 @@ package com.veyarc.feature.editor
 
 import android.content.Context
 import android.content.res.Configuration
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,12 +22,19 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -49,6 +57,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.veyarc.data.storage.StoredRunRecord
+import com.veyarc.data.storage.StoredRunStatus
 import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowStorageException
 import com.veyarc.data.storage.WorkflowSummary
@@ -140,6 +149,44 @@ fun WorkflowEditorScreen(
         saveWorkflow(bundle) { onRunWorkflow(bundle) }
     }
 
+    fun deleteWorkflow(summary: WorkflowSummary) {
+        scope.launch {
+            isBusy = true
+            statusMessage = null
+            runCatching {
+                withContext(Dispatchers.IO) { repository.deleteWorkflow(summary.workflowId) }
+            }.onSuccess {
+                refreshGeneration += 1
+                statusMessage = "Deleted workflow \"${summary.name}\"."
+            }.onFailure { error ->
+                statusMessage = "Could not delete workflow: ${error.userMessage()}"
+            }
+            isBusy = false
+        }
+    }
+
+    fun deleteRun(record: StoredRunRecord) {
+        scope.launch {
+            isBusy = true
+            statusMessage = null
+            runCatching {
+                withContext(Dispatchers.IO) { repository.deleteRun(record.runId) }
+            }.onSuccess {
+                refreshGeneration += 1
+                statusMessage = "Deleted run ${record.runId}."
+            }.onFailure { error ->
+                statusMessage = "Could not delete run: ${error.userMessage()}"
+            }
+            isBusy = false
+        }
+    }
+
+    fun closeDraft() {
+        geometryTarget = null
+        editingDraft = null
+        refreshGeneration += 1
+    }
+
     val draft = editingDraft
     if (draft == null) {
         WorkflowLibraryScreen(
@@ -153,9 +200,12 @@ fun WorkflowEditorScreen(
             },
             onOpen = ::openWorkflow,
             onOpenAutomationHarness = onOpenAutomationHarness,
+            onDeleteWorkflow = ::deleteWorkflow,
+            onDeleteRun = ::deleteRun,
             modifier = modifier,
         )
     } else {
+        BackHandler { closeDraft() }
         val validation = remember(draft) { draft.buildBundle() }
         WorkflowDraftScreen(
             draft = draft,
@@ -163,11 +213,7 @@ fun WorkflowEditorScreen(
             isBusy = isBusy,
             statusMessage = statusMessage,
             onDraftChange = { editingDraft = it },
-            onBack = {
-                geometryTarget = null
-                editingDraft = null
-                refreshGeneration += 1
-            },
+            onBack = ::closeDraft,
             onSave = { bundle -> saveWorkflow(bundle) },
             onRun = ::saveAndRun,
             onEditGeometry = { path, index -> geometryTarget = GeometryTarget(path, index) },
@@ -196,6 +242,11 @@ private data class GeometryTarget(
     val index: Int,
 )
 
+private sealed interface DeleteTarget {
+    data class Workflow(val summary: WorkflowSummary) : DeleteTarget
+    data class Run(val record: StoredRunRecord) : DeleteTarget
+}
+
 @Composable
 private fun WorkflowLibraryScreen(
     summaries: List<WorkflowSummary>,
@@ -205,8 +256,12 @@ private fun WorkflowLibraryScreen(
     onCreate: () -> Unit,
     onOpen: (WorkflowSummary) -> Unit,
     onOpenAutomationHarness: () -> Unit,
+    onDeleteWorkflow: (WorkflowSummary) -> Unit,
+    onDeleteRun: (StoredRunRecord) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var pendingDelete by remember { mutableStateOf<DeleteTarget?>(null) }
+
     Scaffold(
         modifier = modifier,
         topBar = {
@@ -253,38 +308,93 @@ private fun WorkflowLibraryScreen(
                 }
             }
             items(summaries, key = { it.workflowId }) { summary ->
-                WorkflowSummaryCard(summary = summary, onClick = { onOpen(summary) })
+                WorkflowSummaryCard(
+                    summary = summary,
+                    onClick = { onOpen(summary) },
+                    onDelete = { pendingDelete = DeleteTarget.Workflow(summary) },
+                    deleteEnabled = !isBusy,
+                )
             }
             if (runHistory.isNotEmpty()) {
                 item {
                     Text("Recent runs", style = MaterialTheme.typography.titleLarge)
                 }
                 items(runHistory, key = { it.runId }) { record ->
-                    RunHistoryCard(record)
+                    RunHistoryCard(
+                        record = record,
+                        onDelete = { pendingDelete = DeleteTarget.Run(record) },
+                        deleteEnabled = !isBusy && record.status != StoredRunStatus.RUNNING,
+                    )
                 }
             }
         }
     }
+
+    pendingDelete?.let { target ->
+        val isWorkflow = target is DeleteTarget.Workflow
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text(if (isWorkflow) "Delete workflow?" else "Delete run?") },
+            text = {
+                Text(
+                    if (isWorkflow) {
+                        "This removes the workflow, every saved revision, and its run history from this phone."
+                    } else {
+                        "This permanently removes the selected run record from this phone."
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        when (target) {
+                            is DeleteTarget.Workflow -> onDeleteWorkflow(target.summary)
+                            is DeleteTarget.Run -> onDeleteRun(target.record)
+                        }
+                        pendingDelete = null
+                    },
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+            },
+        )
+    }
 }
 
 @Composable
-private fun RunHistoryCard(record: StoredRunRecord) {
+private fun RunHistoryCard(
+    record: StoredRunRecord,
+    onDelete: () -> Unit,
+    deleteEnabled: Boolean,
+) {
     Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
-        Column(
+        Row(
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                "${record.status.name.lowercase()} · revision ${record.revision}",
-                style = MaterialTheme.typography.titleMedium,
-            )
-            Text(
-                "Started ${record.startedAtMs} · finished ${record.finishedAtMs ?: "—"}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            record.interruptionReason?.let { reason ->
-                Text(reason, style = MaterialTheme.typography.bodySmall)
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    "${record.status.name.lowercase()} · revision ${record.revision}",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    "Started ${record.startedAtMs} · finished ${record.finishedAtMs ?: "—"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                record.interruptionReason?.let { reason ->
+                    Text(reason, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            IconButton(onClick = onDelete, enabled = deleteEnabled) {
+                Icon(Icons.Outlined.Delete, contentDescription = "Delete run")
             }
         }
     }
@@ -294,6 +404,8 @@ private fun RunHistoryCard(record: StoredRunRecord) {
 private fun WorkflowSummaryCard(
     summary: WorkflowSummary,
     onClick: () -> Unit,
+    onDelete: () -> Unit,
+    deleteEnabled: Boolean,
 ) {
     Card(
         modifier = Modifier
@@ -301,21 +413,30 @@ private fun WorkflowSummaryCard(
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(16.dp),
     ) {
-        Column(
+        Row(
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(summary.name, style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Revision ${summary.latestRevision} · Updated ${summary.updatedAtMs}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                summary.workflowId,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(summary.name, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Revision ${summary.latestRevision} · Updated ${summary.updatedAtMs}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    summary.workflowId,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(onClick = onDelete, enabled = deleteEnabled) {
+                Icon(Icons.Outlined.Delete, contentDescription = "Delete workflow")
+            }
         }
     }
 }
@@ -491,22 +612,28 @@ private fun StepCard(
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.titleSmall,
                 )
+                IconButton(
+                    enabled = index > 0,
+                    onClick = { onDraftChange(draft.moveStep(path, index, -1)) },
+                ) {
+                    Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = "Move block up")
+                }
+                IconButton(
+                    enabled = index < draft.stepsAt(path).lastIndex,
+                    onClick = { onDraftChange(draft.moveStep(path, index, 1)) },
+                ) {
+                    Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "Move block down")
+                }
+                IconButton(
+                    onClick = { onDraftChange(draft.removeStep(path, index)) },
+                ) {
+                    Icon(Icons.Outlined.Delete, contentDescription = "Remove block")
+                }
                 TextButton(onClick = { onDraftChange(draft.toggleCollapsed(step.id)) }) {
                     Text(if (expanded) "Collapse" else "Expand")
                 }
             }
             Text(step.summary(), style = MaterialTheme.typography.bodyMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(
-                    enabled = index > 0,
-                    onClick = { onDraftChange(draft.moveStep(path, index, -1)) },
-                ) { Text("Up") }
-                TextButton(
-                    enabled = index < draft.stepsAt(path).lastIndex,
-                    onClick = { onDraftChange(draft.moveStep(path, index, 1)) },
-                ) { Text("Down") }
-                TextButton(onClick = { onDraftChange(draft.removeStep(path, index)) }) { Text("Remove") }
-            }
             if (expanded) {
                 StepEditorFields(
                     draft = draft,

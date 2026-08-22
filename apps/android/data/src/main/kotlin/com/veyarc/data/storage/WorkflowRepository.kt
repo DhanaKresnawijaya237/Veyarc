@@ -226,6 +226,40 @@ class WorkflowRepository internal constructor(
         return database.workflowDao().listAllRunRecords(limit).map(::toStoredRunRecord)
     }
 
+    /** Deletes a terminal run record. Running records stay protected until they finish. */
+    fun deleteRun(runId: String) = synchronized(this) {
+        val deleted = database.workflowDao().deleteRun(
+            runId = runId,
+            runningStatus = StoredRunStatus.RUNNING.name,
+        )
+        check(deleted == 1) { "Run record is missing or still running" }
+    }
+
+    /** Deletes a workflow, its revisions, encrypted files, and all associated run records. */
+    fun deleteWorkflow(workflowId: String) = synchronized(this) {
+        val dao = database.workflowDao()
+        if (dao.findWorkflow(workflowId) == null) {
+            throw WorkflowStorageException("Workflow does not exist")
+        }
+        require(
+            dao.countRuns(workflowId, StoredRunStatus.RUNNING.name) == 0,
+        ) { "Cannot delete a workflow while a run is active" }
+
+        val revisions = dao.listRevisions(workflowId)
+        try {
+            database.runInTransaction {
+                dao.deleteRunsForWorkflow(workflowId)
+                dao.deleteRevisionsForWorkflow(workflowId)
+                check(dao.deleteWorkflow(workflowId) == 1) {
+                    "Workflow disappeared while it was being deleted"
+                }
+            }
+            revisions.forEach { revision -> files.delete(revision.encryptedFileName) }
+        } catch (error: Exception) {
+            throw WorkflowStorageException("Could not delete workflow", error)
+        }
+    }
+
     fun close() {
         database.close()
     }

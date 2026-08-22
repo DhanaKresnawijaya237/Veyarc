@@ -47,12 +47,21 @@ class WorkflowRepositoryTest {
 
             val runId = repository.beginRun(WORKFLOW_ID, 2, runId = RUN_ID, startedAtMs = 2000L)
             assertEquals(RUN_ID, runId)
+            assertTrue(runCatching { repository.deleteRun(RUN_ID) }.isFailure)
+            assertTrue(runCatching { repository.deleteWorkflow(WORKFLOW_ID) }.isFailure)
             assertEquals(1, repository.recoverInterruptedRuns(recoveredAtMs = 3000L))
             val interrupted = repository.listInterruptedRuns().single()
             assertEquals(RUN_ID, interrupted.runId)
             assertEquals(StoredRunStatus.INTERRUPTED, interrupted.status)
             assertTrue(interrupted.interruptionReason!!.isNotBlank())
             assertEquals(listOf(RUN_ID), repository.listRunHistory().map { it.runId })
+
+            repository.deleteRun(RUN_ID)
+            assertTrue(repository.listRunHistory().isEmpty())
+            repository.deleteWorkflow(WORKFLOW_ID)
+            assertTrue(repository.listWorkflows().isEmpty())
+            assertTrue(repository.listRevisions(WORKFLOW_ID).isEmpty())
+            assertTrue(directory.listFiles().isNullOrEmpty())
         } finally {
             repository.close()
             directory.deleteRecursively()
