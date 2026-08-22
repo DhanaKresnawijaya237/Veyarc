@@ -7,14 +7,13 @@ import org.junit.Test
 
 class ForegroundPackageTrackerTest {
     @Test
-    fun acceptsOnlyFullScreenApplicationWindows() {
-        assertTrue(ForegroundPackageTracker.isFullScreenApplicationWindow(AccessibilityWindowInfo.TYPE_APPLICATION, true))
-        assertFalse(ForegroundPackageTracker.isFullScreenApplicationWindow(AccessibilityWindowInfo.TYPE_SYSTEM, true))
-        assertFalse(ForegroundPackageTracker.isFullScreenApplicationWindow(AccessibilityWindowInfo.TYPE_APPLICATION, false))
+    fun acceptsApplicationWindowsWithoutRequiringFullScreenMetadata() {
+        assertTrue(ForegroundPackageTracker.isApplicationWindow(AccessibilityWindowInfo.TYPE_APPLICATION))
+        assertFalse(ForegroundPackageTracker.isApplicationWindow(AccessibilityWindowInfo.TYPE_SYSTEM))
     }
 
     @Test
     fun doesNotAcceptAnUnknownWindowTypeAsAnApplication() {
-        assertFalse(ForegroundPackageTracker.isFullScreenApplicationWindow(null, true))
+        assertFalse(ForegroundPackageTracker.isApplicationWindow(null))
     }
 }
