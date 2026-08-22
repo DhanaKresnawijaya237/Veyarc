@@ -180,6 +180,40 @@ class WorkflowRunnerTest {
     }
 
     @Test
+    fun pausesAtASafeBoundaryAndPublishesControlEvents() {
+        val control = MutableExecutionControl()
+        var sleepCount = 0
+        val clock = FakeClock(onSleep = {
+            sleepCount += 1
+            when (sleepCount) {
+                1 -> control.requestPause()
+                2 -> control.resume()
+            }
+        })
+        val events = mutableListOf<RunEvent>()
+        val driver = FakeDriver()
+        val plan = plan(
+            steps = listOf(
+                Wait(STEP_1, DurationMillis(100)),
+                TapPoint(STEP_2, NormalizedCoordinate(0.1, 0.1)),
+            ),
+        )
+
+        val result = WorkflowRunner().run(
+            plan = plan,
+            driver = driver,
+            clock = clock,
+            pause = control,
+            eventSink = events::add,
+        )
+
+        assertTrue(result.isSuccess)
+        assertTrue(events.any { it is RunEvent.Paused })
+        assertTrue(events.any { it is RunEvent.Resumed })
+        assertEquals(listOf("tap:10.0,20.0"), driver.actions)
+    }
+
+    @Test
     fun rejectsUnexpectedForegroundPackageBeforeDispatchingInput() {
         val plan = plan(steps = listOf(TapPoint(STEP_1, NormalizedCoordinate(0.1, 0.1))))
         val driver = FakeDriver(foreground = OTHER_PACKAGE)

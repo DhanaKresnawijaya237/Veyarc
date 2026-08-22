@@ -59,6 +59,39 @@ object CancellationSignals {
     val NONE: CancellationSignal = CancellationSignal { false }
 }
 
+fun interface PauseSignal {
+    fun isPauseRequested(): Boolean
+}
+
+object PauseSignals {
+    val NONE: PauseSignal = PauseSignal { false }
+}
+
+/** Thread-safe controls shared by Android run buttons and the deterministic runner. */
+class MutableExecutionControl :
+    CancellationSignal,
+    PauseSignal {
+    private val cancellationRequested = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val pauseRequested = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    override fun isCancellationRequested(): Boolean = cancellationRequested.get()
+
+    override fun isPauseRequested(): Boolean = pauseRequested.get() && !isCancellationRequested()
+
+    fun requestPause() {
+        if (!isCancellationRequested()) pauseRequested.set(true)
+    }
+
+    fun resume() {
+        pauseRequested.set(false)
+    }
+
+    fun cancel() {
+        cancellationRequested.set(true)
+        pauseRequested.set(false)
+    }
+}
+
 enum class RunOutcome {
     COMPLETED,
     FAILED,
@@ -114,6 +147,14 @@ sealed interface RunEvent {
         override val atMs: Long,
         val stepId: String,
         val outcome: StepOutcome,
+    ) : RunEvent
+
+    data class Paused(
+        override val atMs: Long,
+    ) : RunEvent
+
+    data class Resumed(
+        override val atMs: Long,
     ) : RunEvent
 
     data class Finished(

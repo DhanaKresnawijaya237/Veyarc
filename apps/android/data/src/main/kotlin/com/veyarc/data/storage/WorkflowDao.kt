@@ -63,4 +63,7 @@ internal interface WorkflowDao {
 
     @Query("SELECT * FROM run_records WHERE status = :status ORDER BY startedAtMs DESC")
     fun listRunRecords(status: String): List<RunRecordEntity>
+
+    @Query("SELECT * FROM run_records ORDER BY startedAtMs DESC LIMIT :limit")
+    fun listAllRunRecords(limit: Int): List<RunRecordEntity>
 }

@@ -52,6 +52,7 @@ class WorkflowRepositoryTest {
             assertEquals(RUN_ID, interrupted.runId)
             assertEquals(StoredRunStatus.INTERRUPTED, interrupted.status)
             assertTrue(interrupted.interruptionReason!!.isNotBlank())
+            assertEquals(listOf(RUN_ID), repository.listRunHistory().map { it.runId })
         } finally {
             repository.close()
             directory.deleteRecursively()

@@ -38,6 +38,7 @@ object AccessibilityGestureDispatcher {
     @Volatile
     private var service: AccessibilityService? = null
     private val dispatchInProgress = AtomicBoolean(false)
+    private val cancellationRequested = AtomicBoolean(false)
 
     val isConnected: Boolean
         get() = service != null
@@ -109,8 +110,14 @@ object AccessibilityGestureDispatcher {
     internal fun detach(accessibilityService: AccessibilityService) {
         if (service === accessibilityService) {
             service = null
+            cancellationRequested.set(true)
             dispatchInProgress.set(false)
         }
+    }
+
+    /** Requests cancellation of the active platform gesture, if one exists. */
+    fun cancelActiveGesture() {
+        if (dispatchInProgress.get()) cancellationRequested.set(true)
     }
 
     private fun dispatch(
@@ -133,6 +140,7 @@ object AccessibilityGestureDispatcher {
             onResult(GestureDispatchResult.AlreadyInProgress)
             return
         }
+        cancellationRequested.set(false)
 
         val path = Path().apply {
             moveTo(points.first().x, points.first().y)
@@ -148,7 +156,13 @@ object AccessibilityGestureDispatcher {
                 object : AccessibilityService.GestureResultCallback() {
                     override fun onCompleted(gestureDescription: GestureDescription?) {
                         dispatchInProgress.set(false)
-                        onResult(GestureDispatchResult.Completed)
+                        onResult(
+                            if (cancellationRequested.get()) {
+                                GestureDispatchResult.Cancelled
+                            } else {
+                                GestureDispatchResult.Completed
+                            },
+                        )
                     }
 
                     override fun onCancelled(gestureDescription: GestureDescription?) {
@@ -161,6 +175,7 @@ object AccessibilityGestureDispatcher {
 
         if (!accepted) {
             dispatchInProgress.set(false)
+            cancellationRequested.set(false)
             onResult(GestureDispatchResult.RejectedBySystem)
         }
     }

@@ -5,6 +5,9 @@ import com.veyarc.engine.AutomationDriver
 import com.veyarc.engine.CancellationSignal
 import com.veyarc.engine.CancellationSignals
 import com.veyarc.engine.ExecutionClock
+import com.veyarc.engine.PauseSignal
+import com.veyarc.engine.PauseSignals
+import com.veyarc.engine.RunEvent
 import com.veyarc.engine.WorkflowCompilationResult
 import com.veyarc.engine.WorkflowCompiler
 import com.veyarc.engine.WorkflowRunResult
@@ -43,6 +46,8 @@ class AndroidWorkflowExecutor private constructor(
     fun execute(
         document: WorkflowDocument,
         cancellation: CancellationSignal = CancellationSignals.NONE,
+        pause: PauseSignal = PauseSignals.NONE,
+        eventSink: (RunEvent) -> Unit = {},
     ): AndroidWorkflowExecution {
         val capabilities = dependencies.capabilitiesProvider.invoke()
         val compilation = WorkflowCompiler.compile(document, capabilities.engineCapabilities)
@@ -57,6 +62,8 @@ class AndroidWorkflowExecutor private constructor(
             driver = dependencies.driverProvider.invoke(),
             clock = dependencies.clock,
             cancellation = cancellation,
+            pause = pause,
+            eventSink = eventSink,
         )
         return AndroidWorkflowExecution(capabilities, compilation, run)
     }

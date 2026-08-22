@@ -48,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.veyarc.data.storage.StoredRunRecord
 import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowStorageException
 import com.veyarc.data.storage.WorkflowSummary
@@ -64,6 +65,7 @@ import com.veyarc.model.Wait
 import com.veyarc.model.WaitUntil
 import com.veyarc.model.WhileStep
 import com.veyarc.model.WorkflowStep
+import com.veyarc.model.bundle.WorkflowBundle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -72,11 +74,13 @@ import kotlinx.coroutines.withContext
 fun WorkflowEditorScreen(
     repository: WorkflowRepository,
     onOpenAutomationHarness: () -> Unit,
+    onRunWorkflow: (WorkflowBundle) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var summaries by remember { mutableStateOf<List<WorkflowSummary>>(emptyList()) }
+    var runHistory by remember { mutableStateOf<List<StoredRunRecord>>(emptyList()) }
     var editingDraft by remember { mutableStateOf<WorkflowDraft?>(null) }
     var isBusy by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
@@ -90,6 +94,9 @@ fun WorkflowEditorScreen(
             withContext(Dispatchers.IO) { repository.listWorkflows() }
         }.onFailure { error ->
             statusMessage = "Could not load workflows: ${error.userMessage()}"
+        }.getOrElse { emptyList() }
+        runHistory = runCatching {
+            withContext(Dispatchers.IO) { repository.listRunHistory(limit = 20) }
         }.getOrElse { emptyList() }
         isBusy = false
     }
@@ -111,7 +118,7 @@ fun WorkflowEditorScreen(
         }
     }
 
-    fun saveWorkflow(bundle: com.veyarc.model.bundle.WorkflowBundle) {
+    fun saveWorkflow(bundle: WorkflowBundle, afterSave: (() -> Unit)? = null) {
         scope.launch {
             isBusy = true
             statusMessage = null
@@ -121,6 +128,7 @@ fun WorkflowEditorScreen(
                 editingDraft = WorkflowDraft.fromBundle(bundle)
                 refreshGeneration += 1
                 statusMessage = "Saved revision ${bundle.document.revision}."
+                afterSave?.invoke()
             }.onFailure { error ->
                 statusMessage = "Could not save revision: ${error.userMessage()}"
             }
@@ -128,10 +136,15 @@ fun WorkflowEditorScreen(
         }
     }
 
+    fun saveAndRun(bundle: WorkflowBundle) {
+        saveWorkflow(bundle) { onRunWorkflow(bundle) }
+    }
+
     val draft = editingDraft
     if (draft == null) {
         WorkflowLibraryScreen(
             summaries = summaries,
+            runHistory = runHistory,
             isBusy = isBusy,
             statusMessage = statusMessage,
             onCreate = {
@@ -155,7 +168,8 @@ fun WorkflowEditorScreen(
                 editingDraft = null
                 refreshGeneration += 1
             },
-            onSave = ::saveWorkflow,
+            onSave = { bundle -> saveWorkflow(bundle) },
+            onRun = ::saveAndRun,
             onEditGeometry = { path, index -> geometryTarget = GeometryTarget(path, index) },
             modifier = modifier,
         )
@@ -185,6 +199,7 @@ private data class GeometryTarget(
 @Composable
 private fun WorkflowLibraryScreen(
     summaries: List<WorkflowSummary>,
+    runHistory: List<StoredRunRecord>,
     isBusy: Boolean,
     statusMessage: String?,
     onCreate: () -> Unit,
@@ -240,6 +255,37 @@ private fun WorkflowLibraryScreen(
             items(summaries, key = { it.workflowId }) { summary ->
                 WorkflowSummaryCard(summary = summary, onClick = { onOpen(summary) })
             }
+            if (runHistory.isNotEmpty()) {
+                item {
+                    Text("Recent runs", style = MaterialTheme.typography.titleLarge)
+                }
+                items(runHistory, key = { it.runId }) { record ->
+                    RunHistoryCard(record)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RunHistoryCard(record: StoredRunRecord) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                "${record.status.name.lowercase()} · revision ${record.revision}",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                "Started ${record.startedAtMs} · finished ${record.finishedAtMs ?: "—"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            record.interruptionReason?.let { reason ->
+                Text(reason, style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }
@@ -282,7 +328,8 @@ private fun WorkflowDraftScreen(
     statusMessage: String?,
     onDraftChange: (WorkflowDraft) -> Unit,
     onBack: () -> Unit,
-    onSave: (com.veyarc.model.bundle.WorkflowBundle) -> Unit,
+    onSave: (WorkflowBundle) -> Unit,
+    onRun: (WorkflowBundle) -> Unit,
     onEditGeometry: (StepListPath, Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -298,6 +345,12 @@ private fun WorkflowDraftScreen(
                         onClick = { validation.bundle?.let(onSave) },
                     ) {
                         Text("Save v${draft.nextRevision}")
+                    }
+                    TextButton(
+                        enabled = !isBusy && validation.bundle != null,
+                        onClick = { validation.bundle?.let(onRun) },
+                    ) {
+                        Text("Review & run")
                     }
                 },
             )

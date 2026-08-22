@@ -219,6 +219,13 @@ class WorkflowRepository internal constructor(
         .listRunRecords(StoredRunStatus.INTERRUPTED.name)
         .map(::toStoredRunRecord)
 
+    fun listRunHistory(limit: Int = 100): List<StoredRunRecord> {
+        require(limit in 1..MAX_HISTORY_LIMIT) {
+            "Run history limit must be between 1 and $MAX_HISTORY_LIMIT"
+        }
+        return database.workflowDao().listAllRunRecords(limit).map(::toStoredRunRecord)
+    }
+
     fun close() {
         database.close()
     }
@@ -241,6 +248,7 @@ class WorkflowRepository internal constructor(
         const val WORKFLOW_DIRECTORY = "workflows"
         const val DEFAULT_INTERRUPTION_REASON = "Run was interrupted when the process ended"
         const val MAX_REASON_LENGTH = 256
+        const val MAX_HISTORY_LIMIT = 1_000
 
         fun revisionFileName(workflowId: String, revision: Int): String {
             require(revision > 0) { "Workflow revision must be positive" }

@@ -30,6 +30,8 @@ class WorkflowRunner {
         driver: AutomationDriver,
         clock: ExecutionClock,
         cancellation: CancellationSignal = CancellationSignals.NONE,
+        pause: PauseSignal = PauseSignals.NONE,
+        eventSink: (RunEvent) -> Unit = {},
     ): WorkflowRunResult {
         if (!active.compareAndSet(false, true)) {
             val failure = RunFailure(
@@ -53,12 +55,16 @@ class WorkflowRunner {
             driver = driver,
             clock = clock,
             cancellation = cancellation,
+            pause = pause,
+            eventSink = eventSink,
             startedAtMs = clock.nowMs(),
         )
-        state.events += RunEvent.Started(
-            atMs = state.nowMs(),
-            workflowId = plan.workflowId,
-            workflowRevision = plan.workflowRevision,
+        state.emit(
+            RunEvent.Started(
+                atMs = state.nowMs(),
+                workflowId = plan.workflowId,
+                workflowRevision = plan.workflowRevision,
+            ),
         )
 
         return try {
@@ -99,21 +105,21 @@ class WorkflowRunner {
         state.currentStepId = step.id
         state.currentPath = "/steps/${step.id}"
         ensureBoundary(state)
-        state.events += RunEvent.StepStarted(state.nowMs(), step.id)
+        state.emit(RunEvent.StepStarted(state.nowMs(), step.id))
         var finished = false
         val startedAtMs = state.nowMs()
         return try {
             val execution = executeStepBody(step, state)
             if (isAtomicStep(step)) checkStepDuration(step.id, startedAtMs, state)
             state.stepOutcomes[step.id] = execution.outcome
-            state.events += RunEvent.StepFinished(state.nowMs(), step.id, execution.outcome)
+            state.emit(RunEvent.StepFinished(state.nowMs(), step.id, execution.outcome))
             finished = true
             if (execution.halt == null) ensureBoundary(state)
             execution
         } catch (abort: RunAbort) {
             if (!finished) {
                 state.stepOutcomes[step.id] = abort.stepOutcome
-                state.events += RunEvent.StepFinished(state.nowMs(), step.id, abort.stepOutcome)
+                state.emit(RunEvent.StepFinished(state.nowMs(), step.id, abort.stepOutcome))
             }
             throw abort
         } catch (error: Exception) {
@@ -124,7 +130,7 @@ class WorkflowRunner {
                 message = error.message ?: "Execution dependency failed",
             )
             state.stepOutcomes[step.id] = StepOutcome.FAILED
-            state.events += RunEvent.StepFinished(state.nowMs(), step.id, StepOutcome.FAILED)
+            state.emit(RunEvent.StepFinished(state.nowMs(), step.id, StepOutcome.FAILED))
             throw RunAbort(RunOutcome.FAILED, StepOutcome.FAILED, failure, null)
         }
     }
@@ -258,7 +264,7 @@ class WorkflowRunner {
                     stopReason = null,
                 )
             }
-            state.clock.sleep(min(pollIntervalMs, remaining))
+            sleepWithControls(min(pollIntervalMs, remaining), state)
         }
     }
 
@@ -281,7 +287,7 @@ class WorkflowRunner {
                     stopReason = null,
                 )
             }
-            state.clock.sleep(min(FOREGROUND_POLL_INTERVAL_MS, remaining))
+            sleepWithControls(min(FOREGROUND_POLL_INTERVAL_MS, remaining), state)
         }
     }
 
@@ -317,7 +323,7 @@ class WorkflowRunner {
 
             is NotCondition -> !evaluateCondition(condition.condition, stepId, "$path/condition", state)
         }
-        state.events += RunEvent.ConditionEvaluated(state.nowMs(), stepId, path, result)
+        state.emit(RunEvent.ConditionEvaluated(state.nowMs(), stepId, path, result))
         return result
     }
 
@@ -364,19 +370,8 @@ class WorkflowRunner {
     }
 
     private fun ensureBoundary(state: RunState) {
-        if (state.cancellation.isCancellationRequested()) {
-            throw RunAbort(
-                outcome = RunOutcome.CANCELLED,
-                stepOutcome = StepOutcome.CANCELLED,
-                failure = RunFailure(
-                    code = RunFailureCode.CANCELLATION_REQUESTED,
-                    stepId = state.currentStepId,
-                    path = state.currentPath,
-                    message = "Cancellation was requested",
-                ),
-                stopReason = null,
-            )
-        }
+        ensureNotCancelled(state)
+        awaitResume(state)
         val now = state.nowMs()
         if (now < state.startedAtMs) {
             throw RunAbort(
@@ -406,6 +401,52 @@ class WorkflowRunner {
         }
         currentViewportOrAbort(state)
         ensureForeground(state)
+    }
+
+    private fun ensureNotCancelled(state: RunState) {
+        if (state.cancellation.isCancellationRequested()) {
+            throw RunAbort(
+                outcome = RunOutcome.CANCELLED,
+                stepOutcome = StepOutcome.CANCELLED,
+                failure = RunFailure(
+                    code = RunFailureCode.CANCELLATION_REQUESTED,
+                    stepId = state.currentStepId,
+                    path = state.currentPath,
+                    message = "Cancellation was requested",
+                ),
+                stopReason = null,
+            )
+        }
+    }
+
+    private fun awaitResume(state: RunState) {
+        if (!state.pause.isPauseRequested()) {
+            if (state.pauseEventPublished) {
+                state.emit(RunEvent.Resumed(state.nowMs()))
+                state.pauseEventPublished = false
+            }
+            return
+        }
+        if (!state.pauseEventPublished) {
+            state.emit(RunEvent.Paused(state.nowMs()))
+            state.pauseEventPublished = true
+        }
+        while (state.pause.isPauseRequested()) {
+            ensureNotCancelled(state)
+            state.clock.sleep(PAUSE_POLL_INTERVAL_MS)
+        }
+        state.emit(RunEvent.Resumed(state.nowMs()))
+        state.pauseEventPublished = false
+    }
+
+    private fun sleepWithControls(durationMs: Long, state: RunState) {
+        var remaining = durationMs
+        while (remaining > 0L) {
+            ensureBoundary(state)
+            val slice = min(PAUSE_POLL_INTERVAL_MS, remaining)
+            state.clock.sleep(slice)
+            remaining -= slice
+        }
     }
 
     private inline fun <T> dispatchAtViewport(
@@ -519,7 +560,7 @@ class WorkflowRunner {
         failure: RunFailure?,
         stopReason: StopReason?,
     ): WorkflowRunResult {
-        state.events += RunEvent.Finished(state.nowMs(), outcome, failure, stopReason)
+        state.emit(RunEvent.Finished(state.nowMs(), outcome, failure, stopReason))
         return WorkflowRunResult(
             outcome = outcome,
             events = immutableRuntimeList(state.events),
@@ -537,6 +578,8 @@ class WorkflowRunner {
         val driver: AutomationDriver,
         val clock: ExecutionClock,
         val cancellation: CancellationSignal,
+        val pause: PauseSignal,
+        val eventSink: (RunEvent) -> Unit,
         val startedAtMs: Long,
     ) {
         val events = mutableListOf<RunEvent>()
@@ -544,8 +587,14 @@ class WorkflowRunner {
         val variables = LinkedHashMap(plan.variables.mapValues { it.value.initialValue })
         var currentStepId: String? = null
         var currentPath: String = "/"
+        var pauseEventPublished = false
 
         fun nowMs(): Long = clock.nowMs()
+
+        fun emit(event: RunEvent) {
+            events += event
+            runCatching { eventSink(event) }
+        }
     }
 
     private data class StepExecution(
@@ -568,6 +617,7 @@ class WorkflowRunner {
 
     private companion object {
         const val FOREGROUND_POLL_INTERVAL_MS = 50L
+        const val PAUSE_POLL_INTERVAL_MS = 50L
 
         fun collectStepIds(steps: List<ExecutionStep>): List<String> = buildList {
             steps.forEach { step ->
