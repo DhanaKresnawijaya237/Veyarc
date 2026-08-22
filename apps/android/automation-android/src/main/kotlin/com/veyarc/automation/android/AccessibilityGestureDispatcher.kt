@@ -77,6 +77,15 @@ object AccessibilityGestureDispatcher {
         dispatch(listOf(point), duration, onResult)
     }
 
+    /** Dispatches a long press for the duration declared by the workflow. */
+    fun dispatchLongPress(
+        point: ScreenPoint,
+        durationMillis: Long,
+        onResult: (GestureDispatchResult) -> Unit,
+    ) {
+        dispatch(listOf(point), durationMillis, onResult)
+    }
+
     fun dispatchPath(
         points: List<ScreenPoint>,
         durationMillis: Long,
