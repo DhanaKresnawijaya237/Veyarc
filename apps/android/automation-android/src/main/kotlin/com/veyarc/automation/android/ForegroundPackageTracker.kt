@@ -13,11 +13,26 @@ internal object ForegroundPackageTracker {
     @Volatile
     private var currentPackage: PackageName? = null
 
-    fun current(): PackageName? = currentPackage
+    @Volatile
+    private var lastEvidenceWasApplication: Boolean = false
+
+    fun current(): PackageName? {
+        val service = attachedService ?: return currentPackage
+        val activePackage = readActiveApplicationPackage(service)
+        if (activePackage != null) {
+            currentPackage = activePackage
+            lastEvidenceWasApplication = true
+        } else if (!lastEvidenceWasApplication) {
+            currentPackage = null
+        }
+        return currentPackage
+    }
 
     fun attach(service: AccessibilityService) {
         attachedService = service
-        currentPackage = readActiveApplicationPackage(service)
+        currentPackage = readActiveApplicationPackage(service).also {
+            lastEvidenceWasApplication = it != null
+        }
     }
 
     fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -36,6 +51,7 @@ internal object ForegroundPackageTracker {
             ?.let { packageValue -> runCatching { PackageName(packageValue) }.getOrNull() }
             ?: run {
                 currentPackage = null
+                lastEvidenceWasApplication = false
                 return
             }
 
@@ -58,16 +74,23 @@ internal object ForegroundPackageTracker {
             // owned by this service. It must not replace the application underneath it.
             if (!isOwnAccessibilityOverlay(window.type, packageName, service.packageName)) {
                 currentPackage = null
+                lastEvidenceWasApplication = false
             }
             return
         }
 
-        // Some OEM builds do not expose a matching AccessibilityWindowInfo even when
-        // the event is a normal application transition. In that case the event package
-        // is the only available signal. The workflow allowlist is still checked by the
-        // runner before any input is dispatched, so an undeclared overlay package is
-        // rejected rather than acted on.
-        currentPackage = packageName
+        if (window != null) {
+            currentPackage = packageName
+            lastEvidenceWasApplication = true
+            return
+        }
+
+        // Do not trust an unmatched event package. Vivo can emit a window-state event
+        // for an edge panel without exposing its window record. Re-read the active root
+        // instead, and fail closed when Android cannot identify an application window.
+        currentPackage = readActiveApplicationPackage(service).also {
+            lastEvidenceWasApplication = it != null
+        }
     }
 
     internal fun isApplicationWindow(windowType: Int?): Boolean = windowType == AccessibilityWindowInfo.TYPE_APPLICATION
@@ -78,15 +101,15 @@ internal object ForegroundPackageTracker {
         if (attachedService === service) {
             attachedService = null
             currentPackage = null
+            lastEvidenceWasApplication = false
         }
     }
 
     private fun readActiveApplicationPackage(service: AccessibilityService): PackageName? {
         val root = runCatching { service.rootInActiveWindow }.getOrNull() ?: return null
         val packageName = packageNameOf(root.packageName) ?: return null
-        val window = runCatching {
-            service.windows.firstOrNull { it.id == root.windowId }
-        }.getOrNull()
+        val window = runCatching { root.window }.getOrNull()
+            ?: runCatching { service.windows.firstOrNull { it.id == root.windowId } }.getOrNull()
         return packageName.takeIf { window == null || isApplicationWindow(window.type) }
     }
 
