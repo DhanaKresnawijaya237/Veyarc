@@ -32,7 +32,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -42,21 +41,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.veyarc.automation.android.AccessibilityGestureDispatcher
-import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.model.bundle.WorkflowBundle
 
 @Composable
 fun WorkflowRunScreen(
     bundle: WorkflowBundle,
-    repository: WorkflowRepository,
+    controller: WorkflowRunController,
+    canStart: Boolean = true,
+    startBlockMessage: String? = null,
+    onStart: () -> Unit = controller::start,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
-    val controller = remember(bundle.document.id, bundle.document.revision) {
-        WorkflowRunController(context, repository, bundle.document)
-    }
     val state by controller.state.collectAsState()
     var permissionRequestPending by remember { mutableStateOf(false) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -64,16 +62,13 @@ fun WorkflowRunScreen(
     ) { granted ->
         permissionRequestPending = false
         controller.refreshNotificationState()
-        if (granted) controller.start() else openNotificationSettings(context)
-    }
-
-    DisposableEffect(controller) {
-        onDispose { controller.close() }
+        if (granted) onStart() else openNotificationSettings(context)
     }
 
     fun requestStart() {
+        if (!canStart) return
         if (state.notificationReady) {
-            controller.start()
+            onStart()
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -116,6 +111,8 @@ fun WorkflowRunScreen(
                     onStart = ::requestStart,
                     onRefresh = controller::refreshReview,
                     onOpenNotificationSettings = { openNotificationSettings(context) },
+                    canStart = canStart,
+                    startBlockMessage = startBlockMessage,
                 )
             } else {
                 RunContent(state = state, onPause = controller::pause, onResume = controller::resume, onStop = controller::stop, onBack = onBack)
@@ -134,6 +131,8 @@ private fun ReviewContent(
     onStart: () -> Unit,
     onRefresh: () -> Unit,
     onOpenNotificationSettings: () -> Unit,
+    canStart: Boolean,
+    startBlockMessage: String?,
 ) {
     val context = LocalContext.current
     val plan = state.review.plan
@@ -175,9 +174,13 @@ private fun ReviewContent(
         }
     }
 
+    startBlockMessage?.let { message ->
+        Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(onClick = onRefresh) { Text("Refresh checks") }
-        Button(enabled = state.review.isRunnable, onClick = onStart) {
+        Button(enabled = state.review.isRunnable && canStart, onClick = onStart) {
             Text("Start run")
         }
     }

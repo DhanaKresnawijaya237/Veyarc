@@ -1,6 +1,7 @@
 package com.veyarc.feature.runner
 
 import android.content.Context
+import android.util.Log
 import com.veyarc.automation.android.AccessibilityEmergencyOverlay
 import com.veyarc.automation.android.AccessibilityGestureDispatcher
 import com.veyarc.automation.android.AndroidAutomationCapabilities
@@ -15,6 +16,7 @@ import com.veyarc.engine.RunOutcome
 import com.veyarc.engine.WorkflowCompilationResult
 import com.veyarc.engine.WorkflowCompiler
 import com.veyarc.model.WorkflowDocument
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -85,6 +87,10 @@ class WorkflowRunController(
     private var runJob: Job? = null
     private var control: MutableExecutionControl? = null
 
+    @Volatile private var closed = false
+
+    @Volatile private var closeReason: String? = null
+
     val state: StateFlow<WorkflowRunUiState> = _state.asStateFlow()
 
     fun refreshNotificationState() {
@@ -152,7 +158,10 @@ class WorkflowRunController(
         }
     }
 
-    fun close() {
+    fun close(reason: String = "the controller was closed") {
+        if (closed) return
+        closeReason = reason
+        closed = true
         control?.cancel()
         AccessibilityGestureDispatcher.cancelActiveGesture()
         AccessibilityEmergencyOverlay.hide()
@@ -209,7 +218,7 @@ class WorkflowRunController(
                     -> {
                         val failure = run.failure
                         terminalStatus = StoredRunStatus.FAILED
-                        terminalReason = failure?.code?.name ?: "EXECUTION_FAILED"
+                        val failureCode = failure?.code?.name ?: "EXECUTION_FAILED"
                         val displayMessage = when (failure?.code) {
                             RunFailureCode.UNEXPECTED_FOREGROUND_PACKAGE ->
                                 "${failure.message}. Add that app's package to Allowed Android packages, or make Launch app the first block."
@@ -217,16 +226,32 @@ class WorkflowRunController(
                             RunFailureCode.FOREGROUND_UNAVAILABLE ->
                                 "The foreground app could not be identified. Return to the target app and refresh the run checks."
 
-                            else -> terminalReason
+                            else -> failure?.let { "${it.code.name}: ${it.message}" } ?: failureCode
                         }
+                        terminalReason = displayMessage
                         updateTerminal(WorkflowRunPhase.FAILED, displayMessage)
                     }
                 }
             }
-        } catch (_: Exception) {
+        } catch (cancellation: CancellationException) {
+            terminalStatus = StoredRunStatus.CANCELLED
+            terminalReason = closeReason?.let { "Run cancelled because $it" } ?: "Run cancelled"
+            if (!closed) {
+                updateTerminal(WorkflowRunPhase.CANCELLED, terminalReason)
+            }
+            throw cancellation
+        } catch (error: Exception) {
+            val exceptionType = error.javaClass.simpleName.ifBlank { "Unknown exception" }
+            val detail = error.message
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { "$exceptionType: $it" }
+                ?: exceptionType
+            val displayMessage = "Execution error: $detail"
+            Log.e(TAG, "Workflow execution failed for ${document.id}", error)
             terminalStatus = StoredRunStatus.FAILED
-            terminalReason = "EXECUTION_ERROR"
-            updateTerminal(WorkflowRunPhase.FAILED, terminalReason)
+            terminalReason = "EXECUTION_ERROR: $detail"
+            updateTerminal(WorkflowRunPhase.FAILED, displayMessage)
         } finally {
             if (runId != null) {
                 val completedRunId = runId
@@ -239,7 +264,9 @@ class WorkflowRunController(
                 }
             }
             AccessibilityEmergencyOverlay.hide()
-            notifications.showTerminal(_state.value.message ?: "Workflow finished")
+            if (!closed) {
+                notifications.showTerminal(_state.value.message ?: "Workflow finished")
+            }
             control = null
         }
     }
@@ -284,6 +311,7 @@ class WorkflowRunController(
     }
 
     private companion object {
+        const val TAG = "Veyarc.WorkflowRun"
         const val MAX_EVENT_HISTORY = 50
 
         fun redactEvent(event: RunEvent): String = when (event) {
