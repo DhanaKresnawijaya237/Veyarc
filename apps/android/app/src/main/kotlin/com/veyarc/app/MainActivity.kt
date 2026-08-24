@@ -16,10 +16,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import com.veyarc.app.ui.theme.VeyarcTheme
 import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.feature.editor.WorkflowEditorScreen
+import com.veyarc.feature.recorder.CoordinateRecorderScreen
+import com.veyarc.feature.recorder.CoordinateRecordingRuntime
 import com.veyarc.feature.runner.AccessibilitySpikeScreen
 import com.veyarc.feature.runner.WorkflowRunController
 import com.veyarc.feature.runner.WorkflowRunScreen
@@ -36,12 +39,16 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     private var resumeGeneration by mutableIntStateOf(0)
     private var showAccessibilityHarness by mutableStateOf(false)
+    private var showRecorder by mutableStateOf(false)
     private var workflowToRun by mutableStateOf<WorkflowBundle?>(null)
     private val runSession: MainRunSession by lazy {
         ViewModelProvider(this)[MainRunSession::class.java]
     }
     private val workflowRepository: WorkflowRepository
         get() = runSession.repository
+    private val recordingSession: MainRecordingSession by lazy {
+        ViewModelProvider(this)[MainRecordingSession::class.java]
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,6 +59,9 @@ class MainActivity : ComponentActivity() {
                 override fun handleOnBackPressed() {
                     if (showAccessibilityHarness) {
                         showAccessibilityHarness = false
+                    } else if (showRecorder) {
+                        recordingSession.controller.stop()
+                        showRecorder = false
                     } else if (workflowToRun != null) {
                         leaveRunScreen()
                     } else {
@@ -73,6 +83,15 @@ class MainActivity : ComponentActivity() {
                         showAccessibilityHarness -> AccessibilitySpikeScreen(
                             resumeGeneration = resumeGeneration,
                             onBack = { showAccessibilityHarness = false },
+                            onStartRecording = {
+                                showAccessibilityHarness = false
+                                showRecorder = true
+                            },
+                        )
+
+                        showRecorder -> CoordinateRecorderScreen(
+                            controller = recordingSession.controller,
+                            onBack = { showRecorder = false },
                         )
 
                         bundle != null -> WorkflowRunScreen(
@@ -170,4 +189,10 @@ class MainRunSession(application: Application) : AndroidViewModel(application) {
     private companion object {
         const val TAG = "Veyarc.RunSession"
     }
+}
+
+class MainRecordingSession : ViewModel() {
+    // The controller is process-owned so destroying/recreating MainActivity does not stop a
+    // recording that is intentionally running in another app.
+    val controller = CoordinateRecordingRuntime.controller()
 }

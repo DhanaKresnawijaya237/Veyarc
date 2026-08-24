@@ -135,6 +135,8 @@ sealed interface RecordingAnalysisEvent {
 data class RecordingAnalysis(
     val header: RecordingJournalHeader,
     val events: List<RecordingAnalysisEvent>,
+    /** The first package observation, if the recorder observed one. */
+    val initialForegroundPackage: PackageName?,
     /** True when the journal ended with a down/move sequence without a matching up. */
     val incompleteTouchIgnored: Boolean,
 ) {
@@ -168,6 +170,10 @@ object RecordingAnalyzer {
         return RecordingAnalysis(
             header = snapshot.header,
             events = events,
+            initialForegroundPackage = snapshot.events
+                .filterIsInstance<RecordingJournalLine.ForegroundPackage>()
+                .firstOrNull()
+                ?.packageName,
             incompleteTouchIgnored = snapshot.cursor.touchInProgress,
         )
     }

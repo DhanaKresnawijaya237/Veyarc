@@ -40,6 +40,7 @@ class RecordingAnalyzerTest {
         )
         assertEquals(listOf(270L, 500L, 500L), analysis.inferredWaits.map { it.durationMillis })
         assertEquals(1, analysis.foregroundTransitions.size)
+        assertEquals(PackageName("com.example.app"), analysis.initialForegroundPackage)
         assertEquals(250L, analysis.foregroundTransitions.single().elapsedMillis)
         assertEquals(PackageName("com.example.app"), analysis.foregroundTransitions.single().previousPackage)
         assertEquals(PackageName("com.example.other"), analysis.foregroundTransitions.single().currentPackage)
