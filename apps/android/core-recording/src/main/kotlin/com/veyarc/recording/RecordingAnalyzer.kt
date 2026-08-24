@@ -226,7 +226,7 @@ object RecordingAnalyzer {
             rawDurationMillis >= config.longPressTimeoutMillis -> ClassifiedGestureKind.HOLD
             else -> ClassifiedGestureKind.TAP
         }
-        val points = when (kind) {
+        val classified = when (kind) {
             ClassifiedGestureKind.PATH -> simplifyPath(
                 samples = samples,
                 durationMillis = durationMillis,
@@ -236,93 +236,64 @@ object RecordingAnalyzer {
 
             ClassifiedGestureKind.TAP,
             ClassifiedGestureKind.HOLD,
-            -> listOf(
-                RecordedTimedPoint(start, 0L),
-                RecordedTimedPoint(RecordedPoint(last.xPx, last.yPx), durationMillis),
+            -> TimedPath(
+                durationMillis = durationMillis,
+                points = listOf(
+                    RecordedTimedPoint(start, 0L),
+                    RecordedTimedPoint(RecordedPoint(last.xPx, last.yPx), durationMillis),
+                ),
             )
         }
         return ClassifiedTouchGesture(
             startElapsedMillis = first.elapsedMillis,
-            durationMillis = durationMillis,
+            durationMillis = classified.durationMillis,
             kind = kind,
-            points = points,
+            points = classified.points,
         )
     }
+
+    private data class TimedPath(
+        val durationMillis: Long,
+        val points: List<RecordedTimedPoint>,
+    )
 
     private fun simplifyPath(
         samples: List<RecordingJournalLine.Touch>,
         durationMillis: Long,
         tolerancePx: Double,
         maxPathPoints: Int,
-    ): List<RecordedTimedPoint> {
+    ): TimedPath {
         val rawPoints = samples.map { sample ->
             RawTimedPoint(
                 point = RecordedPoint(sample.xPx, sample.yPx),
                 elapsedMillis = sample.elapsedMillis,
             )
         }
-        val timedPoints = collapseDuplicateTimestamps(rawPoints)
-        val simplified = ramerDouglasPeucker(timedPoints, tolerancePx)
+        // Do not collapse equal timestamps before geometric simplification. The journal uses
+        // millisecond resolution, so several genuine move samples can share a timestamp during
+        // a fast gesture. Keeping the samples preserves the shape; offsets are made strict below.
+        val simplified = ramerDouglasPeucker(rawPoints, tolerancePx)
         val bounded = limitPointCount(simplified, maxPathPoints)
-        return if (rawPoints.first().elapsedMillis == rawPoints.last().elapsedMillis) {
-            bounded.mapIndexed { index, point ->
-                val offset = if (bounded.size == 1) 0L else (index.toLong() * durationMillis) / (bounded.size - 1)
-                RecordedTimedPoint(point.point, offset)
+        val effectiveDurationMillis = max(durationMillis, bounded.lastIndex.toLong())
+        val sourceStartMillis = rawPoints.first().elapsedMillis
+        val sourceDurationMillis = (rawPoints.last().elapsedMillis - sourceStartMillis).coerceAtLeast(0L)
+        val sourceOffsets = bounded.map { point ->
+            (point.elapsedMillis - sourceStartMillis).coerceIn(0L, sourceDurationMillis)
+        }
+        val sourceOffsetsAreStrict = sourceOffsets.zipWithNext().all { (first, second) -> first < second }
+        val offsets = if (sourceDurationMillis == 0L || !sourceOffsetsAreStrict) {
+            bounded.mapIndexed { index, _ ->
+                (index.toLong() * effectiveDurationMillis) / bounded.lastIndex
             }
         } else {
-            val startMillis = rawPoints.first().elapsedMillis
-            bounded.map { point ->
-                RecordedTimedPoint(
-                    point = point.point,
-                    offsetMillis = ((point.elapsedMillis - startMillis).coerceAtLeast(0L))
-                        .coerceAtMost(durationMillis),
-                )
-            }.let(::makeOffsetsStrict)
+            sourceOffsets
         }
-    }
-
-    private fun collapseDuplicateTimestamps(points: List<RawTimedPoint>): List<RawTimedPoint> {
-        if (points.size <= 2) return points
-        val result = mutableListOf<RawTimedPoint>()
-        var index = 0
-        while (index < points.size) {
-            val timestamp = points[index].elapsedMillis
-            var end = index + 1
-            while (end < points.size && points[end].elapsedMillis == timestamp) end += 1
-            result += when {
-                index == 0 -> points[index]
-                end == points.size -> points[end - 1]
-                else -> points[end - 1]
-            }
-            index = end
-        }
-        if (result.first() != points.first()) result.add(0, points.first())
-        if (result.last() != points.last()) result += points.last()
-        return result
-    }
-
-    private fun makeOffsetsStrict(points: List<RecordedTimedPoint>): List<RecordedTimedPoint> {
-        if (points.size <= 1) return points
-        val result = ArrayList<RecordedTimedPoint>(points.size)
-        var previous = -1L
-        points.forEachIndexed { index, point ->
-            val offset = when {
-                index == 0 -> 0L
-                index == points.lastIndex -> max(point.offsetMillis, previous + 1L)
-                else -> max(point.offsetMillis, previous + 1L)
-            }
-            result += point.copy(offsetMillis = offset)
-            previous = offset
-        }
-        val declaredDuration = points.last().offsetMillis
-        if (result.last().offsetMillis == declaredDuration) return result
-        val finalOffset = result.last().offsetMillis
-        if (finalOffset <= 0L) {
-            return result.mapIndexed { index, point ->
-                point.copy(offsetMillis = (index.toLong() * max(1L, declaredDuration)) / points.lastIndex)
-            }
-        }
-        return result
+        return TimedPath(
+            durationMillis = effectiveDurationMillis,
+            points = bounded.mapIndexed { index, point ->
+                RecordedTimedPoint(point.point, offsets[index])
+            },
+        )
     }
 
     private fun ramerDouglasPeucker(points: List<RawTimedPoint>, tolerancePx: Double): List<RawTimedPoint> {
@@ -366,10 +337,9 @@ object RecordingAnalyzer {
         return (0 until maximum).map { outputIndex ->
             val sourceIndex = (outputIndex.toDouble() * lastIndex / (maximum - 1)).roundToInt()
             points[sourceIndex]
-        }.distinctBy { it.elapsedMillis }
-            .let { bounded ->
-                if (bounded.last() == points.last()) bounded else bounded.dropLast(1) + points.last()
-            }
+        }.let { bounded ->
+            if (bounded.last() == points.last()) bounded else bounded.dropLast(1) + points.last()
+        }
     }
 
     private fun inferWaits(

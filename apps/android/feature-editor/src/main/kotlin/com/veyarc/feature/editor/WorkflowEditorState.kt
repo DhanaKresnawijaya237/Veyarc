@@ -86,6 +86,7 @@ data class WorkflowDraft(
     val producerVersion: String,
     val steps: List<WorkflowStep>,
     val collapsedStepIds: Set<String> = emptySet(),
+    val recordingJournalFileName: String? = null,
 ) {
     val nextRevision: Int
         get() = (lastSavedRevision ?: 0) + 1
@@ -228,7 +229,7 @@ data class WorkflowDraft(
             )
         }
 
-        fun fromBundle(bundle: WorkflowBundle): WorkflowDraft = WorkflowDraft(
+        fun fromBundle(bundle: WorkflowBundle, recordingJournalFileName: String? = null): WorkflowDraft = WorkflowDraft(
             workflowId = bundle.document.id,
             lastSavedRevision = bundle.document.revision,
             name = bundle.document.name,
@@ -239,6 +240,7 @@ data class WorkflowDraft(
             assets = bundle.assets,
             producerVersion = bundle.producerVersion,
             steps = bundle.document.steps,
+            recordingJournalFileName = recordingJournalFileName,
         )
 
         private fun defaultViewport() = ViewportSpec(

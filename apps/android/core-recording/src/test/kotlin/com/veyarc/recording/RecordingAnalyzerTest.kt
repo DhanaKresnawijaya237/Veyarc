@@ -102,6 +102,29 @@ class RecordingAnalyzerTest {
     }
 
     @Test
+    fun preservesRapidNonlinearPathWhenSamplesShareMillisecondTimestamp() {
+        val snapshot = snapshot(
+            RecordingJournalLine.Touch(0L, RecordingTouchAction.DOWN, 0.0, 0.0),
+            RecordingJournalLine.Touch(0L, RecordingTouchAction.MOVE, 100.0, 0.0),
+            RecordingJournalLine.Touch(0L, RecordingTouchAction.MOVE, 100.0, 100.0),
+            RecordingJournalLine.Touch(0L, RecordingTouchAction.MOVE, 0.0, 100.0),
+            RecordingJournalLine.Touch(0L, RecordingTouchAction.UP, 0.0, 0.0),
+        )
+
+        val gesture = RecordingAnalyzer.analyze(
+            snapshot,
+            config(touchSlopPx = 1.0, pathSimplificationFraction = 0.0001),
+        ).gestures.single()
+
+        assertEquals(ClassifiedGestureKind.PATH, gesture.kind)
+        assertTrue(gesture.points.size > 2)
+        assertTrue(gesture.durationMillis >= gesture.points.lastIndex)
+        assertEquals(gesture.durationMillis, gesture.points.last().offsetMillis)
+        assertTrue(gesture.points.any { it.point == RecordedPoint(100.0, 100.0) })
+        assertTrue(gesture.points.zipWithNext().all { (first, second) -> first.offsetMillis < second.offsetMillis })
+    }
+
+    @Test
     fun doesNotInventACompletedGestureForAnIncompleteTail() {
         val snapshot = snapshot(
             RecordingJournalLine.Touch(100L, RecordingTouchAction.DOWN, 10.0, 20.0),

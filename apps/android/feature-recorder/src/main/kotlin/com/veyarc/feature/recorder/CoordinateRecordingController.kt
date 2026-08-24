@@ -21,6 +21,7 @@ import com.veyarc.recording.RecordingClassificationConfig
 import com.veyarc.recording.RecordingJournalLine
 import com.veyarc.recording.RecordingJournalSnapshot
 import com.veyarc.recording.RecordingTouchAction
+import com.veyarc.recording.RecordingWorkflowConverter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -70,11 +71,14 @@ class CoordinateRecordingController(
     private var lastForegroundPackage: PackageName? = null
     private var firstThirdPartyForegroundPackage: PackageName? = null
     private var lastThirdPartyForegroundPackage: PackageName? = null
+    private val observedThirdPartyPackages = LinkedHashSet<PackageName>()
     private var hasForegroundObservation = false
 
     /** False until a complete touch starts after the session source is armed. */
     private var captureReady = false
-    private var sourceStartTimestampMicros: Long? = null
+
+    /** App-process monotonic origin for frame timing; avoids device/helper clock mismatches. */
+    private var recordingStartReceivedTimestampMicros: Long? = null
     private var minX = 0L
     private var maxX = 0L
     private var minY = 0L
@@ -189,9 +193,10 @@ class CoordinateRecordingController(
         lastForegroundPackage = null
         firstThirdPartyForegroundPackage = null
         lastThirdPartyForegroundPackage = null
+        observedThirdPartyPackages.clear()
         hasForegroundObservation = false
         captureReady = false
-        sourceStartTimestampMicros = null
+        recordingStartReceivedTimestampMicros = null
         frameCount = 0L
         sourceError = null
         pendingTouchLines = null
@@ -274,7 +279,7 @@ class CoordinateRecordingController(
         when (event) {
             is ShizukuTouchRecordingEvent.Started -> enqueue {
                 if (!active) return@enqueue
-                sourceStartTimestampMicros = event.startTimestampMicros
+                recordingStartReceivedTimestampMicros = event.receivedTimestampMicros
                 minX = event.minX
                 maxX = event.maxX
                 minY = event.minY
@@ -361,9 +366,12 @@ class CoordinateRecordingController(
         }
         if (controlSurface) pendingTouchSawControlSurface = true
 
-        val startTimestamp = sourceStartTimestampMicros ?: return
+        val startTimestamp = recordingStartReceivedTimestampMicros ?: return
         val currentViewport = viewport ?: return
-        val elapsed = ((event.timestampMicros - startTimestamp) / 1_000L).coerceAtLeast(0L)
+        // The helper's kernel timestamp and the app process can use different clock domains on
+        // OEM builds. The wrapper captures an app-process monotonic timestamp for every callback,
+        // so journal timing remains ordered and reflects the real gesture duration.
+        val elapsed = ((event.receivedTimestampMicros - startTimestamp) / 1_000L).coerceAtLeast(0L)
         val monotonicElapsed = appendElapsed(elapsed)
         val xRange = maxX - minX
         val yRange = maxY - minY
@@ -417,6 +425,7 @@ class CoordinateRecordingController(
                 firstThirdPartyForegroundPackage = packageName
             }
             lastThirdPartyForegroundPackage = packageName
+            packageName?.let(observedThirdPartyPackages::add)
         }
         hasForegroundObservation = true
         try {
@@ -511,6 +520,14 @@ class CoordinateRecordingController(
                     ),
                 )
             }
+            val workflowConversion = analysis?.let { recordingAnalysis ->
+                runCatching {
+                    RecordingWorkflowConverter.convert(
+                        analysis = recordingAnalysis,
+                        allowedPackages = observedThirdPartyPackages.toList(),
+                    )
+                }
+            }
             store?.close()
             journal = null
             RecordingForegroundService.stop(appContext)
@@ -526,6 +543,10 @@ class CoordinateRecordingController(
                     inferredWaitCount = analysis?.inferredWaits?.size ?: 0,
                     foregroundTransitionCount = analysis?.foregroundTransitions?.size ?: 0,
                     incompleteTouchIgnored = analysis?.incompleteTouchIgnored ?: false,
+                    editableWorkflow = workflowConversion?.getOrNull()?.bundle,
+                    draftWarnings = workflowConversion?.getOrNull()?.warnings.orEmpty(),
+                    draftUnavailableReason = workflowConversion?.exceptionOrNull()?.message
+                        ?: if (analysis == null) "The recording did not produce reviewable events." else null,
                 ),
             )
             reviewSucceeded = true
@@ -606,9 +627,10 @@ class CoordinateRecordingController(
         lastForegroundPackage = null
         firstThirdPartyForegroundPackage = null
         lastThirdPartyForegroundPackage = null
+        observedThirdPartyPackages.clear()
         hasForegroundObservation = false
         captureReady = false
-        sourceStartTimestampMicros = null
+        recordingStartReceivedTimestampMicros = null
         sourceError = null
         stopFailureReason = null
         minX = 0L

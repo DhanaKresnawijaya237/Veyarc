@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import rikka.shizuku.Shizuku
 import java.io.Closeable
 
@@ -19,6 +20,8 @@ sealed interface ShizukuTouchRecordingEvent {
         val maxX: Long,
         val minY: Long,
         val maxY: Long,
+        /** Monotonic timestamp captured when this callback reached the app process. */
+        val receivedTimestampMicros: Long = startTimestampMicros,
     ) : ShizukuTouchRecordingEvent
 
     data class Frame(
@@ -26,6 +29,8 @@ sealed interface ShizukuTouchRecordingEvent {
         val action: Action,
         val x: Long,
         val y: Long,
+        /** Monotonic timestamp captured when this callback reached the app process. */
+        val receivedTimestampMicros: Long = timestampMicros,
     ) : ShizukuTouchRecordingEvent
 
     data class Error(val message: String) : ShizukuTouchRecordingEvent
@@ -91,6 +96,7 @@ class ShizukuTouchRecording(
             minY: Long,
             maxY: Long,
         ) {
+            val receivedTimestampMicros = SystemClock.elapsedRealtimeNanos() / 1_000L
             publish(
                 ShizukuTouchRecordingEvent.Started(
                     startTimestampMicros = startTimestampMicros,
@@ -99,11 +105,13 @@ class ShizukuTouchRecording(
                     maxX = maxX,
                     minY = minY,
                     maxY = maxY,
+                    receivedTimestampMicros = receivedTimestampMicros,
                 ),
             )
         }
 
         override fun onFrame(timestampMicros: Long, action: Int, x: Long, y: Long) {
+            val receivedTimestampMicros = SystemClock.elapsedRealtimeNanos() / 1_000L
             val mappedAction = when (action) {
                 0 -> ShizukuTouchRecordingEvent.Action.DOWN
 
@@ -116,7 +124,15 @@ class ShizukuTouchRecording(
                     return
                 }
             }
-            publish(ShizukuTouchRecordingEvent.Frame(timestampMicros, mappedAction, x, y))
+            publish(
+                ShizukuTouchRecordingEvent.Frame(
+                    timestampMicros = timestampMicros,
+                    action = mappedAction,
+                    x = x,
+                    y = y,
+                    receivedTimestampMicros = receivedTimestampMicros,
+                ),
+            )
         }
 
         override fun onError(message: String?) {

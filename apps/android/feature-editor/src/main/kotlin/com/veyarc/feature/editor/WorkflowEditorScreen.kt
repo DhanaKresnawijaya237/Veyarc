@@ -84,6 +84,9 @@ fun WorkflowEditorScreen(
     repository: WorkflowRepository,
     onOpenAutomationHarness: () -> Unit,
     onRunWorkflow: (WorkflowBundle) -> Unit,
+    initialBundle: WorkflowBundle? = null,
+    initialRecordingJournalFileName: String? = null,
+    onInitialBundleConsumed: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -95,6 +98,13 @@ fun WorkflowEditorScreen(
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var refreshGeneration by remember { mutableIntStateOf(0) }
     var geometryTarget by remember { mutableStateOf<GeometryTarget?>(null) }
+
+    LaunchedEffect(initialBundle, initialRecordingJournalFileName) {
+        val bundle = initialBundle ?: return@LaunchedEffect
+        editingDraft = WorkflowDraft.fromBundle(bundle, initialRecordingJournalFileName)
+        statusMessage = "Recording imported. Review the generated steps before saving."
+        onInitialBundleConsumed()
+    }
 
     LaunchedEffect(refreshGeneration) {
         isBusy = true
@@ -128,13 +138,14 @@ fun WorkflowEditorScreen(
     }
 
     fun saveWorkflow(bundle: WorkflowBundle, afterSave: (() -> Unit)? = null) {
+        val sourceJournalFileName = editingDraft?.recordingJournalFileName
         scope.launch {
             isBusy = true
             statusMessage = null
             runCatching {
                 withContext(Dispatchers.IO) { repository.saveRevision(bundle) }
             }.onSuccess {
-                editingDraft = WorkflowDraft.fromBundle(bundle)
+                editingDraft = WorkflowDraft.fromBundle(bundle, sourceJournalFileName)
                 refreshGeneration += 1
                 statusMessage = "Saved revision ${bundle.document.revision}."
                 afterSave?.invoke()
@@ -506,6 +517,13 @@ private fun WorkflowDraftScreen(
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            draft.recordingJournalFileName?.let { journalFileName ->
+                Text(
+                    "Imported from encrypted recording: $journalFileName",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             ValidationCard(validation = validation)
             HorizontalDivider()
             Text("Blocks", style = MaterialTheme.typography.titleLarge)

@@ -20,11 +20,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.veyarc.model.bundle.WorkflowBundle
 
 @Composable
 fun CoordinateRecorderScreen(
     controller: CoordinateRecordingController,
     onBack: () -> Unit,
+    onEditWorkflow: (WorkflowBundle, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by controller.state.collectAsState()
@@ -105,6 +107,17 @@ fun CoordinateRecorderScreen(
                     )
                 }
                 Text("Encrypted journal: ${review.journalFileName}")
+                review.draftWarnings.forEach { warning ->
+                    Text(warning, color = MaterialTheme.colorScheme.error)
+                }
+                review.draftUnavailableReason?.let { reason ->
+                    Text("Workflow draft unavailable: $reason", color = MaterialTheme.colorScheme.error)
+                }
+                review.editableWorkflow?.let { bundle ->
+                    Button(onClick = { onEditWorkflow(bundle, review.journalFileName) }) {
+                        Text("Edit as workflow")
+                    }
+                }
                 Button(onClick = controller::start) { Text("Record another") }
             }
 

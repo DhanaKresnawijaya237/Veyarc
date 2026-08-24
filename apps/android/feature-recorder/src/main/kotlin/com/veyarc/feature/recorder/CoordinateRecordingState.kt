@@ -1,5 +1,7 @@
 package com.veyarc.feature.recorder
 
+import com.veyarc.model.bundle.WorkflowBundle
+
 sealed interface CoordinateRecordingState {
     data object Idle : CoordinateRecordingState
 
@@ -38,4 +40,7 @@ data class CoordinateRecordingReview(
     val inferredWaitCount: Int,
     val foregroundTransitionCount: Int,
     val incompleteTouchIgnored: Boolean,
+    val editableWorkflow: WorkflowBundle? = null,
+    val draftWarnings: List<String> = emptyList(),
+    val draftUnavailableReason: String? = null,
 )

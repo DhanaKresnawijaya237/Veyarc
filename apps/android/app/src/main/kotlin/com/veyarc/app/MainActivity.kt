@@ -41,6 +41,8 @@ class MainActivity : ComponentActivity() {
     private var showAccessibilityHarness by mutableStateOf(false)
     private var showRecorder by mutableStateOf(false)
     private var workflowToRun by mutableStateOf<WorkflowBundle?>(null)
+    private var recordedWorkflowToEdit by mutableStateOf<WorkflowBundle?>(null)
+    private var recordedJournalFileName by mutableStateOf<String?>(null)
     private val runSession: MainRunSession by lazy {
         ViewModelProvider(this)[MainRunSession::class.java]
     }
@@ -92,6 +94,11 @@ class MainActivity : ComponentActivity() {
                         showRecorder -> CoordinateRecorderScreen(
                             controller = recordingSession.controller,
                             onBack = { showRecorder = false },
+                            onEditWorkflow = { bundle, journalFileName ->
+                                recordedWorkflowToEdit = bundle
+                                recordedJournalFileName = journalFileName
+                                showRecorder = false
+                            },
                         )
 
                         bundle != null -> WorkflowRunScreen(
@@ -109,6 +116,12 @@ class MainActivity : ComponentActivity() {
                             repository = workflowRepository,
                             onOpenAutomationHarness = { showAccessibilityHarness = true },
                             onRunWorkflow = ::openRunScreen,
+                            initialBundle = recordedWorkflowToEdit,
+                            initialRecordingJournalFileName = recordedJournalFileName,
+                            onInitialBundleConsumed = {
+                                recordedWorkflowToEdit = null
+                                recordedJournalFileName = null
+                            },
                         )
                     }
                 }
