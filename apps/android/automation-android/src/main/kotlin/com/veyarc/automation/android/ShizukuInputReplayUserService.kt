@@ -7,18 +7,19 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 
 /**
- * A deliberately narrow Shizuku UserService for input-injection feasibility testing.
+ * A deliberately narrow Shizuku UserService for approved input replay.
  *
- * The service accepts only validated tap/swipe commands and invokes Android's fixed `input`
- * command through ProcessBuilder. It never accepts an arbitrary shell string, writes to an input
- * device, calls sendevent/uinput, or executes a workflow. This is a diagnostic backend, not yet
- * the production replay implementation.
+ * The service accepts only validated tap/swipe commands or a bounded single-pointer motion trace
+ * and invokes Android's fixed `input` command through ProcessBuilder. It never accepts an
+ * arbitrary shell string, writes to an input device, calls sendevent/uinput, or executes a
+ * workflow. A capability probe must report support for `motionevent` before a raw trace is queued.
  */
 class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
     private sealed interface ReplayCommand {
         val description: String
         val cancelX: Float
         val cancelY: Float
+        val delayBeforeMillis: Long
 
         fun arguments(): List<String>
 
@@ -29,6 +30,7 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
             override val description: String = "tap ${format(x)} ${format(y)}"
             override val cancelX: Float = x
             override val cancelY: Float = y
+            override val delayBeforeMillis: Long = 0L
 
             override fun arguments(): List<String> = inputArguments(
                 "tap",
@@ -49,6 +51,7 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
                     "${format(endX)} ${format(endY)} ${durationMillis}ms"
             override val cancelX: Float = endX
             override val cancelY: Float = endY
+            override val delayBeforeMillis: Long = 0L
 
             override fun arguments(): List<String> = inputArguments(
                 "swipe",
@@ -57,6 +60,25 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
                 format(endX),
                 format(endY),
                 durationMillis.toString(),
+            )
+        }
+
+        data class MotionFrame(
+            val action: Int,
+            val x: Float,
+            val y: Float,
+            override val delayBeforeMillis: Long,
+        ) : ReplayCommand {
+            override val description: String =
+                "motionevent ${actionName(action)} ${format(x)} ${format(y)}"
+            override val cancelX: Float = x
+            override val cancelY: Float = y
+
+            override fun arguments(): List<String> = inputArguments(
+                "motionevent",
+                actionName(action),
+                format(x),
+                format(y),
             )
         }
     }
@@ -95,6 +117,17 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
     override fun getLastCommand(): String? = lastCommand
 
     override fun getLastError(): String? = lastError
+
+    @Volatile
+    private var capabilities: Int? = null
+
+    override fun getCapabilities(): Int = synchronized(stateLock) {
+        capabilities ?: run {
+            val value = if (supportsMotionEvents()) CAPABILITY_RAW_MOTION_TRACE else 0
+            capabilities = value
+            value
+        }
+    }
 
     override fun clearQueue() {
         synchronized(stateLock) {
@@ -143,6 +176,63 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
                     durationMillis = durationMillis,
                 ),
             )
+        }
+    }
+
+    override fun enqueueMotionTrace(
+        actions: IntArray?,
+        xs: FloatArray?,
+        ys: FloatArray?,
+        delaysMillis: LongArray?,
+    ) {
+        check(getCapabilities() and CAPABILITY_RAW_MOTION_TRACE != 0) {
+            "This device's input helper does not support motionevent replay"
+        }
+        val checkedActions = requireNotNull(actions) { "Motion actions are required" }
+        val checkedXs = requireNotNull(xs) { "Motion x coordinates are required" }
+        val checkedYs = requireNotNull(ys) { "Motion y coordinates are required" }
+        val checkedDelays = requireNotNull(delaysMillis) { "Motion delays are required" }
+        require(checkedActions.isNotEmpty() && checkedActions.size <= MAX_MOTION_FRAME_COUNT) {
+            "Motion trace must contain between 1 and $MAX_MOTION_FRAME_COUNT frames"
+        }
+        require(
+            checkedActions.size == checkedXs.size &&
+                checkedActions.size == checkedYs.size &&
+                checkedActions.size == checkedDelays.size,
+        ) { "Motion trace arrays must have equal lengths" }
+
+        var touchActive = false
+        val frames = ArrayList<ReplayCommand.MotionFrame>(checkedActions.size)
+        checkedActions.indices.forEach { index ->
+            val action = checkedActions[index]
+            val x = checkedXs[index]
+            val y = checkedYs[index]
+            val delay = checkedDelays[index]
+            validateCoordinate("x", x)
+            validateCoordinate("y", y)
+            require(delay in 0L..MAX_MOTION_DELAY_MILLIS) {
+                "Motion frame delay must be between 0 and $MAX_MOTION_DELAY_MILLIS milliseconds"
+            }
+            when (action) {
+                MOTION_DOWN -> check(!touchActive) {
+                    "A motion trace cannot start a second touch before UP"
+                }.also { touchActive = true }
+
+                MOTION_MOVE -> check(touchActive) { "A motion MOVE requires an active touch" }
+
+                MOTION_UP -> check(touchActive) {
+                    "A motion UP requires an active touch"
+                }.also { touchActive = false }
+
+                else -> error("Motion action must be DOWN, MOVE, or UP")
+            }
+            frames += ReplayCommand.MotionFrame(action, x, y, delay)
+        }
+        check(!touchActive) { "A motion trace must end with UP" }
+        synchronized(stateLock) {
+            check(!running.get()) { "Cannot enqueue while replay is running" }
+            check(queue.isEmpty()) { "A raw motion trace cannot be mixed with other commands" }
+            queue.addAll(frames)
         }
     }
 
@@ -212,6 +302,15 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
     }
 
     private fun execute(command: ReplayCommand) {
+        if (command.delayBeforeMillis > 0L) {
+            try {
+                Thread.sleep(command.delayBeforeMillis)
+            } catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return
+            }
+            if (cancelRequested) return
+        }
         val process = ProcessBuilder(command.arguments())
             .redirectErrorStream(true)
             .start()
@@ -284,10 +383,17 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
         const val INPUT_BINARY = "/system/bin/input"
         const val DISPLAY_ID = "0"
         const val MAX_QUEUE_SIZE = 16
+        const val MAX_MOTION_FRAME_COUNT = 16_384
+        const val MAX_MOTION_DELAY_MILLIS = 300_000L
+        const val CAPABILITY_RAW_MOTION_TRACE = 1
+        const val MOTION_DOWN = 0
+        const val MOTION_MOVE = 1
+        const val MOTION_UP = 2
         const val MAX_COORDINATE = 30_000f
         const val MIN_SWIPE_DURATION_MILLIS = 1L
         const val MAX_SWIPE_DURATION_MILLIS = 5_000L
         const val COMMAND_TIMEOUT_MILLIS = 6_000L
+        const val CAPABILITY_PROBE_TIMEOUT_MILLIS = 1_000L
         const val PROCESS_STOP_TIMEOUT_MILLIS = 250L
         const val CANCEL_TIMEOUT_MILLIS = 500L
         const val PROCESS_POLL_INTERVAL_MILLIS = 10L
@@ -302,6 +408,29 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
         }
 
         fun format(value: Float): String = String.format(Locale.US, "%.3f", value)
+
+        fun actionName(action: Int): String = when (action) {
+            MOTION_DOWN -> "DOWN"
+            MOTION_MOVE -> "MOVE"
+            MOTION_UP -> "UP"
+            else -> error("Motion action must be DOWN, MOVE, or UP")
+        }
+    }
+
+    private fun supportsMotionEvents(): Boolean {
+        val process = runCatching {
+            ProcessBuilder(INPUT_BINARY, "help")
+                .redirectErrorStream(true)
+                .start()
+        }.getOrNull() ?: return false
+        val finished = waitForProcess(process, CAPABILITY_PROBE_TIMEOUT_MILLIS)
+        if (!finished) {
+            process.destroy()
+            return false
+        }
+        val output = runCatching { process.inputStream.bufferedReader().use { it.readText() } }
+            .getOrDefault("")
+        return process.exitValue() == 0 && output.contains("motionevent", ignoreCase = true)
     }
 
     private fun validateCoordinate(name: String, value: Float) {

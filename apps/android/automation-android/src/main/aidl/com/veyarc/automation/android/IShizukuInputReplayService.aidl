@@ -1,10 +1,10 @@
 package com.veyarc.automation.android;
 
 /**
- * Bounded Shizuku shell-identity replay feasibility surface.
+ * Bounded Shizuku shell-identity replay surface.
  *
- * This interface intentionally exposes fixed tap/swipe operations only. It does not accept shell
- * command strings, raw device writes, or arbitrary workflow payloads.
+ * This interface exposes fixed tap/swipe operations and a validated single-pointer motion trace.
+ * It does not accept shell command strings, raw device writes, or arbitrary workflow payloads.
  */
 interface IShizukuInputReplayService {
     void destroy() = 16777114;
@@ -20,4 +20,6 @@ interface IShizukuInputReplayService {
     void enqueueSwipe(float startX, float startY, float endX, float endY, long durationMillis) = 10;
     void startQueue() = 11;
     void cancel() = 12;
+    int getCapabilities() = 13;
+    void enqueueMotionTrace(in int[] actions, in float[] xs, in float[] ys, in long[] delaysMillis) = 14;
 }

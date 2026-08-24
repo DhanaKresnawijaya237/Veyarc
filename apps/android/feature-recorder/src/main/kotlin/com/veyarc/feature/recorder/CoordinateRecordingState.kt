@@ -1,6 +1,8 @@
 package com.veyarc.feature.recorder
 
+import com.veyarc.model.PackageName
 import com.veyarc.model.bundle.WorkflowBundle
+import com.veyarc.recording.RecordingRawTrace
 
 sealed interface CoordinateRecordingState {
     data object Idle : CoordinateRecordingState
@@ -43,4 +45,7 @@ data class CoordinateRecordingReview(
     val editableWorkflow: WorkflowBundle? = null,
     val draftWarnings: List<String> = emptyList(),
     val draftUnavailableReason: String? = null,
+    val rawReplayTrace: RecordingRawTrace? = null,
+    val rawReplayTargetPackage: PackageName? = null,
+    val rawReplayUnavailableReason: String? = null,
 )

@@ -9,6 +9,10 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
         <service
+            android:name=".RawReplayForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+        <service
             android:name=".RecordingQuickSettingsTileService"
             android:exported="true"
             android:icon="@drawable/ic_recording_tile"
@@ -23,6 +27,9 @@
         </service>
         <receiver
             android:name=".RecordingStopReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".RawReplayStopReceiver"
             android:exported="false" />
     </application>
 </manifest>

@@ -10,13 +10,19 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -31,9 +37,16 @@ fun CoordinateRecorderScreen(
 ) {
     val state by controller.state.collectAsState()
     val context = LocalContext.current
+    val rawReplayController = remember(context) { CoordinateRawTraceReplayController(context) }
+    val rawReplayState by rawReplayController.state.collectAsState()
+    var pendingReplayReview by remember { mutableStateOf<CoordinateRecordingReview?>(null) }
     val active = state is CoordinateRecordingState.Arming || state is CoordinateRecordingState.Recording
+    DisposableEffect(rawReplayController) {
+        onDispose { rawReplayController.close() }
+    }
     BackHandler {
         if (active) controller.stop()
+        if (rawReplayState.running) rawReplayController.cancel()
         onBack()
     }
     Column(
@@ -114,11 +127,35 @@ fun CoordinateRecorderScreen(
                     Text("Workflow draft unavailable: $reason", color = MaterialTheme.colorScheme.error)
                 }
                 review.editableWorkflow?.let { bundle ->
-                    Button(onClick = { onEditWorkflow(bundle, review.journalFileName) }) {
+                    Button(
+                        enabled = !rawReplayState.running,
+                        onClick = { onEditWorkflow(bundle, review.journalFileName) },
+                    ) {
                         Text("Edit as workflow")
                     }
                 }
-                Button(onClick = controller::start) { Text("Record another") }
+                review.rawReplayUnavailableReason?.let { reason ->
+                    Text("Raw replay unavailable: $reason", color = MaterialTheme.colorScheme.error)
+                }
+                if (review.rawReplayTrace != null && review.rawReplayUnavailableReason == null) {
+                    Text("Raw replay target: ${review.rawReplayTargetPackage?.value ?: "unknown"}")
+                    Button(
+                        enabled = !rawReplayState.running,
+                        onClick = { pendingReplayReview = review },
+                    ) {
+                        Text("Replay raw trace")
+                    }
+                    if (rawReplayState.running) {
+                        OutlinedButton(onClick = rawReplayController::cancel) { Text("Cancel replay") }
+                    }
+                    rawReplayState.error?.let { error ->
+                        Text(error, color = MaterialTheme.colorScheme.error)
+                    }
+                    if (rawReplayState.completed) Text(rawReplayState.message)
+                }
+                Button(enabled = !rawReplayState.running, onClick = controller::start) {
+                    Text("Record another")
+                }
             }
 
             is CoordinateRecordingState.Failed -> {
@@ -130,6 +167,36 @@ fun CoordinateRecorderScreen(
         }
 
         OutlinedButton(onClick = onBack) { Text("Back") }
+    }
+
+    pendingReplayReview?.let { review ->
+        AlertDialog(
+            onDismissRequest = { pendingReplayReview = null },
+            title = { Text("Replay raw touch trace?") },
+            text = {
+                Text(
+                    "Veyarc will send the preserved DOWN, MOVE, and UP frames to " +
+                        "${review.rawReplayTargetPackage?.value ?: "the current app"}. " +
+                        "Veyarc will open that app and wait for it to become foreground. No input " +
+                        "is sent unless the Shizuku helper proves fixed motionevent support.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingReplayReview = null
+                        val trace = review.rawReplayTrace
+                        val target = review.rawReplayTargetPackage
+                        if (trace != null) rawReplayController.start(trace, target)
+                    },
+                ) {
+                    Text("Replay")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingReplayReview = null }) { Text("Cancel") }
+            },
+        )
     }
 }
 

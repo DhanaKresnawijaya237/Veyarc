@@ -20,6 +20,7 @@ import com.veyarc.recording.RecordingAnalyzer
 import com.veyarc.recording.RecordingClassificationConfig
 import com.veyarc.recording.RecordingJournalLine
 import com.veyarc.recording.RecordingJournalSnapshot
+import com.veyarc.recording.RecordingRawTrace
 import com.veyarc.recording.RecordingTouchAction
 import com.veyarc.recording.RecordingWorkflowConverter
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -503,22 +504,39 @@ class CoordinateRecordingController(
             // that partial prefix in the encrypted journal so review can report it honestly.
             settlePendingTouchBeforeClose(preservePartialTouch = stopCause?.preservePartialTouch ?: true)
             val encryptedSnapshot = store?.snapshot()
-            val analysis = encryptedSnapshot?.let { snapshot ->
+            val journalSnapshot = encryptedSnapshot?.let { snapshot ->
+                RecordingJournalSnapshot(
+                    header = snapshot.header,
+                    events = snapshot.events,
+                    cursor = snapshot.cursor,
+                    trailingPartialBytes = 0,
+                    validPrefixBytes = 0,
+                    endsWithNewline = true,
+                )
+            }
+            val analysis = journalSnapshot?.let { snapshot ->
                 RecordingAnalyzer.analyze(
-                    RecordingJournalSnapshot(
-                        header = snapshot.header,
-                        events = snapshot.events,
-                        cursor = snapshot.cursor,
-                        trailingPartialBytes = 0,
-                        validPrefixBytes = 0,
-                        endsWithNewline = true,
-                    ),
+                    snapshot,
                     RecordingClassificationConfig(
                         touchSlopPx = ViewConfiguration.get(appContext).scaledTouchSlop.toDouble(),
                         tapTimeoutMillis = ViewConfiguration.getTapTimeout().toLong(),
                         longPressTimeoutMillis = ViewConfiguration.getLongPressTimeout().toLong(),
                     ),
                 )
+            }
+            val rawReplayAttempt = journalSnapshot?.let { snapshot ->
+                runCatching { RecordingRawTrace.fromJournal(snapshot) }
+            }
+            val rawReplayTrace = rawReplayAttempt?.getOrNull()
+            val rawReplayUnavailableReason = when {
+                rawReplayTrace == null -> rawReplayAttempt?.exceptionOrNull()?.message
+                    ?: "The recording did not contain a complete raw touch trace."
+
+                observedThirdPartyPackages.size != 1 ->
+                    "Raw replay currently requires exactly one recorded third-party target app. " +
+                        "Edit the trace into a workflow before replaying across app switches."
+
+                else -> null
             }
             val workflowConversion = analysis?.let { recordingAnalysis ->
                 runCatching {
@@ -547,6 +565,10 @@ class CoordinateRecordingController(
                     draftWarnings = workflowConversion?.getOrNull()?.warnings.orEmpty(),
                     draftUnavailableReason = workflowConversion?.exceptionOrNull()?.message
                         ?: if (analysis == null) "The recording did not produce reviewable events." else null,
+                    rawReplayTrace = rawReplayTrace,
+                    rawReplayTargetPackage = observedThirdPartyPackages.singleOrNull()
+                        ?.takeIf { rawReplayUnavailableReason == null },
+                    rawReplayUnavailableReason = rawReplayUnavailableReason,
                 ),
             )
             reviewSucceeded = true

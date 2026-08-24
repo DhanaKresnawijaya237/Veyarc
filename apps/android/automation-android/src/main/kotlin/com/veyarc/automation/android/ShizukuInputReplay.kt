@@ -25,14 +25,29 @@ data class ShizukuInputReplaySnapshot(
     val remoteProcessUid: Int? = null,
     val lastCommand: String? = null,
     val lastError: String? = null,
+    /** Null until the bound helper has completed its read-only capability probe. */
+    val rawMotionTimelineSupported: Boolean? = null,
     val message: String = "Shizuku is not connected.",
 )
 
+enum class ShizukuMotionAction(val wireValue: Int) {
+    DOWN(0),
+    MOVE(1),
+    UP(2),
+}
+
+data class ShizukuMotionFrame(
+    val action: ShizukuMotionAction,
+    val x: Float,
+    val y: Float,
+    val delayMillis: Long,
+)
+
 /**
- * Normal-app side of the bounded Shizuku input-injection feasibility spike.
+ * Normal-app side of the bounded Shizuku input-injection client.
  *
- * This client exposes only fixed tap/swipe test requests. It does not provide a general shell
- * runner or connect the feasibility backend to workflow execution.
+ * This client exposes only fixed tap/swipe requests and a validated raw single-pointer trace. It
+ * does not provide a general shell runner or connect the diagnostic backend to workflow execution.
  */
 class ShizukuInputReplay(
     context: Context,
@@ -49,6 +64,10 @@ class ShizukuInputReplay(
             val endX: Float,
             val endY: Float,
             val durationMillis: Long,
+        ) : ReplayCommand
+
+        data class MotionTrace(
+            val frames: List<ShizukuMotionFrame>,
         ) : ReplayCommand
     }
 
@@ -98,6 +117,7 @@ class ShizukuInputReplay(
                 permissionGranted = false,
                 serviceConnected = false,
                 running = false,
+                rawMotionTimelineSupported = null,
                 message = "Shizuku stopped. Start it again, then refresh.",
             ),
         )
@@ -271,6 +291,15 @@ class ShizukuInputReplay(
         )
     }
 
+    /** Requests a raw trace replay after the helper proves motionevent support. */
+    fun dispatchRawMotionTrace(frames: List<ShizukuMotionFrame>) {
+        validateMotionTrace(frames)
+        request(
+            listOf(ReplayCommand.MotionTrace(frames.toList())),
+            "Preparing the approved raw touch trace…",
+        )
+    }
+
     fun cancel() {
         if (closed) return
         val service = remoteService
@@ -336,6 +365,13 @@ class ShizukuInputReplay(
         executor.execute {
             try {
                 service.clearQueue()
+                val motionTrace = commands.filterIsInstance<ReplayCommand.MotionTrace>().singleOrNull()
+                val capabilities = if (motionTrace != null) service.getCapabilities() else null
+                if (motionTrace != null && capabilities?.and(CAPABILITY_RAW_MOTION_TRACE) == 0) {
+                    throw IllegalStateException(
+                        "The Shizuku helper cannot prove motionevent replay support on this device",
+                    )
+                }
                 commands.forEach { command ->
                     when (command) {
                         is ReplayCommand.Tap -> service.enqueueTap(command.x, command.y)
@@ -348,6 +384,20 @@ class ShizukuInputReplay(
                                 command.endY,
                                 command.durationMillis,
                             )
+
+                        is ReplayCommand.MotionTrace -> {
+                            val actions = IntArray(command.frames.size)
+                            val xs = FloatArray(command.frames.size)
+                            val ys = FloatArray(command.frames.size)
+                            val delays = LongArray(command.frames.size)
+                            command.frames.forEachIndexed { index, frame ->
+                                actions[index] = frame.action.wireValue
+                                xs[index] = frame.x
+                                ys[index] = frame.y
+                                delays[index] = frame.delayMillis
+                            }
+                            service.enqueueMotionTrace(actions, xs, ys, delays)
+                        }
                     }
                 }
                 service.startQueue()
@@ -356,6 +406,9 @@ class ShizukuInputReplay(
                     currentSnapshot.copy(
                         serviceConnected = true,
                         running = true,
+                        rawMotionTimelineSupported = capabilities?.let {
+                            it and CAPABILITY_RAW_MOTION_TRACE != 0
+                        } ?: currentSnapshot.rawMotionTimelineSupported,
                         remoteProcessUid = runCatching { service.getProcessUid() }.getOrNull(),
                         message = "Replay running through the Shizuku shell-identity helper.",
                     ),
@@ -450,5 +503,37 @@ class ShizukuInputReplay(
     private companion object {
         const val PERMISSION_REQUEST_CODE = 20_427
         const val DEFAULT_SWIPE_DURATION_MILLIS = 700L
+        const val CAPABILITY_RAW_MOTION_TRACE = 1
+        const val MAX_MOTION_FRAME_COUNT = 16_384
+        const val MAX_MOTION_DELAY_MILLIS = 300_000L
+        const val MAX_COORDINATE = 30_000f
+    }
+
+    private fun validateMotionTrace(frames: List<ShizukuMotionFrame>) {
+        require(frames.isNotEmpty() && frames.size <= MAX_MOTION_FRAME_COUNT) {
+            "Raw replay must contain between 1 and $MAX_MOTION_FRAME_COUNT frames"
+        }
+        var active = false
+        frames.forEach { frame ->
+            require(frame.x.isFinite() && frame.y.isFinite()) { "Raw replay coordinates must be finite" }
+            require(frame.x in 0f..MAX_COORDINATE && frame.y in 0f..MAX_COORDINATE) {
+                "Raw replay coordinates are outside the supported display range"
+            }
+            require(frame.delayMillis in 0L..MAX_MOTION_DELAY_MILLIS) {
+                "Raw replay frame delay is outside the supported range"
+            }
+            when (frame.action) {
+                ShizukuMotionAction.DOWN -> check(!active) {
+                    "Raw replay cannot start a second touch before UP"
+                }.also { active = true }
+
+                ShizukuMotionAction.MOVE -> check(active) { "Raw replay MOVE requires an active touch" }
+
+                ShizukuMotionAction.UP -> check(active) {
+                    "Raw replay UP requires an active touch"
+                }.also { active = false }
+            }
+        }
+        check(!active) { "Raw replay must end with UP" }
     }
 }
