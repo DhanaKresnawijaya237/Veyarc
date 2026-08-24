@@ -16,4 +16,10 @@ object CoordinateRecordingRuntime {
         sharedController?.close()
         sharedController = null
     }
+
+    /** Reports an unexpected foreground-service loss without creating a new controller. */
+    @Synchronized
+    fun notifyRecordingServiceLost(reason: String = "The recording foreground service stopped unexpectedly.") {
+        sharedController?.onRecordingServiceLost(reason)
+    }
 }

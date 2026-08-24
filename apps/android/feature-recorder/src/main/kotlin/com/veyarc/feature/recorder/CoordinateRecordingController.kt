@@ -39,6 +39,7 @@ class CoordinateRecordingController(
 ) {
     private val appContext = context.applicationContext
     private val source = ShizukuTouchRecording(appContext)
+    private val sessionCleanup = RecordingSessionCleanup()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val eventExecutor: ExecutorService = ThreadPoolExecutor(
         1,
@@ -80,6 +81,7 @@ class CoordinateRecordingController(
     private var maxY = 0L
     private var frameCount = 0L
     private var sourceError: String? = null
+    private var stopFailureReason: String? = null
 
     /**
      * Touch frames stay in memory until the raw contact ends. This lets us discard an entire
@@ -100,6 +102,13 @@ class CoordinateRecordingController(
         override fun run() {
             if (!active || stopRequested) return
             val elapsed = elapsedMillis()
+            if (elapsed >= MAX_RECORDING_DURATION_MILLIS) {
+                requestStop(
+                    cause = RecordingStopCause.TIMEOUT,
+                    failureReason = "Recording stopped after the five-minute safety limit.",
+                )
+                return
+            }
             when (val current = _state.value) {
                 is CoordinateRecordingState.Arming -> _state.value = current.copy(elapsedMillis = elapsed)
 
@@ -122,7 +131,13 @@ class CoordinateRecordingController(
     }
 
     private val stopFallbackRunnable = Runnable {
-        if (active && stopRequested) enqueue { finishSession() }
+        if (active && stopRequested) {
+            enqueue {
+                if (!active || !stopRequested) return@enqueue
+                val reason = stopFailureReason ?: sourceError
+                if (reason == null) finishSession() else failSession(reason)
+            }
+        }
     }
 
     fun start() {
@@ -183,6 +198,14 @@ class CoordinateRecordingController(
         pendingTouchSawControlSurface = false
         ignoredTouchActive = false
         stopRequested = false
+        stopFailureReason = null
+        if (!sessionCleanup.begin()) {
+            runCatching { openedJournal.close() }
+            _state.value = CoordinateRecordingState.Unavailable(
+                "The previous recording is still cleaning up. Try again in a moment.",
+            )
+            return
+        }
         active = true
         sessionStartedElapsedRealtime = SystemClock.elapsedRealtime()
         lastElapsedMillis = 0L
@@ -219,12 +242,32 @@ class CoordinateRecordingController(
             }
             return
         }
+        requestStop(RecordingStopCause.USER_STOP)
+    }
+
+    /** Stops safely when Android destroys the foreground-service control unexpectedly. */
+    fun onRecordingServiceLost(reason: String = "The recording foreground service stopped unexpectedly.") {
+        if (!active) return
+        if (!requestStop(RecordingStopCause.SERVICE_DISCONNECT, reason)) return
+        source.abort()
+        enqueue {
+            if (active) failSession(reason)
+        }
+    }
+
+    private fun requestStop(
+        cause: RecordingStopCause,
+        failureReason: String? = null,
+    ): Boolean {
+        if (!sessionCleanup.requestStop(cause)) return false
         stopRequested = true
+        stopFailureReason = failureReason
         mainHandler.removeCallbacks(timerRunnable)
-        source.stop()
+        runCatching { source.stop() }
         RecordingQuickSettingsTileService.requestRefresh(appContext)
         mainHandler.removeCallbacks(stopFallbackRunnable)
         mainHandler.postDelayed(stopFallbackRunnable, STOP_FALLBACK_DELAY_MILLIS)
+        return true
     }
 
     private fun onSourceEvent(event: ShizukuTouchRecordingEvent) {
@@ -262,7 +305,16 @@ class CoordinateRecordingController(
 
             ShizukuTouchRecordingEvent.Completed -> enqueue {
                 if (!active) return@enqueue
-                if (sourceError == null) finishSession() else failSession(sourceError!!)
+                val reason = sourceError ?: stopFailureReason ?: if (!stopRequested) {
+                    if (elapsedMillis() >= MAX_RECORDING_DURATION_MILLIS) {
+                        "Recording stopped after the five-minute safety limit."
+                    } else {
+                        "The raw-input helper ended before the recording was stopped safely."
+                    }
+                } else {
+                    null
+                }
+                if (reason == null) finishSession() else failSession(reason)
             }
         }
     }
@@ -425,11 +477,12 @@ class CoordinateRecordingController(
     }
 
     private fun finishSession() {
-        if (!active) return
+        if (!active || !sessionCleanup.claimTerminal()) return
+        val stopCause = sessionCleanup.currentStopCause()
         active = false
         mainHandler.removeCallbacks(timerRunnable)
         mainHandler.removeCallbacks(stopFallbackRunnable)
-        source.stop()
+        source.abort()
         val store = journal
         val file = journalFile
         val id = sessionId
@@ -439,7 +492,7 @@ class CoordinateRecordingController(
             // An explicit stop has already discarded the control-surface gesture. A helper
             // timeout/completion may still leave a genuine third-party touch without UP; keep
             // that partial prefix in the encrypted journal so review can report it honestly.
-            settlePendingTouchBeforeClose(preservePartialTouch = !stopRequested)
+            settlePendingTouchBeforeClose(preservePartialTouch = stopCause?.preservePartialTouch ?: true)
             val encryptedSnapshot = store?.snapshot()
             val analysis = encryptedSnapshot?.let { snapshot ->
                 RecordingAnalyzer.analyze(
@@ -490,12 +543,15 @@ class CoordinateRecordingController(
     }
 
     private fun failSession(reason: String) {
-        if (!active) return
+        if (!active || !sessionCleanup.claimTerminal()) return
+        val stopCause = sessionCleanup.currentStopCause()
         active = false
         mainHandler.removeCallbacks(timerRunnable)
         mainHandler.removeCallbacks(stopFallbackRunnable)
-        source.stop()
-        runCatching { settlePendingTouchBeforeClose(preservePartialTouch = !stopRequested) }
+        source.abort()
+        runCatching {
+            settlePendingTouchBeforeClose(preservePartialTouch = stopCause?.preservePartialTouch ?: true)
+        }
         runCatching { journal?.close() }
         journal = null
         RecordingForegroundService.stop(appContext)
@@ -504,7 +560,8 @@ class CoordinateRecordingController(
     }
 
     private fun failImmediately(reason: String) {
-        runCatching { source.stop() }
+        sessionCleanup.claimTerminal()
+        runCatching { source.abort() }
         runCatching { journal?.close() }
         active = false
         mainHandler.removeCallbacks(timerRunnable)
@@ -517,12 +574,18 @@ class CoordinateRecordingController(
     /** Process-lifecycle cleanup; the activity ViewModel calls this only when the process exits. */
     fun close() {
         if (active) {
+            sessionCleanup.requestStop(RecordingStopCause.PROCESS_CLOSE)
+            if (!sessionCleanup.claimTerminal()) return
             active = false
             stopRequested = true
             mainHandler.removeCallbacks(timerRunnable)
             mainHandler.removeCallbacks(stopFallbackRunnable)
             runCatching { source.close() }
-            runCatching { settlePendingTouchBeforeClose(preservePartialTouch = true) }
+            runCatching {
+                settlePendingTouchBeforeClose(
+                    preservePartialTouch = sessionCleanup.currentStopCause()?.preservePartialTouch ?: true,
+                )
+            }
             runCatching { journal?.close() }
             journal = null
             RecordingForegroundService.stop(appContext)
@@ -547,6 +610,7 @@ class CoordinateRecordingController(
         captureReady = false
         sourceStartTimestampMicros = null
         sourceError = null
+        stopFailureReason = null
         minX = 0L
         maxX = 0L
         minY = 0L
@@ -556,6 +620,8 @@ class CoordinateRecordingController(
         pendingTouchLines = null
         pendingTouchSawControlSurface = false
         ignoredTouchActive = false
+        stopRequested = false
+        sessionCleanup.reset()
         if (!keepJournalFile) journalFile = null
     }
 

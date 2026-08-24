@@ -21,7 +21,10 @@ foreground-service notification plus a Quick Settings start/stop control, a boun
 observer callback, and the existing encrypted journal/analyzer. It does not register a touch
 overlay or accessibility touch exploration, and it never replays while recording. The Vivo V50
 cross-app capture and independent Quick Settings stop path have been physically verified. Draft
-conversion and exact replay from the preserved trace remain future work.
+conversion and exact replay from the preserved trace remain future work. The item 19 cleanup path
+was also smoke-tested on the V50: Quick Settings stop removed the controls, review returned, and
+a new recording could start. Helper-death, five-minute timeout, and wider OEM lifecycle cases
+remain unit-covered or future hardening rather than physically verified.
 
 The first passive approach requested Android 13+ `FLAG_REQUEST_TOUCH_EXPLORATION_MODE` and
 `FLAG_SEND_MOTION_EVENTS` and consumed completed `AccessibilityGestureEvent` motion batches. On

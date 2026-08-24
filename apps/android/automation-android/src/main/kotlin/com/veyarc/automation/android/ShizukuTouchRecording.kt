@@ -69,6 +69,19 @@ class ShizukuTouchRecording(
     @Volatile
     private var expectedServiceDisconnect = false
 
+    private val binderDeadListener = Shizuku.OnBinderDeadListener {
+        if (closed || expectedServiceDisconnect || (!bound && remoteService == null)) return@OnBinderDeadListener
+        mainHandler.post {
+            if (closed || expectedServiceDisconnect) return@post
+            publishOnMain(
+                ShizukuTouchRecordingEvent.Error(
+                    "Shizuku stopped while the raw-input helper was recording.",
+                ),
+            )
+            finishServiceOnMain()
+        }
+    }
+
     private val callback = object : IShizukuTouchRecordingCallback.Stub() {
         override fun onStarted(
             startTimestampMicros: Long,
@@ -150,7 +163,7 @@ class ShizukuTouchRecording(
                         ),
                     )
                     publishOnMain(ShizukuTouchRecordingEvent.Completed)
-                    listener = null
+                    finishServiceOnMain()
                 }
             } else if (expected) {
                 listener = null
@@ -160,6 +173,10 @@ class ShizukuTouchRecording(
 
     @Volatile
     private var requestedDurationMillis: Long = DEFAULT_DURATION_MILLIS
+
+    init {
+        Shizuku.addBinderDeadListener(binderDeadListener)
+    }
 
     /** Returns null when the transaction was accepted, otherwise a user-readable reason. */
     fun start(
@@ -194,6 +211,16 @@ class ShizukuTouchRecording(
         runCatching { remoteService?.stopObservation() }
     }
 
+    /**
+     * Aborts a transaction when its callback cannot be trusted to arrive. The object remains
+     * reusable for a later recording, unlike [close], which permanently shuts it down.
+     */
+    fun abort() {
+        if (closed) return
+        runCatching { remoteService?.stopObservation() }
+        mainHandler.post { finishServiceOnMain() }
+    }
+
     fun isReady(): Boolean = !closed && runCatching { Shizuku.pingBinder() }.getOrDefault(false) &&
         runCatching { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }
             .getOrDefault(false)
@@ -204,6 +231,7 @@ class ShizukuTouchRecording(
         runCatching { remoteService?.stopObservation() }
         mainHandler.post { finishServiceOnMain() }
         listener = null
+        Shizuku.removeBinderDeadListener(binderDeadListener)
     }
 
     private fun publish(event: ShizukuTouchRecordingEvent) {

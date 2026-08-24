@@ -12,6 +12,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Owns the visible stop control while a raw-input recording is armed or active. */
 class RecordingForegroundService : Service() {
@@ -23,22 +24,37 @@ class RecordingForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val text = intent?.getStringExtra(EXTRA_TEXT) ?: DEFAULT_TEXT
         val notification = buildNotification(this, text)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+            serviceRunning.set(true)
+            START_NOT_STICKY
+        } catch (error: Throwable) {
+            CoordinateRecordingRuntime.notifyRecordingServiceLost(
+                "The recording notification could not be started: ${error.message ?: error.javaClass.simpleName}",
             )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+            stopSelf()
+            START_NOT_STICKY
         }
-        return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        val expected = expectedStop.compareAndSet(true, false)
+        val wasRunning = serviceRunning.getAndSet(false)
         getSystemService(NotificationManager::class.java)?.cancel(NOTIFICATION_ID)
+        RecordingQuickSettingsTileService.requestRefresh(this)
+        if (wasRunning && !expected) {
+            CoordinateRecordingRuntime.notifyRecordingServiceLost()
+        }
         super.onDestroy()
     }
 
@@ -49,6 +65,8 @@ class RecordingForegroundService : Service() {
         private const val NOTIFICATION_ID = 42_701
         private const val STOP_REQUEST_CODE = 42_702
         private const val DEFAULT_TEXT = "Recording armed. Open the target app, then stop here."
+        private val serviceRunning = AtomicBoolean(false)
+        private val expectedStop = AtomicBoolean(false)
 
         fun isNotificationReady(context: Context): Boolean {
             val manager = context.getSystemService(NotificationManager::class.java) ?: return false
@@ -86,6 +104,7 @@ class RecordingForegroundService : Service() {
 
         fun start(context: Context, text: String = DEFAULT_TEXT) {
             createChannel(context)
+            expectedStop.set(false)
             val intent = Intent(context, RecordingForegroundService::class.java)
                 .setAction(ACTION_START)
                 .putExtra(EXTRA_TEXT, text)
@@ -105,6 +124,7 @@ class RecordingForegroundService : Service() {
         }
 
         fun stop(context: Context) {
+            if (serviceRunning.get()) expectedStop.set(true)
             context.stopService(Intent(context, RecordingForegroundService::class.java))
             RecordingQuickSettingsTileService.requestRefresh(context)
         }
