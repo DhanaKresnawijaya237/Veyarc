@@ -98,16 +98,16 @@ The Android adapter implements them using `AccessibilityService`, `TouchInteract
 
 Recording is event-driven, not fixed-interval polling:
 
-1. The accessibility service owns a recording session that can be started and stopped while a declared target app is foreground through service-owned controls (notification first, with Quick Settings/accessibility shortcuts as follow-up entry points).
+1. The service owns a global recording session that can be started from Veyarc or a service-owned control and stopped from any foreground app (Quick Settings tile first, with the notification as a fallback).
 2. The recording indicator is non-touchable. Stopping is handled by the service rather than by a draggable input overlay, so the target app and system navigation remain usable throughout the session.
 3. For third-party apps, prefer a privileged read-only Linux `evdev` input source: a root companion process (or a verified shell/Shizuku capability) observes the touchscreen device without requesting accessibility touch exploration or injecting/replaying during capture. The public Accessibility API touch-exploration experiment failed this safety test on the vivo V50 and remains disabled. If the privileged source is unavailable or cannot prove unchanged target-app input, recording must refuse to start.
 4. Capture only the selected touchscreen device, parse complete single-pointer down/move/up frames, and preserve their monotonic timestamps in the encrypted raw journal. Raw events remain available for exact replay after recording; analysis is a separate view of the same trace.
-5. The target package must remain foreground for the entire session. A package change, lock screen, system dialog, or lost helper connection fails the recording, stops the helper, and preserves only a recoverable journal when safe.
+5. Foreground-package observations are journal data, not a stop condition: normal app switches remain in one global trace. Veyarc, the unlocked notification shade, the launcher, and unknown/non-application windows are control surfaces whose touch frames are ignored. The lock screen, a lost helper connection, or an invalid touchscreen stream stops the recording and preserves only a recoverable journal when safe.
 6. After recording, simplify paths using a configurable tolerance based on display diagonal while preserving timing and endpoints.
 7. Classify gestures using the captured touch thresholds and infer waits from inter-gesture gaps and foreground-package observations.
 8. Produce an editable workflow draft; never execute the inferred draft automatically.
 
-Recording controls are excluded from the trace. A failed or unsupported observation source must stop safely, avoid changing accessibility input routing, terminate any privileged helper, preserve the recoverable journal when possible, and report that exact third-party recording is unavailable on that device rather than allowing recorded and actual app state to diverge.
+Recording controls are excluded from the trace, while their foreground transitions may be retained as review metadata. A failed or unsupported observation source must stop safely, avoid changing accessibility input routing, terminate any privileged helper, preserve the recoverable journal when possible, and report that exact global recording is unavailable on that device rather than allowing recorded and actual app state to diverge.
 
 Playback remains available on API 24–32, but exact third-party recording is capability-gated. If the rooted/privileged evdev feasibility spike fails on a device family, mark recording unsupported for that device and retain manual authoring rather than silently producing incomplete traces.
 
@@ -162,9 +162,9 @@ Every workflow declares allowed packages. `LaunchApp` may switch only to a decla
    - Ship no network permission or cloud dependency at this stage.
 
 4. **Coordinate recorder**
-   - Implement a service-owned app-scoped recording session, non-touchable indicator, service-owned start/stop controls, append-only event journal and a capability-gated privileged raw-input adapter. The adapter reads only the touchscreen evdev stream and must remain disabled unless it proves that normal third-party-app input is preserved; the current Android accessibility touch-exploration path is not acceptable.
+   - Implement a service-owned global recording session, non-touchable indicator, Quick Settings/notification start-stop controls, append-only event journal and a capability-gated privileged raw-input adapter. The adapter reads only the touchscreen evdev stream and must remain disabled unless it proves that normal third-party-app input is preserved; the current Android accessibility touch-exploration path is not acceptable.
    - Preserve raw events for post-recording exact replay; do not replay gestures while recording.
-   - Implement path simplification, gesture classification, wait inference and foreground-package transition suggestions.
+   - Implement path simplification, gesture classification, wait inference and foreground-package transition review data across app switches.
    - Always open the inferred workflow in review mode.
 
 5. **Pixel/image conditions**
@@ -207,17 +207,17 @@ Every workflow declares allowed packages. `LaunchApp` may switch only to a decla
 
 - Playback on API 24 and current Android targets.
 - Privileged start/stop and raw recording on multiple API 33+ physical devices.
-- The declared target app remains interactive during recording; leaving it fails safely.
+- Third-party apps remain interactive during recording; switching between them does not interrupt the global trace.
 - Home, Recents and system navigation remain usable before and after recording, and the helper cannot remain active after cancellation.
 - Rapid consecutive gestures remain ordered and complete in the raw journal.
 - Exact replay uses the preserved raw trace only after recording has stopped.
 - Rotation between steps and during an active gesture.
 - Accessibility disabled mid-run.
 - Screen-capture consent denial and revocation.
-- Unexpected foreground package, lock screen and system dialog.
+- Foreground-package transitions, unknown windows, lock screen and system dialog behavior.
 - Recording-control surfaces excluded from recording.
 - No video file or unintended screenshot survives a run.
-- Service-owned emergency stop prevents further capture, terminates the privileged helper, restores normal routing and removes recording controls on a best-effort basis within one second.
+- Quick Settings/notification emergency stop prevents further capture, terminates the privileged helper, restores normal routing and removes recording controls on a best-effort basis within one second.
 
 ### End-to-end acceptance scenario
 
@@ -231,10 +231,11 @@ Record:
 
 The resulting draft must reproduce the actions, allow insertion of a bounded loop and image condition, scale across two resolutions, keep top-left relative to the visible screen after rotation, stop on an undeclared app, and replay only after explicit user approval.
 
-This end-to-end recording scenario remains blocked until the privileged third-party input-source
-feasibility gate is passed without altering ordinary one-finger touch behavior. The vivo V50
-touch-exploration spike failed that gate; the current build must refuse to start recording rather
-than freeze input. The next spike is a read-only evdev observer with package-scope enforcement.
+The privileged input-source feasibility gate is now passed on the scoped vivo V50 without altering
+ordinary one-finger touch behavior. The vivo V50 touch-exploration spike remains disabled because it
+failed that gate. The production trace records foreground transitions across multiple third-party
+apps and stops only through the explicit service-owned control or a safety failure. Converting that
+trace into an editable workflow and replaying it exactly remain follow-up work.
 
 ## Locked Assumptions
 

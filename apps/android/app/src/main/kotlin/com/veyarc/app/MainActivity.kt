@@ -191,8 +191,13 @@ class MainRunSession(application: Application) : AndroidViewModel(application) {
     }
 }
 
-class MainRecordingSession : ViewModel() {
+class MainRecordingSession(application: Application) : AndroidViewModel(application) {
     // The controller is process-owned so destroying/recreating MainActivity does not stop a
     // recording that is intentionally running in another app.
-    val controller = CoordinateRecordingRuntime.controller()
+    val controller = CoordinateRecordingRuntime.controller(application)
+
+    override fun onCleared() {
+        CoordinateRecordingRuntime.close()
+        super.onCleared()
+    }
 }

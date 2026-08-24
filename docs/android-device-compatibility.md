@@ -16,9 +16,12 @@ The emulator result proves that the adapter can bind, dispatch, capture, replay,
 ## Global recording rework (safety result)
 
 The Phase 3 recorder is being changed from the one-gesture intercept/replay experiment to a
-service-owned app-scoped session. The current recorder entry point is a fail-closed placeholder;
-no global input source, notification action, or touch overlay is registered. The actual global
-input source is currently disabled.
+service-owned global session. The implementation uses a visible
+foreground-service notification plus a Quick Settings start/stop control, a bounded Shizuku
+observer callback, and the existing encrypted journal/analyzer. It does not register a touch
+overlay or accessibility touch exploration, and it never replays while recording. The Vivo V50
+cross-app capture and independent Quick Settings stop path have been physically verified. Draft
+conversion and exact replay from the preserved trace remain future work.
 
 The first passive approach requested Android 13+ `FLAG_REQUEST_TOUCH_EXPLORATION_MODE` and
 `FLAG_SEND_MOTION_EVENTS` and consumed completed `AccessibilityGestureEvent` motion batches. On
@@ -27,11 +30,13 @@ screen remained visually alive and foreground observations continued, but normal
 even the floating stop control could not be used. That is an implementation bug, not acceptable
 device behavior.
 
-The current build therefore fails closed before changing any accessibility flags. It reports that
-transparent global recording is unavailable rather than risking another input freeze. Re-enabling
-recording requires a source that can expose raw coordinates while passing the original touch stream
-through unchanged; the public Accessibility API path used by this spike has not proven that
-property.
+The old public Accessibility API path remains disabled before it can change any accessibility
+flags. The new recorder is capability-gated on the read-only Shizuku source and fails closed if
+that source, the viewport, or an independent stop control is unavailable. Foreground-package
+changes are recorded as metadata rather than terminating a global session; control-surface touches
+are excluded from the trace. The source must expose raw coordinates while passing the original
+touch stream through unchanged; the public Accessibility API path used by this spike has not
+proven that property.
 
 ## Shizuku replay feasibility
 
@@ -51,10 +56,21 @@ orchestration, global recording, raw-trace fidelity, or production workflow repl
 The next feasibility path is a privileged, read-only Linux `evdev` observer. Android's input
 pipeline is fed from these kernel event devices, and AOSP documents `getevent` with `su` as a way
 to inspect the live stream. A production helper would open only the touchscreen device, parse its
-multi-touch protocol, and stream encrypted records to Veyarc while the selected third-party
-package remains foreground. This is a proposed spike, not a support claim: root or a shell-level
-capability may be required, device SELinux policy can deny access, and coordinate calibration and
-raw replay must be proven on the vivo V50 before the adapter is enabled.
+multi-touch protocol, and stream encrypted records to Veyarc while foreground-package transitions
+are sampled alongside the raw frames. This is a proposed spike, not a support claim: root or a
+shell-level capability may be required, device SELinux policy can deny access, and coordinate
+calibration and raw replay must be proven on the vivo V50 before the adapter is enabled.
+
+The first read-only diagnostic for that spike is now implemented in the debug build. It uses only
+fixed `getevent -lp` and `getevent -lt <selected-device>` operations through the Shizuku
+UserService, selects a node with multi-touch X/Y ranges and `INPUT_PROP_DIRECT`, and reports the
+node metadata plus transient single-pointer frame counters. This direct-input requirement avoids
+Vivo's fingerprint nodes, which also expose coordinate-like ABS axes but do not receive screen
+touches. It deliberately does not persist coordinates, inject input, change accessibility routing,
+or enable the production recorder. The user has physically confirmed this corrected diagnostic on
+the V50; a
+discovery denial, missing ranges, malformed frames, or incomplete gestures keeps recording
+unavailable.
 
 ## Physical-device matrix
 
@@ -96,13 +112,14 @@ a device build:
 1. A root or shell-level capability can enumerate and read only the device's touchscreen evdev
    stream; the helper refuses to start if it cannot identify a direct multi-touch device and its
    coordinate ranges.
-2. A start action can be issued while the selected third-party app is foreground and no Veyarc
-   activity is visible.
+2. A start action can be issued from Veyarc or a service-owned Quick Settings/notification control,
+   and the session can continue while no Veyarc activity is visible.
 3. The target app remains interactive while recording; the helper never requests touch exploration,
    consumes Android touch callbacks, or replays input during capture.
 4. Every supported rapid single-pointer down/move/up sequence arrives as a complete ordered raw
    frame and is written with a monotonic timestamp without reading keyboard or power devices.
-5. Leaving the target package, Home, Recents, a lock screen or a system dialog fails the recording.
+5. Switching between third-party apps remains in the same trace; lock screen or unsafe system
+   surfaces stop the recording, while control-surface touches are excluded.
 6. Notification stop, emergency stop, service disconnect, helper death and process restart leave no
    stale observer, overlay, notification action, open device node or modified accessibility flag.
 
@@ -116,7 +133,10 @@ If a tested device family fails these checks, Veyarc keeps manual workflow autho
 
 For the first beta's scoped vivo V50 target, the original accessibility playback/intercept diagnostic
 gate is satisfied: the service binds, capture and replay work on a physical device, and replay timing
-is acceptable in the reported test. The production third-party recorder is not yet supported: the
-touch-exploration path failed the pass-through safety test, and the privileged evdev spike remains
-to be implemented and verified. Pixel, Samsung, and OPPO validation, along with numeric latency
-instrumentation, remain future hardening work.
+is acceptable in the reported test. The read-only privileged evdev diagnostic is also physically
+confirmed. The production global recorder's cross-app session and independent stop controls are
+also physically verified on the V50. The touch-exploration path remains disabled because it failed
+the pass-through safety test. Converting the preserved trace into an editable workflow and replaying
+that trace exactly are still future work.
+Pixel, Samsung, and OPPO validation, along with numeric latency instrumentation, remain future
+hardening work.

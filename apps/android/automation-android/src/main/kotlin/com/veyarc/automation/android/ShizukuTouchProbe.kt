@@ -26,6 +26,13 @@ data class ShizukuTouchProbeSnapshot(
     val touchContactCount: Long = 0L,
     val positionSampleCount: Long = 0L,
     val remoteProcessUid: Int? = null,
+    val deviceSummary: String? = null,
+    val frameCount: Long = 0L,
+    val completeGestureCount: Long = 0L,
+    val malformedFrameCount: Long = 0L,
+    val incompleteGestureCount: Long = 0L,
+    val outOfRangeSampleCount: Long = 0L,
+    val lastError: String? = null,
     val message: String = "Shizuku is not connected.",
 )
 
@@ -33,7 +40,8 @@ data class ShizukuTouchProbeSnapshot(
  * Normal-app side of the read-only Shizuku feasibility test.
  *
  * This class intentionally does not expose a general command runner. The only remote operation
- * available in this spike is the fixed-duration touchscreen counter in ShizukuTouchProbeUserService.
+ * available in this spike is the fixed-duration touchscreen discovery and frame counter in
+ * ShizukuTouchProbeUserService.
  */
 class ShizukuTouchProbe(
     context: Context,
@@ -104,7 +112,14 @@ class ShizukuTouchProbe(
                         serviceConnected = true,
                         running = true,
                         remoteProcessUid = runCatching { service.getProcessUid() }.getOrNull(),
-                        message = "Listening to the touchscreen read-only for 30 seconds. Leave Veyarc and use a third-party app.",
+                        deviceSummary = null,
+                        frameCount = 0L,
+                        completeGestureCount = 0L,
+                        malformedFrameCount = 0L,
+                        incompleteGestureCount = 0L,
+                        outOfRangeSampleCount = 0L,
+                        lastError = null,
+                        message = "Discovering a touchscreen evdev node read-only…",
                     ),
                 )
                 startPolling()
@@ -261,8 +276,21 @@ class ShizukuTouchProbe(
                     touchContactCount = service.getTouchContactCount(),
                     positionSampleCount = service.getPositionSampleCount(),
                     remoteProcessUid = service.getProcessUid(),
+                    deviceSummary = service.getDeviceSummary(),
+                    frameCount = service.getFrameCount(),
+                    completeGestureCount = service.getCompleteGestureCount(),
+                    malformedFrameCount = service.getMalformedFrameCount(),
+                    incompleteGestureCount = service.getIncompleteGestureCount(),
+                    outOfRangeSampleCount = service.getOutOfRangeSampleCount(),
+                    lastError = service.getLastError(),
                     message = if (running) {
-                        "Listening. Leave Veyarc, use a third-party app, and return before the timer ends."
+                        if (service.getDeviceSummary() == null) {
+                            "Discovering the touchscreen. Do not interact until the device is selected."
+                        } else {
+                            "Listening read-only. Leave Veyarc, use a third-party app, and return before the timer ends."
+                        }
+                    } else if (service.getLastError() != null) {
+                        "Probe finished with a diagnostic error. No input was injected or saved."
                     } else {
                         "Probe completed. No input was injected or saved."
                     },

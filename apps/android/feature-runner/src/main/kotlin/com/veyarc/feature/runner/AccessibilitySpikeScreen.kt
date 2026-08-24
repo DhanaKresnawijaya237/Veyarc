@@ -47,7 +47,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.veyarc.automation.android.AccessibilityGestureDispatcher
 import com.veyarc.automation.android.GestureDispatchResult
-import com.veyarc.automation.android.PassiveTouchObservationRecorder
 import com.veyarc.automation.android.ScreenPoint
 import com.veyarc.automation.android.ShizukuInputReplay
 import com.veyarc.automation.android.ShizukuInputReplaySnapshot
@@ -343,7 +342,7 @@ fun AccessibilitySpikeScreen(
             onCancel = shizukuReplay::cancel,
         )
         OutlinedButton(
-            enabled = accessibilityEnabled && serviceConnected && PassiveTouchObservationRecorder.isSupported,
+            enabled = accessibilityEnabled && serviceConnected,
             onClick = onStartRecording,
         ) {
             Text(stringResource(R.string.start_coordinate_recording))
@@ -416,7 +415,7 @@ private fun ShizukuProbeContent(
     HorizontalDivider()
     Text("Shizuku raw-input feasibility test", style = MaterialTheme.typography.titleMedium)
     Text(
-        "This is a read-only 30-second diagnostic for the Vivo V50. It counts touchscreen events through a Shizuku shell-identity helper; it never injects, intercepts, or saves touch data.",
+        "This is a read-only 30-second diagnostic for the Vivo V50. It discovers one touchscreen evdev node, checks its coordinate ranges, and counts ordered single-pointer frames through a Shizuku shell-identity helper. It never injects, intercepts, or saves touch data.",
         style = MaterialTheme.typography.bodyMedium,
     )
     Text("Binder: ${if (snapshot.binderAvailable) "available" else "not available"}")
@@ -427,6 +426,9 @@ private fun ShizukuProbeContent(
     }
     if (snapshot.remoteProcessUid != null) {
         Text("Probe process UID: ${snapshot.remoteProcessUid}")
+    }
+    snapshot.deviceSummary?.let { summary ->
+        Text("Selected touchscreen: $summary")
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(onClick = onRefresh) { Text("Refresh Shizuku") }
@@ -449,6 +451,16 @@ private fun ShizukuProbeContent(
     }
     Text("Raw event lines: ${snapshot.eventCount}")
     Text("Touch contacts: ${snapshot.touchContactCount} · position samples: ${snapshot.positionSampleCount}")
+    Text(
+        "Frames: ${snapshot.frameCount} · complete gestures: ${snapshot.completeGestureCount}",
+    )
+    Text(
+        "Malformed frames: ${snapshot.malformedFrameCount} · incomplete gestures: ${snapshot.incompleteGestureCount}",
+    )
+    Text("Out-of-range coordinate samples: ${snapshot.outOfRangeSampleCount}")
+    snapshot.lastError?.let { error ->
+        Text("Diagnostic error: $error", color = MaterialTheme.colorScheme.error)
+    }
     Text(snapshot.message, color = MaterialTheme.colorScheme.primary)
 }
 
