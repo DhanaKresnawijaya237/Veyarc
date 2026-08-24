@@ -11,6 +11,7 @@ import android.provider.Settings
 import android.view.ViewConfiguration
 import android.view.accessibility.AccessibilityManager
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 data class ScreenPoint(
     val x: Float,
@@ -39,6 +40,7 @@ object AccessibilityGestureDispatcher {
     private var service: AccessibilityService? = null
     private val dispatchInProgress = AtomicBoolean(false)
     private val cancellationRequested = AtomicBoolean(false)
+    private val dispatchGeneration = AtomicLong(0L)
 
     val isConnected: Boolean
         get() = service != null
@@ -109,15 +111,21 @@ object AccessibilityGestureDispatcher {
 
     internal fun detach(accessibilityService: AccessibilityService) {
         if (service === accessibilityService) {
+            reset()
             service = null
-            cancellationRequested.set(true)
-            dispatchInProgress.set(false)
         }
     }
 
     /** Requests cancellation of the active platform gesture, if one exists. */
     fun cancelActiveGesture() {
         if (dispatchInProgress.get()) cancellationRequested.set(true)
+    }
+
+    /** Invalidates stale callbacks and releases the dispatcher state during service teardown. */
+    internal fun reset() {
+        dispatchGeneration.incrementAndGet()
+        cancellationRequested.set(true)
+        dispatchInProgress.set(false)
     }
 
     private fun dispatch(
@@ -141,6 +149,7 @@ object AccessibilityGestureDispatcher {
             return
         }
         cancellationRequested.set(false)
+        val generation = dispatchGeneration.get()
 
         val path = Path().apply {
             moveTo(points.first().x, points.first().y)
@@ -155,6 +164,7 @@ object AccessibilityGestureDispatcher {
                 gesture,
                 object : AccessibilityService.GestureResultCallback() {
                     override fun onCompleted(gestureDescription: GestureDescription?) {
+                        if (generation != dispatchGeneration.get()) return
                         dispatchInProgress.set(false)
                         onResult(
                             if (cancellationRequested.get()) {
@@ -166,6 +176,7 @@ object AccessibilityGestureDispatcher {
                     }
 
                     override fun onCancelled(gestureDescription: GestureDescription?) {
+                        if (generation != dispatchGeneration.get()) return
                         dispatchInProgress.set(false)
                         onResult(GestureDispatchResult.Cancelled)
                     }

@@ -17,7 +17,11 @@ class VeyarcAccessibilityService : AccessibilityService() {
         ForegroundPackageTracker.onAccessibilityEvent(event)
     }
 
-    override fun onInterrupt() = Unit
+    override fun onInterrupt() {
+        TouchInterceptionRecorder.reset()
+        AccessibilityGestureDispatcher.reset()
+        AccessibilityEmergencyOverlay.hide()
+    }
 
     override fun onUnbind(intent: Intent?): Boolean {
         TouchInterceptionRecorder.detach(this)

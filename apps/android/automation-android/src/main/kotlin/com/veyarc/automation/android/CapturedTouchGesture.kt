@@ -15,6 +15,10 @@ data class CapturedTouchSample(
 data class CapturedTouchGesture(
     val samples: List<CapturedTouchSample>,
 ) {
+    init {
+        require(samples.isNotEmpty()) { "Captured gestures must contain samples" }
+    }
+
     val durationMillis: Long = samples.last().elapsedMillis.coerceAtLeast(1L)
     val points: List<ScreenPoint> = samples.map(CapturedTouchSample::point)
 }
@@ -57,6 +61,6 @@ internal class CapturedTouchGestureBuilder {
     fun build(): CapturedTouchGesture? {
         if (samples.firstOrNull()?.action != CapturedTouchAction.Down) return null
         if (samples.lastOrNull()?.action != CapturedTouchAction.Up) return null
-        return CapturedTouchGesture(samples.toList())
+        return CapturedTouchGesture(samples = samples.toList())
     }
 }

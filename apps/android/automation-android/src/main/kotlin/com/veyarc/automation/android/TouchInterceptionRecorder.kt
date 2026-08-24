@@ -66,13 +66,24 @@ object TouchInterceptionRecorder {
             }.also(Api33Capture::arm)
     }
 
+    /** Cancels the currently armed capture, if any. */
+    fun cancel() {
+        activeCapture?.cancel()
+    }
+
+    /** Emergency cleanup for lifecycle interruption; never leaves a callback or flag behind. */
+    internal fun reset() {
+        activeCapture?.forceReset()
+        activeCapture = null
+    }
+
     internal fun attach(accessibilityService: AccessibilityService) {
         service = accessibilityService
     }
 
     internal fun detach(accessibilityService: AccessibilityService) {
         if (service === accessibilityService) {
-            activeCapture?.cancel()
+            activeCapture?.forceReset()
             activeCapture = null
             service = null
         }
@@ -136,6 +147,7 @@ object TouchInterceptionRecorder {
 
         override fun onMotionEvent(event: MotionEvent) {
             if (finished) return
+
             if (event.pointerCount != 1) {
                 fail("The feasibility recorder supports one pointer only.", delegateCurrentGesture = true)
                 return
@@ -179,13 +191,29 @@ object TouchInterceptionRecorder {
             if (finished) {
                 replayTimeoutRunnable?.let(mainHandler::removeCallbacks)
                 replayTimeoutRunnable = null
+                replayFinished = true
+                AccessibilityGestureDispatcher.cancelActiveGesture()
+                releaseInterception(restoreDelayMillis = null)
                 restoreServiceFlags()
+                onFinished()
                 return
             }
             finished = true
             releaseInterception()
             onFinished()
             onUpdate(TouchCaptureUpdate.Cancelled)
+        }
+
+        fun forceReset() {
+            finished = true
+            replayFinished = true
+            replayTimeoutRunnable?.let(mainHandler::removeCallbacks)
+            replayTimeoutRunnable = null
+            restoreRunnable?.let(mainHandler::removeCallbacks)
+            restoreRunnable = null
+            releaseInterception(restoreDelayMillis = null)
+            runCatching { controller.unregisterAllCallbacks() }
+            restoreServiceFlags()
         }
 
         private fun finishWhenInteractionClears() {
