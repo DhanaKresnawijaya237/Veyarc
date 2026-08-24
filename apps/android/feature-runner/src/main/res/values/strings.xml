@@ -23,8 +23,8 @@
     <string name="settings_unavailable">Accessibility settings are unavailable on this device.</string>
     <string name="tap_received">Tap input received by the test surface.</string>
     <string name="long_press_received">Long-press input received by the test surface.</string>
-    <string name="touch_capture_title">Android 13+ interception experiment</string>
-    <string name="touch_capture_explanation">Arm one capture, then perform a single-finger gesture on the surface. Android withholds that gesture while Veyarc samples it, and Veyarc immediately replays the captured path. Nothing is saved.</string>
+    <string name="touch_capture_title">Android 13+ interception diagnostic (legacy)</string>
+    <string name="touch_capture_explanation">This one-gesture diagnostic temporarily withholds and replays input. It is kept for Phase 0 troubleshooting; third-party coordinate recording is currently unavailable.</string>
     <string name="arm_touch_capture">Arm next gesture</string>
     <string name="touch_capture_unsupported">Touch interception requires Android 13 or newer.</string>
     <string name="touch_capture_already_armed">A one-gesture capture is already armed.</string>
@@ -34,6 +34,7 @@
     <string name="touch_capture_cancelled">Android cancelled the captured gesture.</string>
     <string name="touch_capture_completed">Captured and replayed %1$d samples over %2$d ms.</string>
     <string name="touch_capture_failed">Capture failed: %1$s</string>
+    <string name="start_coordinate_recording">Global coordinate recording unavailable</string>
     <plurals name="touch_capture_replaying">
         <item quantity="one">Captured %1$d sample. Replaying it now…</item>
         <item quantity="other">Captured %1$d samples. Replaying them now…</item>

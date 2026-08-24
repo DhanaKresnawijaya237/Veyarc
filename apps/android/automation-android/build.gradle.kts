@@ -14,9 +14,14 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    buildFeatures {
+        aidl = true
+    }
 }
 
 dependencies {
     implementation(project(":core-engine"))
     implementation(project(":core-model"))
+    implementation(libs.shizuku.api)
 }
