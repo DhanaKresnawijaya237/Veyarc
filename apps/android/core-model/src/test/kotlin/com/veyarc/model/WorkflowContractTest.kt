@@ -138,6 +138,23 @@ class WorkflowContractTest {
     }
 
     @Test
+    fun detectsVisualConditionsAtAnyNestedWorkflowDepth() {
+        assertTrue(validDocument().usesVisualConditions())
+        assertFalse(
+            validDocument().copy(
+                steps = listOf(
+                    IfElse(
+                        id = STEP_1,
+                        condition = ForegroundPackageCondition(PackageName("com.example.app")),
+                        thenSteps = listOf(Wait(STEP_2, DurationMillis(100))),
+                        elseSteps = emptyList(),
+                    ),
+                ),
+            ).usesVisualConditions(),
+        )
+    }
+
+    @Test
     fun unsupportedSchemaVersionIsReported() {
         val errors = WorkflowValidator.validate(validDocument().copy(schemaVersion = 2))
 
