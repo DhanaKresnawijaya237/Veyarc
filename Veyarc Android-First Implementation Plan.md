@@ -98,17 +98,18 @@ The Android adapter implements them using `AccessibilityService`, `TouchInteract
 
 Recording is event-driven, not fixed-interval polling:
 
-1. User starts recording from a draggable accessibility overlay displaying elapsed time and a stop control.
-2. On Android 13+, intercept each gesture, capture its full down/move/up sequence with monotonic timestamps, then immediately replay it into the target application.
-3. Preserve every down/up event and all delivered moves in the raw journal.
-4. After recording, simplify paths using a configurable tolerance based on display diagonal while preserving timing and endpoints.
-5. Classify gestures using Android’s recorded tap, movement and long-press thresholds.
-6. Infer waits from inter-gesture gaps and foreground-package changes from system state.
-7. Produce an editable workflow draft; never execute the inferred draft automatically.
+1. The accessibility service owns a recording session that can be started and stopped while a declared target app is foreground through service-owned controls (notification first, with Quick Settings/accessibility shortcuts as follow-up entry points).
+2. The recording indicator is non-touchable. Stopping is handled by the service rather than by a draggable input overlay, so the target app and system navigation remain usable throughout the session.
+3. For third-party apps, prefer a privileged read-only Linux `evdev` input source: a root companion process (or a verified shell/Shizuku capability) observes the touchscreen device without requesting accessibility touch exploration or injecting/replaying during capture. The public Accessibility API touch-exploration experiment failed this safety test on the vivo V50 and remains disabled. If the privileged source is unavailable or cannot prove unchanged target-app input, recording must refuse to start.
+4. Capture only the selected touchscreen device, parse complete single-pointer down/move/up frames, and preserve their monotonic timestamps in the encrypted raw journal. Raw events remain available for exact replay after recording; analysis is a separate view of the same trace.
+5. The target package must remain foreground for the entire session. A package change, lock screen, system dialog, or lost helper connection fails the recording, stops the helper, and preserves only a recoverable journal when safe.
+6. After recording, simplify paths using a configurable tolerance based on display diagonal while preserving timing and endpoints.
+7. Classify gestures using the captured touch thresholds and infer waits from inter-gesture gaps and foreground-package observations.
+8. Produce an editable workflow draft; never execute the inferred draft automatically.
 
-Overlay interactions are excluded from the trace. If replay fails, stop recording and report the failed gesture rather than allowing recorded and actual app state to diverge.
+Recording controls are excluded from the trace. A failed or unsupported observation source must stop safely, avoid changing accessibility input routing, terminate any privileged helper, preserve the recoverable journal when possible, and report that exact third-party recording is unavailable on that device rather than allowing recorded and actual app state to diverge.
 
-Playback remains available on API 24–32, but exact recording is visibly unavailable. If the Android 13+ feasibility spike fails on a device family, mark recording unsupported for that device and retain manual authoring rather than silently producing incomplete traces.
+Playback remains available on API 24–32, but exact third-party recording is capability-gated. If the rooted/privileged evdev feasibility spike fails on a device family, mark recording unsupported for that device and retain manual authoring rather than silently producing incomplete traces.
 
 ### Visual conditions
 
@@ -146,7 +147,7 @@ Every workflow declares allowed packages. `LaunchApp` may switch only to a decla
    - Configure the Android SDK/toolchain and scaffold `com.veyarc.app`; install Android Studio only if its IDE, profiler, or device-management workflows are needed.
    - Build a minimal Accessibility Service.
    - Prove tap, hold and arbitrary-path playback.
-   - Prove Android 13+ intercept-and-replay recording on the physical target selected for the first beta. The current target is the vivo V50; other OEM families remain future validation targets.
+   - Prove read-only privileged touchscreen observation on the physical target selected for the first beta. The current target is the vivo V50; other OEM families remain future validation targets. Keep the earlier accessibility intercept/replay experiment as a legacy diagnostic only; it is not the production recorder.
    - Validate replay timing and service lifecycle restoration on the selected target, then document unsupported or unverified OEM behavior before building the full UI.
 
 2. **Portable core**
@@ -161,7 +162,8 @@ Every workflow declares allowed packages. `LaunchApp` may switch only to a decla
    - Ship no network permission or cloud dependency at this stage.
 
 4. **Coordinate recorder**
-   - Implement timer overlay, append-only event journal, interception/replay adapter and raw-trace recovery.
+   - Implement a service-owned app-scoped recording session, non-touchable indicator, service-owned start/stop controls, append-only event journal and a capability-gated privileged raw-input adapter. The adapter reads only the touchscreen evdev stream and must remain disabled unless it proves that normal third-party-app input is preserved; the current Android accessibility touch-exploration path is not acceptable.
+   - Preserve raw events for post-recording exact replay; do not replay gestures while recording.
    - Implement path simplification, gesture classification, wait inference and foreground-package transition suggestions.
    - Always open the inferred workflow in review mode.
 
@@ -204,14 +206,18 @@ Every workflow declares allowed packages. `LaunchApp` may switch only to a decla
 ### Android tests
 
 - Playback on API 24 and current Android targets.
-- Exact recording/replay on multiple API 33+ physical devices.
+- Privileged start/stop and raw recording on multiple API 33+ physical devices.
+- The declared target app remains interactive during recording; leaving it fails safely.
+- Home, Recents and system navigation remain usable before and after recording, and the helper cannot remain active after cancellation.
+- Rapid consecutive gestures remain ordered and complete in the raw journal.
+- Exact replay uses the preserved raw trace only after recording has stopped.
 - Rotation between steps and during an active gesture.
 - Accessibility disabled mid-run.
 - Screen-capture consent denial and revocation.
 - Unexpected foreground package, lock screen and system dialog.
-- Overlay start/stop events excluded from recording.
+- Recording-control surfaces excluded from recording.
 - No video file or unintended screenshot survives a run.
-- Emergency stop prevents the next step and cancels active platform input on a best-effort basis within one second.
+- Service-owned emergency stop prevents further capture, terminates the privileged helper, restores normal routing and removes recording controls on a best-effort basis within one second.
 
 ### End-to-end acceptance scenario
 
@@ -225,13 +231,18 @@ Record:
 
 The resulting draft must reproduce the actions, allow insertion of a bounded loop and image condition, scale across two resolutions, keep top-left relative to the visible screen after rotation, stop on an undeclared app, and replay only after explicit user approval.
 
+This end-to-end recording scenario remains blocked until the privileged third-party input-source
+feasibility gate is passed without altering ordinary one-finger touch behavior. The vivo V50
+touch-exploration spike failed that gate; the current build must refuse to start recording rather
+than freeze input. The next spike is a read-only evdev observer with package-scope enforcement.
+
 ## Locked Assumptions
 
 - Display name: **Veyarc**; package: `com.veyarc.app`.
 - Initial audience: technical early adopters.
 - Distribution: sideloaded APK first; Play Store later.
 - Playback: Android API 24+; exact recording: API 33+.
-- Recording: coordinate/timing events only, with intercept-and-replay.
+- Recording: coordinate/timing events only, with a root/privileged read-only touchscreen observer for third-party apps when a device-specific source proves transparent pass-through. Public accessibility touch exploration is never used for production recording. Without the capability, recording is visibly unavailable and manual authoring remains supported. No replay or touch injection occurs during recording.
 - No semantic UI recording and no stored video.
 - Touch regions and shapes are editor/path abstractions; Android receives point contacts following paths.
 - Single-pointer arbitrary paths are included; simultaneous multi-touch is deferred.
