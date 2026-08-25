@@ -3,6 +3,7 @@ package com.veyarc.feature.recorder
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -14,6 +15,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -23,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -40,6 +43,7 @@ fun CoordinateRecorderScreen(
     val rawReplayController = remember(context) { CoordinateRawTraceReplayController(context) }
     val rawReplayState by rawReplayController.state.collectAsState()
     var pendingReplayReview by remember { mutableStateOf<CoordinateRecordingReview?>(null) }
+    var replayInputGuardEnabled by remember { mutableStateOf(false) }
     val active = state is CoordinateRecordingState.Arming || state is CoordinateRecordingState.Recording
     DisposableEffect(rawReplayController) {
         onDispose { rawReplayController.close() }
@@ -139,6 +143,22 @@ fun CoordinateRecorderScreen(
                 }
                 if (review.rawReplayTrace != null && review.rawReplayUnavailableReason == null) {
                     Text("Raw replay target: ${review.rawReplayTargetPackage?.value ?: "unknown"}")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Freeze target-app input during replay",
+                            modifier = Modifier.weight(1f),
+                        )
+                        Switch(
+                            checked = replayInputGuardEnabled,
+                            enabled = !rawReplayState.running,
+                            onCheckedChange = { replayInputGuardEnabled = it },
+                        )
+                    }
+                    Text(
+                        "Optional safety guard: it consumes touches in the target app while replay " +
+                            "runs. System navigation and the emergency notification remain available.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                     Button(
                         enabled = !rawReplayState.running,
                         onClick = { pendingReplayReview = review },
@@ -179,7 +199,12 @@ fun CoordinateRecorderScreen(
                     "Veyarc will send the preserved DOWN, MOVE, and UP frames to " +
                         "${review.rawReplayTargetPackage?.value ?: "the current app"}. " +
                         "Veyarc will open that app and wait for it to become foreground. No input " +
-                        "is sent unless the Shizuku helper proves fixed motionevent support.",
+                        "is sent unless the Shizuku helper proves fixed motionevent support. " +
+                        if (replayInputGuardEnabled) {
+                            "The optional input guard will consume target-app touches during replay."
+                        } else {
+                            "Human touches remain enabled during replay."
+                        },
                 )
             },
             confirmButton = {
@@ -188,7 +213,13 @@ fun CoordinateRecorderScreen(
                         pendingReplayReview = null
                         val trace = review.rawReplayTrace
                         val target = review.rawReplayTargetPackage
-                        if (trace != null) rawReplayController.start(trace, target)
+                        if (trace != null) {
+                            rawReplayController.start(
+                                trace = trace,
+                                expectedTargetPackage = target,
+                                inputGuardEnabled = replayInputGuardEnabled,
+                            )
+                        }
                     },
                 ) {
                     Text("Replay")

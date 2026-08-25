@@ -18,6 +18,7 @@ import java.lang.reflect.Method
 internal class DirectMotionEventInjector private constructor(
     private val inputManager: Any,
     private val injectInputEvent: Method,
+    private val injectInputEventToTarget: Method?,
 ) {
     fun inject(
         action: Int,
@@ -26,7 +27,13 @@ internal class DirectMotionEventInjector private constructor(
         downTimeMillis: Long,
         eventTimeMillis: Long,
         displayId: Int,
+        targetUid: Int? = null,
     ) {
+        if (targetUid != null && injectInputEventToTarget == null) {
+            throw UnsupportedOperationException(
+                "This device does not expose targeted input injection for replay protection",
+            )
+        }
         val pressure = if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
             NO_PRESSURE
         } else {
@@ -60,7 +67,16 @@ internal class DirectMotionEventInjector private constructor(
         )
         try {
             try {
-                injectInputEvent.invoke(inputManager, event, INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH)
+                if (targetUid != null) {
+                    injectInputEventToTarget?.invoke(
+                        inputManager,
+                        event,
+                        INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH,
+                        targetUid,
+                    )
+                } else {
+                    injectInputEvent.invoke(inputManager, event, INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH)
+                }
             } catch (error: InvocationTargetException) {
                 throw error.targetException
             }
@@ -68,6 +84,9 @@ internal class DirectMotionEventInjector private constructor(
             event.recycle()
         }
     }
+
+    val supportsTargetedInjection: Boolean
+        get() = injectInputEventToTarget != null
 
     companion object {
         private const val INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH = 2
@@ -99,7 +118,17 @@ internal class DirectMotionEventInjector private constructor(
             ).apply {
                 isAccessible = true
             }
-            DirectMotionEventInjector(manager, injectMethod)
+            val targetedMethod = runCatching {
+                managerClass.getDeclaredMethod(
+                    "injectInputEvent",
+                    InputEvent::class.java,
+                    Int::class.javaPrimitiveType,
+                    Int::class.javaPrimitiveType,
+                ).apply {
+                    isAccessible = true
+                }
+            }.getOrNull()
+            DirectMotionEventInjector(manager, injectMethod, targetedMethod)
         }.getOrNull()
     }
 }

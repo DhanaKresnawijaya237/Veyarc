@@ -24,6 +24,8 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
         val cancelX: Float
         val cancelY: Float
         val delayBeforeMillis: Long
+        val targetUid: Int?
+            get() = null
 
         fun arguments(): List<String>
 
@@ -72,6 +74,7 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
             val x: Float,
             val y: Float,
             override val delayBeforeMillis: Long,
+            override val targetUid: Int? = null,
         ) : ReplayCommand {
             override val description: String =
                 "motionevent ${actionName(action)} ${format(x)} ${format(y)}"
@@ -145,8 +148,17 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
             directMotionInjector = direct
             val shellSupported = supportsMotionEvents()
             val value = when {
-                direct != null -> CAPABILITY_RAW_MOTION_TRACE or CAPABILITY_DIRECT_MOTION_TRACE
+                direct != null ->
+                    CAPABILITY_RAW_MOTION_TRACE or
+                        CAPABILITY_DIRECT_MOTION_TRACE or
+                        if (direct.supportsTargetedInjection) {
+                            CAPABILITY_TARGETED_DIRECT_MOTION_TRACE
+                        } else {
+                            0
+                        }
+
                 shellSupported -> CAPABILITY_RAW_MOTION_TRACE
+
                 else -> 0
             }
             capabilities = value
@@ -212,6 +224,30 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
         ys: FloatArray?,
         delaysMillis: LongArray?,
     ) {
+        enqueueMotionTraceInternal(actions, xs, ys, delaysMillis, targetUid = null)
+    }
+
+    override fun enqueueTargetedMotionTrace(
+        actions: IntArray?,
+        xs: FloatArray?,
+        ys: FloatArray?,
+        delaysMillis: LongArray?,
+        targetUid: Int,
+    ) {
+        require(targetUid >= 0) { "Target UID must be non-negative" }
+        check(getCapabilities() and CAPABILITY_TARGETED_DIRECT_MOTION_TRACE != 0) {
+            "This device's input helper does not support targeted replay protection"
+        }
+        enqueueMotionTraceInternal(actions, xs, ys, delaysMillis, targetUid)
+    }
+
+    private fun enqueueMotionTraceInternal(
+        actions: IntArray?,
+        xs: FloatArray?,
+        ys: FloatArray?,
+        delaysMillis: LongArray?,
+        targetUid: Int?,
+    ) {
         check(getCapabilities() and CAPABILITY_RAW_MOTION_TRACE != 0) {
             "This device's input helper does not support motionevent replay"
         }
@@ -253,7 +289,7 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
 
                 else -> error("Motion action must be DOWN, MOVE, or UP")
             }
-            frames += ReplayCommand.MotionFrame(action, x, y, delay)
+            frames += ReplayCommand.MotionFrame(action, x, y, delay, targetUid)
         }
         check(!touchActive) { "A motion trace must end with UP" }
         synchronized(stateLock) {
@@ -296,10 +332,13 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
                     y = command?.cancelY ?: 0f,
                     downTimeMillis = directDownTimeMillis,
                     eventTimeMillis = max(directNextEventDeadlineMillis, SystemClock.uptimeMillis()),
+                    targetUid = command?.targetUid,
                 )
             }
         }
-        if (directCancel != null && directMotionInjector != null && !directMotionInjectionFailed) {
+        if (directCancel != null && directMotionInjector != null &&
+            (directCancel.targetUid != null || !directMotionInjectionFailed)
+        ) {
             runCatching {
                 directMotionInjector?.inject(
                     action = MotionEvent.ACTION_CANCEL,
@@ -308,12 +347,15 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
                     downTimeMillis = directCancel.downTimeMillis,
                     eventTimeMillis = directCancel.eventTimeMillis,
                     displayId = DISPLAY_ID.toInt(),
+                    targetUid = directCancel.targetUid,
                 )
-            }.onFailure { sendCancel(directCancel.x, directCancel.y) }
+            }.onFailure {
+                if (directCancel.targetUid == null) sendCancel(directCancel.x, directCancel.y)
+            }
         } else if (command != null) {
             // Best effort: if a swipe was interrupted between DOWN and UP, explicitly send a
             // CANCEL through the same shell input path. This never writes to the touchscreen node.
-            sendCancel(command.cancelX, command.cancelY)
+            if (command.targetUid == null) sendCancel(command.cancelX, command.cancelY)
         }
     }
 
@@ -357,9 +399,19 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
 
     private fun execute(command: ReplayCommand) {
         if (command is ReplayCommand.MotionFrame) {
+            if (command.targetUid != null && directMotionInjector == null) {
+                throw IllegalStateException(
+                    "Targeted replay protection requires direct InputManager injection",
+                )
+            }
             if (directMotionInjector != null && !directMotionInjectionFailed) {
                 executeDirectMotionFrame(command)
             } else {
+                if (command.targetUid != null) {
+                    throw IllegalStateException(
+                        "Targeted replay protection is unavailable after direct injection failed",
+                    )
+                }
                 executeShellMotionFrame(command)
             }
             return
@@ -407,25 +459,54 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
             directNextEventDeadlineMillis
         }
         if (!waitUntil(deadline)) return
-        val eventTimeMillis = SystemClock.uptimeMillis()
         val downTimeMillis = synchronized(directMotionLock) { directDownTimeMillis }
-        try {
-            injector.inject(
-                action = when (command.action) {
-                    MOTION_DOWN -> MotionEvent.ACTION_DOWN
-                    MOTION_MOVE -> MotionEvent.ACTION_MOVE
-                    MOTION_UP -> MotionEvent.ACTION_UP
-                    else -> error("Motion action must be DOWN, MOVE, or UP")
-                },
-                x = command.x,
-                y = command.y,
-                downTimeMillis = downTimeMillis,
-                eventTimeMillis = eventTimeMillis,
-                displayId = DISPLAY_ID.toInt(),
-            )
-        } catch (error: Throwable) {
+        val action = when (command.action) {
+            MOTION_DOWN -> MotionEvent.ACTION_DOWN
+            MOTION_MOVE -> MotionEvent.ACTION_MOVE
+            MOTION_UP -> MotionEvent.ACTION_UP
+            else -> error("Motion action must be DOWN, MOVE, or UP")
+        }
+        val attemptLimit = if (command.targetUid != null) {
+            TARGETED_INJECTION_ATTEMPTS
+        } else {
+            1
+        }
+        var attempt = 0
+        var delivered = false
+        var lastError: Throwable? = null
+        var eventTimeMillis = SystemClock.uptimeMillis()
+        while (attempt < attemptLimit && !delivered) {
+            if (cancelRequested) return
+            eventTimeMillis = SystemClock.uptimeMillis()
+            try {
+                injector.inject(
+                    action = action,
+                    x = command.x,
+                    y = command.y,
+                    downTimeMillis = downTimeMillis,
+                    eventTimeMillis = eventTimeMillis,
+                    displayId = DISPLAY_ID.toInt(),
+                    targetUid = command.targetUid,
+                )
+                delivered = true
+            } catch (error: Throwable) {
+                lastError = error
+                val canRetry = command.targetUid != null &&
+                    isTargetWindowMismatch(error) &&
+                    attempt + 1 < attemptLimit
+                if (!canRetry) break
+                if (!waitUntil(SystemClock.uptimeMillis() + TARGETED_INJECTION_RETRY_DELAY_MILLIS)) {
+                    return
+                }
+            }
+            attempt += 1
+        }
+        if (!delivered) {
             directMotionInjectionFailed = true
-            throw error
+            if (command.action == MOTION_DOWN) {
+                synchronized(directMotionLock) { directTouchActive = false }
+            }
+            throw lastError ?: IllegalStateException("Input event injection failed")
         }
         synchronized(directMotionLock) {
             if (command.action == MOTION_UP) {
@@ -434,6 +515,17 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
                 directNextEventDeadlineMillis = max(directNextEventDeadlineMillis, eventTimeMillis)
             }
         }
+    }
+
+    private fun isTargetWindowMismatch(error: Throwable): Boolean {
+        var current: Throwable? = error
+        while (current != null) {
+            if (current.message?.contains("Targeted input event injection", ignoreCase = true) == true) {
+                return true
+            }
+            current = current.cause
+        }
+        return false
     }
 
     private fun executeShellCommand(command: ReplayCommand, includeDelay: Boolean = true) {
@@ -494,10 +586,13 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
                 y = currentCommand?.cancelY ?: 0f,
                 downTimeMillis = directDownTimeMillis,
                 eventTimeMillis = max(directNextEventDeadlineMillis, SystemClock.uptimeMillis()),
+                targetUid = currentCommand?.targetUid,
             )
         }
         synchronized(directMotionLock) { directTouchActive = false }
-        if (directMotionInjector != null && !directMotionInjectionFailed) {
+        if (directMotionInjector != null &&
+            (cancel.targetUid != null || !directMotionInjectionFailed)
+        ) {
             runCatching {
                 directMotionInjector?.inject(
                     action = MotionEvent.ACTION_CANCEL,
@@ -506,13 +601,16 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
                     downTimeMillis = cancel.downTimeMillis,
                     eventTimeMillis = cancel.eventTimeMillis,
                     displayId = DISPLAY_ID.toInt(),
+                    targetUid = cancel.targetUid,
                 )
-            }.onFailure { sendCancel(cancel.x, cancel.y) }
+            }.onFailure {
+                if (cancel.targetUid == null) sendCancel(cancel.x, cancel.y)
+            }
         } else {
             // If direct injection failed after DOWN, still clear the target's active touch
             // through the validated shell path. Leaving the stream open can make the target
             // appear frozen until Android times out the pointer.
-            sendCancel(cancel.x, cancel.y)
+            if (cancel.targetUid == null) sendCancel(cancel.x, cancel.y)
         }
     }
 
@@ -570,6 +668,7 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
             val y: Float,
             val downTimeMillis: Long,
             val eventTimeMillis: Long,
+            val targetUid: Int?,
         )
 
         const val INPUT_BINARY = "/system/bin/input"
@@ -579,6 +678,7 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
         const val MAX_MOTION_DELAY_MILLIS = 300_000L
         const val CAPABILITY_RAW_MOTION_TRACE = 1
         const val CAPABILITY_DIRECT_MOTION_TRACE = 2
+        const val CAPABILITY_TARGETED_DIRECT_MOTION_TRACE = 4
         const val MOTION_DOWN = 0
         const val MOTION_MOVE = 1
         const val MOTION_UP = 2
@@ -591,6 +691,8 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
         const val CANCEL_TIMEOUT_MILLIS = 500L
         const val PROCESS_POLL_INTERVAL_MILLIS = 10L
         const val SCHEDULER_SLEEP_MILLIS = 2L
+        const val TARGETED_INJECTION_ATTEMPTS = 10
+        const val TARGETED_INJECTION_RETRY_DELAY_MILLIS = 100L
         const val MAX_ERROR_LENGTH = 240
 
         fun inputArguments(command: String, vararg args: String): List<String> = buildList {

@@ -7,6 +7,7 @@ import android.os.Looper
 import android.os.SystemClock
 import com.veyarc.automation.android.AndroidForegroundPackage
 import com.veyarc.automation.android.AndroidRecordingViewportSnapshot
+import com.veyarc.automation.android.ReplayInputGuardOverlay
 import com.veyarc.automation.android.ShizukuInputReplay
 import com.veyarc.automation.android.ShizukuInputReplaySnapshot
 import com.veyarc.automation.android.ShizukuMotionAction
@@ -49,6 +50,29 @@ class CoordinateRawTraceReplayController(
     private var foregroundWaitDeadline = 0L
     private var stableViewport: AndroidRecordingViewportSnapshot? = null
     private var stableViewportSampleCount = 0
+    private var inputGuardEnabled = false
+    private var activeTargetPackage: PackageName? = null
+
+    private val replaySafetyRunnable = object : Runnable {
+        override fun run() {
+            if (!requestStarted) return
+            val targetPackage = activeTargetPackage
+            if (inputGuardEnabled &&
+                (!ReplayInputGuardOverlay.isAvailable || !ReplayInputGuardOverlay.isShown)
+            ) {
+                cancel("Replay input guard was removed, so replay was cancelled safely.")
+                return
+            }
+            if (inputGuardEnabled &&
+                targetPackage != null &&
+                AndroidForegroundPackage.current() != targetPackage
+            ) {
+                cancel("Replay cancelled because the foreground app changed from $targetPackage.")
+                return
+            }
+            mainHandler.postDelayed(this, REPLAY_SAFETY_POLL_INTERVAL_MILLIS)
+        }
+    }
 
     private val dispatchReplayRunnable = Runnable {
         if (!requestStarted) return@Runnable
@@ -60,7 +84,7 @@ class CoordinateRawTraceReplayController(
             pendingReplayTargetPackage = null
             pendingReplayViewport = null
             requestStarted = false
-            RawReplayForegroundService.stop(appContext)
+            stopReplaySurfaces()
             refuse("The target app changed before replay dispatch. No input was sent.")
             return@Runnable
         }
@@ -69,13 +93,13 @@ class CoordinateRawTraceReplayController(
             pendingReplayTrace = null
             pendingReplayTargetPackage = null
             pendingReplayViewport = null
-            RawReplayForegroundService.stop(appContext)
+            stopReplaySurfaces()
             retryAfterViewportChange(trace, targetPackage)
             return@Runnable
         }
         val remappedFrames = runCatching { trace.remapTo(currentViewport.viewport) }.getOrElse { error ->
             requestStarted = false
-            RawReplayForegroundService.stop(appContext)
+            stopReplaySurfaces()
             refuse(error.message ?: "The recording cannot be safely mapped to the current display.")
             return@Runnable
         }
@@ -94,9 +118,24 @@ class CoordinateRawTraceReplayController(
         pendingReplayTrace = null
         pendingReplayTargetPackage = null
         pendingReplayViewport = null
-        runCatching { replay.dispatchRawMotionTrace(frames) }.onFailure { error ->
+        val targetUid = if (inputGuardEnabled) {
+            runCatching {
+                appContext.packageManager.getApplicationInfo(targetPackage.value, 0).uid
+            }.getOrElse { error ->
+                requestStarted = false
+                stopReplaySurfaces()
+                refuse(
+                    "Veyarc could not resolve the target app UID for the input guard: " +
+                        (error.message ?: error.javaClass.simpleName),
+                )
+                return@Runnable
+            }
+        } else {
+            null
+        }
+        runCatching { replay.dispatchRawMotionTrace(frames, targetUid) }.onFailure { error ->
             requestStarted = false
-            RawReplayForegroundService.stop(appContext)
+            stopReplaySurfaces()
             refuse(error.message ?: "The raw replay request was rejected.")
         }
     }
@@ -161,13 +200,26 @@ class CoordinateRawTraceReplayController(
     }
 
     /** Starts only after the caller has shown an explicit confirmation dialog. */
-    fun start(trace: RecordingRawTrace, expectedTargetPackage: PackageName?) {
+    fun start(
+        trace: RecordingRawTrace,
+        expectedTargetPackage: PackageName?,
+        inputGuardEnabled: Boolean = false,
+    ) {
         if (_state.value.running) return
         val targetPackage = expectedTargetPackage ?: run {
             refuse("Raw replay requires one known recorded target application.")
             return
         }
+        if (inputGuardEnabled && targetPackage.value == appContext.packageName) {
+            refuse(
+                "The input guard cannot protect replay inside Veyarc itself. Turn it off for " +
+                    "a Veyarc-targeted replay.",
+            )
+            return
+        }
         val currentPackage = AndroidForegroundPackage.current()
+        this.inputGuardEnabled = inputGuardEnabled
+        activeTargetPackage = targetPackage
         requestStarted = true
         pendingTrace = trace
         pendingTargetPackage = targetPackage
@@ -234,6 +286,14 @@ class CoordinateRawTraceReplayController(
             refuse(reason)
             return
         }
+        if (inputGuardEnabled && !ReplayInputGuardOverlay.show()) {
+            requestStarted = false
+            refuse(
+                "The replay input guard is unavailable. Connect Veyarc's Accessibility service " +
+                    "or turn off the input guard before replaying.",
+            )
+            return
+        }
         pendingReplayTrace = trace
         pendingReplayTargetPackage = targetPackage
         pendingReplayViewport = expectedViewport
@@ -243,6 +303,8 @@ class CoordinateRawTraceReplayController(
         )
         RawReplayForegroundService.start(appContext, targetPackage.value)
         mainHandler.removeCallbacks(dispatchReplayRunnable)
+        mainHandler.removeCallbacks(replaySafetyRunnable)
+        mainHandler.post(replaySafetyRunnable)
         mainHandler.postDelayed(dispatchReplayRunnable, REPLAY_SERVICE_START_DELAY_MILLIS)
     }
 
@@ -284,7 +346,9 @@ class CoordinateRawTraceReplayController(
         pendingReplayViewport = null
         resetStableViewport()
         replay.cancel()
-        RawReplayForegroundService.stop(appContext)
+        stopReplaySurfaces()
+        inputGuardEnabled = false
+        activeTargetPackage = null
         _state.value = CoordinateRawTraceReplayState(
             cancelled = true,
             message = reason,
@@ -302,7 +366,9 @@ class CoordinateRawTraceReplayController(
         pendingReplayViewport = null
         resetStableViewport()
         CoordinateRawTraceReplayRuntime.unregister(this)
-        RawReplayForegroundService.stop(appContext)
+        stopReplaySurfaces()
+        inputGuardEnabled = false
+        activeTargetPackage = null
         replay.cancel()
         replay.close()
     }
@@ -319,16 +385,30 @@ class CoordinateRawTraceReplayController(
 
             snapshot.lastError != null || isFailureMessage(snapshot.message) -> {
                 requestStarted = false
-                RawReplayForegroundService.stop(appContext)
-                _state.value = CoordinateRawTraceReplayState(
-                    message = snapshot.message,
-                    error = snapshot.lastError ?: snapshot.message,
-                )
+                stopReplaySurfaces()
+                inputGuardEnabled = false
+                activeTargetPackage = null
+                val targetWindowLost = listOfNotNull(snapshot.lastError, snapshot.message)
+                    .any { it.contains("Targeted input event injection", ignoreCase = true) }
+                if (targetWindowLost) {
+                    _state.value = CoordinateRawTraceReplayState(
+                        cancelled = true,
+                        message = "Replay cancelled safely because the target app window changed " +
+                            "or closed before the next frame. Return to the target app and retry.",
+                    )
+                } else {
+                    _state.value = CoordinateRawTraceReplayState(
+                        message = snapshot.message,
+                        error = snapshot.lastError ?: snapshot.message,
+                    )
+                }
             }
 
             snapshot.message.contains("completed", ignoreCase = true) -> {
                 requestStarted = false
-                RawReplayForegroundService.stop(appContext)
+                stopReplaySurfaces()
+                inputGuardEnabled = false
+                activeTargetPackage = null
                 _state.value = CoordinateRawTraceReplayState(
                     completed = true,
                     message = snapshot.message,
@@ -345,7 +425,17 @@ class CoordinateRawTraceReplayController(
     }
 
     private fun refuse(reason: String) {
+        requestStarted = false
+        stopReplaySurfaces()
+        inputGuardEnabled = false
+        activeTargetPackage = null
         _state.value = CoordinateRawTraceReplayState(message = "Raw replay refused.", error = reason)
+    }
+
+    private fun stopReplaySurfaces() {
+        mainHandler.removeCallbacks(replaySafetyRunnable)
+        ReplayInputGuardOverlay.hide()
+        RawReplayForegroundService.stop(appContext)
     }
 
     private fun isFailureMessage(message: String): Boolean = listOf(
@@ -364,6 +454,7 @@ class CoordinateRawTraceReplayController(
     private companion object {
         const val FOREGROUND_WAIT_TIMEOUT_MILLIS = 5_000L
         const val FOREGROUND_POLL_INTERVAL_MILLIS = 250L
+        const val REPLAY_SAFETY_POLL_INTERVAL_MILLIS = 250L
         const val REPLAY_SERVICE_START_DELAY_MILLIS = 250L
         const val REQUIRED_STABLE_VIEWPORT_SAMPLES = 3
     }

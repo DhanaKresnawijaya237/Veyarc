@@ -9,6 +9,7 @@ class VeyarcAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         AccessibilityGestureDispatcher.attach(this)
         AccessibilityEmergencyOverlay.attach(this)
+        ReplayInputGuardOverlay.attach(this)
         ForegroundPackageTracker.attach(this)
         TouchInterceptionRecorder.attach(this)
     }
@@ -21,12 +22,14 @@ class VeyarcAccessibilityService : AccessibilityService() {
         TouchInterceptionRecorder.reset()
         AccessibilityGestureDispatcher.reset()
         AccessibilityEmergencyOverlay.hide()
+        ReplayInputGuardOverlay.hide()
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
         TouchInterceptionRecorder.detach(this)
         ForegroundPackageTracker.detach(this)
         AccessibilityEmergencyOverlay.detach(this)
+        ReplayInputGuardOverlay.detach(this)
         AccessibilityGestureDispatcher.detach(this)
         return super.onUnbind(intent)
     }
@@ -35,6 +38,7 @@ class VeyarcAccessibilityService : AccessibilityService() {
         TouchInterceptionRecorder.detach(this)
         ForegroundPackageTracker.detach(this)
         AccessibilityEmergencyOverlay.detach(this)
+        ReplayInputGuardOverlay.detach(this)
         AccessibilityGestureDispatcher.detach(this)
         super.onDestroy()
     }

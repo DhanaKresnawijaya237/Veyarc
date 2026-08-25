@@ -22,4 +22,11 @@ interface IShizukuInputReplayService {
     void cancel() = 12;
     int getCapabilities() = 13;
     void enqueueMotionTrace(in int[] actions, in float[] xs, in float[] ys, in long[] delaysMillis) = 14;
+    void enqueueTargetedMotionTrace(
+        in int[] actions,
+        in float[] xs,
+        in float[] ys,
+        in long[] delaysMillis,
+        int targetUid
+    ) = 15;
 }

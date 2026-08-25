@@ -70,6 +70,7 @@ class ShizukuInputReplay(
 
         data class MotionTrace(
             val frames: List<ShizukuMotionFrame>,
+            val targetUid: Int? = null,
         ) : ReplayCommand
     }
 
@@ -295,10 +296,11 @@ class ShizukuInputReplay(
     }
 
     /** Requests a raw trace replay after the helper proves motionevent support. */
-    fun dispatchRawMotionTrace(frames: List<ShizukuMotionFrame>) {
+    fun dispatchRawMotionTrace(frames: List<ShizukuMotionFrame>, targetUid: Int? = null) {
         validateMotionTrace(frames)
+        require(targetUid == null || targetUid >= 0) { "Target UID must be non-negative" }
         request(
-            listOf(ReplayCommand.MotionTrace(frames.toList())),
+            listOf(ReplayCommand.MotionTrace(frames.toList(), targetUid)),
             "Preparing the approved raw touch trace…",
         )
     }
@@ -375,6 +377,13 @@ class ShizukuInputReplay(
                         "The Shizuku helper cannot prove motionevent replay support on this device",
                     )
                 }
+                if (motionTrace?.targetUid != null &&
+                    capabilities?.and(CAPABILITY_TARGETED_DIRECT_MOTION_TRACE) == 0
+                ) {
+                    throw IllegalStateException(
+                        "This device cannot target replay input beneath the freeze guard",
+                    )
+                }
                 commands.forEach { command ->
                     when (command) {
                         is ReplayCommand.Tap -> service.enqueueTap(command.x, command.y)
@@ -399,7 +408,17 @@ class ShizukuInputReplay(
                                 ys[index] = frame.y
                                 delays[index] = frame.delayMillis
                             }
-                            service.enqueueMotionTrace(actions, xs, ys, delays)
+                            if (command.targetUid == null) {
+                                service.enqueueMotionTrace(actions, xs, ys, delays)
+                            } else {
+                                service.enqueueTargetedMotionTrace(
+                                    actions,
+                                    xs,
+                                    ys,
+                                    delays,
+                                    command.targetUid,
+                                )
+                            }
                         }
                     }
                 }
@@ -520,6 +539,7 @@ class ShizukuInputReplay(
         const val DEFAULT_SWIPE_DURATION_MILLIS = 700L
         const val CAPABILITY_RAW_MOTION_TRACE = 1
         const val CAPABILITY_DIRECT_MOTION_TRACE = 2
+        const val CAPABILITY_TARGETED_DIRECT_MOTION_TRACE = 4
         const val MAX_MOTION_FRAME_COUNT = 16_384
         const val MAX_MOTION_DELAY_MILLIS = 300_000L
         const val MAX_COORDINATE = 30_000f
