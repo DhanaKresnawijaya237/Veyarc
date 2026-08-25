@@ -17,12 +17,25 @@ import java.util.UUID
 const val CURRENT_RECORDING_JOURNAL_VERSION: Int = 1
 const val DEFAULT_MAX_RECORDING_JOURNAL_BYTES: Long = 16L * 1024L * 1024L
 
+/** Coordinate space used for touch samples in a recording journal. */
+@Serializable
+enum class RecordingCoordinateSpace {
+    /** Journals written before rotation-aware capture used the start viewport axes directly. */
+    @SerialName("legacyStartViewport")
+    LEGACY_START_VIEWPORT,
+
+    /** New journals normalize each sample to the logical display orientation at capture time. */
+    @SerialName("logicalDisplayNormalized")
+    LOGICAL_DISPLAY_NORMALIZED,
+}
+
 /** Metadata written as the first record in every recording journal. */
 @Serializable
 data class RecordingJournalHeader(
     val sessionId: String,
     val startedAtEpochMillis: Long,
     val viewport: ViewportSpec,
+    val coordinateSpace: RecordingCoordinateSpace = RecordingCoordinateSpace.LEGACY_START_VIEWPORT,
     val formatVersion: Int = CURRENT_RECORDING_JOURNAL_VERSION,
 ) {
     init {

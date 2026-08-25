@@ -21,6 +21,7 @@ data class RecordingRawTouchFrame(
 data class RecordingRawTrace(
     val recordedViewport: ViewportSpec,
     val frames: List<RecordingRawTouchFrame>,
+    val coordinateSpace: RecordingCoordinateSpace = RecordingCoordinateSpace.LEGACY_START_VIEWPORT,
 ) {
     init {
         require(frames.isNotEmpty()) { "A raw trace must contain at least one frame" }
@@ -44,6 +45,12 @@ data class RecordingRawTrace(
     fun remapTo(currentViewport: ViewportSpec): List<ReplayRawTouchFrame> {
         require(currentViewport.windowMode == recordedViewport.windowMode) {
             "Raw replay requires the same full-display window mode"
+        }
+        require(
+            coordinateSpace == RecordingCoordinateSpace.LOGICAL_DISPLAY_NORMALIZED ||
+                recordedViewport.recordedOrientation == currentViewport.recordedOrientation,
+        ) {
+            "This recording predates rotation-aware capture. Record it again before replaying across orientations."
         }
         val recordedWidthDenominator = max(1, recordedViewport.recordedWidthPx - 1).toDouble()
         val recordedHeightDenominator = max(1, recordedViewport.recordedHeightPx - 1).toDouble()
@@ -84,7 +91,11 @@ data class RecordingRawTrace(
                         yPx = line.yPx,
                     )
                 }
-            return RecordingRawTrace(snapshot.header.viewport, touchFrames)
+            return RecordingRawTrace(
+                recordedViewport = snapshot.header.viewport,
+                frames = touchFrames,
+                coordinateSpace = snapshot.header.coordinateSpace,
+            )
         }
 
         private fun validateFrames(

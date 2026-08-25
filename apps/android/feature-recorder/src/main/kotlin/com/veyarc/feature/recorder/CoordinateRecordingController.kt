@@ -11,18 +11,22 @@ import android.view.ViewConfiguration
 import com.veyarc.automation.android.AndroidForegroundPackage
 import com.veyarc.automation.android.ShizukuTouchRecording
 import com.veyarc.automation.android.ShizukuTouchRecordingEvent
+import com.veyarc.automation.android.currentDisplayRotation
 import com.veyarc.automation.android.currentRecordingViewport
 import com.veyarc.data.storage.AesGcmFileCodec
 import com.veyarc.data.storage.AndroidKeystoreKeySource
 import com.veyarc.data.storage.EncryptedRecordingJournalStore
 import com.veyarc.model.PackageName
+import com.veyarc.recording.RawTouchCoordinateMapper
 import com.veyarc.recording.RecordingAnalyzer
 import com.veyarc.recording.RecordingClassificationConfig
+import com.veyarc.recording.RecordingCoordinateSpace
 import com.veyarc.recording.RecordingJournalLine
 import com.veyarc.recording.RecordingJournalSnapshot
 import com.veyarc.recording.RecordingRawTrace
 import com.veyarc.recording.RecordingTouchAction
 import com.veyarc.recording.RecordingWorkflowConverter
+import com.veyarc.recording.TouchDisplayRotation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -96,6 +100,7 @@ class CoordinateRecordingController(
     private var pendingTouchLines: MutableList<RecordingJournalLine>? = null
     private var pendingTouchSawControlSurface = false
     private var ignoredTouchActive = false
+    private var activeTouchRotation: TouchDisplayRotation? = null
 
     /** True while the global recorder is accepting a new recording session. */
     fun isSessionActive(): Boolean = active && !stopRequested
@@ -173,6 +178,7 @@ class CoordinateRecordingController(
             sessionId = id,
             startedAtEpochMillis = System.currentTimeMillis(),
             viewport = recordingViewport,
+            coordinateSpace = RecordingCoordinateSpace.LOGICAL_DISPLAY_NORMALIZED,
         )
         val openedJournal = runCatching {
             EncryptedRecordingJournalStore.open(
@@ -203,6 +209,7 @@ class CoordinateRecordingController(
         pendingTouchLines = null
         pendingTouchSawControlSurface = false
         ignoredTouchActive = false
+        activeTouchRotation = null
         stopRequested = false
         stopFailureReason = null
         if (!sessionCleanup.begin()) {
@@ -369,6 +376,17 @@ class CoordinateRecordingController(
 
         val startTimestamp = recordingStartReceivedTimestampMicros ?: return
         val currentViewport = viewport ?: return
+        val rotation = currentDisplayRotation(appContext)?.let(TouchDisplayRotation::fromAndroidRotation)
+            ?: run {
+                failSession("The display rotation could not be read safely during recording.")
+                return
+            }
+        if (startingTouch) {
+            activeTouchRotation = rotation
+        } else if (activeTouchRotation != rotation) {
+            failSession("Display rotation changed during an active touch; recording stopped safely.")
+            return
+        }
         // The helper's kernel timestamp and the app process can use different clock domains on
         // OEM builds. The wrapper captures an app-process monotonic timestamp for every callback,
         // so journal timing remains ordered and reflects the real gesture duration.
@@ -380,10 +398,17 @@ class CoordinateRecordingController(
             failSession("The touchscreen coordinate range became invalid during recording.")
             return
         }
-        val x = ((event.x.coerceIn(minX, maxX) - minX).toDouble() / xRange) *
-            (currentViewport.recordedWidthPx - 1).toDouble()
-        val y = ((event.y.coerceIn(minY, maxY) - minY).toDouble() / yRange) *
-            (currentViewport.recordedHeightPx - 1).toDouble()
+        val normalized = RawTouchCoordinateMapper.toLogicalNormalized(
+            rawX = event.x,
+            rawY = event.y,
+            minX = minX,
+            maxX = maxX,
+            minY = minY,
+            maxY = maxY,
+            rotation = rotation,
+        )
+        val x = normalized.x * (currentViewport.recordedWidthPx - 1).toDouble()
+        val y = normalized.y * (currentViewport.recordedHeightPx - 1).toDouble()
         val action = when (event.action) {
             ShizukuTouchRecordingEvent.Action.DOWN -> RecordingTouchAction.DOWN
             ShizukuTouchRecordingEvent.Action.MOVE -> RecordingTouchAction.MOVE
@@ -400,6 +425,7 @@ class CoordinateRecordingController(
             yPx = y,
         )
         if (event.action == ShizukuTouchRecordingEvent.Action.UP) {
+            activeTouchRotation = null
             val shouldDiscard = pendingTouchSawControlSurface
             val completedLines = pendingTouchLines
             pendingTouchLines = null
@@ -664,6 +690,7 @@ class CoordinateRecordingController(
         pendingTouchLines = null
         pendingTouchSawControlSurface = false
         ignoredTouchActive = false
+        activeTouchRotation = null
         stopRequested = false
         sessionCleanup.reset()
         if (!keepJournalFile) journalFile = null
@@ -679,6 +706,7 @@ class CoordinateRecordingController(
         val sawControlSurface = pendingTouchSawControlSurface
         pendingTouchLines = null
         pendingTouchSawControlSurface = false
+        activeTouchRotation = null
         val retainedLines = if (sawControlSurface || !preservePartialTouch) {
             lines.filterIsInstance<RecordingJournalLine.ForegroundPackage>()
         } else {

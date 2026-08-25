@@ -17,3 +17,10 @@ fun currentRecordingViewport(context: Context): ViewportSpec? {
         recordedOrientation = active.orientation,
     )
 }
+
+/** Returns the physical display rotation used to interpret native touchscreen coordinates. */
+fun currentDisplayRotation(context: Context): Int? = runCatching {
+    val windowManager = context.getSystemService(android.view.WindowManager::class.java) ?: return null
+    @Suppress("DEPRECATION")
+    windowManager.defaultDisplay.rotation
+}.getOrNull()
