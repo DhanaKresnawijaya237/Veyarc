@@ -83,6 +83,26 @@ Implement the runner as a single-coroutine deterministic state machine with:
 - Viewport recalculation between steps.
 - Pause-and-fail behavior if orientation changes during an active gesture, preventing accidental duplicate execution.
 
+Replay safety controls are separate from the workflow engine and must be service-owned:
+
+- Provide an opt-in replay input guard (the user-facing "freeze input while replaying" mode). It
+  may consume touches in the declared target app's content area so human touches cannot conflict
+  with injected events, but it must not block system navigation, the emergency notification/Quick
+  Settings path, or the service-owned replay controller. This is a target-app guard, not an
+  assumed system-wide input filter.
+- Provide a movable floating replay controller while a replay is active. It exposes pause/resume
+  at safe gesture boundaries, cancellation, and a workflow picker. The controller never forwards
+  its own touches to the target app and remains available when the input guard is enabled.
+- Permit workflow switching only while paused or stopped, after any active touch has received
+  `CANCEL` and the target package, viewport, permissions, and capabilities have been rechecked.
+  Never switch workflows in the middle of a gesture.
+- Keep the persistent notification and Quick Settings emergency stop as independent fallback
+  controls. If the guard or controller cannot be created, is removed unexpectedly, or cannot be
+  cleaned up, cancel the replay, clear active touches, remove all controls, and leave the target
+  app in normal pass-through mode.
+- Keep the input guard opt-in and capability-gated until it is physically verified across the
+  supported OEM/device matrix; the default beta behavior remains normal pass-through.
+
 Define platform-neutral interfaces for:
 
 - Gesture dispatch
@@ -134,6 +154,8 @@ Build a single-activity Compose application with:
 - Permission/capability setup
 - Pre-run validation and maximum-runtime summary
 - Live run status, pause and emergency stop
+- Optional replay input-guard toggle
+- Service-owned movable floating replay controller with pause/resume, cancel, and safe workflow switching
 - Run history and diagnostics
 - AI assistant screen added later
 
@@ -166,6 +188,10 @@ Every workflow declares allowed packages. `LaunchApp` may switch only to a decla
    - Preserve raw events for post-recording exact replay; do not replay gestures while recording.
    - Implement path simplification, gesture classification, wait inference and foreground-package transition review data across app switches.
    - Always open the inferred workflow in review mode.
+   - Add the replay follow-up controls: an opt-in target-app input guard and a service-owned movable
+     replay controller. Keep controller actions outside the target trace, pause only at gesture
+     boundaries, switch workflows only while paused/stopped, and retain notification/Quick Settings
+     emergency stop as an independent fallback.
 
 5. **Pixel/image conditions**
    - Add MediaProjection session management, ephemeral frame capture, pixel matching and on-device template matching.
@@ -211,6 +237,12 @@ Every workflow declares allowed packages. `LaunchApp` may switch only to a decla
 - Home, Recents and system navigation remain usable before and after recording, and the helper cannot remain active after cancellation.
 - Rapid consecutive gestures remain ordered and complete in the raw journal.
 - Exact replay uses the preserved raw trace only after recording has stopped.
+- When the replay input guard is enabled, target-app touches are consumed without blocking system
+  navigation or the floating controller; replay pause/resume never splits a gesture.
+- The floating replay controller can be moved, remains touchable above the guard, and can switch
+  workflows only after a safe pause/stop and a fresh package/viewport/capability check.
+- Guard/controller teardown is idempotent after completion, cancellation, service disconnect,
+  timeout, process death, or permission loss; no input blocker remains installed.
 - Rotation between steps and during an active gesture.
 - Accessibility disabled mid-run.
 - Screen-capture consent denial and revocation.
@@ -218,6 +250,10 @@ Every workflow declares allowed packages. `LaunchApp` may switch only to a decla
 - Recording-control surfaces excluded from recording.
 - No video file or unintended screenshot survives a run.
 - Quick Settings/notification emergency stop prevents further capture, terminates the privileged helper, restores normal routing and removes recording controls on a best-effort basis within one second.
+- Replay input-guard tests verify that conflicting target-app touches are consumed while system
+  navigation, emergency controls, and the movable controller remain usable.
+- Replay controller tests verify pause/resume boundaries, safe workflow switching, controller
+  movement, cancellation, service loss, timeout, orientation changes, and cleanup on every exit path.
 
 ### End-to-end acceptance scenario
 
