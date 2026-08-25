@@ -6,11 +6,12 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import com.veyarc.automation.android.AndroidForegroundPackage
+import com.veyarc.automation.android.AndroidRecordingViewportSnapshot
 import com.veyarc.automation.android.ShizukuInputReplay
 import com.veyarc.automation.android.ShizukuInputReplaySnapshot
 import com.veyarc.automation.android.ShizukuMotionAction
 import com.veyarc.automation.android.ShizukuMotionFrame
-import com.veyarc.automation.android.currentRecordingViewport
+import com.veyarc.automation.android.currentRecordingViewportSnapshot
 import com.veyarc.model.PackageName
 import com.veyarc.recording.RecordingRawTrace
 import com.veyarc.recording.RecordingTouchAction
@@ -42,13 +43,57 @@ class CoordinateRawTraceReplayController(
 
     private var pendingTrace: RecordingRawTrace? = null
     private var pendingTargetPackage: PackageName? = null
-    private var pendingReplayFrames: List<ShizukuMotionFrame>? = null
+    private var pendingReplayTrace: RecordingRawTrace? = null
+    private var pendingReplayTargetPackage: PackageName? = null
+    private var pendingReplayViewport: AndroidRecordingViewportSnapshot? = null
     private var foregroundWaitDeadline = 0L
+    private var stableViewport: AndroidRecordingViewportSnapshot? = null
+    private var stableViewportSampleCount = 0
 
     private val dispatchReplayRunnable = Runnable {
         if (!requestStarted) return@Runnable
-        val frames = pendingReplayFrames ?: return@Runnable
-        pendingReplayFrames = null
+        val trace = pendingReplayTrace ?: return@Runnable
+        val targetPackage = pendingReplayTargetPackage ?: return@Runnable
+        val expectedViewport = pendingReplayViewport ?: return@Runnable
+        if (AndroidForegroundPackage.current() != targetPackage) {
+            pendingReplayTrace = null
+            pendingReplayTargetPackage = null
+            pendingReplayViewport = null
+            requestStarted = false
+            RawReplayForegroundService.stop(appContext)
+            refuse("The target app changed before replay dispatch. No input was sent.")
+            return@Runnable
+        }
+        val currentViewport = currentRecordingViewportSnapshot(appContext)
+        if (currentViewport == null || currentViewport != expectedViewport) {
+            pendingReplayTrace = null
+            pendingReplayTargetPackage = null
+            pendingReplayViewport = null
+            RawReplayForegroundService.stop(appContext)
+            retryAfterViewportChange(trace, targetPackage)
+            return@Runnable
+        }
+        val remappedFrames = runCatching { trace.remapTo(currentViewport.viewport) }.getOrElse { error ->
+            requestStarted = false
+            RawReplayForegroundService.stop(appContext)
+            refuse(error.message ?: "The recording cannot be safely mapped to the current display.")
+            return@Runnable
+        }
+        val frames = remappedFrames.map { frame ->
+            ShizukuMotionFrame(
+                action = when (frame.action) {
+                    RecordingTouchAction.DOWN -> ShizukuMotionAction.DOWN
+                    RecordingTouchAction.MOVE -> ShizukuMotionAction.MOVE
+                    RecordingTouchAction.UP -> ShizukuMotionAction.UP
+                },
+                x = frame.xPx.toFloat(),
+                y = frame.yPx.toFloat(),
+                delayMillis = frame.delayMillis,
+            )
+        }
+        pendingReplayTrace = null
+        pendingReplayTargetPackage = null
+        pendingReplayViewport = null
         runCatching { replay.dispatchRawMotionTrace(frames) }.onFailure { error ->
             requestStarted = false
             RawReplayForegroundService.stop(appContext)
@@ -60,25 +105,53 @@ class CoordinateRawTraceReplayController(
         override fun run() {
             if (!requestStarted) return
             val targetPackage = pendingTargetPackage ?: return
-            if (AndroidForegroundPackage.current() == targetPackage) {
-                val trace = pendingTrace
-                pendingTrace = null
-                pendingTargetPackage = null
-                if (trace != null) submitWhenForeground(trace, targetPackage)
-                return
-            }
             if (SystemClock.elapsedRealtime() >= foregroundWaitDeadline) {
                 pendingTrace = null
                 pendingTargetPackage = null
+                resetStableViewport()
                 requestStarted = false
                 refuse("$targetPackage did not become the foreground app in time. No input was sent.")
                 return
             }
-            _state.value = CoordinateRawTraceReplayState(
-                running = true,
-                message = "Waiting for $targetPackage to become foreground…",
-            )
-            mainHandler.postDelayed(this, FOREGROUND_POLL_INTERVAL_MILLIS)
+            if (AndroidForegroundPackage.current() != targetPackage) {
+                resetStableViewport()
+                _state.value = CoordinateRawTraceReplayState(
+                    running = true,
+                    message = "Waiting for $targetPackage to become foreground…",
+                )
+                mainHandler.postDelayed(this, FOREGROUND_POLL_INTERVAL_MILLIS)
+                return
+            }
+            val currentViewport = currentRecordingViewportSnapshot(appContext)
+            if (currentViewport == null) {
+                resetStableViewport()
+                _state.value = CoordinateRawTraceReplayState(
+                    running = true,
+                    message = "Waiting for the target display to settle…",
+                )
+                mainHandler.postDelayed(this, FOREGROUND_POLL_INTERVAL_MILLIS)
+                return
+            }
+            if (stableViewport == currentViewport) {
+                stableViewportSampleCount += 1
+            } else {
+                stableViewport = currentViewport
+                stableViewportSampleCount = 1
+            }
+            if (stableViewportSampleCount < REQUIRED_STABLE_VIEWPORT_SAMPLES) {
+                _state.value = CoordinateRawTraceReplayState(
+                    running = true,
+                    message = "Waiting for the target display to settle…",
+                )
+                mainHandler.postDelayed(this, FOREGROUND_POLL_INTERVAL_MILLIS)
+                return
+            }
+            val trace = pendingTrace
+            pendingTrace = null
+            pendingTargetPackage = null
+            resetStableViewport()
+            if (trace != null) submitWhenForeground(trace, targetPackage, currentViewport)
+            return
         }
     }
 
@@ -95,19 +168,24 @@ class CoordinateRawTraceReplayController(
             return
         }
         val currentPackage = AndroidForegroundPackage.current()
+        requestStarted = true
+        pendingTrace = trace
+        pendingTargetPackage = targetPackage
+        foregroundWaitDeadline = SystemClock.elapsedRealtime() + FOREGROUND_WAIT_TIMEOUT_MILLIS
+        resetStableViewport()
         if (currentPackage != targetPackage) {
             val launchIntent = appContext.packageManager.getLaunchIntentForPackage(targetPackage.value)
             if (launchIntent == null) {
+                pendingTrace = null
+                pendingTargetPackage = null
+                requestStarted = false
+                resetStableViewport()
                 refuse(
                     "Veyarc could not launch $targetPackage. Open it manually, then start replay " +
                         "from a future replay control.",
                 )
                 return
             }
-            requestStarted = true
-            pendingTrace = trace
-            pendingTargetPackage = targetPackage
-            foregroundWaitDeadline = SystemClock.elapsedRealtime() + FOREGROUND_WAIT_TIMEOUT_MILLIS
             _state.value = CoordinateRawTraceReplayState(
                 running = true,
                 message = "Opening $targetPackage before replay…",
@@ -120,6 +198,7 @@ class CoordinateRawTraceReplayController(
                 pendingTrace = null
                 pendingTargetPackage = null
                 requestStarted = false
+                resetStableViewport()
                 refuse(error.message ?: "The target app could not be opened. No input was sent.")
                 return
             }
@@ -127,19 +206,27 @@ class CoordinateRawTraceReplayController(
             mainHandler.post(foregroundWaitRunnable)
             return
         }
-        requestStarted = true
-        submitWhenForeground(trace, targetPackage)
+        _state.value = CoordinateRawTraceReplayState(
+            running = true,
+            message = "Waiting for the target display to settle…",
+        )
+        mainHandler.removeCallbacks(foregroundWaitRunnable)
+        mainHandler.post(foregroundWaitRunnable)
     }
 
-    private fun submitWhenForeground(trace: RecordingRawTrace, targetPackage: PackageName) {
+    private fun submitWhenForeground(
+        trace: RecordingRawTrace,
+        targetPackage: PackageName,
+        expectedViewport: AndroidRecordingViewportSnapshot,
+    ) {
         if (AndroidForegroundPackage.current() != targetPackage) {
             requestStarted = false
             refuse("The target app changed before replay started. No input was sent.")
             return
         }
-        val currentViewport = currentRecordingViewport(appContext) ?: run {
-            requestStarted = false
-            refuse("Raw replay requires a full-display viewport. Close split-screen or freeform windows.")
+        val currentViewport = currentRecordingViewportSnapshot(appContext)
+        if (currentViewport == null || currentViewport != expectedViewport) {
+            retryAfterViewportChange(trace, targetPackage)
             return
         }
         RawReplayForegroundService.notificationUnavailableReason(appContext)?.let { reason ->
@@ -147,31 +234,42 @@ class CoordinateRawTraceReplayController(
             refuse(reason)
             return
         }
-        val remappedFrames = runCatching { trace.remapTo(currentViewport) }.getOrElse { error ->
-            requestStarted = false
-            refuse(error.message ?: "The recording cannot be safely mapped to the current display.")
-            return
-        }
-        val replayFrames = remappedFrames.map { frame ->
-            ShizukuMotionFrame(
-                action = when (frame.action) {
-                    RecordingTouchAction.DOWN -> ShizukuMotionAction.DOWN
-                    RecordingTouchAction.MOVE -> ShizukuMotionAction.MOVE
-                    RecordingTouchAction.UP -> ShizukuMotionAction.UP
-                },
-                x = frame.xPx.toFloat(),
-                y = frame.yPx.toFloat(),
-                delayMillis = frame.delayMillis,
-            )
-        }
-        pendingReplayFrames = replayFrames
+        pendingReplayTrace = trace
+        pendingReplayTargetPackage = targetPackage
+        pendingReplayViewport = expectedViewport
         _state.value = CoordinateRawTraceReplayState(
             running = true,
-            message = "Starting the visible replay emergency control…",
+            message = "Starting replay after the target display settled…",
         )
         RawReplayForegroundService.start(appContext, targetPackage.value)
         mainHandler.removeCallbacks(dispatchReplayRunnable)
         mainHandler.postDelayed(dispatchReplayRunnable, REPLAY_SERVICE_START_DELAY_MILLIS)
+    }
+
+    private fun retryAfterViewportChange(trace: RecordingRawTrace, targetPackage: PackageName) {
+        if (!requestStarted) return
+        if (SystemClock.elapsedRealtime() >= foregroundWaitDeadline) {
+            pendingTrace = null
+            pendingTargetPackage = null
+            resetStableViewport()
+            requestStarted = false
+            refuse("The target display did not settle before replay timed out. No input was sent.")
+            return
+        }
+        pendingTrace = trace
+        pendingTargetPackage = targetPackage
+        resetStableViewport()
+        _state.value = CoordinateRawTraceReplayState(
+            running = true,
+            message = "Waiting for the target display to settle…",
+        )
+        mainHandler.removeCallbacks(foregroundWaitRunnable)
+        mainHandler.post(foregroundWaitRunnable)
+    }
+
+    private fun resetStableViewport() {
+        stableViewport = null
+        stableViewportSampleCount = 0
     }
 
     fun cancel(reason: String = "Raw replay cancelled. Any active touch was sent CANCEL best-effort.") {
@@ -181,7 +279,10 @@ class CoordinateRawTraceReplayController(
         mainHandler.removeCallbacks(dispatchReplayRunnable)
         pendingTrace = null
         pendingTargetPackage = null
-        pendingReplayFrames = null
+        pendingReplayTrace = null
+        pendingReplayTargetPackage = null
+        pendingReplayViewport = null
+        resetStableViewport()
         replay.cancel()
         RawReplayForegroundService.stop(appContext)
         _state.value = CoordinateRawTraceReplayState(
@@ -196,7 +297,10 @@ class CoordinateRawTraceReplayController(
         mainHandler.removeCallbacks(dispatchReplayRunnable)
         pendingTrace = null
         pendingTargetPackage = null
-        pendingReplayFrames = null
+        pendingReplayTrace = null
+        pendingReplayTargetPackage = null
+        pendingReplayViewport = null
+        resetStableViewport()
         CoordinateRawTraceReplayRuntime.unregister(this)
         RawReplayForegroundService.stop(appContext)
         replay.cancel()
@@ -261,5 +365,6 @@ class CoordinateRawTraceReplayController(
         const val FOREGROUND_WAIT_TIMEOUT_MILLIS = 5_000L
         const val FOREGROUND_POLL_INTERVAL_MILLIS = 250L
         const val REPLAY_SERVICE_START_DELAY_MILLIS = 250L
+        const val REQUIRED_STABLE_VIEWPORT_SAMPLES = 3
     }
 }

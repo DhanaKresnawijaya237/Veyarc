@@ -27,6 +27,8 @@ data class ShizukuInputReplaySnapshot(
     val lastError: String? = null,
     /** Null until the bound helper has completed its read-only capability probe. */
     val rawMotionTimelineSupported: Boolean? = null,
+    /** True when replay can inject the whole timeline without one shell process per frame. */
+    val directMotionTimelineSupported: Boolean? = null,
     val message: String = "Shizuku is not connected.",
 )
 
@@ -118,6 +120,7 @@ class ShizukuInputReplay(
                 serviceConnected = false,
                 running = false,
                 rawMotionTimelineSupported = null,
+                directMotionTimelineSupported = null,
                 message = "Shizuku stopped. Start it again, then refresh.",
             ),
         )
@@ -409,8 +412,15 @@ class ShizukuInputReplay(
                         rawMotionTimelineSupported = capabilities?.let {
                             it and CAPABILITY_RAW_MOTION_TRACE != 0
                         } ?: currentSnapshot.rawMotionTimelineSupported,
+                        directMotionTimelineSupported = capabilities?.let {
+                            it and CAPABILITY_DIRECT_MOTION_TRACE != 0
+                        } ?: currentSnapshot.directMotionTimelineSupported,
                         remoteProcessUid = runCatching { service.getProcessUid() }.getOrNull(),
-                        message = "Replay running through the Shizuku shell-identity helper.",
+                        message = if (capabilities?.and(CAPABILITY_DIRECT_MOTION_TRACE) != 0) {
+                            "Replay running through direct InputManager injection."
+                        } else {
+                            "Replay running through the shell-identity fallback."
+                        },
                     ),
                 )
                 startPolling()
@@ -450,8 +460,13 @@ class ShizukuInputReplay(
                     lastCommand = service.getLastCommand(),
                     lastError = lastError,
                     message = when {
-                        running -> "Replay running through the Shizuku shell-identity helper."
+                        running && currentSnapshot.directMotionTimelineSupported == true ->
+                            "Replay running through direct InputManager injection."
+
+                        running -> "Replay running through the shell-identity fallback."
+
                         lastError != null -> "Replay failed: $lastError"
+
                         else -> "Replay completed: $completedCount command(s)."
                     },
                 ),
@@ -504,6 +519,7 @@ class ShizukuInputReplay(
         const val PERMISSION_REQUEST_CODE = 20_427
         const val DEFAULT_SWIPE_DURATION_MILLIS = 700L
         const val CAPABILITY_RAW_MOTION_TRACE = 1
+        const val CAPABILITY_DIRECT_MOTION_TRACE = 2
         const val MAX_MOTION_FRAME_COUNT = 16_384
         const val MAX_MOTION_DELAY_MILLIS = 300_000L
         const val MAX_COORDINATE = 30_000f

@@ -1,18 +1,22 @@
 package com.veyarc.automation.android
 
+import android.os.SystemClock
+import android.view.MotionEvent
 import java.util.ArrayDeque
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
+import kotlin.math.max
 
 /**
  * A deliberately narrow Shizuku UserService for approved input replay.
  *
  * The service accepts only validated tap/swipe commands or a bounded single-pointer motion trace
- * and invokes Android's fixed `input` command through ProcessBuilder. It never accepts an
+ * and injects it through the Shizuku shell identity. It prefers Android's input manager and falls
+ * back to the fixed `input` command when the OEM hides the direct API. It never accepts an
  * arbitrary shell string, writes to an input device, calls sendevent/uinput, or executes a
- * workflow. A capability probe must report support for `motionevent` before a raw trace is queued.
+ * workflow. A capability probe must report support for a bounded motion trace before one is queued.
  */
 class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
     private sealed interface ReplayCommand {
@@ -87,6 +91,20 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
     private val stateLock = Any()
     private val running = AtomicBoolean(false)
     private val completedCount = AtomicInteger(0)
+    private val directMotionLock = Any()
+
+    @Volatile
+    private var directMotionInjector: DirectMotionEventInjector? = null
+
+    @Volatile
+    private var directMotionInjectionFailed = false
+
+    private var directTouchActive = false
+    private var directDownTimeMillis = 0L
+    private var directNextEventDeadlineMillis = 0L
+
+    private var shellTouchActive = false
+    private var shellNextEventDeadlineMillis = 0L
 
     @Volatile
     private var cancelRequested = false
@@ -123,7 +141,14 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
 
     override fun getCapabilities(): Int = synchronized(stateLock) {
         capabilities ?: run {
-            val value = if (supportsMotionEvents()) CAPABILITY_RAW_MOTION_TRACE else 0
+            val direct = DirectMotionEventInjector.createOrNull()
+            directMotionInjector = direct
+            val shellSupported = supportsMotionEvents()
+            val value = when {
+                direct != null -> CAPABILITY_RAW_MOTION_TRACE or CAPABILITY_DIRECT_MOTION_TRACE
+                shellSupported -> CAPABILITY_RAW_MOTION_TRACE
+                else -> 0
+            }
             capabilities = value
             value
         }
@@ -137,6 +162,8 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
             lastCommand = null
             lastError = null
         }
+        resetReplayTiming()
+        directMotionInjectionFailed = false
     }
 
     override fun enqueueTap(x: Float, y: Float) {
@@ -242,6 +269,8 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
             check(queue.isNotEmpty()) { "Replay queue is empty" }
             cancelRequested = false
             lastError = null
+            resetReplayTiming()
+            directMotionInjectionFailed = false
             running.set(true)
             workerThread = thread(
                 start = true,
@@ -258,7 +287,30 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
         currentProcess?.destroy()
         workerThread?.interrupt()
         synchronized(stateLock) { queue.clear() }
-        if (command != null) {
+        val directCancel = synchronized(directMotionLock) {
+            if (!directTouchActive) {
+                null
+            } else {
+                DirectCancel(
+                    x = command?.cancelX ?: 0f,
+                    y = command?.cancelY ?: 0f,
+                    downTimeMillis = directDownTimeMillis,
+                    eventTimeMillis = max(directNextEventDeadlineMillis, SystemClock.uptimeMillis()),
+                )
+            }
+        }
+        if (directCancel != null && directMotionInjector != null && !directMotionInjectionFailed) {
+            runCatching {
+                directMotionInjector?.inject(
+                    action = MotionEvent.ACTION_CANCEL,
+                    x = directCancel.x,
+                    y = directCancel.y,
+                    downTimeMillis = directCancel.downTimeMillis,
+                    eventTimeMillis = directCancel.eventTimeMillis,
+                    displayId = DISPLAY_ID.toInt(),
+                )
+            }.onFailure { sendCancel(directCancel.x, directCancel.y) }
+        } else if (command != null) {
             // Best effort: if a swipe was interrupted between DOWN and UP, explicitly send a
             // CANCEL through the same shell input path. This never writes to the touchscreen node.
             sendCancel(command.cancelX, command.cancelY)
@@ -293,6 +345,8 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
                 lastError = error.message ?: error.javaClass.simpleName
             }
         } finally {
+            cancelDirectTouchIfNeeded()
+            resetReplayTiming()
             running.set(false)
             currentCommand = null
             currentProcess = null
@@ -302,14 +356,91 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
     }
 
     private fun execute(command: ReplayCommand) {
-        if (command.delayBeforeMillis > 0L) {
-            try {
-                Thread.sleep(command.delayBeforeMillis)
-            } catch (interrupted: InterruptedException) {
-                Thread.currentThread().interrupt()
-                return
+        if (command is ReplayCommand.MotionFrame) {
+            if (directMotionInjector != null && !directMotionInjectionFailed) {
+                executeDirectMotionFrame(command)
+            } else {
+                executeShellMotionFrame(command)
             }
-            if (cancelRequested) return
+            return
+        }
+        executeShellCommand(command)
+    }
+
+    /** Uses absolute deadlines so process startup time does not accumulate across fallback frames. */
+    private fun executeShellMotionFrame(command: ReplayCommand.MotionFrame) {
+        val deadline = synchronized(directMotionLock) {
+            if (command.action == MOTION_DOWN) {
+                shellTouchActive = true
+                shellNextEventDeadlineMillis = SystemClock.uptimeMillis() + command.delayBeforeMillis
+            } else {
+                shellNextEventDeadlineMillis += command.delayBeforeMillis
+            }
+            shellNextEventDeadlineMillis
+        }
+        if (!waitUntil(deadline)) return
+        executeShellCommand(command, includeDelay = false)
+        synchronized(directMotionLock) {
+            if (command.action == MOTION_UP) {
+                shellTouchActive = false
+            } else {
+                shellNextEventDeadlineMillis = max(shellNextEventDeadlineMillis, SystemClock.uptimeMillis())
+            }
+        }
+    }
+
+    /**
+     * Injects directly through InputManagerGlobal/InputManager when the Shizuku shell exposes it.
+     * Event times use one monotonic absolute timeline for the complete touch, avoiding one
+     * process launch and one fresh `now` timestamp per frame.
+     */
+    private fun executeDirectMotionFrame(command: ReplayCommand.MotionFrame) {
+        val injector = directMotionInjector ?: return executeShellMotionFrame(command)
+        val deadline = synchronized(directMotionLock) {
+            if (command.action == MOTION_DOWN) {
+                directDownTimeMillis = SystemClock.uptimeMillis() + command.delayBeforeMillis
+                directNextEventDeadlineMillis = directDownTimeMillis
+                directTouchActive = true
+            } else {
+                directNextEventDeadlineMillis += command.delayBeforeMillis
+            }
+            directNextEventDeadlineMillis
+        }
+        if (!waitUntil(deadline)) return
+        val eventTimeMillis = SystemClock.uptimeMillis()
+        val downTimeMillis = synchronized(directMotionLock) { directDownTimeMillis }
+        try {
+            injector.inject(
+                action = when (command.action) {
+                    MOTION_DOWN -> MotionEvent.ACTION_DOWN
+                    MOTION_MOVE -> MotionEvent.ACTION_MOVE
+                    MOTION_UP -> MotionEvent.ACTION_UP
+                    else -> error("Motion action must be DOWN, MOVE, or UP")
+                },
+                x = command.x,
+                y = command.y,
+                downTimeMillis = downTimeMillis,
+                eventTimeMillis = eventTimeMillis,
+                displayId = DISPLAY_ID.toInt(),
+            )
+        } catch (error: Throwable) {
+            directMotionInjectionFailed = true
+            throw error
+        }
+        synchronized(directMotionLock) {
+            if (command.action == MOTION_UP) {
+                directTouchActive = false
+            } else {
+                directNextEventDeadlineMillis = max(directNextEventDeadlineMillis, eventTimeMillis)
+            }
+        }
+    }
+
+    private fun executeShellCommand(command: ReplayCommand, includeDelay: Boolean = true) {
+        if (includeDelay && command.delayBeforeMillis > 0L &&
+            !waitUntil(SystemClock.uptimeMillis() + command.delayBeforeMillis)
+        ) {
+            return
         }
         val process = ProcessBuilder(command.arguments())
             .redirectErrorStream(true)
@@ -338,6 +469,60 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
             }
         } finally {
             currentProcess = null
+        }
+    }
+
+    private fun waitUntil(deadlineMillis: Long): Boolean {
+        while (!cancelRequested) {
+            val remainingMillis = deadlineMillis - SystemClock.uptimeMillis()
+            if (remainingMillis <= 0L) return true
+            try {
+                Thread.sleep(minOf(remainingMillis, SCHEDULER_SLEEP_MILLIS))
+            } catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return false
+            }
+        }
+        return false
+    }
+
+    private fun cancelDirectTouchIfNeeded() {
+        val cancel = synchronized(directMotionLock) {
+            if (!directTouchActive) return
+            DirectCancel(
+                x = currentCommand?.cancelX ?: 0f,
+                y = currentCommand?.cancelY ?: 0f,
+                downTimeMillis = directDownTimeMillis,
+                eventTimeMillis = max(directNextEventDeadlineMillis, SystemClock.uptimeMillis()),
+            )
+        }
+        synchronized(directMotionLock) { directTouchActive = false }
+        if (directMotionInjector != null && !directMotionInjectionFailed) {
+            runCatching {
+                directMotionInjector?.inject(
+                    action = MotionEvent.ACTION_CANCEL,
+                    x = cancel.x,
+                    y = cancel.y,
+                    downTimeMillis = cancel.downTimeMillis,
+                    eventTimeMillis = cancel.eventTimeMillis,
+                    displayId = DISPLAY_ID.toInt(),
+                )
+            }.onFailure { sendCancel(cancel.x, cancel.y) }
+        } else {
+            // If direct injection failed after DOWN, still clear the target's active touch
+            // through the validated shell path. Leaving the stream open can make the target
+            // appear frozen until Android times out the pointer.
+            sendCancel(cancel.x, cancel.y)
+        }
+    }
+
+    private fun resetReplayTiming() {
+        synchronized(directMotionLock) {
+            directTouchActive = false
+            directDownTimeMillis = 0L
+            directNextEventDeadlineMillis = 0L
+            shellTouchActive = false
+            shellNextEventDeadlineMillis = 0L
         }
     }
 
@@ -380,12 +565,20 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
     }
 
     private companion object {
+        data class DirectCancel(
+            val x: Float,
+            val y: Float,
+            val downTimeMillis: Long,
+            val eventTimeMillis: Long,
+        )
+
         const val INPUT_BINARY = "/system/bin/input"
         const val DISPLAY_ID = "0"
         const val MAX_QUEUE_SIZE = 16
         const val MAX_MOTION_FRAME_COUNT = 16_384
         const val MAX_MOTION_DELAY_MILLIS = 300_000L
         const val CAPABILITY_RAW_MOTION_TRACE = 1
+        const val CAPABILITY_DIRECT_MOTION_TRACE = 2
         const val MOTION_DOWN = 0
         const val MOTION_MOVE = 1
         const val MOTION_UP = 2
@@ -397,6 +590,7 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
         const val PROCESS_STOP_TIMEOUT_MILLIS = 250L
         const val CANCEL_TIMEOUT_MILLIS = 500L
         const val PROCESS_POLL_INTERVAL_MILLIS = 10L
+        const val SCHEDULER_SLEEP_MILLIS = 2L
         const val MAX_ERROR_LENGTH = 240
 
         fun inputArguments(command: String, vararg args: String): List<String> = buildList {

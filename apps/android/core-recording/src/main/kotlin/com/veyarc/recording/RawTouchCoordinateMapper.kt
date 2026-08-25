@@ -39,9 +39,16 @@ object RawTouchCoordinateMapper {
         val nativeY = ((rawY.coerceIn(minY, maxY) - minY).toDouble() / (maxY - minY).toDouble())
         return when (rotation) {
             TouchDisplayRotation.ROTATION_0 -> NormalizedCoordinate(nativeX, nativeY)
-            TouchDisplayRotation.ROTATION_90 -> NormalizedCoordinate(1.0 - nativeY, nativeX)
+
+            // Android's ROTATION_90 is the graphics rotation used to compensate for a
+            // counter-clockwise physical turn. InputReader therefore maps the native portrait
+            // axes to the logical display as (y, 1 - x).
+            TouchDisplayRotation.ROTATION_90 -> NormalizedCoordinate(nativeY, 1.0 - nativeX)
+
             TouchDisplayRotation.ROTATION_180 -> NormalizedCoordinate(1.0 - nativeX, 1.0 - nativeY)
-            TouchDisplayRotation.ROTATION_270 -> NormalizedCoordinate(nativeY, 1.0 - nativeX)
+
+            // ROTATION_270 is the inverse logical transform, (1 - y, x).
+            TouchDisplayRotation.ROTATION_270 -> NormalizedCoordinate(1.0 - nativeY, nativeX)
         }
     }
 }

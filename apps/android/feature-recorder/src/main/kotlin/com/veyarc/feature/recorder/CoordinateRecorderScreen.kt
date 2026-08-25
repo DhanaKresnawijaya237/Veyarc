@@ -146,6 +146,7 @@ fun CoordinateRecorderScreen(
                         Text("Replay raw trace")
                     }
                     if (rawReplayState.running) {
+                        Text(rawReplayState.message)
                         OutlinedButton(onClick = rawReplayController::cancel) { Text("Cancel replay") }
                     }
                     rawReplayState.error?.let { error ->
