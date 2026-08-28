@@ -87,6 +87,12 @@ class EphemeralScreenFrame internal constructor(
         )
     }
 
+    /** Runs a bounded in-memory inspection without exposing the frame buffer to callers. */
+    internal fun <T> withRgbaBytes(block: (ByteArray) -> T): T {
+        check(!closed) { "The ephemeral frame has already been released" }
+        return block(rgbaBytes)
+    }
+
     override fun close() {
         if (closed) return
         rgbaBytes.fill(0)
