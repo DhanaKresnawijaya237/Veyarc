@@ -2,7 +2,6 @@ package com.veyarc.feature.recorder
 
 import android.content.ComponentName
 import android.content.Context
-import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 
@@ -41,12 +40,10 @@ class RecordingQuickSettingsTileService : TileService() {
 
     companion object {
         fun requestRefresh(context: Context) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                TileService.requestListeningState(
-                    context,
-                    ComponentName(context, RecordingQuickSettingsTileService::class.java),
-                )
-            }
+            TileService.requestListeningState(
+                context,
+                ComponentName(context, RecordingQuickSettingsTileService::class.java),
+            )
         }
     }
 }

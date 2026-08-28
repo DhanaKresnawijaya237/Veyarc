@@ -2,7 +2,7 @@ package com.veyarc.feature.recorder
 
 import android.content.Context
 
-/** Process-owned access point for the future service-owned recording session. */
+/** Process-owned access point for the active service-owned recording session. */
 object CoordinateRecordingRuntime {
     @Volatile
     private var sharedController: CoordinateRecordingController? = null

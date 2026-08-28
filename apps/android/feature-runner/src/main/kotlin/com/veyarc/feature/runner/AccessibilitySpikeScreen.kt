@@ -233,24 +233,6 @@ fun AccessibilitySpikeScreen(
             style = MaterialTheme.typography.bodyMedium,
         )
         Text("Observed gestures: $observedGestureCount")
-        Text(
-            text = stringResource(R.string.touch_capture_title),
-            style = MaterialTheme.typography.titleMedium,
-        )
-        Text(
-            text = stringResource(R.string.touch_capture_explanation),
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        Button(
-            enabled = false,
-            onClick = {},
-        ) {
-            Text(stringResource(R.string.touch_capture_disabled_action))
-        }
-        Text(
-            text = stringResource(R.string.touch_capture_disabled),
-            color = MaterialTheme.colorScheme.error,
-        )
         ShizukuProbeContent(
             snapshot = shizukuSnapshot,
             onRefresh = shizukuProbe::refresh,

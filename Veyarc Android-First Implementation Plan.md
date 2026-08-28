@@ -121,8 +121,8 @@ Define platform-neutral interfaces for:
 - Touch-event input source
 
 The Android adapter implements them using `AccessibilityService`, its gesture dispatcher,
-application launch intents and MediaProjection. The legacy touch-interception experiment remains
-isolated from production replay; Android framework classes must not escape into the core engine.
+application launch intents and MediaProjection. The rejected touch-interception prototype has been
+removed; Android framework classes must not escape into the core engine.
 
 ### Coordinate-only recording
 
@@ -299,8 +299,9 @@ The resulting draft must reproduce the actions, allow insertion of a bounded loo
 The privileged input-source feasibility gate is now passed on the scoped vivo V50 without altering
 ordinary one-finger touch behavior. The vivo V50 touch-exploration spike remains disabled because it
 failed that gate. The production trace records foreground transitions across multiple third-party
-apps and stops only through the explicit service-owned control or a safety failure. Converting that
-trace into an editable workflow and replaying it exactly remain follow-up work.
+apps and stops only through the explicit service-owned control or a safety failure. A completed
+trace is converted into an editable workflow with a launch-app step and can be replayed through the
+bounded Shizuku helper; multi-touch and pressure/contact-area fidelity remain follow-up work.
 
 ## Locked Assumptions
 

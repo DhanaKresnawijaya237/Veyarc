@@ -23,24 +23,7 @@
     <string name="settings_unavailable">Accessibility settings are unavailable on this device.</string>
     <string name="tap_received">Tap input received by the test surface.</string>
     <string name="long_press_received">Long-press input received by the test surface.</string>
-    <string name="touch_capture_title">Android 13+ interception diagnostic (legacy)</string>
-    <string name="touch_capture_explanation">This legacy one-gesture diagnostic is disabled. It used a global accessibility touch-interception mode that is not safe for production devices; third-party coordinate recording uses the privileged read-only source instead.</string>
-    <string name="arm_touch_capture">Arm next gesture</string>
-    <string name="touch_capture_disabled_action">Disabled for device safety</string>
-    <string name="touch_capture_disabled">The legacy touch-interception diagnostic is disabled for device safety.</string>
-    <string name="touch_capture_unsupported">Touch interception requires Android 13 or newer.</string>
-    <string name="touch_capture_already_armed">A one-gesture capture is already armed.</string>
-    <string name="touch_capture_arming">Preparing capture…</string>
-    <string name="touch_capture_armed">Armed. Perform one single-finger gesture on the test surface.</string>
-    <string name="touch_capture_capturing">Capturing the current gesture…</string>
-    <string name="touch_capture_cancelled">Android cancelled the captured gesture.</string>
-    <string name="touch_capture_completed">Captured and replayed %1$d samples over %2$d ms.</string>
-    <string name="touch_capture_failed">Capture failed: %1$s</string>
     <string name="start_coordinate_recording">Global coordinate recording unavailable</string>
-    <plurals name="touch_capture_replaying">
-        <item quantity="one">Captured %1$d sample. Replaying it now…</item>
-        <item quantity="other">Captured %1$d samples. Replaying them now…</item>
-    </plurals>
     <plurals name="path_received">
         <item quantity="one">Path input received with %1$d sampled point.</item>
         <item quantity="other">Path input received with %1$d sampled points.</item>
