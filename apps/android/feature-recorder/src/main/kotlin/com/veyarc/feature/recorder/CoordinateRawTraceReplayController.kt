@@ -51,6 +51,7 @@ class CoordinateRawTraceReplayController(
     private var pendingReplayTargetPackage: PackageName? = null
     private var pendingReplayViewport: AndroidRecordingViewportSnapshot? = null
     private var foregroundWaitDeadline = 0L
+    private var emergencyControlDeadline = 0L
     private var stableViewport: AndroidRecordingViewportSnapshot? = null
     private var stableViewportSampleCount = 0
     private var activeTargetPackage: PackageName? = null
@@ -73,63 +74,80 @@ class CoordinateRawTraceReplayController(
         }
     }
 
-    private val dispatchReplayRunnable = Runnable {
-        if (!requestStarted) return@Runnable
-        val trace = pendingReplayTrace ?: return@Runnable
-        val targetPackage = pendingReplayTargetPackage ?: return@Runnable
-        val expectedViewport = pendingReplayViewport ?: return@Runnable
-        if (AndroidForegroundPackage.current() != targetPackage) {
+    private val dispatchReplayRunnable = object : Runnable {
+        override fun run() {
+            if (!requestStarted) return
+            val trace = pendingReplayTrace ?: return
+            val targetPackage = pendingReplayTargetPackage ?: return
+            val expectedViewport = pendingReplayViewport ?: return
+            if (!RawReplayForegroundService.isReady(targetPackage.value)) {
+                if (SystemClock.elapsedRealtime() >= emergencyControlDeadline) {
+                    pendingReplayTrace = null
+                    pendingReplayTargetPackage = null
+                    pendingReplayViewport = null
+                    requestStarted = false
+                    stopReplaySurfaces()
+                    refuse(
+                        "Replay emergency control did not become ready in time. No input was sent.",
+                    )
+                } else {
+                    mainHandler.postDelayed(this, REPLAY_SERVICE_READY_POLL_MILLIS)
+                }
+                return
+            }
+            if (AndroidForegroundPackage.current() != targetPackage) {
+                pendingReplayTrace = null
+                pendingReplayTargetPackage = null
+                pendingReplayViewport = null
+                requestStarted = false
+                stopReplaySurfaces()
+                refuse("The target app changed before replay dispatch. No input was sent.")
+                return
+            }
+            val currentViewport = currentRecordingViewportSnapshot(appContext)
+            if (currentViewport == null || currentViewport != expectedViewport) {
+                pendingReplayTrace = null
+                pendingReplayTargetPackage = null
+                pendingReplayViewport = null
+                stopReplaySurfaces()
+                retryAfterViewportChange(trace, targetPackage)
+                return
+            }
+            val remappedFrames = runCatching { trace.remapTo(currentViewport.viewport) }.getOrElse { error ->
+                requestStarted = false
+                stopReplaySurfaces()
+                refuse(error.message ?: "The recording cannot be safely mapped to the current display.")
+                return
+            }
+            val frames = remappedFrames.map { frame ->
+                ShizukuMotionFrame(
+                    action = when (frame.action) {
+                        RecordingTouchAction.DOWN -> ShizukuMotionAction.DOWN
+                        RecordingTouchAction.MOVE -> ShizukuMotionAction.MOVE
+                        RecordingTouchAction.UP -> ShizukuMotionAction.UP
+                    },
+                    x = frame.xPx.toFloat(),
+                    y = frame.yPx.toFloat(),
+                    delayMillis = frame.delayMillis,
+                )
+            }
+            if (frames.any { ReplayFloatingController.isScreenPointOnSurface(it.x, it.y) }) {
+                requestStarted = false
+                stopReplaySurfaces()
+                refuse(
+                    "Replay was refused because the recorded path intersects the Veyarc edge-latch " +
+                        "control surface. Move the latch or edit the trace before retrying.",
+                )
+                return
+            }
             pendingReplayTrace = null
             pendingReplayTargetPackage = null
             pendingReplayViewport = null
-            requestStarted = false
-            stopReplaySurfaces()
-            refuse("The target app changed before replay dispatch. No input was sent.")
-            return@Runnable
-        }
-        val currentViewport = currentRecordingViewportSnapshot(appContext)
-        if (currentViewport == null || currentViewport != expectedViewport) {
-            pendingReplayTrace = null
-            pendingReplayTargetPackage = null
-            pendingReplayViewport = null
-            stopReplaySurfaces()
-            retryAfterViewportChange(trace, targetPackage)
-            return@Runnable
-        }
-        val remappedFrames = runCatching { trace.remapTo(currentViewport.viewport) }.getOrElse { error ->
-            requestStarted = false
-            stopReplaySurfaces()
-            refuse(error.message ?: "The recording cannot be safely mapped to the current display.")
-            return@Runnable
-        }
-        val frames = remappedFrames.map { frame ->
-            ShizukuMotionFrame(
-                action = when (frame.action) {
-                    RecordingTouchAction.DOWN -> ShizukuMotionAction.DOWN
-                    RecordingTouchAction.MOVE -> ShizukuMotionAction.MOVE
-                    RecordingTouchAction.UP -> ShizukuMotionAction.UP
-                },
-                x = frame.xPx.toFloat(),
-                y = frame.yPx.toFloat(),
-                delayMillis = frame.delayMillis,
-            )
-        }
-        if (frames.any { ReplayFloatingController.isScreenPointOnSurface(it.x, it.y) }) {
-            requestStarted = false
-            stopReplaySurfaces()
-            refuse(
-                "Replay was refused because the recorded path intersects the Veyarc edge-latch " +
-                    "control surface. Move the latch or edit the trace before retrying.",
-            )
-            return@Runnable
-        }
-        pendingReplayTrace = null
-        pendingReplayTargetPackage = null
-        pendingReplayViewport = null
-        runCatching { replay.dispatchRawMotionTrace(frames, null) }.onFailure { error ->
-            requestStarted = false
-            stopReplaySurfaces()
-            refuse(error.message ?: "The raw replay request was rejected.")
+            runCatching { replay.dispatchRawMotionTrace(frames, null) }.onFailure { error ->
+                requestStarted = false
+                stopReplaySurfaces()
+                refuse(error.message ?: "The raw replay request was rejected.")
+            }
         }
     }
 
@@ -236,7 +254,7 @@ class CoordinateRawTraceReplayController(
                 resetStableViewport()
                 refuse(
                     "Veyarc could not launch $targetPackage. Open it manually, then start replay " +
-                        "from a future replay control.",
+                        "again from the edge-latch control center.",
                 )
                 return
             }
@@ -317,10 +335,11 @@ class CoordinateRawTraceReplayController(
             message = "Replay is starting. Use the emergency notification if you need to stop it.",
         )
         RawReplayForegroundService.start(appContext, targetPackage.value)
+        emergencyControlDeadline = SystemClock.elapsedRealtime() + REPLAY_SERVICE_READY_TIMEOUT_MILLIS
         mainHandler.removeCallbacks(dispatchReplayRunnable)
         mainHandler.removeCallbacks(replaySafetyRunnable)
         mainHandler.post(replaySafetyRunnable)
-        mainHandler.postDelayed(dispatchReplayRunnable, REPLAY_SERVICE_START_DELAY_MILLIS)
+        mainHandler.post(dispatchReplayRunnable)
     }
 
     private fun retryAfterViewportChange(trace: RecordingRawTrace, targetPackage: PackageName) {
@@ -485,7 +504,8 @@ class CoordinateRawTraceReplayController(
         const val FOREGROUND_WAIT_TIMEOUT_MILLIS = 5_000L
         const val FOREGROUND_POLL_INTERVAL_MILLIS = 250L
         const val REPLAY_SAFETY_POLL_INTERVAL_MILLIS = 250L
-        const val REPLAY_SERVICE_START_DELAY_MILLIS = 250L
+        const val REPLAY_SERVICE_READY_POLL_MILLIS = 50L
+        const val REPLAY_SERVICE_READY_TIMEOUT_MILLIS = 2_000L
         const val REQUIRED_STABLE_VIEWPORT_SAMPLES = 3
     }
 }

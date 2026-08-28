@@ -17,6 +17,7 @@ object AccessibilityEmergencyOverlay {
     private var service: AccessibilityService? = null
     private var overlayView: View? = null
     private var overlayWindowManager: WindowManager? = null
+    private var overlayLayoutParams: WindowManager.LayoutParams? = null
 
     internal fun attach(accessibilityService: AccessibilityService) {
         service = accessibilityService
@@ -34,7 +35,10 @@ object AccessibilityEmergencyOverlay {
         val activeService = service ?: return false
         mainHandler.post {
             if (service !== activeService) return@post
-            removeOverlay()
+            if (!removeOverlay()) {
+                makeOverlayPassThroughAndRetry()
+                return@post
+            }
             val button = Button(activeService).apply {
                 text = "STOP"
                 contentDescription = "Stop Veyarc workflow"
@@ -59,19 +63,66 @@ object AccessibilityEmergencyOverlay {
                 windowManager.addView(button, layoutParams)
                 overlayView = button
                 overlayWindowManager = windowManager
+                overlayLayoutParams = layoutParams
             }
         }
         return true
     }
 
     fun hide() {
-        mainHandler.post { removeOverlay() }
+        mainHandler.post {
+            if (!removeOverlay()) makeOverlayPassThroughAndRetry()
+        }
     }
 
-    private fun removeOverlay() {
-        val view = overlayView ?: return
-        runCatching { overlayWindowManager?.removeView(view) }
+    private fun removeOverlay(): Boolean {
+        val view = overlayView ?: run {
+            overlayWindowManager = null
+            overlayLayoutParams = null
+            return true
+        }
+        val manager = overlayWindowManager
+        val removed = if (manager == null) {
+            view.parent == null
+        } else {
+            runCatching {
+                manager.removeViewImmediate(view)
+                true
+            }.getOrElse { view.parent == null }
+        }
+        if (!removed) return false
         overlayView = null
         overlayWindowManager = null
+        overlayLayoutParams = null
+        return true
     }
+
+    /** A failed WindowManager removal must never leave an interactive orphaned stop button. */
+    private fun makeOverlayPassThroughAndRetry() {
+        val view = overlayView ?: return
+        val manager = overlayWindowManager
+        val params = overlayLayoutParams
+        if (manager != null && params != null) {
+            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            runCatching { manager.updateViewLayout(view, params) }
+        }
+        view.visibility = View.INVISIBLE
+        view.isEnabled = false
+        view.isClickable = false
+        view.isFocusable = false
+        view.setOnClickListener(null)
+        mainHandler.postDelayed({ retryRemoval(view, MAX_REMOVAL_RETRIES) }, REMOVAL_RETRY_DELAY_MILLIS)
+    }
+
+    private fun retryRemoval(view: View, attemptsRemaining: Int) {
+        if (overlayView !== view || attemptsRemaining <= 0) return
+        if (removeOverlay()) return
+        mainHandler.postDelayed(
+            { retryRemoval(view, attemptsRemaining - 1) },
+            REMOVAL_RETRY_DELAY_MILLIS,
+        )
+    }
+
+    private const val REMOVAL_RETRY_DELAY_MILLIS = 50L
+    private const val MAX_REMOVAL_RETRIES = 6
 }

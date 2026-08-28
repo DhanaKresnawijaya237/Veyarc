@@ -116,6 +116,9 @@ class RecordingForegroundService : Service() {
             RecordingQuickSettingsTileService.requestRefresh(context)
         }
 
+        /** True only after Android has accepted the foreground notification. */
+        fun isReady(): Boolean = serviceRunning.get()
+
         fun update(context: Context, text: String) {
             createChannel(context)
             context.getSystemService(NotificationManager::class.java)

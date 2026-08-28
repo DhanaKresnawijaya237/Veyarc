@@ -256,7 +256,7 @@ class ShizukuTouchProbe(
 
     private fun startPolling() {
         stopPolling()
-        pollTask = executor.scheduleAtFixedRate(::pollRemoteService, 0L, 250L, TimeUnit.MILLISECONDS)
+        pollTask = executor.scheduleWithFixedDelay(::pollRemoteService, 0L, 250L, TimeUnit.MILLISECONDS)
     }
 
     private fun stopPolling() {

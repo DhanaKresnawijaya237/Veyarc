@@ -1,6 +1,7 @@
 package com.veyarc.automation.android
 
 import android.accessibilityservice.AccessibilityService
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -14,6 +15,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageButton
@@ -23,6 +25,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -34,12 +37,10 @@ data class ReplayControllerWorkflow(
     val name: String,
 )
 
-/** Physical edge values kept for preference migration; active placement is left/right only. */
+/** The usable latch edges. Top and bottom are excluded because system gestures obstruct them. */
 enum class EdgeLatchSide {
     LEFT,
     RIGHT,
-    TOP,
-    BOTTOM,
 }
 
 /**
@@ -47,37 +48,17 @@ enum class EdgeLatchSide {
  * The latch is centered on the release point, then clamped so its full length stays on-screen.
  */
 internal fun edgeLatchOffsetForRelease(
-    side: EdgeLatchSide,
-    rawX: Float,
     rawY: Float,
-    displayWidthPx: Int,
     displayHeightPx: Int,
     latchLengthPx: Int,
     fallback: Float,
 ): Float {
-    val displayLength = when (side) {
-        EdgeLatchSide.LEFT,
-        EdgeLatchSide.RIGHT,
-        -> displayHeightPx
-
-        EdgeLatchSide.TOP,
-        EdgeLatchSide.BOTTOM,
-        -> displayWidthPx
-    }
+    val displayLength = displayHeightPx
     val usableLength = (displayLength - latchLengthPx).coerceAtLeast(0)
     if (displayLength <= 0 || latchLengthPx <= 0 || usableLength == 0) {
         return fallback.coerceIn(0f, 1f)
     }
-    val along = when (side) {
-        EdgeLatchSide.LEFT,
-        EdgeLatchSide.RIGHT,
-        -> rawY
-
-        EdgeLatchSide.TOP,
-        EdgeLatchSide.BOTTOM,
-        -> rawX
-    }
-    val startPx = (along - latchLengthPx / 2f).coerceIn(0f, usableLength.toFloat())
+    val startPx = (rawY - latchLengthPx / 2f).coerceIn(0f, usableLength.toFloat())
     return (startPx / usableLength.toFloat()).coerceIn(0f, 1f)
 }
 
@@ -87,10 +68,6 @@ internal fun edgeLatchCornerRadii(side: EdgeLatchSide, radiusPx: Float): FloatAr
     EdgeLatchSide.LEFT -> floatArrayOf(0f, 0f, radiusPx, radiusPx, radiusPx, radiusPx, 0f, 0f)
 
     EdgeLatchSide.RIGHT -> floatArrayOf(radiusPx, radiusPx, 0f, 0f, 0f, 0f, radiusPx, radiusPx)
-
-    EdgeLatchSide.TOP -> floatArrayOf(0f, 0f, 0f, 0f, radiusPx, radiusPx, radiusPx, radiusPx)
-
-    EdgeLatchSide.BOTTOM -> floatArrayOf(radiusPx, radiusPx, radiusPx, radiusPx, 0f, 0f, 0f, 0f)
 }
 
 /**
@@ -100,21 +77,10 @@ internal fun edgeLatchCornerRadii(side: EdgeLatchSide, radiusPx: Float): FloatAr
  */
 internal fun nearestEdgeLatchSide(
     rawX: Float,
-    rawY: Float,
     displayWidthPx: Int,
-    displayHeightPx: Int,
     fallback: EdgeLatchSide,
 ): EdgeLatchSide {
-    val safeFallback = when (fallback) {
-        EdgeLatchSide.LEFT -> EdgeLatchSide.LEFT
-
-        EdgeLatchSide.RIGHT -> EdgeLatchSide.RIGHT
-
-        EdgeLatchSide.TOP,
-        EdgeLatchSide.BOTTOM,
-        -> EdgeLatchSide.RIGHT
-    }
-    if (displayWidthPx <= 0 || displayHeightPx <= 0) return safeFallback
+    if (displayWidthPx <= 0) return fallback
     val x = rawX.coerceIn(0f, displayWidthPx.toFloat())
     return if (x <= displayWidthPx - x) EdgeLatchSide.LEFT else EdgeLatchSide.RIGHT
 }
@@ -153,10 +119,6 @@ object ReplayWorkflowCatalog {
     private const val FIELD_REVISION = "revision"
     private const val FIELD_NAME = "name"
 
-    fun replace(workflows: List<ReplayControllerWorkflow>) {
-        entries.set(workflows.take(MAX_ENTRIES))
-    }
-
     /** Updates the replay list and persists only workflow metadata, never workflow bodies. */
     fun replace(context: Context, workflows: List<ReplayControllerWorkflow>) {
         val bounded = workflows.take(MAX_ENTRIES)
@@ -182,7 +144,10 @@ object ReplayWorkflowCatalog {
         val raw = context.applicationContext
             .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString(PREF_WORKFLOW_CATALOG, null)
-            ?: return
+        if (raw == null) {
+            entries.set(emptyList())
+            return
+        }
         val restored = runCatching {
             val json = JSONArray(raw)
             buildList {
@@ -250,6 +215,10 @@ object ReplayFloatingController {
     private const val SHOW_TIMEOUT_MILLIS = 300L
     private const val OVERLAY_REMOVAL_RETRY_DELAY_MILLIS = 50L
     private const val MAX_OVERLAY_REMOVAL_RETRIES = 6
+    private const val MAIN_TASK_PENDING = 0
+    private const val MAIN_TASK_RUNNING = 1
+    private const val MAIN_TASK_CANCELLED = 2
+    private const val MAIN_TASK_DONE = 3
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -336,11 +305,17 @@ object ReplayFloatingController {
     }
 
     /** Removes all controller state during an accessibility-service interruption. */
-    internal fun onServiceInterrupted() {
+    internal fun onServiceInterrupted(accessibilityService: AccessibilityService) {
+        if (service !== accessibilityService) return
         runOnMain {
+            if (service !== accessibilityService) return@runOnMain
             removeOverlayOrMakePassThrough()
-            service = null
             notifyServiceLost()
+            mainHandler.postDelayed({
+                if (service === accessibilityService && isEnabled(accessibilityService)) {
+                    showCurrentInternal()
+                }
+            }, CONTROLLER_RESHOW_DELAY_MILLIS)
         }
     }
 
@@ -409,22 +384,6 @@ object ReplayFloatingController {
         }
     }
 
-    /**
-     * Compatibility cleanup for callers that need to remove the accessibility window during
-     * teardown. New replay dispatch uses [showReplay] so the latch remains available.
-     */
-    fun hideForReplay(): Boolean = runOnMainAndWait {
-        expanded = false
-        val removed = removeOverlay()
-        if (!removed) removeOverlayOrMakePassThrough()
-        if (removed) {
-            replayActive = true
-            replayPaused = false
-            openAfterReplayStop = false
-        }
-        removed
-    }
-
     /** Returns true when a normalized replay/recording point falls inside the current surface. */
     fun isNormalizedPointOnSurface(normalizedX: Double, normalizedY: Double): Boolean {
         val bounds = currentSurfaceBounds() ?: return false
@@ -448,9 +407,6 @@ object ReplayFloatingController {
             removeOverlayOrMakePassThrough()
             return false
         }
-        // A legacy preference or an in-process stale value must never put the latch in the
-        // top/bottom gesture regions. Active placement is always horizontal.
-        if (edge != EdgeLatchSide.LEFT && edge != EdgeLatchSide.RIGHT) edge = DEFAULT_EDGE
         val newView = buildRoot(activeService)
         if (!removeOverlay()) {
             removeOverlayOrMakePassThrough()
@@ -459,15 +415,15 @@ object ReplayFloatingController {
         return addOverlay(newView, activeService)
     }
 
+    @SuppressLint("ClickableViewAccessibility") // Drag handling calls performClick on non-drag UP.
     private fun buildRoot(activeService: AccessibilityService): ControllerRoot {
         ensureEdgeLoaded(activeService)
         val displayMetrics = realDisplayMetrics(activeService)
         val displayWidth = displayMetrics?.widthPixels ?: activeService.resources.displayMetrics.widthPixels
         val displayHeight = displayMetrics?.heightPixels ?: activeService.resources.displayMetrics.heightPixels
         val root = ControllerRoot(activeService)
-        val verticalLatch = edge == EdgeLatchSide.LEFT || edge == EdgeLatchSide.RIGHT
-        val latchWidth = dp(activeService, if (verticalLatch) LATCH_THICKNESS_DP else LATCH_LENGTH_DP)
-        val latchHeight = dp(activeService, if (verticalLatch) LATCH_LENGTH_DP else LATCH_THICKNESS_DP)
+        val latchWidth = dp(activeService, LATCH_THICKNESS_DP)
+        val latchHeight = dp(activeService, LATCH_LENGTH_DP)
 
         var panelWidth = 0
         var panelHeight = 0
@@ -504,20 +460,6 @@ object ReplayFloatingController {
                 handleLeft = panelWidth,
                 handleTop = 0,
             )
-
-            EdgeLatchSide.TOP -> Placement(
-                panelLeft = 0,
-                panelTop = if (panel == null) 0 else latchHeight,
-                handleLeft = 0,
-                handleTop = 0,
-            )
-
-            EdgeLatchSide.BOTTOM -> Placement(
-                panelLeft = 0,
-                panelTop = 0,
-                handleLeft = 0,
-                handleTop = panelHeight,
-            )
         }
 
         panel?.let {
@@ -529,7 +471,7 @@ object ReplayFloatingController {
                 },
             )
         }
-        val handle = ImageButton(activeService).apply {
+        val handle = LatchButton(activeService).apply {
             // The latch is intentionally a plain tab. A logo/icon makes the small emergency
             // surface look like a floating button and encourages users to drag it into content.
             setImageDrawable(null)
@@ -557,8 +499,13 @@ object ReplayFloatingController {
         root.handleTopPx = placement.handleTop
         root.handleWidthPx = latchWidth
         root.handleHeightPx = latchHeight
-        root.handleView = handle
-        handle.setOnTouchListener { _, event -> handleTouch(root, event) }
+        handle.setOnClickListener {
+            if (!replayActive) {
+                expanded = !expanded
+                showCurrentInternal()
+            }
+        }
+        handle.setOnTouchListener { view, event -> handleTouch(root, view, event) }
         root.measure(
             View.MeasureSpec.makeMeasureSpec(displayWidth, View.MeasureSpec.AT_MOST),
             View.MeasureSpec.makeMeasureSpec(displayHeight, View.MeasureSpec.AT_MOST),
@@ -566,7 +513,7 @@ object ReplayFloatingController {
         return root
     }
 
-    private fun handleTouch(root: ControllerRoot, event: MotionEvent): Boolean {
+    private fun handleTouch(root: ControllerRoot, handle: View, event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN && replayActive) {
             if (!replayStopRequested) {
                 replayStopRequested = true
@@ -592,7 +539,7 @@ object ReplayFloatingController {
                 if (!state.dragging && (abs(dx) > state.touchSlopPx || abs(dy) > state.touchSlopPx)) {
                     state.dragging = true
                 }
-                if (state.dragging) updateCollapsedPosition(root, event.rawX, event.rawY)
+                if (state.dragging) updateCollapsedPosition(root, event.rawY)
             }
 
             MotionEvent.ACTION_UP,
@@ -606,8 +553,7 @@ object ReplayFloatingController {
                     expanded = false
                     showCurrentInternal()
                 } else if (event.actionMasked == MotionEvent.ACTION_UP && !replayActive) {
-                    expanded = !expanded
-                    showCurrentInternal()
+                    handle.performClick()
                 }
             }
         }
@@ -617,12 +563,9 @@ object ReplayFloatingController {
     private fun saveEdgeFromRelease(rawX: Float, rawY: Float) {
         val activeService = service ?: return
         val metrics = realDisplayMetrics(activeService) ?: return
-        edge = nearestEdgeLatchSide(rawX, rawY, metrics.widthPixels, metrics.heightPixels, edge)
+        edge = nearestEdgeLatchSide(rawX, metrics.widthPixels, edge)
         edgeOffset = edgeLatchOffsetForRelease(
-            side = edge,
-            rawX = rawX,
             rawY = rawY,
-            displayWidthPx = metrics.widthPixels,
             displayHeightPx = metrics.heightPixels,
             latchLengthPx = dp(activeService, LATCH_LENGTH_DP),
             fallback = edgeOffset,
@@ -638,22 +581,15 @@ object ReplayFloatingController {
     }
 
     /** Moves only the collapsed latch while the user drags, without rebuilding the touch window. */
-    private fun updateCollapsedPosition(root: ControllerRoot, rawX: Float, rawY: Float) {
+    private fun updateCollapsedPosition(root: ControllerRoot, rawY: Float) {
         val activeService = service ?: return
         val manager = windowManager ?: return
         val params = layoutParams ?: return
         val metrics = realDisplayMetrics(activeService) ?: return
         val nextOffset = edgeLatchOffsetForRelease(
-            side = edge,
-            rawX = rawX,
             rawY = rawY,
-            displayWidthPx = metrics.widthPixels,
             displayHeightPx = metrics.heightPixels,
-            latchLengthPx = if (edge == EdgeLatchSide.LEFT || edge == EdgeLatchSide.RIGHT) {
-                root.handleHeightPx
-            } else {
-                root.handleWidthPx
-            },
+            latchLengthPx = root.handleHeightPx,
             fallback = edgeOffset,
         )
         val previousOffset = edgeOffset
@@ -689,30 +625,10 @@ object ReplayFloatingController {
             EdgeLatchSide.RIGHT ->
                 metrics.widthPixels -
                     (root.handleLeftPx + root.handleWidthPx / 2)
-
-            EdgeLatchSide.TOP,
-            EdgeLatchSide.BOTTOM,
-            -> {
-                val usableAxis = (metrics.widthPixels - root.handleWidthPx).coerceAtLeast(0)
-                (offset * usableAxis).roundToInt()
-                    .coerceIn(0, (metrics.widthPixels - measuredWidth).coerceAtLeast(0))
-            }
         }
-        val y = when (side) {
-            EdgeLatchSide.TOP -> -root.handleHeightPx / 2
-
-            EdgeLatchSide.BOTTOM ->
-                metrics.heightPixels -
-                    (root.handleTopPx + root.handleHeightPx / 2)
-
-            EdgeLatchSide.LEFT,
-            EdgeLatchSide.RIGHT,
-            -> {
-                val usableAxis = (metrics.heightPixels - root.handleHeightPx).coerceAtLeast(0)
-                (offset * usableAxis).roundToInt()
-                    .coerceIn(0, (metrics.heightPixels - measuredHeight).coerceAtLeast(0))
-            }
-        }
+        val usableAxis = (metrics.heightPixels - root.handleHeightPx).coerceAtLeast(0)
+        val y = (offset * usableAxis).roundToInt()
+            .coerceIn(0, (metrics.heightPixels - measuredHeight).coerceAtLeast(0))
         return x to y
     }
 
@@ -724,18 +640,19 @@ object ReplayFloatingController {
             ?.let { value -> runCatching { EdgeLatchSide.valueOf(value) }.getOrNull() }
             ?.takeIf { it == EdgeLatchSide.LEFT || it == EdgeLatchSide.RIGHT }
         edge = persisted ?: legacyEdge(preferences)
-        edgeOffset = preferences.getFloat(PREF_EDGE_OFFSET, 0f).coerceIn(0f, 1f)
+        edgeOffset = if (preferences.contains(PREF_EDGE_OFFSET)) {
+            preferences.getFloat(PREF_EDGE_OFFSET, 0f)
+        } else {
+            preferences.getFloat(PREF_LEGACY_ANCHOR_Y, 0.82f)
+        }.coerceIn(0f, 1f)
         edgeLoaded = true
     }
 
     private fun legacyEdge(preferences: android.content.SharedPreferences): EdgeLatchSide {
         val legacyX = preferences.getFloat(PREF_LEGACY_ANCHOR_X, 0.98f)
-        val legacyY = preferences.getFloat(PREF_LEGACY_ANCHOR_Y, 0.82f)
         return nearestEdgeLatchSide(
             rawX = legacyX * 1000f,
-            rawY = legacyY * 1000f,
             displayWidthPx = 1000,
-            displayHeightPx = 1000,
             fallback = DEFAULT_EDGE,
         )
     }
@@ -895,30 +812,10 @@ object ReplayFloatingController {
             EdgeLatchSide.RIGHT ->
                 displayMetrics.widthPixels -
                     (view.handleLeftPx + view.handleWidthPx / 2)
-
-            EdgeLatchSide.TOP,
-            EdgeLatchSide.BOTTOM,
-            -> {
-                val usableAxis = (displayMetrics.widthPixels - view.handleWidthPx).coerceAtLeast(0)
-                val desired = (edgeOffset * usableAxis).roundToInt()
-                desired.coerceIn(0, (displayMetrics.widthPixels - measuredWidth).coerceAtLeast(0))
-            }
         }
-        params.y = when (edge) {
-            EdgeLatchSide.TOP -> -view.handleHeightPx / 2
-
-            EdgeLatchSide.BOTTOM ->
-                displayMetrics.heightPixels -
-                    (view.handleTopPx + view.handleHeightPx / 2)
-
-            EdgeLatchSide.LEFT,
-            EdgeLatchSide.RIGHT,
-            -> {
-                val usableAxis = (displayMetrics.heightPixels - view.handleHeightPx).coerceAtLeast(0)
-                val desired = (edgeOffset * usableAxis).roundToInt()
-                desired.coerceIn(0, (displayMetrics.heightPixels - measuredHeight).coerceAtLeast(0))
-            }
-        }
+        val usableAxis = (displayMetrics.heightPixels - view.handleHeightPx).coerceAtLeast(0)
+        val desired = (edgeOffset * usableAxis).roundToInt()
+        params.y = desired.coerceIn(0, (displayMetrics.heightPixels - measuredHeight).coerceAtLeast(0))
         return runCatching {
             manager.addView(view, params)
             windowManager = manager
@@ -967,16 +864,27 @@ object ReplayFloatingController {
     private fun removeOverlayOrMakePassThrough() {
         val view = overlayView
         if (removeOverlay() || view == null) return
+        surfaceBounds = null
         val manager = windowManager
         val params = layoutParams
         if (manager != null && params != null) {
             params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
             runCatching { manager.updateViewLayout(view, params) }
         }
+        disableViewTree(view)
+        retryOverlayRemoval(view, MAX_OVERLAY_REMOVAL_RETRIES)
+    }
+
+    private fun disableViewTree(view: View) {
+        view.visibility = View.INVISIBLE
+        view.isEnabled = false
         view.isClickable = false
         view.isFocusable = false
+        view.setOnClickListener(null)
         view.setOnTouchListener(null)
-        retryOverlayRemoval(view, MAX_OVERLAY_REMOVAL_RETRIES)
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) disableViewTree(view.getChildAt(index))
+        }
     }
 
     private fun retryOverlayRemoval(view: View, attemptsRemaining: Int) {
@@ -1098,11 +1006,31 @@ object ReplayFloatingController {
         if (Looper.myLooper() == Looper.getMainLooper()) return block()
         val result = AtomicReference<Boolean?>(null)
         val completed = CountDownLatch(1)
+        val state = AtomicInteger(MAIN_TASK_PENDING)
         mainHandler.post {
-            result.set(runCatching { block() }.getOrDefault(false))
-            completed.countDown()
+            if (!state.compareAndSet(MAIN_TASK_PENDING, MAIN_TASK_RUNNING)) {
+                completed.countDown()
+                return@post
+            }
+            try {
+                result.set(runCatching { block() }.getOrDefault(false))
+            } finally {
+                state.set(MAIN_TASK_DONE)
+                completed.countDown()
+            }
         }
-        if (!runCatching { completed.await(SHOW_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS) }.getOrDefault(false)) return false
+        val completedInTime = runCatching {
+            completed.await(SHOW_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+        }.getOrDefault(false)
+        if (!completedInTime && state.compareAndSet(MAIN_TASK_PENDING, MAIN_TASK_CANCELLED)) {
+            return false
+        }
+        if (!completedInTime && !runCatching {
+                completed.await(SHOW_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+            }.getOrDefault(false)
+        ) {
+            return false
+        }
         return result.get() == true
     }
 
@@ -1141,6 +1069,12 @@ object ReplayFloatingController {
         var handleTopPx: Int = 0
         var handleWidthPx: Int = 0
         var handleHeightPx: Int = 0
-        var handleView: View? = null
+    }
+
+    private class LatchButton(context: Context) : ImageButton(context) {
+        override fun performClick(): Boolean {
+            super.performClick()
+            return true
+        }
     }
 }

@@ -81,6 +81,7 @@ class CoordinateRecordingController(
     @Volatile
     private var sessionStartedElapsedRealtime = 0L
 
+    private var emergencyControlDeadline = 0L
     private var lastElapsedMillis = 0L
     private var sessionId: String? = null
     private var journalFile: File? = null
@@ -180,6 +181,37 @@ class CoordinateRecordingController(
         }
     }
 
+    private val foregroundPollRunnable = object : Runnable {
+        override fun run() {
+            if (!active || stopRequested || paused || pauseRequested) return
+            enqueue {
+                if (!active || stopRequested || paused || pauseRequested) return@enqueue
+                observeForeground(AndroidForegroundPackage.current())
+                if (active && isKeyguardLocked()) {
+                    failSession("Recording stopped because the lock screen became active.")
+                }
+            }
+            mainHandler.postDelayed(this, FOREGROUND_POLL_INTERVAL_MILLIS)
+        }
+    }
+
+    private val startSourceWhenEmergencyReadyRunnable = object : Runnable {
+        override fun run() {
+            if (!active || stopRequested) return
+            if (RecordingForegroundService.isReady()) {
+                startInputSource(MAX_RECORDING_DURATION_MILLIS)
+                return
+            }
+            if (SystemClock.elapsedRealtime() >= emergencyControlDeadline) {
+                failImmediately(
+                    "The recording emergency control did not become ready in time. No input was recorded.",
+                )
+                return
+            }
+            mainHandler.postDelayed(this, EMERGENCY_CONTROL_READY_POLL_MILLIS)
+        }
+    }
+
     fun start() {
         if (active) return
         val notificationUnavailableReason = RecordingForegroundService.notificationUnavailableReason(appContext)
@@ -261,21 +293,31 @@ class CoordinateRecordingController(
                 appContext,
                 "Global recording armed. Stop from Quick Settings or this notification.",
             )
-            val startError = source.start(
-                durationMillis = MAX_RECORDING_DURATION_MILLIS,
-                listener = ::onSourceEvent,
-            )
-            if (startError != null) {
-                failImmediately(startError)
-                return
-            }
-            mainHandler.removeCallbacks(timerRunnable)
-            mainHandler.post(timerRunnable)
-            mainHandler.removeCallbacks(stopFallbackRunnable)
-            mainHandler.postDelayed(::checkForeground, FOREGROUND_POLL_INTERVAL_MILLIS)
+            emergencyControlDeadline =
+                SystemClock.elapsedRealtime() + EMERGENCY_CONTROL_READY_TIMEOUT_MILLIS
+            mainHandler.removeCallbacks(startSourceWhenEmergencyReadyRunnable)
+            mainHandler.post(startSourceWhenEmergencyReadyRunnable)
         } catch (error: Throwable) {
             failImmediately("Could not start recording safely: ${error.message ?: error.javaClass.simpleName}")
         }
+    }
+
+    private fun startInputSource(durationMillis: Long) {
+        if (!active || stopRequested) return
+        val startError = runCatching {
+            source.start(durationMillis = durationMillis, listener = ::onSourceEvent)
+        }.getOrElse { error ->
+            "Could not start recording safely: ${error.message ?: error.javaClass.simpleName}"
+        }
+        if (startError != null) {
+            failImmediately(startError)
+            return
+        }
+        mainHandler.removeCallbacks(timerRunnable)
+        mainHandler.post(timerRunnable)
+        mainHandler.removeCallbacks(stopFallbackRunnable)
+        mainHandler.removeCallbacks(foregroundPollRunnable)
+        mainHandler.postDelayed(foregroundPollRunnable, FOREGROUND_POLL_INTERVAL_MILLIS)
     }
 
     /** Cooperative stop used by Quick Settings, the notification, back navigation, and cleanup. */
@@ -298,6 +340,7 @@ class CoordinateRecordingController(
         pauseRequested = true
         paused = true
         mainHandler.removeCallbacks(timerRunnable)
+        mainHandler.removeCallbacks(foregroundPollRunnable)
         _state.value = CoordinateRecordingState.Paused(
             foregroundPackage = lastThirdPartyForegroundPackage?.value,
             elapsedMillis = elapsedMillis(),
@@ -330,18 +373,7 @@ class CoordinateRecordingController(
         _state.value = CoordinateRecordingState.Arming(elapsedMillis = elapsed)
         ReplayFloatingController.setRecordingState(ControlCenterRecordingState.RECORDING)
         RecordingForegroundService.update(appContext, "Recording resumed")
-        val startError = runCatching {
-            source.start(durationMillis = remaining, listener = ::onSourceEvent)
-        }.getOrElse { error ->
-            "Could not resume recording safely: ${error.message ?: error.javaClass.simpleName}"
-        }
-        if (startError != null) {
-            failSession(startError)
-            return
-        }
-        mainHandler.removeCallbacks(timerRunnable)
-        mainHandler.post(timerRunnable)
-        mainHandler.postDelayed(::checkForeground, FOREGROUND_POLL_INTERVAL_MILLIS)
+        startInputSource(remaining)
     }
 
     /** Stops safely when Android destroys the foreground-service control unexpectedly. */
@@ -361,7 +393,9 @@ class CoordinateRecordingController(
         if (!sessionCleanup.requestStop(cause)) return false
         stopRequested = true
         stopFailureReason = failureReason
+        mainHandler.removeCallbacks(startSourceWhenEmergencyReadyRunnable)
         mainHandler.removeCallbacks(timerRunnable)
+        mainHandler.removeCallbacks(foregroundPollRunnable)
         runCatching { source.stop() }
         RecordingQuickSettingsTileService.requestRefresh(appContext)
         mainHandler.removeCallbacks(stopFallbackRunnable)
@@ -606,23 +640,13 @@ class CoordinateRecordingController(
         }
     }
 
-    private fun checkForeground() {
-        if (!active) return
-        enqueue {
-            if (!active || stopRequested) return@enqueue
-            observeForeground(AndroidForegroundPackage.current())
-            if (active && isKeyguardLocked()) {
-                failSession("Recording stopped because the lock screen became active.")
-            }
-        }
-        mainHandler.postDelayed(::checkForeground, FOREGROUND_POLL_INTERVAL_MILLIS)
-    }
-
     private fun finishSession() {
         if (!active || !sessionCleanup.claimTerminal()) return
         val stopCause = sessionCleanup.currentStopCause()
         active = false
+        mainHandler.removeCallbacks(startSourceWhenEmergencyReadyRunnable)
         mainHandler.removeCallbacks(timerRunnable)
+        mainHandler.removeCallbacks(foregroundPollRunnable)
         mainHandler.removeCallbacks(stopFallbackRunnable)
         source.abort()
         val store = journal
@@ -743,7 +767,9 @@ class CoordinateRecordingController(
         if (!active || !sessionCleanup.claimTerminal()) return
         val stopCause = sessionCleanup.currentStopCause()
         active = false
+        mainHandler.removeCallbacks(startSourceWhenEmergencyReadyRunnable)
         mainHandler.removeCallbacks(timerRunnable)
+        mainHandler.removeCallbacks(foregroundPollRunnable)
         mainHandler.removeCallbacks(stopFallbackRunnable)
         source.abort()
         runCatching {
@@ -763,7 +789,9 @@ class CoordinateRecordingController(
         runCatching { source.abort() }
         runCatching { journal?.close() }
         active = false
+        mainHandler.removeCallbacks(startSourceWhenEmergencyReadyRunnable)
         mainHandler.removeCallbacks(timerRunnable)
+        mainHandler.removeCallbacks(foregroundPollRunnable)
         mainHandler.removeCallbacks(stopFallbackRunnable)
         RecordingForegroundService.stop(appContext)
         ReplayFloatingController.setRecordingState(ControlCenterRecordingState.IDLE)
@@ -779,7 +807,9 @@ class CoordinateRecordingController(
             if (!sessionCleanup.claimTerminal()) return
             active = false
             stopRequested = true
+            mainHandler.removeCallbacks(startSourceWhenEmergencyReadyRunnable)
             mainHandler.removeCallbacks(timerRunnable)
+            mainHandler.removeCallbacks(foregroundPollRunnable)
             mainHandler.removeCallbacks(stopFallbackRunnable)
             runCatching { source.close() }
             runCatching {
@@ -904,6 +934,8 @@ class CoordinateRecordingController(
         const val MIN_RESUME_DURATION_MILLIS = 1_000L
         const val TIMER_INTERVAL_MILLIS = 250L
         const val FOREGROUND_POLL_INTERVAL_MILLIS = 250L
+        const val EMERGENCY_CONTROL_READY_POLL_MILLIS = 50L
+        const val EMERGENCY_CONTROL_READY_TIMEOUT_MILLIS = 2_000L
         const val STOP_FALLBACK_DELAY_MILLIS = 1_500L
         const val PENDING_TOUCH_FRAME_LIMIT = 16_384
     }

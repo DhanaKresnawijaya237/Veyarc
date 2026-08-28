@@ -610,6 +610,8 @@ class ShizukuInputReplay(
                     finishService(
                         "Shizuku replay could not start: ${error.message ?: error.javaClass.simpleName}",
                         cancelRemote = true,
+                        expectedService = service,
+                        expectedGeneration = generation,
                     )
                 } else {
                     runCatching { service.cancel() }
@@ -632,7 +634,7 @@ class ShizukuInputReplay(
 
     private fun startPolling(service: IShizukuInputReplayService, generation: Long) {
         stopPolling()
-        pollTask = executor.scheduleAtFixedRate(
+        pollTask = executor.scheduleWithFixedDelay(
             { pollRemoteService(service, generation) },
             0L,
             100L,
@@ -677,12 +679,21 @@ class ShizukuInputReplay(
                     },
                 ),
             )
-            if (!running) finishService(null, keepSnapshot = true)
+            if (!running) {
+                finishService(
+                    null,
+                    keepSnapshot = true,
+                    expectedService = service,
+                    expectedGeneration = generation,
+                )
+            }
         } catch (error: Throwable) {
             if (isActiveSubmission(service, generation)) {
                 finishService(
                     "The Shizuku replay helper failed: ${error.message ?: error.javaClass.simpleName}",
                     cancelRemote = true,
+                    expectedService = service,
+                    expectedGeneration = generation,
                 )
             } else {
                 runCatching { service.cancel() }
@@ -694,17 +705,33 @@ class ShizukuInputReplay(
         message: String?,
         keepSnapshot: Boolean = false,
         cancelRemote: Boolean = false,
+        expectedService: IShizukuInputReplayService? = null,
+        expectedGeneration: Long? = null,
     ) {
-        stopPolling()
-        pendingCommands = null
-        activeRequest = false
-        pendingPause = false
-        val (service, connection) = synchronized(bindingLock) {
-            val currentService = remoteService
+        val teardown = synchronized(bindingLock) {
             val currentConnection = activeServiceConnection
+            if (expectedService != null &&
+                (
+                    remoteService !== expectedService ||
+                        expectedGeneration == null ||
+                        currentConnection == null ||
+                        !isCurrentBinding(expectedGeneration, currentConnection)
+                    )
+            ) {
+                return
+            }
+            val currentPollTask = pollTask
+            pollTask = null
+            val currentService = remoteService
+            pendingCommands = null
+            pendingPause = false
             retireBindingLocked()
-            currentService to currentConnection
+            activeRequest = false
+            ServiceTeardown(currentService, currentConnection, currentPollTask)
         }
+        teardown.pollTask?.cancel(false)
+        val service = teardown.service
+        val connection = teardown.connection
         if (cancelRemote) runCatching { service?.cancel() }
         connection?.let { boundConnection ->
             runCatching { Shizuku.unbindUserService(userServiceArgs, boundConnection, true) }
@@ -724,6 +751,12 @@ class ShizukuInputReplay(
             }
         }
     }
+
+    private data class ServiceTeardown(
+        val service: IShizukuInputReplayService?,
+        val connection: ServiceConnection?,
+        val pollTask: ScheduledFuture<*>?,
+    )
 
     private fun publish(snapshot: ShizukuInputReplaySnapshot) {
         if (closed) return

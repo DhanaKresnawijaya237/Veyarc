@@ -43,7 +43,7 @@ class VeyarcAccessibilityService : AccessibilityService() {
     override fun onInterrupt() {
         AccessibilityGestureDispatcher.reset()
         AccessibilityEmergencyOverlay.hide()
-        ReplayFloatingController.onServiceInterrupted()
+        ReplayFloatingController.onServiceInterrupted(this)
     }
 
     override fun onUnbind(intent: Intent?): Boolean {

@@ -102,6 +102,9 @@ class RawReplayForegroundService : Service() {
             }
         }
 
+        /** True only after Android has accepted the foreground notification for this target. */
+        fun isReady(targetPackage: String): Boolean = serviceRunning.get() && activeTargetPackage.get() == targetPackage
+
         fun stop(context: Context) {
             if (serviceRunning.get()) expectedStop.set(true)
             context.stopService(Intent(context, RawReplayForegroundService::class.java))

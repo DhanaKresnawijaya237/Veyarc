@@ -8,19 +8,19 @@ class EdgeLatchSideTest {
     fun releaseSelectsOnlyLeftOrRightEvenNearGestureEdges() {
         assertEquals(
             EdgeLatchSide.LEFT,
-            nearestEdgeLatchSide(4f, 500f, 1080, 2000, EdgeLatchSide.RIGHT),
+            nearestEdgeLatchSide(4f, 1080, EdgeLatchSide.RIGHT),
         )
         assertEquals(
             EdgeLatchSide.RIGHT,
-            nearestEdgeLatchSide(1075f, 500f, 1080, 2000, EdgeLatchSide.LEFT),
+            nearestEdgeLatchSide(1075f, 1080, EdgeLatchSide.LEFT),
         )
         assertEquals(
             EdgeLatchSide.LEFT,
-            nearestEdgeLatchSide(500f, 4f, 1080, 2000, EdgeLatchSide.RIGHT),
+            nearestEdgeLatchSide(500f, 1080, EdgeLatchSide.RIGHT),
         )
         assertEquals(
             EdgeLatchSide.LEFT,
-            nearestEdgeLatchSide(500f, 1996f, 1080, 2000, EdgeLatchSide.RIGHT),
+            nearestEdgeLatchSide(500f, 1080, EdgeLatchSide.RIGHT),
         )
     }
 
@@ -28,7 +28,7 @@ class EdgeLatchSideTest {
     fun invalidDisplayDimensionsKeepExistingSafePlacement() {
         assertEquals(
             EdgeLatchSide.RIGHT,
-            nearestEdgeLatchSide(0f, 0f, 0, 0, EdgeLatchSide.TOP),
+            nearestEdgeLatchSide(0f, 0, EdgeLatchSide.RIGHT),
         )
     }
 
@@ -37,10 +37,7 @@ class EdgeLatchSideTest {
         assertEquals(
             0.5f,
             edgeLatchOffsetForRelease(
-                side = EdgeLatchSide.LEFT,
-                rawX = 0f,
                 rawY = 500f,
-                displayWidthPx = 1080,
                 displayHeightPx = 1000,
                 latchLengthPx = 100,
                 fallback = 0f,
@@ -50,10 +47,7 @@ class EdgeLatchSideTest {
         assertEquals(
             1f,
             edgeLatchOffsetForRelease(
-                side = EdgeLatchSide.RIGHT,
-                rawX = 1000f,
                 rawY = 1080f,
-                displayWidthPx = 1000,
                 displayHeightPx = 1080,
                 latchLengthPx = 100,
                 fallback = 0f,

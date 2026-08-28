@@ -10,6 +10,7 @@ import android.os.Looper
 import android.os.SystemClock
 import rikka.shizuku.Shizuku
 import java.io.Closeable
+import java.util.concurrent.atomic.AtomicLong
 
 /** Events emitted by the bounded, read-only evdev recording helper. */
 sealed interface ShizukuTouchRecordingEvent {
@@ -66,28 +67,30 @@ class ShizukuTouchRecording(
     private var remoteService: IShizukuTouchProbeService? = null
 
     @Volatile
-    private var bound = false
+    private var activeServiceConnection: ServiceConnection? = null
 
     @Volatile
     private var closed = false
 
-    @Volatile
-    private var expectedServiceDisconnect = false
+    private val bindingLock = Any()
+    private val bindingGeneration = AtomicLong(0L)
 
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
-        if (closed || expectedServiceDisconnect || (!bound && remoteService == null)) return@OnBinderDeadListener
+        val generation = bindingGeneration.get()
+        if (closed || activeServiceConnection == null) return@OnBinderDeadListener
         mainHandler.post {
-            if (closed || expectedServiceDisconnect) return@post
-            publishOnMain(
+            if (!isCurrentGeneration(generation)) return@post
+            publishOnMainForGeneration(
+                generation,
                 ShizukuTouchRecordingEvent.Error(
                     "Shizuku stopped while the raw-input helper was recording.",
                 ),
             )
-            finishServiceOnMain()
+            finishServiceOnMain(generation)
         }
     }
 
-    private val callback = object : IShizukuTouchRecordingCallback.Stub() {
+    private fun newCallback(generation: Long) = object : IShizukuTouchRecordingCallback.Stub() {
         override fun onStarted(
             startTimestampMicros: Long,
             deviceSummary: String?,
@@ -97,7 +100,8 @@ class ShizukuTouchRecording(
             maxY: Long,
         ) {
             val receivedTimestampMicros = SystemClock.elapsedRealtimeNanos() / 1_000L
-            publish(
+            publishForGeneration(
+                generation,
                 ShizukuTouchRecordingEvent.Started(
                     startTimestampMicros = startTimestampMicros,
                     deviceSummary = deviceSummary.orEmpty(),
@@ -120,11 +124,17 @@ class ShizukuTouchRecording(
                 2 -> ShizukuTouchRecordingEvent.Action.UP
 
                 else -> {
-                    publish(ShizukuTouchRecordingEvent.Error("The raw-input helper returned an unknown frame action."))
+                    publishForGeneration(
+                        generation,
+                        ShizukuTouchRecordingEvent.Error(
+                            "The raw-input helper returned an unknown frame action.",
+                        ),
+                    )
                     return
                 }
             }
-            publish(
+            publishForGeneration(
+                generation,
                 ShizukuTouchRecordingEvent.Frame(
                     timestampMicros = timestampMicros,
                     action = mappedAction,
@@ -136,59 +146,67 @@ class ShizukuTouchRecording(
         }
 
         override fun onError(message: String?) {
-            publish(ShizukuTouchRecordingEvent.Error(message ?: "The raw-input helper failed."))
+            publishForGeneration(
+                generation,
+                ShizukuTouchRecordingEvent.Error(message ?: "The raw-input helper failed."),
+            )
         }
 
         override fun onCompleted() {
             mainHandler.post {
-                if (closed) return@post
-                publishOnMain(ShizukuTouchRecordingEvent.Completed)
-                finishServiceOnMain()
+                if (closed || !isCurrentGeneration(generation)) return@post
+                publishOnMainForGeneration(generation, ShizukuTouchRecordingEvent.Completed)
+                finishServiceOnMain(generation)
             }
         }
     }
 
-    private val serviceConnection = object : ServiceConnection {
+    private fun newServiceConnection(
+        generation: Long,
+        durationMillis: Long,
+        callback: IShizukuTouchRecordingCallback,
+    ) = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
-            if (closed) return
             val service = IShizukuTouchProbeService.Stub.asInterface(binder)
-            remoteService = service
+            val current = synchronized(bindingLock) {
+                if (closed || !isCurrentConnection(generation, this)) {
+                    false
+                } else {
+                    remoteService = service
+                    true
+                }
+            }
+            if (!current) {
+                runCatching { Shizuku.unbindUserService(userServiceArgs, this, true) }
+                return
+            }
             try {
-                service.startRecording(requestedDurationMillis, callback)
+                service.startRecording(durationMillis, callback)
             } catch (error: Throwable) {
-                publish(
+                publishForGeneration(
+                    generation,
                     ShizukuTouchRecordingEvent.Error(
                         "Shizuku could not start recording: ${error.message ?: error.javaClass.simpleName}",
                     ),
                 )
-                finishServiceOnMain()
+                mainHandler.post { finishServiceOnMain(generation) }
             }
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
-            remoteService = null
-            bound = false
-            val expected = expectedServiceDisconnect
-            expectedServiceDisconnect = false
-            if (!expected && !closed) {
-                mainHandler.post {
-                    if (closed) return@post
-                    publishOnMain(
-                        ShizukuTouchRecordingEvent.Error(
-                            "The Shizuku raw-input helper disconnected before recording completed.",
-                        ),
-                    )
-                    publishOnMain(ShizukuTouchRecordingEvent.Completed)
-                    finishServiceOnMain()
-                }
-            } else if (expected) {
-                listener = null
+            mainHandler.post {
+                if (closed || !isCurrentConnection(generation, this)) return@post
+                publishOnMainForGeneration(
+                    generation,
+                    ShizukuTouchRecordingEvent.Error(
+                        "The Shizuku raw-input helper disconnected before recording completed.",
+                    ),
+                )
+                publishOnMainForGeneration(generation, ShizukuTouchRecordingEvent.Completed)
+                finishServiceOnMain(generation, unbind = false)
             }
         }
     }
-
-    @Volatile
-    private var requestedDurationMillis: Long = DEFAULT_DURATION_MILLIS
 
     init {
         Shizuku.addBinderDeadListener(binderDeadListener)
@@ -200,7 +218,9 @@ class ShizukuTouchRecording(
         listener: (ShizukuTouchRecordingEvent) -> Unit,
     ): String? {
         if (closed) return "The raw-input recorder is closed."
-        if (remoteService != null || bound) return "A raw-input recording is already running."
+        if (remoteService != null || activeServiceConnection != null) {
+            return "A raw-input recording is already running."
+        }
         val binderAvailable = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
         if (!binderAvailable) return "Shizuku is not running or its binder is not ready."
         val permissionGranted = runCatching {
@@ -208,16 +228,27 @@ class ShizukuTouchRecording(
         }.getOrDefault(false)
         if (!permissionGranted) return "Grant Veyarc permission in Shizuku before recording."
 
-        this.listener = listener
-        requestedDurationMillis = durationMillis.coerceIn(MIN_DURATION_MILLIS, MAX_DURATION_MILLIS)
-        expectedServiceDisconnect = false
+        val checkedDuration = durationMillis.coerceIn(MIN_DURATION_MILLIS, MAX_DURATION_MILLIS)
+        val generation = bindingGeneration.incrementAndGet()
+        val callback = newCallback(generation)
+        val connection = newServiceConnection(generation, checkedDuration, callback)
+        val registered = synchronized(bindingLock) {
+            if (closed || activeServiceConnection != null || remoteService != null) {
+                false
+            } else {
+                this.listener = listener
+                activeServiceConnection = connection
+                true
+            }
+        }
+        if (!registered) return "A raw-input recording is already running."
         try {
-            bound = true
-            Shizuku.bindUserService(userServiceArgs, serviceConnection)
+            Shizuku.bindUserService(userServiceArgs, connection)
             return null
         } catch (error: Throwable) {
-            bound = false
-            this.listener = null
+            synchronized(bindingLock) {
+                if (isCurrentConnection(generation, connection)) clearBindingLocked()
+            }
             return "Could not start the Shizuku raw-input helper: ${error.message ?: error.javaClass.simpleName}"
         }
     }
@@ -233,8 +264,9 @@ class ShizukuTouchRecording(
      */
     fun abort() {
         if (closed) return
+        val generation = bindingGeneration.get()
         runCatching { remoteService?.stopObservation() }
-        mainHandler.post { finishServiceOnMain() }
+        mainHandler.post { finishServiceOnMain(generation) }
     }
 
     fun isReady(): Boolean = !closed && runCatching { Shizuku.pingBinder() }.getOrDefault(false) &&
@@ -244,33 +276,44 @@ class ShizukuTouchRecording(
     override fun close() {
         if (closed) return
         closed = true
+        val generation = bindingGeneration.get()
         runCatching { remoteService?.stopObservation() }
-        mainHandler.post { finishServiceOnMain() }
         listener = null
+        mainHandler.post { finishServiceOnMain(generation) }
         Shizuku.removeBinderDeadListener(binderDeadListener)
     }
 
-    private fun publish(event: ShizukuTouchRecordingEvent) {
-        mainHandler.post { publishOnMain(event) }
+    private fun publishForGeneration(generation: Long, event: ShizukuTouchRecordingEvent) {
+        mainHandler.post { publishOnMainForGeneration(generation, event) }
     }
 
-    private fun publishOnMain(event: ShizukuTouchRecordingEvent) {
-        if (closed) return
+    private fun publishOnMainForGeneration(generation: Long, event: ShizukuTouchRecordingEvent) {
+        if (closed || !isCurrentGeneration(generation)) return
         listener?.invoke(event)
     }
 
-    private fun finishServiceOnMain() {
-        if (!bound && remoteService == null) {
-            listener = null
-            return
+    private fun finishServiceOnMain(generation: Long, unbind: Boolean = true) {
+        val (service, connection) = synchronized(bindingLock) {
+            val currentConnection = activeServiceConnection
+            if (bindingGeneration.get() != generation || currentConnection == null) return
+            val currentService = remoteService
+            clearBindingLocked()
+            currentService to currentConnection
         }
-        val service = remoteService
-        remoteService = null
         runCatching { service?.stopObservation() }
-        expectedServiceDisconnect = true
-        runCatching { Shizuku.unbindUserService(userServiceArgs, serviceConnection, true) }
-        bound = false
+        if (unbind) runCatching { Shizuku.unbindUserService(userServiceArgs, connection, true) }
+    }
+
+    private fun isCurrentGeneration(generation: Long): Boolean = bindingGeneration.get() == generation && activeServiceConnection != null
+
+    private fun isCurrentConnection(generation: Long, connection: ServiceConnection): Boolean = bindingGeneration.get() == generation && activeServiceConnection === connection
+
+    /** Invalidates every late callback before the next session can register. Must hold the lock. */
+    private fun clearBindingLocked() {
+        remoteService = null
+        activeServiceConnection = null
         listener = null
+        bindingGeneration.incrementAndGet()
     }
 
     private companion object {
