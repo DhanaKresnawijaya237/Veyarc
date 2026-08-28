@@ -41,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.veyarc.automation.android.AccessibilityGestureDispatcher
+import com.veyarc.automation.android.MediaProjectionConsent
 import com.veyarc.model.bundle.WorkflowBundle
 
 @Composable
@@ -57,25 +58,48 @@ fun WorkflowRunScreen(
     val context = LocalContext.current
     val state by controller.state.collectAsState()
     var permissionRequestPending by remember { mutableStateOf(false) }
+    var projectionRequestPending by remember { mutableStateOf(false) }
+    lateinit var requestStart: () -> Unit
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         permissionRequestPending = false
         controller.refreshNotificationState()
-        if (granted) onStart() else openNotificationSettings(context)
+        if (granted) requestStart() else openNotificationSettings(context)
+    }
+    val projectionConsentLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        projectionRequestPending = false
+        controller.startAfterMediaProjectionConsent(result.resultCode, result.data)
     }
 
-    fun requestStart() {
-        if (!canStart) return
-        if (state.notificationReady) {
-            onStart()
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            permissionRequestPending = true
-            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    requestStart = startRequest@{
+        if (!canStart) return@startRequest
+        if (!state.notificationReady) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+            ) {
+                permissionRequestPending = true
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                openNotificationSettings(context)
+            }
+            return@startRequest
+        }
+        if (controller.requiresMediaProjectionConsent()) {
+            runCatching { MediaProjectionConsent.createRequestIntent(context) }
+                .onSuccess { intent ->
+                    projectionRequestPending = true
+                    projectionConsentLauncher.launch(intent)
+                }
+                .onFailure { error ->
+                    controller.reportMediaProjectionFailure(
+                        error.message ?: "Android MediaProjection is unavailable",
+                    )
+                }
         } else {
-            openNotificationSettings(context)
+            onStart()
         }
     }
 
@@ -108,11 +132,12 @@ fun WorkflowRunScreen(
             if (state.phase == WorkflowRunPhase.REVIEW) {
                 ReviewContent(
                     state = state,
-                    onStart = ::requestStart,
+                    onStart = requestStart,
                     onRefresh = controller::refreshReview,
                     onOpenNotificationSettings = { openNotificationSettings(context) },
                     canStart = canStart,
                     startBlockMessage = startBlockMessage,
+                    requiresMediaProjectionConsent = controller.requiresMediaProjectionConsent(),
                 )
             } else {
                 RunContent(state = state, onPause = controller::pause, onResume = controller::resume, onStop = controller::stop, onBack = onBack)
@@ -120,6 +145,9 @@ fun WorkflowRunScreen(
 
             if (permissionRequestPending) {
                 Text("Waiting for notification permission…", style = MaterialTheme.typography.labelMedium)
+            }
+            if (projectionRequestPending) {
+                Text("Waiting for screen-capture consent…", style = MaterialTheme.typography.labelMedium)
             }
         }
     }
@@ -133,6 +161,7 @@ private fun ReviewContent(
     onOpenNotificationSettings: () -> Unit,
     canStart: Boolean,
     startBlockMessage: String?,
+    requiresMediaProjectionConsent: Boolean,
 ) {
     val context = LocalContext.current
     val plan = state.review.plan
@@ -145,6 +174,9 @@ private fun ReviewContent(
             Text("Worst-case steps: ${plan?.analysis?.worstCaseStepCount ?: "—"}")
             Text("Accessibility setting: ${if (state.review.capabilities.accessibilityEnabled) "enabled" else "disabled"}")
             Text("Service connection: ${if (state.review.capabilities.serviceConnected) "ready" else "not ready"}")
+            if (requiresMediaProjectionConsent) {
+                Text("This workflow uses temporary screen frames. Android will request capture consent for this run.")
+            }
             if (!state.review.capabilities.serviceConnected) {
                 OutlinedButton(onClick = { AccessibilityGestureDispatcher.openAccessibilitySettings(context) }) {
                     Text("Open accessibility settings")

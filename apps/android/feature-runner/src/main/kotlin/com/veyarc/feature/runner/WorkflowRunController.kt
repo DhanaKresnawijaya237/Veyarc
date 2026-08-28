@@ -1,12 +1,17 @@
 package com.veyarc.feature.runner
 
 import android.content.Context
+import android.content.Intent
 import android.util.Log
 import com.veyarc.automation.android.AccessibilityEmergencyOverlay
 import com.veyarc.automation.android.AccessibilityGestureDispatcher
 import com.veyarc.automation.android.AndroidAutomationCapabilities
 import com.veyarc.automation.android.AndroidCapabilitySnapshot
 import com.veyarc.automation.android.AndroidWorkflowExecutor
+import com.veyarc.automation.android.MediaProjectionCaptureRuntime
+import com.veyarc.automation.android.MediaProjectionCaptureService
+import com.veyarc.automation.android.MediaProjectionConsent
+import com.veyarc.automation.android.MediaProjectionDisplaySpec
 import com.veyarc.automation.android.ReplayControllerActions
 import com.veyarc.automation.android.ReplayFloatingController
 import com.veyarc.data.storage.StoredRunStatus
@@ -18,6 +23,7 @@ import com.veyarc.engine.RunOutcome
 import com.veyarc.engine.WorkflowCompilationResult
 import com.veyarc.engine.WorkflowCompiler
 import com.veyarc.model.WorkflowDocument
+import com.veyarc.model.usesVisualConditions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +37,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.Closeable
 
 enum class WorkflowRunPhase {
     REVIEW,
@@ -88,6 +95,8 @@ class WorkflowRunController(
     private val _state = MutableStateFlow(initialState())
     private var runJob: Job? = null
     private var control: MutableExecutionControl? = null
+    private var mediaProjectionOwned = false
+    private var mediaProjectionListener: Closeable? = null
 
     @Volatile private var closed = false
 
@@ -99,6 +108,12 @@ class WorkflowRunController(
         onServiceLost = { stop() },
         onPause = ::pause,
     )
+
+    init {
+        if (document.usesVisualConditions()) {
+            mediaProjectionListener = MediaProjectionCaptureRuntime.registerTerminationListener(::onMediaProjectionTerminated)
+        }
+    }
 
     val state: StateFlow<WorkflowRunUiState> = _state.asStateFlow()
 
@@ -119,9 +134,56 @@ class WorkflowRunController(
         }
     }
 
+    fun requiresMediaProjectionConsent(): Boolean = document.usesVisualConditions()
+
+    /** Handles the one-shot ActivityResult returned by Android's screen-capture consent dialog. */
+    fun startAfterMediaProjectionConsent(resultCode: Int, data: Intent?) {
+        if (!MediaProjectionConsent.wasGranted(resultCode, data)) {
+            _state.update {
+                it.copy(message = "Screen-capture consent was denied. The workflow did not start.")
+            }
+            return
+        }
+        if (closed || !isStartReady()) {
+            if (!closed) {
+                _state.update { it.copy(message = "The workflow is no longer ready to start. Refresh the run checks.") }
+            }
+            return
+        }
+        try {
+            MediaProjectionCaptureService.start(
+                context = appContext,
+                resultCode = resultCode,
+                resultData = requireNotNull(data),
+                displaySpec = MediaProjectionDisplaySpec.fromContext(appContext),
+            )
+            mediaProjectionOwned = true
+            start()
+            // Consent can return after navigation, capability loss, or notification changes.
+            // If start() rejected the request, do not leave a projection service running.
+            if (_state.value.phase == WorkflowRunPhase.REVIEW) {
+                stopOwnedMediaProjection()
+            }
+        } catch (error: Exception) {
+            stopOwnedMediaProjection()
+            _state.update {
+                it.copy(
+                    message = "Screen capture could not start: ${error.message ?: error.javaClass.simpleName}",
+                )
+            }
+        }
+    }
+
+    fun reportMediaProjectionFailure(reason: String) {
+        _state.update { it.copy(message = "Screen capture could not start: $reason") }
+    }
+
     fun start() {
-        val current = _state.value
-        if (current.phase != WorkflowRunPhase.REVIEW || !current.review.isRunnable || !current.notificationReady) return
+        if (!isStartReady()) return
+        if (requiresMediaProjectionConsent() && !mediaProjectionOwned) {
+            _state.update { it.copy(message = "Screen-capture consent is required before this workflow can start.") }
+            return
+        }
         if (runJob?.isActive == true) return
 
         ReplayFloatingController.setReplayActions(floatingControllerActions)
@@ -147,6 +209,13 @@ class WorkflowRunController(
         }
     }
 
+    private fun isStartReady(): Boolean {
+        val current = _state.value
+        return current.phase == WorkflowRunPhase.REVIEW &&
+            current.review.isRunnable &&
+            current.notificationReady
+    }
+
     fun pause() {
         control?.requestPause()
         _state.update { state ->
@@ -164,6 +233,7 @@ class WorkflowRunController(
     fun stop() {
         control?.cancel()
         AccessibilityGestureDispatcher.cancelActiveGesture()
+        stopOwnedMediaProjection()
         _state.update { state ->
             if (state.phase == WorkflowRunPhase.RUNNING || state.phase == WorkflowRunPhase.PAUSED) {
                 state.copy(message = "Stopping…")
@@ -184,6 +254,9 @@ class WorkflowRunController(
         ReplayFloatingController.showIdle()
         WorkflowRunRuntime.unregister(this)
         notifications.dismiss()
+        stopOwnedMediaProjection()
+        mediaProjectionListener?.close()
+        mediaProjectionListener = null
         scope.cancel()
     }
 
@@ -198,6 +271,12 @@ class WorkflowRunController(
             _state.update { it.copy(runId = runId, phase = WorkflowRunPhase.RUNNING, message = "Running") }
             AccessibilityEmergencyOverlay.show(::stop)
             notifications.showRunning(document.name, 0, _state.value.review.plan?.analysis?.worstCaseStepCount)
+
+            if (requiresMediaProjectionConsent()) {
+                check(MediaProjectionCaptureRuntime.awaitActive(MEDIA_PROJECTION_START_TIMEOUT_MILLIS)) {
+                    "MediaProjection capture did not become ready before the workflow started"
+                }
+            }
 
             val execution = withContext(Dispatchers.Default) {
                 executor.execute(
@@ -285,11 +364,33 @@ class WorkflowRunController(
             ReplayFloatingController.clearReplayActions()
             ReplayFloatingController.showIdle()
             WorkflowRunRuntime.unregister(this)
+            stopOwnedMediaProjection()
             if (!closed) {
                 notifications.showTerminal(_state.value.message ?: "Workflow finished")
             }
             control = null
         }
+    }
+
+    private fun onMediaProjectionTerminated(reason: String) {
+        mediaProjectionOwned = false
+        control?.cancel()
+        _state.update { state ->
+            if (state.phase == WorkflowRunPhase.STARTING ||
+                state.phase == WorkflowRunPhase.RUNNING ||
+                state.phase == WorkflowRunPhase.PAUSED
+            ) {
+                state.copy(message = "Stopping because screen capture ended: $reason")
+            } else {
+                state.copy(message = reason)
+            }
+        }
+    }
+
+    private fun stopOwnedMediaProjection() {
+        if (!mediaProjectionOwned) return
+        mediaProjectionOwned = false
+        MediaProjectionCaptureService.stop(appContext)
     }
 
     private fun updateTerminal(phase: WorkflowRunPhase, message: String?) {
@@ -362,6 +463,7 @@ class WorkflowRunController(
     private companion object {
         const val TAG = "Veyarc.WorkflowRun"
         const val MAX_EVENT_HISTORY = 50
+        const val MEDIA_PROJECTION_START_TIMEOUT_MILLIS = 5_000L
 
         fun redactEvent(event: RunEvent): String = when (event) {
             is RunEvent.Started -> "Run started"
