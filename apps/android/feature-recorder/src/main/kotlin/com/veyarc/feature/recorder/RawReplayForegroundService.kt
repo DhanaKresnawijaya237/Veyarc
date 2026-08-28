@@ -12,6 +12,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /** Keeps an emergency replay stop action visible while the target app is foreground. */
 class RawReplayForegroundService : Service() {
@@ -23,6 +24,8 @@ class RawReplayForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val targetPackage = intent?.getStringExtra(EXTRA_TARGET_PACKAGE).orEmpty()
         return try {
+            activeTargetPackage.set(targetPackage)
+            paused.set(false)
             val notification = buildNotification(this, targetPackage)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
@@ -49,6 +52,8 @@ class RawReplayForegroundService : Service() {
     override fun onDestroy() {
         val expected = expectedStop.compareAndSet(true, false)
         val wasRunning = serviceRunning.getAndSet(false)
+        activeTargetPackage.set(null)
+        paused.set(false)
         getSystemService(NotificationManager::class.java)?.cancel(NOTIFICATION_ID)
         if (wasRunning && !expected) {
             CoordinateRawTraceReplayRuntime.cancel(
@@ -62,9 +67,13 @@ class RawReplayForegroundService : Service() {
         private const val CHANNEL_ID = "veyarc_raw_replay"
         private const val NOTIFICATION_ID = 42_703
         private const val STOP_REQUEST_CODE = 42_704
+        private const val PAUSE_REQUEST_CODE = 42_705
+        private const val RESUME_REQUEST_CODE = 42_706
         private const val EXTRA_TARGET_PACKAGE = "targetPackage"
         private val serviceRunning = AtomicBoolean(false)
         private val expectedStop = AtomicBoolean(false)
+        private val paused = AtomicBoolean(false)
+        private val activeTargetPackage = AtomicReference<String?>(null)
 
         fun notificationUnavailableReason(context: Context): String? {
             createChannel(context)
@@ -98,6 +107,18 @@ class RawReplayForegroundService : Service() {
             context.stopService(Intent(context, RawReplayForegroundService::class.java))
         }
 
+        fun updatePaused(context: Context, isPaused: Boolean) {
+            if (!serviceRunning.get()) return
+            paused.set(isPaused)
+            val targetPackage = activeTargetPackage.get().orEmpty()
+            runCatching {
+                context.getSystemService(NotificationManager::class.java)?.notify(
+                    NOTIFICATION_ID,
+                    buildNotification(context, targetPackage),
+                )
+            }
+        }
+
         private fun createChannel(context: Context) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
             val manager = context.getSystemService(NotificationManager::class.java) ?: return
@@ -126,13 +147,34 @@ class RawReplayForegroundService : Service() {
             } else {
                 Notification.Builder(context)
             }
+            val pauseIntent = Intent(
+                context,
+                if (paused.get()) RawReplayResumeReceiver::class.java else RawReplayPauseReceiver::class.java,
+            )
+            val pausePendingIntent = PendingIntent.getBroadcast(
+                context,
+                if (paused.get()) RESUME_REQUEST_CODE else PAUSE_REQUEST_CODE,
+                pauseIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
             return builder
                 .setSmallIcon(android.R.drawable.ic_media_pause)
                 .setContentTitle("Veyarc raw replay")
-                .setContentText("Replaying ${targetPackage.ifBlank { "the target app" }}")
+                .setContentText(
+                    if (paused.get()) {
+                        "Replay paused for ${targetPackage.ifBlank { "the target app" }}"
+                    } else {
+                        "Replaying ${targetPackage.ifBlank { "the target app" }}"
+                    },
+                )
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setCategory(Notification.CATEGORY_SERVICE)
+                .addAction(
+                    if (paused.get()) android.R.drawable.ic_media_play else android.R.drawable.ic_media_pause,
+                    if (paused.get()) "Resume replay" else "Pause replay",
+                    pausePendingIntent,
+                )
                 .addAction(android.R.drawable.ic_media_pause, "Stop replay", stopPendingIntent)
                 .build()
         }
@@ -142,6 +184,18 @@ class RawReplayForegroundService : Service() {
 class RawReplayStopReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         CoordinateRawTraceReplayRuntime.cancel("Replay cancelled from the emergency notification.")
+    }
+}
+
+class RawReplayPauseReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        CoordinateRawTraceReplayRuntime.pause()
+    }
+}
+
+class RawReplayResumeReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        CoordinateRawTraceReplayRuntime.resume()
     }
 }
 
@@ -162,5 +216,13 @@ object CoordinateRawTraceReplayRuntime {
 
     fun cancel(reason: String) {
         activeController?.cancel(reason)
+    }
+
+    fun pause() {
+        activeController?.pause()
+    }
+
+    fun resume() {
+        activeController?.resume()
     }
 }

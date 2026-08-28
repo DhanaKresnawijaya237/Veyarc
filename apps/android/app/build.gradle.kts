@@ -35,6 +35,7 @@ dependencies {
     val composeBom = platform(libs.androidx.compose.bom)
 
     implementation(project(":feature-assistant"))
+    implementation(project(":automation-android"))
     implementation(project(":data"))
     implementation(project(":core-model"))
     implementation(project(":feature-editor"))

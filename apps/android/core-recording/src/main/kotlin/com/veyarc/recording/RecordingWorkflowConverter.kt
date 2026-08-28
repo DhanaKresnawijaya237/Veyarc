@@ -1,6 +1,7 @@
 package com.veyarc.recording
 
 import com.veyarc.model.DurationMillis
+import com.veyarc.model.LaunchApp
 import com.veyarc.model.LongPress
 import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.PackageName
@@ -33,6 +34,7 @@ object RecordingWorkflowConverter {
     private const val DEFAULT_MAX_NESTING_DEPTH = 8
     private const val DEFAULT_MAX_PATH_POINTS = 128
     private const val DEFAULT_MAX_STEP_DURATION_MILLIS = 30_000L
+    private const val DEFAULT_LAUNCH_FOREGROUND_TIMEOUT_MILLIS = 5_000L
 
     fun convert(
         analysis: RecordingAnalysis,
@@ -44,7 +46,7 @@ object RecordingWorkflowConverter {
         require(packages.isNotEmpty()) {
             "The recording did not observe a third-party application package."
         }
-        val steps = analysis.events.mapNotNull { event ->
+        val recordedSteps = analysis.events.mapNotNull { event ->
             when (event) {
                 is RecordingAnalysisEvent.Gesture -> event.gesture.toWorkflowStep(analysis.header.viewport)
 
@@ -56,9 +58,24 @@ object RecordingWorkflowConverter {
                 is RecordingAnalysisEvent.ForegroundPackageTransition -> null
             }
         }
-        require(steps.isNotEmpty()) {
+        require(analysis.gestures.isNotEmpty()) {
             "The recording did not contain a complete touch gesture to import."
         }
+        // A recorded workflow must be able to establish the same target app when it
+        // starts from Veyarc or another controller surface. The raw journal can begin
+        // with a controller package, so prefer it only when it is one of the observed
+        // third-party packages; otherwise the recorder's insertion order identifies
+        // the first third-party target.
+        val launchPackage = analysis.initialForegroundPackage
+            ?.takeIf { it in packages }
+            ?: packages.first()
+        val steps = listOf(
+            LaunchApp(
+                id = WorkflowIds.newUuid(),
+                packageName = launchPackage,
+                foregroundTimeoutMs = DurationMillis(DEFAULT_LAUNCH_FOREGROUND_TIMEOUT_MILLIS),
+            ),
+        ) + recordedSteps
 
         val document = WorkflowDocument(
             schemaVersion = WorkflowDocument.CURRENT_SCHEMA_VERSION,
@@ -82,7 +99,10 @@ object RecordingWorkflowConverter {
                 add("The final incomplete touch was not imported.")
             }
             if (analysis.foregroundTransitions.isNotEmpty()) {
-                add("Foreground app changes are suggestions only. Review package declarations and add Launch app steps if needed.")
+                add(
+                    "The first observed third-party app is launched automatically. Later foreground " +
+                        "app changes are suggestions only; add Launch app steps for additional app switches.",
+                )
             }
         }
         return RecordingWorkflowDraft(
@@ -138,10 +158,23 @@ object RecordingWorkflowConverter {
             }
         } ?: 0L
         val longestStepMillis = steps.maxOfOrNull(::stepDurationMillis) ?: 1L
+        // The compiler budgets the timeout owned by every timed step, including the
+        // automatically inserted LaunchApp. Base the document limit on that same sequence
+        // instead of only on the recorded event timeline; otherwise a valid recording can
+        // fail preflight by the launch timeout alone.
+        val staticRuntimeMillis = steps.fold(0L) { total, step ->
+            saturatingAdd(total, stepRuntimeMillis(step))
+        }
         val longestPathPoints = steps.filterIsInstance<SwipePath>().maxOfOrNull { it.points.size } ?: 2
         return RunLimits(
             maxTotalSteps = max(DEFAULT_MAX_TOTAL_STEPS, steps.size + 16),
-            maxRuntimeMs = max(DEFAULT_MAX_RUNTIME_MILLIS, lastRecordedMillis + 1_000L),
+            maxRuntimeMs = max(
+                DEFAULT_MAX_RUNTIME_MILLIS,
+                maxOf(
+                    saturatingAdd(lastRecordedMillis, 1_000L),
+                    saturatingAdd(staticRuntimeMillis, 1_000L),
+                ),
+            ),
             maxLoopIterations = DEFAULT_MAX_LOOP_ITERATIONS,
             maxNestingDepth = DEFAULT_MAX_NESTING_DEPTH,
             maxPathPoints = max(DEFAULT_MAX_PATH_POINTS, longestPathPoints),
@@ -154,6 +187,17 @@ object RecordingWorkflowConverter {
         is LongPress -> step.durationMs.value
         is SwipePath -> step.durationMs.value
         is Wait -> step.durationMs.value
+        is LaunchApp -> step.foregroundTimeoutMs.value
         else -> 1L
     }
+
+    private fun stepRuntimeMillis(step: WorkflowStep): Long = when (step) {
+        is LongPress -> step.durationMs.value
+        is SwipePath -> step.durationMs.value
+        is Wait -> step.durationMs.value
+        is LaunchApp -> step.foregroundTimeoutMs.value
+        else -> 0L
+    }
+
+    private fun saturatingAdd(first: Long, second: Long): Long = if (second > 0L && first > Long.MAX_VALUE - second) Long.MAX_VALUE else first + second
 }

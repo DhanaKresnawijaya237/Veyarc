@@ -52,8 +52,6 @@ import com.veyarc.automation.android.ShizukuInputReplay
 import com.veyarc.automation.android.ShizukuInputReplaySnapshot
 import com.veyarc.automation.android.ShizukuTouchProbe
 import com.veyarc.automation.android.ShizukuTouchProbeSnapshot
-import com.veyarc.automation.android.TouchCaptureUpdate
-import com.veyarc.automation.android.TouchInterceptionRecorder
 import kotlin.math.hypot
 
 @Composable
@@ -79,7 +77,6 @@ fun AccessibilitySpikeScreen(
     var observedPath by remember { mutableStateOf(emptyList<Offset>()) }
     var observedGestureCount by remember { mutableIntStateOf(0) }
     var replaySurfaceBounds by remember { mutableStateOf<Rect?>(null) }
-    var captureMessage by remember { mutableStateOf("") }
     val shizukuProbe = remember(context) { ShizukuTouchProbe(context) }
     var shizukuSnapshot by remember { mutableStateOf(shizukuProbe.snapshot()) }
     val shizukuReplay = remember(context) { ShizukuInputReplay(context) }
@@ -245,49 +242,15 @@ fun AccessibilitySpikeScreen(
             style = MaterialTheme.typography.bodyMedium,
         )
         Button(
-            enabled = !TouchInterceptionRecorder.isArmed,
-            onClick = {
-                TouchInterceptionRecorder.arm { update ->
-                    captureMessage =
-                        when (update) {
-                            TouchCaptureUpdate.UnsupportedApi -> resources.getString(R.string.touch_capture_unsupported)
-
-                            TouchCaptureUpdate.ServiceUnavailable -> resources.getString(R.string.gesture_service_unavailable)
-
-                            TouchCaptureUpdate.AlreadyArmed -> resources.getString(R.string.touch_capture_already_armed)
-
-                            TouchCaptureUpdate.Arming -> resources.getString(R.string.touch_capture_arming)
-
-                            TouchCaptureUpdate.Armed -> resources.getString(R.string.touch_capture_armed)
-
-                            TouchCaptureUpdate.Capturing -> resources.getString(R.string.touch_capture_capturing)
-
-                            is TouchCaptureUpdate.Replaying ->
-                                resources.getQuantityString(
-                                    R.plurals.touch_capture_replaying,
-                                    update.gesture.samples.size,
-                                    update.gesture.samples.size,
-                                )
-
-                            is TouchCaptureUpdate.Completed ->
-                                resources.getString(
-                                    R.string.touch_capture_completed,
-                                    update.gesture.samples.size,
-                                    update.gesture.durationMillis,
-                                )
-
-                            TouchCaptureUpdate.Cancelled -> resources.getString(R.string.touch_capture_cancelled)
-
-                            is TouchCaptureUpdate.Failed -> resources.getString(R.string.touch_capture_failed, update.reason)
-                        }
-                }
-            },
+            enabled = false,
+            onClick = {},
         ) {
-            Text(stringResource(R.string.arm_touch_capture))
+            Text(stringResource(R.string.touch_capture_disabled_action))
         }
-        if (captureMessage.isNotEmpty()) {
-            Text(captureMessage, color = MaterialTheme.colorScheme.primary)
-        }
+        Text(
+            text = stringResource(R.string.touch_capture_disabled),
+            color = MaterialTheme.colorScheme.error,
+        )
         ShizukuProbeContent(
             snapshot = shizukuSnapshot,
             onRefresh = shizukuProbe::refresh,

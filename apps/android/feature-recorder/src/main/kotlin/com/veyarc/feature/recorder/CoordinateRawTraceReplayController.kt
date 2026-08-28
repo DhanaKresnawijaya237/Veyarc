@@ -7,7 +7,9 @@ import android.os.Looper
 import android.os.SystemClock
 import com.veyarc.automation.android.AndroidForegroundPackage
 import com.veyarc.automation.android.AndroidRecordingViewportSnapshot
-import com.veyarc.automation.android.ReplayInputGuardOverlay
+import com.veyarc.automation.android.ReplayControllerActions
+import com.veyarc.automation.android.ReplayFloatingController
+import com.veyarc.automation.android.ReplayFreezeCapability
 import com.veyarc.automation.android.ShizukuInputReplay
 import com.veyarc.automation.android.ShizukuInputReplaySnapshot
 import com.veyarc.automation.android.ShizukuMotionAction
@@ -23,6 +25,7 @@ import java.io.Closeable
 
 data class CoordinateRawTraceReplayState(
     val running: Boolean = false,
+    val paused: Boolean = false,
     val completed: Boolean = false,
     val cancelled: Boolean = false,
     val message: String = "Raw replay has not started.",
@@ -50,23 +53,19 @@ class CoordinateRawTraceReplayController(
     private var foregroundWaitDeadline = 0L
     private var stableViewport: AndroidRecordingViewportSnapshot? = null
     private var stableViewportSampleCount = 0
-    private var inputGuardEnabled = false
     private var activeTargetPackage: PackageName? = null
+
+    private val floatingControllerActions = ReplayControllerActions(
+        onResume = ::resume,
+        onStop = { cancel("Replay cancelled from the Veyarc edge-latch control center.") },
+        onServiceLost = { cancel("Replay cancelled because the accessibility service disconnected.") },
+    )
 
     private val replaySafetyRunnable = object : Runnable {
         override fun run() {
             if (!requestStarted) return
             val targetPackage = activeTargetPackage
-            if (inputGuardEnabled &&
-                (!ReplayInputGuardOverlay.isAvailable || !ReplayInputGuardOverlay.isShown)
-            ) {
-                cancel("Replay input guard was removed, so replay was cancelled safely.")
-                return
-            }
-            if (inputGuardEnabled &&
-                targetPackage != null &&
-                AndroidForegroundPackage.current() != targetPackage
-            ) {
+            if (targetPackage != null && AndroidForegroundPackage.current() != targetPackage) {
                 cancel("Replay cancelled because the foreground app changed from $targetPackage.")
                 return
             }
@@ -115,25 +114,19 @@ class CoordinateRawTraceReplayController(
                 delayMillis = frame.delayMillis,
             )
         }
+        if (frames.any { ReplayFloatingController.isScreenPointOnSurface(it.x, it.y) }) {
+            requestStarted = false
+            stopReplaySurfaces()
+            refuse(
+                "Replay was refused because the recorded path intersects the Veyarc edge-latch " +
+                    "control surface. Move the latch or edit the trace before retrying.",
+            )
+            return@Runnable
+        }
         pendingReplayTrace = null
         pendingReplayTargetPackage = null
         pendingReplayViewport = null
-        val targetUid = if (inputGuardEnabled) {
-            runCatching {
-                appContext.packageManager.getApplicationInfo(targetPackage.value, 0).uid
-            }.getOrElse { error ->
-                requestStarted = false
-                stopReplaySurfaces()
-                refuse(
-                    "Veyarc could not resolve the target app UID for the input guard: " +
-                        (error.message ?: error.javaClass.simpleName),
-                )
-                return@Runnable
-            }
-        } else {
-            null
-        }
-        runCatching { replay.dispatchRawMotionTrace(frames, targetUid) }.onFailure { error ->
+        runCatching { replay.dispatchRawMotionTrace(frames, null) }.onFailure { error ->
             requestStarted = false
             stopReplaySurfaces()
             refuse(error.message ?: "The raw replay request was rejected.")
@@ -210,15 +203,24 @@ class CoordinateRawTraceReplayController(
             refuse("Raw replay requires one known recorded target application.")
             return
         }
-        if (inputGuardEnabled && targetPackage.value == appContext.packageName) {
-            refuse(
-                "The input guard cannot protect replay inside Veyarc itself. Turn it off for " +
-                    "a Veyarc-targeted replay.",
-            )
+        if (inputGuardEnabled) {
+            val availability = ReplayFreezeCapability.availability()
+            if (!availability.available) {
+                refuse(availability.reason ?: "Strict screen freeze is unavailable safely.")
+                return
+            }
+        }
+        if (targetPackage.value == appContext.packageName) {
+            refuse("Raw replay cannot target Veyarc's own control surface.")
+            return
+        }
+        ReplayFloatingController.setReplayActions(floatingControllerActions)
+        if (!ReplayFloatingController.showReplay()) {
+            ReplayFloatingController.clearReplayActions()
+            refuse("The Veyarc edge-latch controller could not be created safely. No input was sent.")
             return
         }
         val currentPackage = AndroidForegroundPackage.current()
-        this.inputGuardEnabled = inputGuardEnabled
         activeTargetPackage = targetPackage
         requestStarted = true
         pendingTrace = trace
@@ -266,6 +268,27 @@ class CoordinateRawTraceReplayController(
         mainHandler.post(foregroundWaitRunnable)
     }
 
+    /** Requests a pause that the helper applies only between complete gestures. */
+    fun pause() {
+        if (!requestStarted || !_state.value.running || _state.value.paused) return
+        replay.pause()
+        _state.value = _state.value.copy(message = "Pausing after the current gesture…")
+    }
+
+    /** Resumes a replay that is paused between gestures. */
+    fun resume() {
+        if (!requestStarted || !_state.value.running || !_state.value.paused) return
+        if (!ReplayFloatingController.showReplay()) {
+            cancel("Replay cancelled because the edge-latch controller could not be restored safely.")
+            return
+        }
+        replay.resume()
+        _state.value = _state.value.copy(
+            paused = false,
+            message = "Resuming replay…",
+        )
+    }
+
     private fun submitWhenForeground(
         trace: RecordingRawTrace,
         targetPackage: PackageName,
@@ -286,20 +309,12 @@ class CoordinateRawTraceReplayController(
             refuse(reason)
             return
         }
-        if (inputGuardEnabled && !ReplayInputGuardOverlay.show()) {
-            requestStarted = false
-            refuse(
-                "The replay input guard is unavailable. Connect Veyarc's Accessibility service " +
-                    "or turn off the input guard before replaying.",
-            )
-            return
-        }
         pendingReplayTrace = trace
         pendingReplayTargetPackage = targetPackage
         pendingReplayViewport = expectedViewport
         _state.value = CoordinateRawTraceReplayState(
             running = true,
-            message = "Starting replay after the target display settled…",
+            message = "Replay is starting. Use the emergency notification if you need to stop it.",
         )
         RawReplayForegroundService.start(appContext, targetPackage.value)
         mainHandler.removeCallbacks(dispatchReplayRunnable)
@@ -334,7 +349,9 @@ class CoordinateRawTraceReplayController(
         stableViewportSampleCount = 0
     }
 
-    fun cancel(reason: String = "Raw replay cancelled. Any active touch was sent CANCEL best-effort.") {
+    fun cancel(
+        reason: String = "Raw replay cancelled safely.",
+    ) {
         if (!requestStarted && !_state.value.running) return
         requestStarted = false
         mainHandler.removeCallbacks(foregroundWaitRunnable)
@@ -347,8 +364,8 @@ class CoordinateRawTraceReplayController(
         resetStableViewport()
         replay.cancel()
         stopReplaySurfaces()
-        inputGuardEnabled = false
         activeTargetPackage = null
+        restoreFloatingController()
         _state.value = CoordinateRawTraceReplayState(
             cancelled = true,
             message = reason,
@@ -366,19 +383,27 @@ class CoordinateRawTraceReplayController(
         pendingReplayViewport = null
         resetStableViewport()
         CoordinateRawTraceReplayRuntime.unregister(this)
-        stopReplaySurfaces()
-        inputGuardEnabled = false
-        activeTargetPackage = null
         replay.cancel()
+        stopReplaySurfaces()
+        activeTargetPackage = null
+        restoreFloatingController()
         replay.close()
     }
 
     private fun onReplaySnapshot(snapshot: ShizukuInputReplaySnapshot) {
         if (!requestStarted) return
+        RawReplayForegroundService.updatePaused(appContext, snapshot.paused)
         when {
             snapshot.running -> {
+                if (snapshot.paused) {
+                    ReplayFloatingController.showPaused(floatingControllerActions)
+                } else if (!ReplayFloatingController.showReplay()) {
+                    cancel("Replay cancelled because the edge-latch controller could not be restored safely.")
+                    return
+                }
                 _state.value = CoordinateRawTraceReplayState(
                     running = true,
+                    paused = snapshot.paused,
                     message = snapshot.message,
                 )
             }
@@ -386,8 +411,8 @@ class CoordinateRawTraceReplayController(
             snapshot.lastError != null || isFailureMessage(snapshot.message) -> {
                 requestStarted = false
                 stopReplaySurfaces()
-                inputGuardEnabled = false
                 activeTargetPackage = null
+                restoreFloatingController()
                 val targetWindowLost = listOfNotNull(snapshot.lastError, snapshot.message)
                     .any { it.contains("Targeted input event injection", ignoreCase = true) }
                 if (targetWindowLost) {
@@ -407,8 +432,8 @@ class CoordinateRawTraceReplayController(
             snapshot.message.contains("completed", ignoreCase = true) -> {
                 requestStarted = false
                 stopReplaySurfaces()
-                inputGuardEnabled = false
                 activeTargetPackage = null
+                restoreFloatingController()
                 _state.value = CoordinateRawTraceReplayState(
                     completed = true,
                     message = snapshot.message,
@@ -418,6 +443,7 @@ class CoordinateRawTraceReplayController(
             else -> {
                 _state.value = CoordinateRawTraceReplayState(
                     running = true,
+                    paused = snapshot.paused,
                     message = snapshot.message,
                 )
             }
@@ -427,14 +453,18 @@ class CoordinateRawTraceReplayController(
     private fun refuse(reason: String) {
         requestStarted = false
         stopReplaySurfaces()
-        inputGuardEnabled = false
         activeTargetPackage = null
+        restoreFloatingController()
         _state.value = CoordinateRawTraceReplayState(message = "Raw replay refused.", error = reason)
+    }
+
+    private fun restoreFloatingController() {
+        ReplayFloatingController.clearReplayActions()
+        ReplayFloatingController.showIdle()
     }
 
     private fun stopReplaySurfaces() {
         mainHandler.removeCallbacks(replaySafetyRunnable)
-        ReplayInputGuardOverlay.hide()
         RawReplayForegroundService.stop(appContext)
     }
 

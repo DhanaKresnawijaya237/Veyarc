@@ -7,6 +7,8 @@ import com.veyarc.automation.android.AccessibilityGestureDispatcher
 import com.veyarc.automation.android.AndroidAutomationCapabilities
 import com.veyarc.automation.android.AndroidCapabilitySnapshot
 import com.veyarc.automation.android.AndroidWorkflowExecutor
+import com.veyarc.automation.android.ReplayControllerActions
+import com.veyarc.automation.android.ReplayFloatingController
 import com.veyarc.data.storage.StoredRunStatus
 import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.engine.MutableExecutionControl
@@ -91,6 +93,13 @@ class WorkflowRunController(
 
     @Volatile private var closeReason: String? = null
 
+    private val floatingControllerActions = ReplayControllerActions(
+        onResume = ::resume,
+        onStop = ::stop,
+        onServiceLost = { stop() },
+        onPause = ::pause,
+    )
+
     val state: StateFlow<WorkflowRunUiState> = _state.asStateFlow()
 
     fun refreshNotificationState() {
@@ -115,6 +124,12 @@ class WorkflowRunController(
         if (current.phase != WorkflowRunPhase.REVIEW || !current.review.isRunnable || !current.notificationReady) return
         if (runJob?.isActive == true) return
 
+        ReplayFloatingController.setReplayActions(floatingControllerActions)
+        if (!ReplayFloatingController.showReplay()) {
+            _state.update { it.copy(message = "Veyarc edge-latch controller could not be created safely. Run was not started.") }
+            return
+        }
+        WorkflowRunRuntime.register(this)
         val executionControl = MutableExecutionControl()
         control = executionControl
         _state.update {
@@ -165,6 +180,9 @@ class WorkflowRunController(
         control?.cancel()
         AccessibilityGestureDispatcher.cancelActiveGesture()
         AccessibilityEmergencyOverlay.hide()
+        ReplayFloatingController.clearReplayActions()
+        ReplayFloatingController.showIdle()
+        WorkflowRunRuntime.unregister(this)
         notifications.dismiss()
         scope.cancel()
     }
@@ -264,6 +282,9 @@ class WorkflowRunController(
                 }
             }
             AccessibilityEmergencyOverlay.hide()
+            ReplayFloatingController.clearReplayActions()
+            ReplayFloatingController.showIdle()
+            WorkflowRunRuntime.unregister(this)
             if (!closed) {
                 notifications.showTerminal(_state.value.message ?: "Workflow finished")
             }
@@ -290,6 +311,34 @@ class WorkflowRunController(
                 message = redacted.message,
                 eventHistory = (current.eventHistory + redacted).takeLast(MAX_EVENT_HISTORY),
             )
+        }
+        when (event) {
+            is RunEvent.Paused -> {
+                ReplayFloatingController.showPaused(floatingControllerActions)
+                val current = _state.value
+                notifications.showRunning(
+                    document.name,
+                    current.completedSteps,
+                    current.review.plan?.analysis?.worstCaseStepCount,
+                    paused = true,
+                )
+            }
+
+            is RunEvent.Resumed -> {
+                if (ReplayFloatingController.showReplay()) {
+                    val current = _state.value
+                    notifications.showRunning(
+                        document.name,
+                        current.completedSteps,
+                        current.review.plan?.analysis?.worstCaseStepCount,
+                        paused = false,
+                    )
+                } else {
+                    stop()
+                }
+            }
+
+            else -> Unit
         }
         if (event is RunEvent.StepFinished) {
             val current = _state.value

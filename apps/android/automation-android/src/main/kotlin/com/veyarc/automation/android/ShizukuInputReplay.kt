@@ -10,16 +10,19 @@ import android.os.Looper
 import com.veyarc.automation.android.IShizukuInputReplayService.Stub
 import rikka.shizuku.Shizuku
 import java.io.Closeable
+import java.util.concurrent.CancellationException
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 data class ShizukuInputReplaySnapshot(
     val binderAvailable: Boolean = false,
     val permissionGranted: Boolean = false,
     val serviceConnected: Boolean = false,
     val running: Boolean = false,
+    val paused: Boolean = false,
     val queuedCount: Int = 0,
     val completedCount: Int = 0,
     val remoteProcessUid: Int? = null,
@@ -93,6 +96,16 @@ class ShizukuInputReplay(
     @Volatile
     private var remoteService: IShizukuInputReplayService? = null
 
+    /**
+     * Each UserService bind gets a generation and a distinct ServiceConnection. Shizuku callbacks
+     * are asynchronous, so an old disconnect must never tear down a later replay request.
+     */
+    private val bindingLock = Any()
+    private val bindingGeneration = AtomicLong(0L)
+
+    @Volatile
+    private var activeServiceConnection: ServiceConnection? = null
+
     @Volatile
     private var pollTask: ScheduledFuture<*>? = null
 
@@ -103,23 +116,21 @@ class ShizukuInputReplay(
     private var activeRequest = false
 
     @Volatile
-    private var expectedServiceDisconnect = false
+    private var pendingPause = false
 
     @Volatile
     private var closed = false
 
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener { refresh() }
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
-        stopPolling()
-        remoteService = null
-        activeRequest = false
-        pendingCommands = null
+        finishService("Shizuku stopped. Start it again, then refresh.", cancelRemote = true)
         publish(
             currentSnapshot.copy(
                 binderAvailable = false,
                 permissionGranted = false,
                 serviceConnected = false,
                 running = false,
+                paused = false,
                 rawMotionTimelineSupported = null,
                 directMotionTimelineSupported = null,
                 message = "Shizuku stopped. Start it again, then refresh.",
@@ -135,11 +146,32 @@ class ShizukuInputReplay(
         }
     }
 
-    private val serviceConnection = object : ServiceConnection {
+    private fun newServiceConnection(generation: Long): ServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
-            if (closed) return
-            remoteService = Stub.asInterface(binder)
-            val service = remoteService ?: return
+            val service = Stub.asInterface(binder)
+            if (service == null) {
+                handleServiceDisconnected(generation, this, "The Shizuku replay helper returned no binder.")
+                return
+            }
+            val dispose = synchronized(bindingLock) {
+                if (!isCurrentBinding(generation, this) ||
+                    ReplayServiceBindingPolicy.shouldDisposeConnectedService(
+                        closed = closed,
+                        activeRequest = activeRequest,
+                        hasPendingCommands = pendingCommands != null,
+                    )
+                ) {
+                    if (isCurrentBinding(generation, this)) retireBindingLocked()
+                    true
+                } else {
+                    remoteService = service
+                    false
+                }
+            }
+            if (dispose) {
+                disposeLateServiceBinding(service, this)
+                return
+            }
             publish(
                 currentSnapshot.copy(
                     serviceConnected = true,
@@ -147,28 +179,65 @@ class ShizukuInputReplay(
                     message = "Replay helper connected. Preparing the bounded test…",
                 ),
             )
-            pendingCommands?.let { commands -> submit(commands, service) }
+            pendingCommands?.let { commands -> submit(commands, service, generation) }
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
-            remoteService = null
-            stopPolling()
-            val expected = expectedServiceDisconnect
-            expectedServiceDisconnect = false
-            if (expected) {
-                publish(currentSnapshot.copy(serviceConnected = false, running = false))
+            handleServiceDisconnected(generation, this, "The Shizuku replay helper disconnected unexpectedly.")
+        }
+
+        override fun onBindingDied(name: ComponentName) {
+            handleServiceDisconnected(generation, this, "The Shizuku replay helper binding died unexpectedly.")
+        }
+
+        override fun onNullBinding(name: ComponentName) {
+            handleServiceDisconnected(generation, this, "The Shizuku replay helper returned no binding.")
+        }
+    }
+
+    private fun disposeLateServiceBinding(
+        service: IShizukuInputReplayService,
+        connection: ServiceConnection,
+    ) {
+        runCatching { service.cancel() }
+        runCatching { Shizuku.unbindUserService(userServiceArgs, connection, true) }
+    }
+
+    private fun handleServiceDisconnected(
+        generation: Long,
+        connection: ServiceConnection,
+        unexpectedMessage: String,
+    ) {
+        val current = synchronized(bindingLock) {
+            if (!isCurrentBinding(generation, connection)) {
+                false
             } else {
-                activeRequest = false
-                pendingCommands = null
-                publish(
-                    currentSnapshot.copy(
-                        serviceConnected = false,
-                        running = false,
-                        message = "The Shizuku replay helper disconnected unexpectedly.",
-                    ),
-                )
+                retireBindingLocked()
+                true
             }
         }
+        if (!current) return
+        stopPolling()
+        activeRequest = false
+        pendingCommands = null
+        pendingPause = false
+        publish(
+            currentSnapshot.copy(
+                serviceConnected = false,
+                running = false,
+                paused = false,
+                message = unexpectedMessage,
+            ),
+        )
+    }
+
+    private fun isCurrentBinding(generation: Long, connection: ServiceConnection): Boolean = bindingGeneration.get() == generation && activeServiceConnection === connection
+
+    /** Invalidates callbacks from the current and every older bind. Must be called under the lock. */
+    private fun retireBindingLocked() {
+        activeServiceConnection = null
+        remoteService = null
+        bindingGeneration.incrementAndGet()
     }
 
     init {
@@ -195,6 +264,7 @@ class ShizukuInputReplay(
                     permissionGranted = false,
                     serviceConnected = false,
                     running = false,
+                    paused = false,
                     message = messageOverride ?: "Shizuku is not running or its binder is not ready.",
                 ),
             )
@@ -305,10 +375,53 @@ class ShizukuInputReplay(
         )
     }
 
+    /** Requests a pause that the helper applies at the next safe gesture boundary. */
+    fun pause() {
+        if (closed) return
+        pendingPause = true
+        val service = remoteService
+        if (!activeRequest || service == null) {
+            publish(currentSnapshot.copy(message = "Pause will apply when replay starts."))
+            return
+        }
+        executor.execute {
+            runCatching { service.pause() }
+                .onFailure { error ->
+                    pendingPause = false
+                    publish(
+                        currentSnapshot.copy(
+                            message = "Replay pause could not be requested: " +
+                                (error.message ?: error.javaClass.simpleName),
+                        ),
+                    )
+                }
+        }
+    }
+
+    /** Resumes a helper paused between complete gestures. */
+    fun resume() {
+        if (closed) return
+        pendingPause = false
+        val service = remoteService ?: return
+        if (!activeRequest) return
+        executor.execute {
+            runCatching { service.resume() }
+                .onFailure { error ->
+                    publish(
+                        currentSnapshot.copy(
+                            message = "Replay resume could not be requested: " +
+                                (error.message ?: error.javaClass.simpleName),
+                        ),
+                    )
+                }
+        }
+    }
+
     fun cancel() {
         if (closed) return
         val service = remoteService
         activeRequest = false
+        pendingPause = false
         pendingCommands = null
         stopPolling()
         runCatching { service?.cancel() }
@@ -319,6 +432,7 @@ class ShizukuInputReplay(
         if (closed) return
         closed = true
         val service = remoteService
+        pendingPause = false
         runCatching { service?.cancel() }
         finishService(null)
         Shizuku.removeBinderReceivedListener(binderReceivedListener)
@@ -349,12 +463,39 @@ class ShizukuInputReplay(
         publish(snapshot.copy(message = message))
         val service = remoteService
         if (service != null) {
-            submit(commands, service)
+            val generation = bindingGeneration.get()
+            val connection = activeServiceConnection
+            if (connection == null || !isCurrentBinding(generation, connection)) {
+                finishService(
+                    "The Shizuku replay helper binding is settling. Try again shortly.",
+                    cancelRemote = true,
+                )
+                return
+            }
+            submit(commands, service, generation)
+            return
+        }
+        val generation = bindingGeneration.incrementAndGet()
+        val connection = newServiceConnection(generation)
+        val registered = synchronized(bindingLock) {
+            if (closed || !activeRequest) {
+                false
+            } else {
+                activeServiceConnection = connection
+                true
+            }
+        }
+        if (!registered) {
+            activeRequest = false
+            pendingCommands = null
             return
         }
         try {
-            Shizuku.bindUserService(userServiceArgs, serviceConnection)
+            Shizuku.bindUserService(userServiceArgs, connection)
         } catch (error: Throwable) {
+            synchronized(bindingLock) {
+                if (isCurrentBinding(generation, connection)) retireBindingLocked()
+            }
             activeRequest = false
             pendingCommands = null
             publish(
@@ -366,9 +507,14 @@ class ShizukuInputReplay(
         }
     }
 
-    private fun submit(commands: List<ReplayCommand>, service: IShizukuInputReplayService) {
+    private fun submit(
+        commands: List<ReplayCommand>,
+        service: IShizukuInputReplayService,
+        generation: Long,
+    ) {
         executor.execute {
             try {
+                requireActiveSubmission(service, generation)
                 service.clearQueue()
                 val motionTrace = commands.filterIsInstance<ReplayCommand.MotionTrace>().singleOrNull()
                 val capabilities = if (motionTrace != null) service.getCapabilities() else null
@@ -385,6 +531,7 @@ class ShizukuInputReplay(
                     )
                 }
                 commands.forEach { command ->
+                    requireActiveSubmission(service, generation)
                     when (command) {
                         is ReplayCommand.Tap -> service.enqueueTap(command.x, command.y)
 
@@ -422,12 +569,27 @@ class ShizukuInputReplay(
                         }
                     }
                 }
+                requireActiveSubmission(service, generation)
                 service.startQueue()
-                pendingCommands = null
+                if (pendingPause && isActiveSubmission(service, generation)) service.pause()
+                val submissionStillCurrent = synchronized(bindingLock) {
+                    val connection = activeServiceConnection
+                    if (!activeRequest || connection == null || !isCurrentBinding(generation, connection)) {
+                        false
+                    } else {
+                        pendingCommands = null
+                        true
+                    }
+                }
+                if (!submissionStillCurrent) {
+                    runCatching { service.cancel() }
+                    return@execute
+                }
                 publish(
                     currentSnapshot.copy(
                         serviceConnected = true,
                         running = true,
+                        paused = false,
                         rawMotionTimelineSupported = capabilities?.let {
                             it and CAPABILITY_RAW_MOTION_TRACE != 0
                         } ?: currentSnapshot.rawMotionTimelineSupported,
@@ -442,19 +604,40 @@ class ShizukuInputReplay(
                         },
                     ),
                 )
-                startPolling()
+                if (isActiveSubmission(service, generation)) startPolling(service, generation)
             } catch (error: Throwable) {
-                finishService(
-                    "Shizuku replay could not start: ${error.message ?: error.javaClass.simpleName}",
-                    cancelRemote = true,
-                )
+                if (isActiveSubmission(service, generation)) {
+                    finishService(
+                        "Shizuku replay could not start: ${error.message ?: error.javaClass.simpleName}",
+                        cancelRemote = true,
+                    )
+                } else {
+                    runCatching { service.cancel() }
+                }
             }
         }
     }
 
-    private fun startPolling() {
+    private fun requireActiveSubmission(service: IShizukuInputReplayService, generation: Long) {
+        if (!isActiveSubmission(service, generation)) {
+            throw CancellationException("Replay request ended before the helper could start")
+        }
+    }
+
+    private fun isActiveSubmission(service: IShizukuInputReplayService, generation: Long): Boolean {
+        if (closed || !activeRequest || remoteService !== service) return false
+        val connection = activeServiceConnection ?: return false
+        return isCurrentBinding(generation, connection)
+    }
+
+    private fun startPolling(service: IShizukuInputReplayService, generation: Long) {
         stopPolling()
-        pollTask = executor.scheduleAtFixedRate(::pollRemoteService, 0L, 100L, TimeUnit.MILLISECONDS)
+        pollTask = executor.scheduleAtFixedRate(
+            { pollRemoteService(service, generation) },
+            0L,
+            100L,
+            TimeUnit.MILLISECONDS,
+        )
     }
 
     private fun stopPolling() {
@@ -462,10 +645,11 @@ class ShizukuInputReplay(
         pollTask = null
     }
 
-    private fun pollRemoteService() {
-        val service = remoteService ?: return
+    private fun pollRemoteService(service: IShizukuInputReplayService, generation: Long) {
+        if (!isActiveSubmission(service, generation)) return
         try {
             val running = service.isRunning()
+            val paused = service.isPaused()
             val completedCount = service.getCompletedCount()
             val queuedCount = service.getQueuedCount()
             val lastError = service.getLastError()
@@ -473,12 +657,15 @@ class ShizukuInputReplay(
                 currentSnapshot.copy(
                     serviceConnected = true,
                     running = running,
+                    paused = paused,
                     queuedCount = queuedCount,
                     completedCount = completedCount,
                     remoteProcessUid = service.getProcessUid(),
                     lastCommand = service.getLastCommand(),
                     lastError = lastError,
                     message = when {
+                        paused -> "Replay paused safely after the current gesture."
+
                         running && currentSnapshot.directMotionTimelineSupported == true ->
                             "Replay running through direct InputManager injection."
 
@@ -492,10 +679,14 @@ class ShizukuInputReplay(
             )
             if (!running) finishService(null, keepSnapshot = true)
         } catch (error: Throwable) {
-            finishService(
-                "The Shizuku replay helper failed: ${error.message ?: error.javaClass.simpleName}",
-                cancelRemote = true,
-            )
+            if (isActiveSubmission(service, generation)) {
+                finishService(
+                    "The Shizuku replay helper failed: ${error.message ?: error.javaClass.simpleName}",
+                    cancelRemote = true,
+                )
+            } else {
+                runCatching { service.cancel() }
+            }
         }
     }
 
@@ -507,19 +698,26 @@ class ShizukuInputReplay(
         stopPolling()
         pendingCommands = null
         activeRequest = false
-        val service = remoteService
-        remoteService = null
+        pendingPause = false
+        val (service, connection) = synchronized(bindingLock) {
+            val currentService = remoteService
+            val currentConnection = activeServiceConnection
+            retireBindingLocked()
+            currentService to currentConnection
+        }
         if (cancelRemote) runCatching { service?.cancel() }
-        expectedServiceDisconnect = true
-        runCatching { Shizuku.unbindUserService(userServiceArgs, serviceConnection, true) }
+        connection?.let { boundConnection ->
+            runCatching { Shizuku.unbindUserService(userServiceArgs, boundConnection, true) }
+        }
         if (!closed) {
             if (keepSnapshot) {
-                publish(currentSnapshot.copy(serviceConnected = false, running = false))
+                publish(currentSnapshot.copy(serviceConnected = false, running = false, paused = false))
             } else {
                 publish(
                     currentSnapshot.copy(
                         serviceConnected = false,
                         running = false,
+                        paused = false,
                         message = message ?: currentSnapshot.message,
                     ),
                 )

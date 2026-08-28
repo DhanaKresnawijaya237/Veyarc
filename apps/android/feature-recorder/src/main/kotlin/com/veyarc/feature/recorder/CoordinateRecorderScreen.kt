@@ -29,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.veyarc.automation.android.ReplayFreezeCapability
 import com.veyarc.model.bundle.WorkflowBundle
 
 @Composable
@@ -44,7 +45,10 @@ fun CoordinateRecorderScreen(
     val rawReplayState by rawReplayController.state.collectAsState()
     var pendingReplayReview by remember { mutableStateOf<CoordinateRecordingReview?>(null) }
     var replayInputGuardEnabled by remember { mutableStateOf(false) }
-    val active = state is CoordinateRecordingState.Arming || state is CoordinateRecordingState.Recording
+    val replayFreezeAvailability = ReplayFreezeCapability.availability()
+    val active = state is CoordinateRecordingState.Arming ||
+        state is CoordinateRecordingState.Recording ||
+        state is CoordinateRecordingState.Paused
     DisposableEffect(rawReplayController) {
         onDispose { rawReplayController.close() }
     }
@@ -63,15 +67,16 @@ fun CoordinateRecorderScreen(
     ) {
         Text("Coordinate recording", style = MaterialTheme.typography.headlineSmall)
         Text(
-            "Arm recording here, then use any apps normally. Veyarc records a global raw single-pointer " +
+            "Start recording here or from the Veyarc edge-latch control center, then use any apps normally. " +
+                "Veyarc records a global raw single-pointer " +
                 "touch timeline and foreground-package transitions; it does not inspect UI content, " +
-                "replay while recording, or install a touch-intercepting overlay.",
+                "replay while recording, or install a full-screen touch-intercepting overlay.",
             style = MaterialTheme.typography.bodyMedium,
         )
         Text(
-            "Stop from the Quick Settings Veyarc tile, the persistent notification, or this screen. " +
-                "Control-surface touches are excluded; switching between third-party apps stays in " +
-                "the same encrypted journal.",
+            "Use the edge-latch control center to start, pause, resume, or stop and save. Quick Settings and the " +
+                "persistent notification remain independent emergency fallbacks. Control-surface touches are " +
+                "excluded; switching between third-party apps stays in the same encrypted journal.",
             style = MaterialTheme.typography.bodyMedium,
         )
 
@@ -97,6 +102,7 @@ fun CoordinateRecorderScreen(
                 Text("Recording armed", style = MaterialTheme.typography.titleMedium)
                 Text("Elapsed: ${formatElapsed(current.elapsedMillis)}")
                 Text("Use any third-party apps now. Foreground transitions will be logged automatically.")
+                OutlinedButton(onClick = controller::pause) { Text("Pause recording") }
                 OutlinedButton(onClick = controller::stop) { Text("Stop and review") }
             }
 
@@ -105,7 +111,17 @@ fun CoordinateRecorderScreen(
                 Text("Foreground: ${current.foregroundPackage ?: "unknown"}")
                 Text("Elapsed: ${formatElapsed(current.elapsedMillis)}")
                 Text("Captured frames: ${current.frameCount}")
+                OutlinedButton(onClick = controller::pause) { Text("Pause recording") }
                 OutlinedButton(onClick = controller::stop) { Text("Stop and review") }
+            }
+
+            is CoordinateRecordingState.Paused -> {
+                Text("Recording paused", style = MaterialTheme.typography.titleMedium)
+                Text("Foreground: ${current.foregroundPackage ?: "unknown"}")
+                Text("Elapsed: ${formatElapsed(current.elapsedMillis)}")
+                Text("Captured frames: ${current.frameCount}")
+                Button(onClick = controller::resume) { Text("Resume recording") }
+                OutlinedButton(onClick = controller::stop) { Text("Stop and save") }
             }
 
             is CoordinateRecordingState.Review -> {
@@ -130,12 +146,21 @@ fun CoordinateRecorderScreen(
                 review.draftUnavailableReason?.let { reason ->
                     Text("Workflow draft unavailable: $reason", color = MaterialTheme.colorScheme.error)
                 }
+                if (review.workflowSaved && review.editableWorkflow != null) {
+                    Text(
+                        "Saved as workflow revision ${review.editableWorkflow.document.revision}.",
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                review.workflowSaveError?.let { reason ->
+                    Text("Workflow could not be saved automatically: $reason", color = MaterialTheme.colorScheme.error)
+                }
                 review.editableWorkflow?.let { bundle ->
                     Button(
                         enabled = !rawReplayState.running,
                         onClick = { onEditWorkflow(bundle, review.journalFileName) },
                     ) {
-                        Text("Edit as workflow")
+                        Text(if (review.workflowSaved) "Edit saved workflow" else "Edit as workflow")
                     }
                 }
                 review.rawReplayUnavailableReason?.let { reason ->
@@ -143,6 +168,10 @@ fun CoordinateRecorderScreen(
                 }
                 if (review.rawReplayTrace != null && review.rawReplayUnavailableReason == null) {
                     Text("Raw replay target: ${review.rawReplayTargetPackage?.value ?: "unknown"}")
+                    Text(
+                        "Use the edge-latch control center for Pause, Resume, or Stop. The persistent Veyarc replay notification remains an independent fallback.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             "Freeze target-app input during replay",
@@ -150,13 +179,20 @@ fun CoordinateRecorderScreen(
                         )
                         Switch(
                             checked = replayInputGuardEnabled,
-                            enabled = !rawReplayState.running,
+                            enabled = !rawReplayState.running && replayFreezeAvailability.available,
                             onCheckedChange = { replayInputGuardEnabled = it },
                         )
                     }
                     Text(
-                        "Optional safety guard: it consumes touches in the target app while replay " +
-                            "runs. System navigation and the emergency notification remain available.",
+                        if (replayFreezeAvailability.available) {
+                            "Strict freeze is capability-gated. It blocks target-app touches while " +
+                                "keeping system navigation and the emergency notification available."
+                        } else {
+                            "Strict screen freeze is disabled on this build because Android cannot " +
+                                "safely block human touches and route the same synthetic gesture " +
+                                "to a third-party app without a privileged input-filter backend. " +
+                                "Normal replay remains available with human touches enabled."
+                        },
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Button(
@@ -167,6 +203,13 @@ fun CoordinateRecorderScreen(
                     }
                     if (rawReplayState.running) {
                         Text(rawReplayState.message)
+                        if (rawReplayState.paused) {
+                            Button(onClick = rawReplayController::resume) { Text("Resume replay") }
+                        } else {
+                            OutlinedButton(onClick = rawReplayController::pause) {
+                                Text("Pause after current gesture")
+                            }
+                        }
                         OutlinedButton(onClick = rawReplayController::cancel) { Text("Cancel replay") }
                     }
                     rawReplayState.error?.let { error ->
@@ -200,10 +243,10 @@ fun CoordinateRecorderScreen(
                         "${review.rawReplayTargetPackage?.value ?: "the current app"}. " +
                         "Veyarc will open that app and wait for it to become foreground. No input " +
                         "is sent unless the Shizuku helper proves fixed motionevent support. " +
-                        if (replayInputGuardEnabled) {
-                            "The optional input guard will consume target-app touches during replay."
+                        if (replayInputGuardEnabled && replayFreezeAvailability.available) {
+                            "Strict freeze is enabled and will consume target-app touches during replay."
                         } else {
-                            "Human touches remain enabled during replay."
+                            "Strict freeze is unavailable on this build; human touches remain enabled during replay."
                         },
                 )
             },

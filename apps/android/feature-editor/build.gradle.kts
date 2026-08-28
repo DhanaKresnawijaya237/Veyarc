@@ -22,6 +22,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":automation-android"))
     val composeBom = platform(libs.androidx.compose.bom)
 
     implementation(project(":data"))

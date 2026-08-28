@@ -1,6 +1,7 @@
 package com.veyarc.recording
 
 import com.veyarc.model.DisplayOrientation
+import com.veyarc.model.LaunchApp
 import com.veyarc.model.LongPress
 import com.veyarc.model.PackageName
 import com.veyarc.model.SwipePath
@@ -72,19 +73,93 @@ class RecordingWorkflowConverterTest {
         )
         val steps = converted.bundle.document.steps
 
-        assertEquals(4, steps.size)
-        assertTrue(steps[0] is TapPoint)
-        assertTrue(steps[1] is Wait)
-        assertTrue(steps[2] is LongPress)
-        assertTrue(steps[3] is SwipePath)
-        assertEquals(100.0 / 999.0, (steps[0] as TapPoint).point.x, 0.000001)
-        assertEquals(200.0 / 1_999.0, (steps[0] as TapPoint).point.y, 0.000001)
-        assertEquals(700L, (steps[2] as LongPress).durationMs.value)
-        assertEquals(1.0, (steps[3] as SwipePath).points.last().point.x, 0.0001)
-        assertEquals(1.0, (steps[3] as SwipePath).points.last().point.y, 0.0001)
+        assertEquals(5, steps.size)
+        assertTrue(steps[0] is LaunchApp)
+        assertEquals(PackageName("com.example.app"), (steps[0] as LaunchApp).packageName)
+        assertEquals(5_000L, (steps[0] as LaunchApp).foregroundTimeoutMs.value)
+        assertTrue(steps[1] is TapPoint)
+        assertTrue(steps[2] is Wait)
+        assertTrue(steps[3] is LongPress)
+        assertTrue(steps[4] is SwipePath)
+        assertEquals(100.0 / 999.0, (steps[1] as TapPoint).point.x, 0.000001)
+        assertEquals(200.0 / 1_999.0, (steps[1] as TapPoint).point.y, 0.000001)
+        assertEquals(700L, (steps[3] as LongPress).durationMs.value)
+        assertEquals(1.0, (steps[4] as SwipePath).points.last().point.x, 0.0001)
+        assertEquals(1.0, (steps[4] as SwipePath).points.last().point.y, 0.0001)
         assertEquals(1, converted.foregroundPackageSuggestions.size)
         assertTrue(converted.warnings.any { it.contains("incomplete", ignoreCase = true) })
         assertTrue(converted.warnings.any { it.contains("Launch app", ignoreCase = true) })
+    }
+
+    @Test
+    fun fallsBackToFirstObservedThirdPartyPackageWhenInitialObservationIsController() {
+        val targetPackage = PackageName("com.example.target")
+        val converted = RecordingWorkflowConverter.convert(
+            analysis = RecordingAnalysis(
+                header = RecordingJournalHeader(
+                    sessionId = "00000000-0000-4000-8000-000000000407",
+                    startedAtEpochMillis = 6_000L,
+                    viewport = viewport(),
+                ),
+                events = listOf(
+                    RecordingAnalysisEvent.Gesture(
+                        ClassifiedTouchGesture(
+                            startElapsedMillis = 0L,
+                            durationMillis = 10L,
+                            kind = ClassifiedGestureKind.TAP,
+                            points = listOf(
+                                RecordedTimedPoint(RecordedPoint(1.0, 1.0), 0L),
+                                RecordedTimedPoint(RecordedPoint(1.0, 1.0), 10L),
+                            ),
+                        ),
+                    ),
+                ),
+                initialForegroundPackage = PackageName("com.veyarc.app"),
+                incompleteTouchIgnored = false,
+            ),
+            allowedPackages = listOf(targetPackage),
+        )
+
+        val launch = converted.bundle.document.steps.first() as LaunchApp
+        assertEquals(targetPackage, launch.packageName)
+    }
+
+    @Test
+    fun includesAutomaticLaunchTimeoutInRuntimeBudget() {
+        val recordedDurationMillis = 60_500L
+        val converted = RecordingWorkflowConverter.convert(
+            analysis = RecordingAnalysis(
+                header = RecordingJournalHeader(
+                    sessionId = "00000000-0000-4000-8000-000000000408",
+                    startedAtEpochMillis = 7_000L,
+                    viewport = viewport(),
+                ),
+                events = listOf(
+                    RecordingAnalysisEvent.Gesture(
+                        ClassifiedTouchGesture(
+                            startElapsedMillis = 0L,
+                            durationMillis = recordedDurationMillis,
+                            kind = ClassifiedGestureKind.HOLD,
+                            points = listOf(
+                                RecordedTimedPoint(RecordedPoint(1.0, 1.0), 0L),
+                                RecordedTimedPoint(
+                                    RecordedPoint(1.0, 1.0),
+                                    recordedDurationMillis,
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+                initialForegroundPackage = PackageName("com.example.target"),
+                incompleteTouchIgnored = false,
+            ),
+            allowedPackages = listOf(PackageName("com.example.target")),
+        )
+
+        assertTrue(
+            converted.bundle.document.runLimits.maxRuntimeMs >=
+                recordedDurationMillis + 5_000L,
+        )
     }
 
     @Test(expected = IllegalArgumentException::class)

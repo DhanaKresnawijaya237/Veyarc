@@ -85,21 +85,29 @@ Implement the runner as a single-coroutine deterministic state machine with:
 
 Replay safety controls are separate from the workflow engine and must be service-owned:
 
-- Provide an opt-in replay input guard (the user-facing "freeze input while replaying" mode). It
-  may consume touches in the declared target app's content area so human touches cannot conflict
-  with injected events, but it must not block system navigation, the emergency notification/Quick
-  Settings path, or the service-owned replay controller. This is a target-app guard, not an
-  assumed system-wide input filter.
-- Provide a movable floating replay controller while a replay is active. It exposes pause/resume
-  at safe gesture boundaries, cancellation, and a workflow picker. The controller never forwards
-  its own touches to the target app and remains available when the input guard is enabled.
-- Permit workflow switching only while paused or stopped, after any active touch has received
-  `CANCEL` and the target package, viewport, permissions, and capabilities have been rechecked.
-  Never switch workflows in the middle of a gesture.
-- Keep the persistent notification and Quick Settings emergency stop as independent fallback
-  controls. If the guard or controller cannot be created, is removed unexpectedly, or cannot be
-  cleaned up, cancel the replay, clear active touches, remove all controls, and leave the target
-  app in normal pass-through mode.
+- Treat strict replay freezing (the user-facing "freeze input while replaying" mode) as a
+  privileged capability, not as an ordinary accessibility overlay. Android touchable overlays
+  become the input target, so they cannot safely consume physical touches while also routing the
+  same synthetic gesture to the third-party app. Until a lifecycle-tested root/system input-filter
+  backend exists, the freeze toggle is disabled and replay refuses to start if requested; it must
+  never fall back to touch exploration, a full-screen overlay, or an unscoped input filter.
+- Keep the persistent notification's Pause/Resume/Stop actions and Quick Settings emergency stop
+  as independent service-owned fallbacks, even when the controller is the primary user-facing
+  control. The controller is an opt-in, small edge-latch accessibility overlay that is persisted
+  on the left or right screen edge with a normalized along-edge position. It remains collapsed during recording and replay
+  and expands into a compact control-center panel. Opening
+  the panel while replay is active must cancel replay before any panel action is handled. It is
+  never a freeze surface. The recorder excludes its user-selected bounds from the raw journal, and replay
+  preflight refuses a trace whose remapped points intersect those bounds, preventing the overlay
+  from stealing or misdirecting synthetic input. Its square replay-latest action requests a direct
+  replay; the remaining state, latest-replay, library, and hide actions stay in one compact
+  horizontal row, and the separate library action remains available for editing.
+- A normal APK must not claim to convert the system Back gesture into a replay pause. Notification
+  Pause/Resume/Stop and the controller's explicit panel actions are the reliable controls; ordinary
+  Back remains system navigation and may cause the existing foreground-safety cancellation.
+- If the future privileged guard or any replay control cannot be created, is removed unexpectedly,
+  or cannot be cleaned up, cancel the replay, clear active touches, remove all controls, and leave
+  the target app in normal pass-through mode.
 - Keep the input guard opt-in and capability-gated until it is physically verified across the
   supported OEM/device matrix; the default beta behavior remains normal pass-through.
 
@@ -112,20 +120,28 @@ Define platform-neutral interfaces for:
 - Execution clock
 - Touch-event input source
 
-The Android adapter implements them using `AccessibilityService`, `TouchInteractionController`, `dispatchGesture`, application launch intents and MediaProjection. Android framework classes must not escape into the core engine.
+The Android adapter implements them using `AccessibilityService`, its gesture dispatcher,
+application launch intents and MediaProjection. The legacy touch-interception experiment remains
+isolated from production replay; Android framework classes must not escape into the core engine.
 
 ### Coordinate-only recording
 
 Recording is event-driven, not fixed-interval polling:
 
-1. The service owns a global recording session that can be started from Veyarc or a service-owned control and stopped from any foreground app (Quick Settings tile first, with the notification as a fallback).
-2. The recording indicator is non-touchable. Stopping is handled by the service rather than by a draggable input overlay, so the target app and system navigation remain usable throughout the session.
+1. The service owns a global recording session that can be started, paused, resumed and saved from
+the fixed service-owned control center or Veyarc, and stopped from any foreground app (Quick
+Settings tile and the notification remain independent emergency fallbacks).
+2. The controller is a small edge latch rather than a circular or full-screen input surface. The
+   user can drag it continuously along the left or right edge; it switches only between those two
+   edges on release and persists a normalized position along the selected edge, and any drag closes the expanded panel. Its current touch bounds are explicitly excluded
+   from the raw journal; outside those bounds the target app and system navigation remain usable
+   throughout the session.
 3. For third-party apps, prefer a privileged read-only Linux `evdev` input source: a root companion process (or a verified shell/Shizuku capability) observes the touchscreen device without requesting accessibility touch exploration or injecting/replaying during capture. The public Accessibility API touch-exploration experiment failed this safety test on the vivo V50 and remains disabled. If the privileged source is unavailable or cannot prove unchanged target-app input, recording must refuse to start.
 4. Capture only the selected touchscreen device, parse complete single-pointer down/move/up frames, and preserve their monotonic timestamps in the encrypted raw journal. Raw events remain available for exact replay after recording; analysis is a separate view of the same trace.
 5. Foreground-package observations are journal data, not a stop condition: normal app switches remain in one global trace. Veyarc, the unlocked notification shade, the launcher, and unknown/non-application windows are control surfaces whose touch frames are ignored. The lock screen, a lost helper connection, or an invalid touchscreen stream stops the recording and preserves only a recoverable journal when safe.
 6. After recording, simplify paths using a configurable tolerance based on display diagonal while preserving timing and endpoints.
 7. Classify gestures using the captured touch thresholds and infer waits from inter-gesture gaps and foreground-package observations.
-8. Produce an editable workflow draft; never execute the inferred draft automatically.
+8. Produce an editable workflow draft; prepend one validated `LaunchApp` step for the first observed third-party package so a recorded workflow can start from Veyarc or another control surface, but never execute the inferred draft automatically. Later foreground transitions remain review suggestions; loops, conditions, and additional app launches are not inferred.
 
 Recording controls are excluded from the trace, while their foreground transitions may be retained as review metadata. A failed or unsupported observation source must stop safely, avoid changing accessibility input routing, terminate any privileged helper, preserve the recoverable journal when possible, and report that exact global recording is unavailable on that device rather than allowing recorded and actual app state to diverge.
 
@@ -154,8 +170,10 @@ Build a single-activity Compose application with:
 - Permission/capability setup
 - Pre-run validation and maximum-runtime summary
 - Live run status, pause and emergency stop
-- Optional replay input-guard toggle
-- Service-owned movable floating replay controller with pause/resume, cancel, and safe workflow switching
+- Explicit strict-freeze capability status (disabled until a privileged input filter exists)
+- Opt-in left/right edge-latch control-center toggle, continuous along-edge placement, and a direct replay-latest play action in one compact horizontal row
+- Recording start/pause/resume/save plus replay status and stop actions from the controller
+- Replay pause/cancel status with notification Pause/Resume/Stop and Quick Settings emergency stop
 - Run history and diagnostics
 - AI assistant screen added later
 
@@ -187,11 +205,19 @@ Every workflow declares allowed packages. `LaunchApp` may switch only to a decla
    - Implement a service-owned global recording session, non-touchable indicator, Quick Settings/notification start-stop controls, append-only event journal and a capability-gated privileged raw-input adapter. The adapter reads only the touchscreen evdev stream and must remain disabled unless it proves that normal third-party-app input is preserved; the current Android accessibility touch-exploration path is not acceptable.
    - Preserve raw events for post-recording exact replay; do not replay gestures while recording.
    - Implement path simplification, gesture classification, wait inference and foreground-package transition review data across app switches.
-   - Always open the inferred workflow in review mode.
-   - Add the replay follow-up controls: an opt-in target-app input guard and a service-owned movable
-     replay controller. Keep controller actions outside the target trace, pause only at gesture
-     boundaries, switch workflows only while paused/stopped, and retain notification/Quick Settings
-     emergency stop as an independent fallback.
+   - Convert the reviewable recording into a validated workflow, prepend one validated `LaunchApp`
+     step for the first observed third-party package, and persist it immediately as a new revision.
+     Keep the encrypted journal and review screen available for diagnostics; opening the saved
+     workflow in the editor creates the next revision rather than replacing the automatic save.
+     - Add the replay follow-up controls: a capability-gated strict-freeze slot for a future
+       privileged input-filter backend, notification Pause/Resume/Stop and Quick Settings emergency
+       stop, in-app replay status, and an opt-in fixed edge-latch control-center overlay. The collapsed
+      handle remains present during recording and replay; opening it while replaying cancels the
+       replay before panel actions run. The panel provides recording start/pause/resume/save and
+       workflow/replay actions. Square play actions auto-start only after the normal recovery,
+       service, compilation, and emergency-notification checks. It never intercepts or freezes target input, recording excludes its
+       user-selected bounds, and replay refuses colliding traces. Keep normal replay explicitly pass-through while
+      strict freeze is unavailable.
 
 5. **Pixel/image conditions**
    - Add MediaProjection session management, ephemeral frame capture, pixel matching and on-device template matching.
@@ -237,12 +263,16 @@ Every workflow declares allowed packages. `LaunchApp` may switch only to a decla
 - Home, Recents and system navigation remain usable before and after recording, and the helper cannot remain active after cancellation.
 - Rapid consecutive gestures remain ordered and complete in the raw journal.
 - Exact replay uses the preserved raw trace only after recording has stopped.
-- When the replay input guard is enabled, target-app touches are consumed without blocking system
-  navigation or the floating controller; replay pause/resume never splits a gesture.
-- The floating replay controller can be moved, remains touchable above the guard, and can switch
-  workflows only after a safe pause/stop and a fresh package/viewport/capability check.
-- Guard/controller teardown is idempotent after completion, cancellation, service disconnect,
-  timeout, process death, or permission loss; no input blocker remains installed.
+- Strict freeze is enabled only when a privileged input-filter capability has passed device-specific
+  lifecycle checks; otherwise the request is refused before any input is sent.
+- The opt-in edge-latch controller remains collapsed during recording and replay, can be dragged continuously along the left or right edge and switches
+  between those two edges only on release, opens to an adjacent control-center panel, cancels active replay before
+  panel actions run, excludes its current bounds from recording, and refuses replay traces that
+  intersect those bounds; controller/service teardown is idempotent.
+- Notification Pause/Resume/Stop reaches the active process-owned run controller, and ordinary Back
+  is not treated as a guaranteed pause signal.
+- Any future privileged filter teardown is idempotent after completion, cancellation, service
+  disconnect, timeout, process death, or permission loss; no input blocker remains installed.
 - Rotation between steps and during an active gesture.
 - Accessibility disabled mid-run.
 - Screen-capture consent denial and revocation.
@@ -250,10 +280,9 @@ Every workflow declares allowed packages. `LaunchApp` may switch only to a decla
 - Recording-control surfaces excluded from recording.
 - No video file or unintended screenshot survives a run.
 - Quick Settings/notification emergency stop prevents further capture, terminates the privileged helper, restores normal routing and removes recording controls on a best-effort basis within one second.
-- Replay input-guard tests verify that conflicting target-app touches are consumed while system
-  navigation, emergency controls, and the movable controller remain usable.
-- Replay controller tests verify pause/resume boundaries, safe workflow switching, controller
-  movement, cancellation, service loss, timeout, orientation changes, and cleanup on every exit path.
+- Replay input-guard tests remain deferred until a privileged backend exists; they must verify that
+  conflicting target-app touches are consumed while system navigation and emergency controls
+  remain usable.
 
 ### End-to-end acceptance scenario
 

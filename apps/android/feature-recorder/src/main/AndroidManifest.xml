@@ -31,5 +31,11 @@
         <receiver
             android:name=".RawReplayStopReceiver"
             android:exported="false" />
+        <receiver
+            android:name=".RawReplayPauseReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".RawReplayResumeReceiver"
+            android:exported="false" />
     </application>
 </manifest>

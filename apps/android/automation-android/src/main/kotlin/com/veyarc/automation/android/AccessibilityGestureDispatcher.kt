@@ -138,6 +138,14 @@ object AccessibilityGestureDispatcher {
             onResult(it)
             return
         }
+        if (points.any { ReplayFloatingController.isScreenPointOnSurface(it.x, it.y) }) {
+            onResult(
+                GestureDispatchResult.InvalidRequest(
+                    "Gesture intersects the Veyarc edge-latch control surface; move the latch or edit the gesture.",
+                ),
+            )
+            return
+        }
 
         val activeService = service
         if (activeService == null) {

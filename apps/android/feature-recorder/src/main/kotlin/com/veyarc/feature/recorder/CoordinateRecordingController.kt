@@ -9,6 +9,11 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.ViewConfiguration
 import com.veyarc.automation.android.AndroidForegroundPackage
+import com.veyarc.automation.android.ControlCenterRecordingState
+import com.veyarc.automation.android.RecordingControllerActions
+import com.veyarc.automation.android.ReplayControllerWorkflow
+import com.veyarc.automation.android.ReplayFloatingController
+import com.veyarc.automation.android.ReplayWorkflowCatalog
 import com.veyarc.automation.android.ShizukuTouchRecording
 import com.veyarc.automation.android.ShizukuTouchRecordingEvent
 import com.veyarc.automation.android.currentDisplayRotation
@@ -16,6 +21,7 @@ import com.veyarc.automation.android.currentRecordingViewport
 import com.veyarc.data.storage.AesGcmFileCodec
 import com.veyarc.data.storage.AndroidKeystoreKeySource
 import com.veyarc.data.storage.EncryptedRecordingJournalStore
+import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.model.PackageName
 import com.veyarc.recording.RawTouchCoordinateMapper
 import com.veyarc.recording.RecordingAnalyzer
@@ -45,6 +51,7 @@ class CoordinateRecordingController(
 ) {
     private val appContext = context.applicationContext
     private val source = ShizukuTouchRecording(appContext)
+    private val workflowRepository = WorkflowRepository(appContext)
     private val sessionCleanup = RecordingSessionCleanup()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val eventExecutor: ExecutorService = ThreadPoolExecutor(
@@ -64,6 +71,12 @@ class CoordinateRecordingController(
 
     @Volatile
     private var stopRequested = false
+
+    @Volatile
+    private var pauseRequested = false
+
+    @Volatile
+    private var paused = false
 
     @Volatile
     private var sessionStartedElapsedRealtime = 0L
@@ -102,15 +115,30 @@ class CoordinateRecordingController(
     private var ignoredTouchActive = false
     private var activeTouchRotation: TouchDisplayRotation? = null
 
+    private val controlCenterActions = RecordingControllerActions(
+        onStart = ::start,
+        onPause = ::pause,
+        onResume = ::resume,
+        onStop = ::stop,
+        onServiceLost = { onRecordingServiceLost() },
+    )
+
+    init {
+        ReplayFloatingController.setRecordingActions(controlCenterActions)
+    }
+
     /** True while the global recorder is accepting a new recording session. */
     fun isSessionActive(): Boolean = active && !stopRequested
 
     /** True while the helper is shutting down after an explicit stop request. */
     fun isSessionStopping(): Boolean = active && stopRequested
 
+    /** True while the journal remains open but raw-input observation is paused. */
+    fun isSessionPaused(): Boolean = active && paused && !stopRequested
+
     private val timerRunnable = object : Runnable {
         override fun run() {
-            if (!active || stopRequested) return
+            if (!active || stopRequested || paused) return
             val elapsed = elapsedMillis()
             if (elapsed >= MAX_RECORDING_DURATION_MILLIS) {
                 requestStop(
@@ -133,6 +161,8 @@ class CoordinateRecordingController(
                         notificationText(lastThirdPartyForegroundPackage?.value, elapsed),
                     )
                 }
+
+                is CoordinateRecordingState.Paused -> Unit
 
                 else -> Unit
             }
@@ -211,6 +241,8 @@ class CoordinateRecordingController(
         ignoredTouchActive = false
         activeTouchRotation = null
         stopRequested = false
+        pauseRequested = false
+        paused = false
         stopFailureReason = null
         if (!sessionCleanup.begin()) {
             runCatching { openedJournal.close() }
@@ -223,6 +255,7 @@ class CoordinateRecordingController(
         sessionStartedElapsedRealtime = SystemClock.elapsedRealtime()
         lastElapsedMillis = 0L
         _state.value = CoordinateRecordingState.Arming(elapsedMillis = 0L)
+        ReplayFloatingController.setRecordingState(ControlCenterRecordingState.RECORDING)
         try {
             RecordingForegroundService.start(
                 appContext,
@@ -249,13 +282,66 @@ class CoordinateRecordingController(
     fun stop() {
         if (!active) {
             if (_state.value is CoordinateRecordingState.Arming ||
-                _state.value is CoordinateRecordingState.Recording
+                _state.value is CoordinateRecordingState.Recording ||
+                _state.value is CoordinateRecordingState.Paused
             ) {
                 _state.value = CoordinateRecordingState.Idle
             }
             return
         }
         requestStop(RecordingStopCause.USER_STOP)
+    }
+
+    /** Pauses raw observation without closing the encrypted journal. */
+    fun pause() {
+        if (!active || stopRequested || paused || pauseRequested) return
+        pauseRequested = true
+        paused = true
+        mainHandler.removeCallbacks(timerRunnable)
+        _state.value = CoordinateRecordingState.Paused(
+            foregroundPackage = lastThirdPartyForegroundPackage?.value,
+            elapsedMillis = elapsedMillis(),
+            frameCount = frameCount,
+        )
+        ReplayFloatingController.setRecordingState(ControlCenterRecordingState.PAUSED)
+        RecordingForegroundService.update(appContext, "Recording paused")
+        runCatching { source.stop() }
+    }
+
+    /** Resumes raw observation using the same encrypted journal and session clock. */
+    fun resume() {
+        if (!active || stopRequested || !paused || pauseRequested) return
+        val elapsed = elapsedMillis()
+        val remaining = MAX_RECORDING_DURATION_MILLIS - elapsed
+        if (remaining < MIN_RESUME_DURATION_MILLIS) {
+            requestStop(
+                cause = RecordingStopCause.TIMEOUT,
+                failureReason = "Recording reached its five-minute safety limit while paused.",
+            )
+            return
+        }
+        paused = false
+        captureReady = false
+        pendingTouchLines = null
+        pendingTouchSawControlSurface = false
+        ignoredTouchActive = false
+        activeTouchRotation = null
+        sourceError = null
+        _state.value = CoordinateRecordingState.Arming(elapsedMillis = elapsed)
+        ReplayFloatingController.setRecordingState(ControlCenterRecordingState.RECORDING)
+        RecordingForegroundService.update(appContext, "Recording resumed")
+        val startError = runCatching {
+            source.start(durationMillis = remaining, listener = ::onSourceEvent)
+        }.getOrElse { error ->
+            "Could not resume recording safely: ${error.message ?: error.javaClass.simpleName}"
+        }
+        if (startError != null) {
+            failSession(startError)
+            return
+        }
+        mainHandler.removeCallbacks(timerRunnable)
+        mainHandler.post(timerRunnable)
+        mainHandler.postDelayed(::checkForeground, FOREGROUND_POLL_INTERVAL_MILLIS)
     }
 
     /** Stops safely when Android destroys the foreground-service control unexpectedly. */
@@ -287,6 +373,7 @@ class CoordinateRecordingController(
         when (event) {
             is ShizukuTouchRecordingEvent.Started -> enqueue {
                 if (!active) return@enqueue
+                if (pauseRequested || paused) return@enqueue
                 recordingStartReceivedTimestampMicros = event.receivedTimestampMicros
                 minX = event.minX
                 maxX = event.maxX
@@ -303,6 +390,7 @@ class CoordinateRecordingController(
                     elapsedMillis = elapsedMillis(),
                     frameCount = frameCount,
                 )
+                ReplayFloatingController.setRecordingState(ControlCenterRecordingState.RECORDING)
             }
 
             is ShizukuTouchRecordingEvent.Frame -> enqueue {
@@ -318,6 +406,19 @@ class CoordinateRecordingController(
 
             ShizukuTouchRecordingEvent.Completed -> enqueue {
                 if (!active) return@enqueue
+                if (pauseRequested && !stopRequested) {
+                    pauseRequested = false
+                    paused = true
+                    settlePendingTouchBeforeClose(preservePartialTouch = false)
+                    _state.value = CoordinateRecordingState.Paused(
+                        foregroundPackage = lastThirdPartyForegroundPackage?.value,
+                        elapsedMillis = elapsedMillis(),
+                        frameCount = frameCount,
+                    )
+                    ReplayFloatingController.setRecordingState(ControlCenterRecordingState.PAUSED)
+                    RecordingForegroundService.update(appContext, "Recording paused")
+                    return@enqueue
+                }
                 val reason = sourceError ?: stopFailureReason ?: if (!stopRequested) {
                     if (elapsedMillis() >= MAX_RECORDING_DURATION_MILLIS) {
                         "Recording stopped after the five-minute safety limit."
@@ -333,7 +434,7 @@ class CoordinateRecordingController(
     }
 
     private fun processFrame(event: ShizukuTouchRecordingEvent.Frame) {
-        if (stopRequested) return
+        if (stopRequested || paused || pauseRequested) return
         val foreground = AndroidForegroundPackage.current()
         observeForeground(foreground)
         if (!active) return
@@ -341,41 +442,9 @@ class CoordinateRecordingController(
             failSession("Recording stopped because the lock screen became active.")
             return
         }
-        // Veyarc, the unlocked notification shade, the launcher, and unknown windows are
-        // control surfaces. Their package transitions remain review metadata, but their
-        // control taps must not become workflow gestures.
-        val controlSurface = isControlSurface(foreground)
-        if (ignoredTouchActive) {
-            if (event.action == ShizukuTouchRecordingEvent.Action.UP) {
-                ignoredTouchActive = false
-            }
-            return
-        }
-
-        // A start action can leave a final control-tap UP in the raw stream. Do not append
-        // that orphan; begin the global trace at the next complete third-party touch.
-        if (!captureReady && event.action != ShizukuTouchRecordingEvent.Action.DOWN) return
-        if (pendingTouchLines == null && controlSurface) {
-            if (event.action == ShizukuTouchRecordingEvent.Action.DOWN) {
-                ignoredTouchActive = true
-            }
-            return
-        }
-        val startingTouch = pendingTouchLines == null && event.action == ShizukuTouchRecordingEvent.Action.DOWN
-        if (startingTouch) {
-            captureReady = true
-            pendingTouchLines = ArrayList(PENDING_TOUCH_FRAME_LIMIT)
-            pendingTouchSawControlSurface = false
-        }
-        val pendingLines = pendingTouchLines ?: return
-        if (!startingTouch && event.action == ShizukuTouchRecordingEvent.Action.DOWN) {
-            failSession("The raw-input helper delivered a second touch before the previous one ended.")
-            return
-        }
-        if (controlSurface) pendingTouchSawControlSurface = true
-
         val startTimestamp = recordingStartReceivedTimestampMicros ?: return
         val currentViewport = viewport ?: return
+        val startingTouch = pendingTouchLines == null && event.action == ShizukuTouchRecordingEvent.Action.DOWN
         val rotation = currentDisplayRotation(appContext)?.let(TouchDisplayRotation::fromAndroidRotation)
             ?: run {
                 failSession("The display rotation could not be read safely during recording.")
@@ -407,6 +476,43 @@ class CoordinateRecordingController(
             maxY = maxY,
             rotation = rotation,
         )
+        // Veyarc, the unlocked notification shade, the launcher, unknown windows, and the edge
+        // latch bounds are control surfaces. Their package transitions remain review
+        // metadata, but their control taps must not become workflow gestures.
+        val packageControlSurface = isControlSurface(foreground)
+        val controllerControlSurface = ReplayFloatingController.isNormalizedPointOnSurface(
+            normalizedX = normalized.x,
+            normalizedY = normalized.y,
+        )
+        val controlSurface = packageControlSurface || controllerControlSurface
+        if (ignoredTouchActive) {
+            if (event.action == ShizukuTouchRecordingEvent.Action.UP) ignoredTouchActive = false
+            return
+        }
+
+        // A start action can leave a final control-tap UP in the raw stream. Do not append
+        // that orphan; begin the global trace at the next complete third-party touch.
+        if (!captureReady && event.action != ShizukuTouchRecordingEvent.Action.DOWN) return
+        if (pendingTouchLines == null && packageControlSurface) {
+            if (event.action == ShizukuTouchRecordingEvent.Action.DOWN) ignoredTouchActive = true
+            return
+        }
+        if (startingTouch) {
+            captureReady = true
+            pendingTouchLines = ArrayList(PENDING_TOUCH_FRAME_LIMIT)
+            pendingTouchSawControlSurface = false
+            if (controllerControlSurface) {
+                ignoredTouchActive = true
+                pendingTouchLines = null
+                return
+            }
+        }
+        val pendingLines = pendingTouchLines ?: return
+        if (!startingTouch && event.action == ShizukuTouchRecordingEvent.Action.DOWN) {
+            failSession("The raw-input helper delivered a second touch before the previous one ended.")
+            return
+        }
+        if (controlSurface) pendingTouchSawControlSurface = true
         val x = normalized.x * (currentViewport.recordedWidthPx - 1).toDouble()
         val y = normalized.y * (currentViewport.recordedHeightPx - 1).toDouble()
         val action = when (event.action) {
@@ -572,9 +678,27 @@ class CoordinateRecordingController(
                     )
                 }
             }
+            val convertedWorkflow = workflowConversion?.getOrNull()
+            val workflowSave = convertedWorkflow?.let { draft ->
+                runCatching { workflowRepository.saveRevision(draft.bundle) }
+            }
+            workflowSave?.getOrNull()?.let {
+                runCatching {
+                    ReplayWorkflowCatalog.addOrReplace(
+                        appContext,
+                        ReplayControllerWorkflow(
+                            workflowId = convertedWorkflow.bundle.document.id,
+                            revision = convertedWorkflow.bundle.document.revision,
+                            name = convertedWorkflow.bundle.document.name,
+                        ),
+                    )
+                }
+            }
             store?.close()
             journal = null
             RecordingForegroundService.stop(appContext)
+            ReplayFloatingController.setRecordingState(ControlCenterRecordingState.IDLE)
+            ReplayFloatingController.showIdle()
             _state.value = CoordinateRecordingState.Review(
                 CoordinateRecordingReview(
                     sessionId = requireNotNull(id),
@@ -587,10 +711,12 @@ class CoordinateRecordingController(
                     inferredWaitCount = analysis?.inferredWaits?.size ?: 0,
                     foregroundTransitionCount = analysis?.foregroundTransitions?.size ?: 0,
                     incompleteTouchIgnored = analysis?.incompleteTouchIgnored ?: false,
-                    editableWorkflow = workflowConversion?.getOrNull()?.bundle,
-                    draftWarnings = workflowConversion?.getOrNull()?.warnings.orEmpty(),
+                    editableWorkflow = convertedWorkflow?.bundle,
+                    draftWarnings = convertedWorkflow?.warnings.orEmpty(),
                     draftUnavailableReason = workflowConversion?.exceptionOrNull()?.message
                         ?: if (analysis == null) "The recording did not produce reviewable events." else null,
+                    workflowSaved = workflowSave?.isSuccess == true,
+                    workflowSaveError = workflowSave?.exceptionOrNull()?.message,
                     rawReplayTrace = rawReplayTrace,
                     rawReplayTargetPackage = observedThirdPartyPackages.singleOrNull()
                         ?.takeIf { rawReplayUnavailableReason == null },
@@ -602,6 +728,8 @@ class CoordinateRecordingController(
             runCatching { journal?.close() }
             journal = null
             RecordingForegroundService.stop(appContext)
+            ReplayFloatingController.setRecordingState(ControlCenterRecordingState.IDLE)
+            ReplayFloatingController.showIdle()
             _state.value = CoordinateRecordingState.Failed(
                 "Recording review could not be generated: ${error.message ?: error.javaClass.simpleName}",
                 journalFile?.name,
@@ -624,6 +752,8 @@ class CoordinateRecordingController(
         runCatching { journal?.close() }
         journal = null
         RecordingForegroundService.stop(appContext)
+        ReplayFloatingController.setRecordingState(ControlCenterRecordingState.IDLE)
+        ReplayFloatingController.showIdle()
         _state.value = CoordinateRecordingState.Failed(reason, journalFile?.name)
         clearSessionFields(keepJournalFile = true)
     }
@@ -636,6 +766,8 @@ class CoordinateRecordingController(
         mainHandler.removeCallbacks(timerRunnable)
         mainHandler.removeCallbacks(stopFallbackRunnable)
         RecordingForegroundService.stop(appContext)
+        ReplayFloatingController.setRecordingState(ControlCenterRecordingState.IDLE)
+        ReplayFloatingController.showIdle()
         _state.value = CoordinateRecordingState.Failed(reason, journalFile?.name)
         clearSessionFields(keepJournalFile = true)
     }
@@ -658,6 +790,8 @@ class CoordinateRecordingController(
             runCatching { journal?.close() }
             journal = null
             RecordingForegroundService.stop(appContext)
+            ReplayFloatingController.setRecordingState(ControlCenterRecordingState.IDLE)
+            ReplayFloatingController.showIdle()
             _state.value = CoordinateRecordingState.Failed(
                 "Recording ended because Veyarc was closed.",
                 journalFile?.name,
@@ -666,6 +800,8 @@ class CoordinateRecordingController(
         } else {
             runCatching { source.close() }
         }
+        ReplayFloatingController.clearRecordingActions()
+        runCatching { workflowRepository.close() }
         eventExecutor.shutdownNow()
     }
 
@@ -692,6 +828,8 @@ class CoordinateRecordingController(
         ignoredTouchActive = false
         activeTouchRotation = null
         stopRequested = false
+        pauseRequested = false
+        paused = false
         sessionCleanup.reset()
         if (!keepJournalFile) journalFile = null
     }
@@ -763,6 +901,7 @@ class CoordinateRecordingController(
     private companion object {
         const val SYSTEM_UI_PACKAGE = "com.android.systemui"
         const val MAX_RECORDING_DURATION_MILLIS = 5L * 60L * 1_000L
+        const val MIN_RESUME_DURATION_MILLIS = 1_000L
         const val TIMER_INTERVAL_MILLIS = 250L
         const val FOREGROUND_POLL_INTERVAL_MILLIS = 250L
         const val STOP_FALLBACK_DELAY_MILLIS = 1_500L

@@ -40,6 +40,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -56,6 +57,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.veyarc.automation.android.ReplayFloatingController
 import com.veyarc.data.storage.StoredRunRecord
 import com.veyarc.data.storage.StoredRunStatus
 import com.veyarc.data.storage.WorkflowRepository
@@ -102,7 +104,7 @@ fun WorkflowEditorScreen(
     LaunchedEffect(initialBundle, initialRecordingJournalFileName) {
         val bundle = initialBundle ?: return@LaunchedEffect
         editingDraft = WorkflowDraft.fromBundle(bundle, initialRecordingJournalFileName)
-        statusMessage = "Recording imported. Review the generated steps before saving."
+        statusMessage = "Recording workflow opened. Saving edits creates the next revision."
         onInitialBundleConsumed()
     }
 
@@ -271,6 +273,10 @@ private fun WorkflowLibraryScreen(
     onDeleteRun: (StoredRunRecord) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+    var replayControllerEnabled by remember {
+        mutableStateOf(ReplayFloatingController.isEnabled(context))
+    }
     var pendingDelete by remember { mutableStateOf<DeleteTarget?>(null) }
 
     Scaffold(
@@ -303,6 +309,32 @@ private fun WorkflowLibraryScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text("Veyarc edge-latch control center", style = MaterialTheme.typography.titleMedium)
+                                Switch(
+                                    checked = replayControllerEnabled,
+                                    onCheckedChange = { enabled ->
+                                        replayControllerEnabled = enabled
+                                        ReplayFloatingController.setEnabled(context, enabled)
+                                    },
+                                )
+                            }
+                            Text(
+                                "When enabled, a small latch stays attached to the left or right screen edge during recording and replay. Drag it continuously along an edge; release near the other side to switch between left and right, and it remembers the position along that edge without moving through app content or gesture regions. Press it to open the adjacent control center. Opening it during active replay stops the replay first. The panel provides recording controls, one square button for the latest saved workflow, and a separate library button; the persistent notification remains an independent emergency fallback. Strict screen freeze is unavailable, so replay remains touch pass-through.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            OutlinedButton(onClick = { ReplayFloatingController.resetPosition(context) }) {
+                                Text("Reset latch position")
+                            }
+                        }
+                    }
                     Button(onClick = onCreate, enabled = !isBusy) { Text("New workflow") }
                 }
             }
@@ -313,7 +345,7 @@ private fun WorkflowLibraryScreen(
             if (!isBusy && summaries.isEmpty()) {
                 item {
                     Text(
-                        "No saved workflows yet. Create one to open the block editor.",
+                        "No saved workflows yet. Create and save one before using Replay.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }

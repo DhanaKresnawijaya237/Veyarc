@@ -4,7 +4,9 @@
 
 # Gradle
 .gradle/
+.gradle-user-home/
 **/build/
+**/.kotlin/
 
 # Local Android configuration
 local.properties

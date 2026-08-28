@@ -200,7 +200,7 @@ private fun RunContent(
         style = MaterialTheme.typography.titleMedium,
     )
     if (state.phase == WorkflowRunPhase.RUNNING || state.phase == WorkflowRunPhase.PAUSED || state.phase == WorkflowRunPhase.STARTING) {
-        Text("Emergency stop overlay is active when the accessibility service is connected.")
+        Text("The Veyarc edge-latch control center provides replay controls when enabled. The persistent notification remains an independent Pause, Resume, and Stop fallback.")
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         when (state.phase) {

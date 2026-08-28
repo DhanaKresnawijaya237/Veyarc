@@ -1,2 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <receiver
+            android:name=".WorkflowRunPauseReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".WorkflowRunResumeReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".WorkflowRunStopReceiver"
+            android:exported="false" />
+    </application>
+</manifest>

@@ -1,6 +1,7 @@
 package com.veyarc.app
 
 import android.app.Application
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -19,6 +20,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import com.veyarc.app.ui.theme.VeyarcTheme
+import com.veyarc.automation.android.ReplayControllerWorkflow
+import com.veyarc.automation.android.ReplayFloatingController
+import com.veyarc.automation.android.ReplayWorkflowCatalog
 import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.feature.editor.WorkflowEditorScreen
 import com.veyarc.feature.recorder.CoordinateRecorderScreen
@@ -34,7 +38,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     private var resumeGeneration by mutableIntStateOf(0)
@@ -51,9 +57,14 @@ class MainActivity : ComponentActivity() {
     private val recordingSession: MainRecordingSession by lazy {
         ViewModelProvider(this)[MainRecordingSession::class.java]
     }
+    private val catalogScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Register the process-owned recording actions before the user leaves Veyarc. This lets
+        // the fixed service-owned control center start a recording from a third-party app instead
+        // of requiring the recorder screen to have been opened first.
+        recordingSession.controller
         workflowToRun = runSession.bundle
         onBackPressedDispatcher.addCallback(
             this,
@@ -127,21 +138,92 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        handleControllerIntent(intent)
     }
 
     override fun onResume() {
         super.onResume()
         resumeGeneration += 1
+        refreshReplayWorkflowCatalog()
     }
 
-    private fun openRunScreen(bundle: WorkflowBundle) {
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleControllerIntent(intent)
+    }
+
+    override fun onDestroy() {
+        catalogScope.cancel()
+        super.onDestroy()
+    }
+
+    private fun openRunScreen(bundle: WorkflowBundle, autoStart: Boolean = false) {
         runSession.open(bundle)
         workflowToRun = bundle
+        if (autoStart) startControllerReplayWhenReady()
+    }
+
+    /** Starts a controller-requested replay only after recovery and the normal safety checks pass. */
+    private fun startControllerReplayWhenReady() {
+        catalogScope.launch {
+            val recovery = runSession.recoveryState.first { it != RunRecoveryState.RECOVERING }
+            if (recovery != RunRecoveryState.READY || workflowToRun == null) return@launch
+            val controller = runSession.controller ?: return@launch
+            controller.refreshNotificationState()
+            val state = controller.state.value
+            // A service-owned emergency notification is mandatory. If it is unavailable, leave
+            // the normal review screen visible rather than starting an unprotected replay.
+            if (state.review.isRunnable && state.notificationReady) runSession.startRun()
+        }
     }
 
     private fun leaveRunScreen() {
         runSession.leave()
         workflowToRun = null
+    }
+
+    private fun refreshReplayWorkflowCatalog() {
+        catalogScope.launch {
+            val workflows = runCatching {
+                withContext(Dispatchers.IO) {
+                    workflowRepository.listWorkflows().map { summary ->
+                        ReplayControllerWorkflow(
+                            workflowId = summary.workflowId,
+                            revision = summary.latestRevision,
+                            name = summary.name,
+                        )
+                    }
+                }
+            }.getOrElse { emptyList() }
+            ReplayWorkflowCatalog.replace(applicationContext, workflows)
+        }
+    }
+
+    private fun handleControllerIntent(intent: Intent?) {
+        if (intent?.action != ReplayFloatingController.ACTION_OPEN_WORKFLOW) return
+        val workflowId = intent.getStringExtra(ReplayFloatingController.EXTRA_WORKFLOW_ID)
+            ?.takeIf { it.isNotBlank() }
+        val revision = intent.getIntExtra(ReplayFloatingController.EXTRA_WORKFLOW_REVISION, -1)
+        val autoStart = intent.getBooleanExtra(ReplayFloatingController.EXTRA_AUTO_START, false)
+        if (workflowId == null || revision <= 0) {
+            // The library action is intentionally separate from Replay-latest. CLEAR_TOP/
+            // SINGLE_TOP can deliver it to an existing run screen, so explicitly return to the
+            // editor when the user asks for the library.
+            showAccessibilityHarness = false
+            if (showRecorder) recordingSession.controller.stop()
+            showRecorder = false
+            leaveRunScreen()
+            return
+        }
+        catalogScope.launch {
+            val bundle = runCatching {
+                withContext(Dispatchers.IO) {
+                    workflowRepository.loadRevision(workflowId, revision)
+                }
+            }.getOrNull() ?: return@launch
+            openRunScreen(bundle, autoStart = autoStart)
+        }
     }
 }
 

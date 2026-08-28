@@ -112,6 +112,15 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
     @Volatile
     private var cancelRequested = false
 
+    @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN")
+    private val pauseLock = java.lang.Object()
+
+    @Volatile
+    private var pauseRequested = false
+
+    @Volatile
+    private var paused = false
+
     @Volatile
     private var workerThread: Thread? = null
 
@@ -138,6 +147,20 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
     override fun getLastCommand(): String? = lastCommand
 
     override fun getLastError(): String? = lastError
+
+    override fun pause() {
+        if (!running.get()) return
+        pauseRequested = true
+    }
+
+    override fun resume() {
+        synchronized(pauseLock) {
+            pauseRequested = false
+            pauseLock.notifyAll()
+        }
+    }
+
+    override fun isPaused(): Boolean = paused
 
     @Volatile
     private var capabilities: Int? = null
@@ -176,9 +199,12 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
         }
         resetReplayTiming()
         directMotionInjectionFailed = false
+        pauseRequested = false
+        paused = false
     }
 
     override fun enqueueTap(x: Float, y: Float) {
+        check(!cancelRequested) { "Replay was cancelled" }
         validateCoordinate("x", x)
         validateCoordinate("y", y)
         synchronized(stateLock) {
@@ -195,6 +221,7 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
         endY: Float,
         durationMillis: Long,
     ) {
+        check(!cancelRequested) { "Replay was cancelled" }
         validateCoordinate("startX", startX)
         validateCoordinate("startY", startY)
         validateCoordinate("endX", endX)
@@ -248,6 +275,7 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
         delaysMillis: LongArray?,
         targetUid: Int?,
     ) {
+        check(!cancelRequested) { "Replay was cancelled" }
         check(getCapabilities() and CAPABILITY_RAW_MOTION_TRACE != 0) {
             "This device's input helper does not support motionevent replay"
         }
@@ -302,8 +330,14 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
     override fun startQueue() {
         synchronized(stateLock) {
             if (running.get()) return
+            if (cancelRequested) {
+                queue.clear()
+                return
+            }
             check(queue.isNotEmpty()) { "Replay queue is empty" }
             cancelRequested = false
+            pauseRequested = false
+            paused = false
             lastError = null
             resetReplayTiming()
             directMotionInjectionFailed = false
@@ -319,6 +353,7 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
     override fun cancel() {
         val command = currentCommand
         cancelRequested = true
+        synchronized(pauseLock) { pauseLock.notifyAll() }
         running.set(false)
         currentProcess?.destroy()
         workerThread?.interrupt()
@@ -375,12 +410,15 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
                 val command = synchronized(stateLock) {
                     if (cancelRequested || queue.isEmpty()) null else queue.removeFirst()
                 } ?: break
+                awaitPauseBefore(command)
+                if (cancelRequested) break
                 currentCommand = command
                 lastCommand = command.description
                 execute(command)
                 if (cancelRequested) break
                 completedCount.incrementAndGet()
                 currentCommand = null
+                awaitPauseAfter(command)
             }
         } catch (error: Throwable) {
             if (!cancelRequested) {
@@ -394,6 +432,46 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
             currentProcess = null
             workerThread = null
             synchronized(stateLock) { queue.clear() }
+            synchronized(pauseLock) {
+                pauseRequested = false
+                paused = false
+                pauseLock.notifyAll()
+            }
+        }
+    }
+
+    /** Pausing before a DOWN prevents a new gesture from starting after the request. */
+    private fun awaitPauseBefore(command: ReplayCommand) {
+        if (command is ReplayCommand.MotionFrame && command.action == MOTION_DOWN) {
+            awaitPauseIfRequested()
+        }
+    }
+
+    /** Pausing after an UP preserves the complete gesture that was already in flight. */
+    private fun awaitPauseAfter(command: ReplayCommand) {
+        if (command is ReplayCommand.MotionFrame && command.action != MOTION_UP) return
+        val hasMoreCommands = synchronized(stateLock) { queue.isNotEmpty() }
+        if (hasMoreCommands) awaitPauseIfRequested()
+    }
+
+    private fun awaitPauseIfRequested() {
+        if (!pauseRequested || cancelRequested) return
+        synchronized(pauseLock) {
+            if (!pauseRequested || cancelRequested) return
+            paused = true
+            try {
+                while (pauseRequested && !cancelRequested) {
+                    try {
+                        pauseLock.wait(PAUSE_POLL_MILLIS)
+                    } catch (interrupted: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        cancelRequested = true
+                        break
+                    }
+                }
+            } finally {
+                paused = false
+            }
         }
     }
 
@@ -694,6 +772,7 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
         const val TARGETED_INJECTION_ATTEMPTS = 10
         const val TARGETED_INJECTION_RETRY_DELAY_MILLIS = 100L
         const val MAX_ERROR_LENGTH = 240
+        const val PAUSE_POLL_MILLIS = 100L
 
         fun inputArguments(command: String, vararg args: String): List<String> = buildList {
             add(INPUT_BINARY)

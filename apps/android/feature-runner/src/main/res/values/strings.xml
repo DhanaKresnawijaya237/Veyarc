@@ -24,8 +24,10 @@
     <string name="tap_received">Tap input received by the test surface.</string>
     <string name="long_press_received">Long-press input received by the test surface.</string>
     <string name="touch_capture_title">Android 13+ interception diagnostic (legacy)</string>
-    <string name="touch_capture_explanation">This one-gesture diagnostic temporarily withholds and replays input. It is kept for Phase 0 troubleshooting; third-party coordinate recording is currently unavailable.</string>
+    <string name="touch_capture_explanation">This legacy one-gesture diagnostic is disabled. It used a global accessibility touch-interception mode that is not safe for production devices; third-party coordinate recording uses the privileged read-only source instead.</string>
     <string name="arm_touch_capture">Arm next gesture</string>
+    <string name="touch_capture_disabled_action">Disabled for device safety</string>
+    <string name="touch_capture_disabled">The legacy touch-interception diagnostic is disabled for device safety.</string>
     <string name="touch_capture_unsupported">Touch interception requires Android 13 or newer.</string>
     <string name="touch_capture_already_armed">A one-gesture capture is already armed.</string>
     <string name="touch_capture_arming">Preparing capture…</string>

@@ -29,4 +29,7 @@ interface IShizukuInputReplayService {
         in long[] delaysMillis,
         int targetUid
     ) = 15;
+    void pause() = 16;
+    void resume() = 17;
+    boolean isPaused() = 18;
 }
