@@ -12,7 +12,10 @@ import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Handler
 import android.os.Looper
+import com.veyarc.model.NormalizedRect
 import java.io.Closeable
+import kotlin.math.ceil
+import kotlin.math.floor
 
 /** Display dimensions used to size a temporary MediaProjection virtual display. */
 data class MediaProjectionDisplaySpec(
@@ -85,6 +88,42 @@ class EphemeralScreenFrame internal constructor(
             blue = rgbaBytes[offset + 2].toInt() and 0xFF,
             alpha = rgbaBytes[offset + 3].toInt() and 0xFF,
         )
+    }
+
+    /**
+     * Copies a user-selected normalized crop into a bounded template and leaves this frame
+     * releasable as usual. The returned template is independent of the frame and must be cleared
+     * by the caller after it has been encrypted or otherwise consumed.
+     */
+    fun copyRegion(region: NormalizedRect): RgbaTemplate {
+        check(!closed) { "The ephemeral frame has already been released" }
+        val left = floor(region.x * widthPx).toInt().coerceIn(0, widthPx - 1)
+        val top = floor(region.y * heightPx).toInt().coerceIn(0, heightPx - 1)
+        val right = ceil((region.x + region.width) * widthPx).toInt().coerceIn(left + 1, widthPx)
+        val bottom = ceil((region.y + region.height) * heightPx).toInt().coerceIn(top + 1, heightPx)
+        val cropWidth = right - left
+        val cropHeight = bottom - top
+        require(cropWidth.toLong() * cropHeight <= RgbaTemplate.MAX_TEMPLATE_PIXELS) {
+            "Template crop is too large to store safely"
+        }
+        val output = ByteArray(cropWidth * cropHeight * BYTES_PER_PIXEL)
+        withRgbaBytes { bytes ->
+            for (row in 0 until cropHeight) {
+                val sourceOffset = ((top + row) * widthPx + left) * BYTES_PER_PIXEL
+                val destinationOffset = row * cropWidth * BYTES_PER_PIXEL
+                bytes.copyInto(
+                    destination = output,
+                    destinationOffset = destinationOffset,
+                    startIndex = sourceOffset,
+                    endIndex = sourceOffset + cropWidth * BYTES_PER_PIXEL,
+                )
+            }
+        }
+        return try {
+            RgbaTemplate.fromRgba(cropWidth, cropHeight, output)
+        } finally {
+            output.fill(0)
+        }
     }
 
     /** Runs a bounded in-memory inspection without exposing the frame buffer to callers. */

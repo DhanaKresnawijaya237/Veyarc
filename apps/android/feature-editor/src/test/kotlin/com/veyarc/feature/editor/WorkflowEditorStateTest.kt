@@ -1,9 +1,12 @@
 package com.veyarc.feature.editor
 
+import com.veyarc.model.DurationMillis
 import com.veyarc.model.NormalizedCoordinate
+import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.Repeat
 import com.veyarc.model.SwipePath
 import com.veyarc.model.TapPoint
+import com.veyarc.model.WaitUntil
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -77,5 +80,45 @@ class WorkflowEditorStateTest {
         val bundle = result.bundle ?: error("Expected geometry draft to build")
         assertEquals(NormalizedCoordinate(0.25, 0.75), (bundle.document.steps[0] as TapPoint).point)
         assertEquals(0.6, (bundle.document.steps[swipeIndex] as SwipePath).points.first().point.y, 0.000001)
+    }
+
+    @Test
+    fun conditionEditsRemainInTheValidatedWorkflowBundle() {
+        var draft = WorkflowDraft.newDefault()
+        val root = StepListPath()
+        draft = draft.addStep(root, WorkflowStepKind.WAIT_UNTIL, "com.veyarc.app")
+        val conditionIndex = draft.steps.lastIndex
+        val condition = PixelColorCondition(
+            point = NormalizedCoordinate(0.2, 0.8),
+            expectedArgb = 0xFF112233L,
+            tolerance = 12,
+        )
+
+        draft = draft.updateCondition(root, conditionIndex) { condition }
+        draft = draft.updateStep(root, conditionIndex) {
+            (it as WaitUntil).copy(timeoutMs = DurationMillis(2_000))
+        }
+
+        val result = draft.buildBundle()
+
+        assertTrue(result.issues.isEmpty())
+        val saved = result.bundle!!.document.steps[conditionIndex] as WaitUntil
+        assertEquals(condition, saved.condition)
+        assertEquals(2_000L, saved.timeoutMs.value)
+    }
+
+    @Test
+    fun assetCanBeAddedAndRemovedFromDraft() {
+        val asset = com.veyarc.model.bundle.BundleAsset(
+            assetId = com.veyarc.model.AssetId("template-test"),
+            kind = com.veyarc.model.AssetKind.IMAGE_TEMPLATE,
+            mimeType = "image/x-veyarc-rgba",
+            bytes = byteArrayOf(1, 2, 3),
+            encrypted = true,
+        )
+        var draft = WorkflowDraft.newDefault().addAsset(asset)
+        assertEquals(listOf(asset.assetId), draft.assets.map { it.assetId })
+        draft = draft.removeAsset(asset.assetId)
+        assertTrue(draft.assets.isEmpty())
     }
 }

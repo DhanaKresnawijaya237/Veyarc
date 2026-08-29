@@ -1,16 +1,22 @@
 package com.veyarc.feature.editor
 
+import com.veyarc.model.AndCondition
 import com.veyarc.model.AssetReference
 import com.veyarc.model.Condition
 import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.DurationMillis
 import com.veyarc.model.ForegroundPackageCondition
 import com.veyarc.model.IfElse
+import com.veyarc.model.ImageAbsentCondition
+import com.veyarc.model.ImagePresentCondition
 import com.veyarc.model.LaunchApp
 import com.veyarc.model.LongPress
 import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.NormalizedRect
+import com.veyarc.model.NotCondition
+import com.veyarc.model.OrCondition
 import com.veyarc.model.PackageName
+import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.RegionAnchor
 import com.veyarc.model.Repeat
 import com.veyarc.model.RunLimits
@@ -183,6 +189,28 @@ data class WorkflowDraft(
             if (index in indices) this[index] = transform(this[index])
         }
     }
+
+    fun updateCondition(
+        path: StepListPath,
+        index: Int,
+        transform: (Condition) -> Condition,
+    ): WorkflowDraft = updateStep(path, index) { step ->
+        when (step) {
+            is WaitUntil -> step.copy(condition = transform(step.condition))
+            is IfElse -> step.copy(condition = transform(step.condition))
+            is WhileStep -> step.copy(condition = transform(step.condition))
+            else -> step
+        }
+    }
+
+    fun addAsset(asset: BundleAsset): WorkflowDraft = copy(
+        assets = (assets.filterNot { it.assetId == asset.assetId } + asset)
+            .sortedBy { it.assetId.value },
+    )
+
+    fun removeAsset(assetId: com.veyarc.model.AssetId): WorkflowDraft = copy(
+        assets = assets.filterNot { it.assetId == assetId },
+    )
 
     private fun updateList(path: StepListPath, transform: (List<WorkflowStep>) -> List<WorkflowStep>): WorkflowDraft = copy(steps = replaceSteps(steps, path.segments, transform(readSteps(steps, path.segments))))
 
@@ -363,11 +391,24 @@ fun WorkflowStep.summary(): String = when (this) {
     is LongPress -> "${durationMs.value} ms at ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}%"
     is SwipePath -> "${points.size} points over ${durationMs.value} ms"
     is Wait -> "Wait ${durationMs.value} ms"
-    is WaitUntil -> "Timeout ${timeoutMs.value} ms, poll every ${pollIntervalMs.value} ms"
-    is IfElse -> "Condition with ${thenSteps.size} then / ${elseSteps.size} else blocks"
+    is WaitUntil -> "${condition.summary()} · timeout ${timeoutMs.value} ms, poll every ${pollIntervalMs.value} ms"
+    is IfElse -> "${condition.summary()} · ${thenSteps.size} then / ${elseSteps.size} else blocks"
     is Repeat -> "$count iterations, ${bodySteps.size} nested blocks"
-    is WhileStep -> "Up to $maxIterations iterations, ${bodySteps.size} nested blocks"
+    is WhileStep -> "${condition.summary()} · up to $maxIterations iterations, ${bodySteps.size} nested blocks"
     is LaunchApp -> "${packageName.value} (timeout ${foregroundTimeoutMs.value} ms)"
     is Stop -> message ?: reason.name.lowercase().replace('_', ' ')
     else -> "Configured workflow step"
+}
+
+fun Condition.summary(): String = when (this) {
+    is PixelColorCondition -> "Pixel ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}%"
+    is ImagePresentCondition -> "Image ${assetId.value} present"
+    is ImageAbsentCondition -> "Image ${assetId.value} absent"
+    is ForegroundPackageCondition -> "Foreground ${packageName.value}"
+    is com.veyarc.model.OrientationCondition -> "Orientation ${orientation.name.lowercase()}"
+    is com.veyarc.model.VariableComparisonCondition -> "Variable comparison"
+    is com.veyarc.model.StepResultCondition -> "Step result ${stepId.take(8)}…"
+    is AndCondition -> "All of ${conditions.size} conditions"
+    is OrCondition -> "Any of ${conditions.size} conditions"
+    is NotCondition -> "Not (${condition.summary()})"
 }

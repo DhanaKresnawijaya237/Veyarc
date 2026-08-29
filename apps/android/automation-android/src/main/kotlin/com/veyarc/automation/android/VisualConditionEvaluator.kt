@@ -47,7 +47,7 @@ class RgbaTemplate private constructor(
 
     companion object {
         private const val BYTES_PER_PIXEL = 4
-        private const val MAX_TEMPLATE_PIXELS = 2_000_000L
+        const val MAX_TEMPLATE_PIXELS = 2_000_000L
 
         /** Creates a template from tightly packed RGBA bytes and takes ownership of a copy. */
         fun fromRgba(widthPx: Int, heightPx: Int, rgbaBytes: ByteArray): RgbaTemplate = RgbaTemplate(widthPx, heightPx, rgbaBytes.copyOf())

@@ -5,6 +5,8 @@ package com.veyarc.feature.editor
 import android.content.Context
 import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -63,6 +65,7 @@ import com.veyarc.data.storage.StoredRunStatus
 import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowStorageException
 import com.veyarc.data.storage.WorkflowSummary
+import com.veyarc.model.Condition
 import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.IfElse
 import com.veyarc.model.LaunchApp
@@ -100,6 +103,27 @@ fun WorkflowEditorScreen(
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var refreshGeneration by remember { mutableIntStateOf(0) }
     var geometryTarget by remember { mutableStateOf<GeometryTarget?>(null) }
+    var conditionTarget by remember { mutableStateOf<ConditionTarget?>(null) }
+
+    val templatePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val draftAtImport = editingDraft ?: return@rememberLauncherForActivityResult
+        scope.launch {
+            isBusy = true
+            statusMessage = null
+            runCatching {
+                withContext(Dispatchers.Default) {
+                    importTemplateAsset(context.contentResolver, uri)
+                }
+            }.onSuccess { asset ->
+                editingDraft = draftAtImport.addAsset(asset)
+                statusMessage = "Encrypted image template added. Select it from an image condition."
+            }.onFailure { error ->
+                statusMessage = "Could not add image template: ${error.userMessage()}"
+            }
+            isBusy = false
+        }
+    }
 
     LaunchedEffect(initialBundle, initialRecordingJournalFileName) {
         val bundle = initialBundle ?: return@LaunchedEffect
@@ -230,6 +254,8 @@ fun WorkflowEditorScreen(
             onSave = { bundle -> saveWorkflow(bundle) },
             onRun = ::saveAndRun,
             onEditGeometry = { path, index -> geometryTarget = GeometryTarget(path, index) },
+            onEditCondition = { path, index -> conditionTarget = ConditionTarget(path, index) },
+            onAddTemplate = { templatePicker.launch("image/*") },
             modifier = modifier,
         )
         geometryTarget?.let { target ->
@@ -247,10 +273,32 @@ fun WorkflowEditorScreen(
                 )
             }
         }
+        conditionTarget?.let { target ->
+            val targetStep = draft.stepsAt(target.path).getOrNull(target.index)
+            val condition = targetStep?.conditionOrNull()
+            if (condition != null) {
+                ConditionEditorDialog(
+                    initialCondition = condition,
+                    assets = draft.assets,
+                    defaultPackage = draft.allowedPackagesText.firstPackageOrDefault(),
+                    onAddTemplate = { templatePicker.launch("image/*") },
+                    onDismiss = { conditionTarget = null },
+                    onApply = { updatedCondition ->
+                        editingDraft = draft.updateCondition(target.path, target.index) { updatedCondition }
+                        conditionTarget = null
+                    },
+                )
+            }
+        }
     }
 }
 
 private data class GeometryTarget(
+    val path: StepListPath,
+    val index: Int,
+)
+
+private data class ConditionTarget(
     val path: StepListPath,
     val index: Int,
 )
@@ -495,6 +543,8 @@ private fun WorkflowDraftScreen(
     onSave: (WorkflowBundle) -> Unit,
     onRun: (WorkflowBundle) -> Unit,
     onEditGeometry: (StepListPath, Int) -> Unit,
+    onEditCondition: (StepListPath, Int) -> Unit,
+    onAddTemplate: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Scaffold(
@@ -557,6 +607,11 @@ private fun WorkflowDraftScreen(
                 )
             }
             ValidationCard(validation = validation)
+            TemplateAssetSection(
+                assets = draft.assets,
+                onAddTemplate = onAddTemplate,
+                onRemoveTemplate = { assetId -> onDraftChange(draft.removeAsset(assetId)) },
+            )
             HorizontalDivider()
             Text("Blocks", style = MaterialTheme.typography.titleLarge)
             StepListEditor(
@@ -565,9 +620,51 @@ private fun WorkflowDraftScreen(
                 heading = "Main sequence",
                 onDraftChange = onDraftChange,
                 onEditGeometry = onEditGeometry,
+                onEditCondition = onEditCondition,
             )
             statusMessage?.let { message ->
                 Text(message, color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TemplateAssetSection(
+    assets: List<com.veyarc.model.bundle.BundleAsset>,
+    onAddTemplate: () -> Unit,
+    onRemoveTemplate: (com.veyarc.model.AssetId) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Image templates", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+            OutlinedButton(onClick = onAddTemplate) { Text("Add image") }
+        }
+        Text(
+            "Templates are encrypted with Android Keystore before they enter the workflow bundle. Remove unused templates to keep validation clean.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (assets.isEmpty()) {
+            Text("No templates added yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            assets.forEach { asset ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(asset.assetId.value, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "${asset.mimeType} · ${asset.bytes.size} encrypted bytes",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    IconButton(onClick = { onRemoveTemplate(asset.assetId) }) {
+                        Icon(Icons.Outlined.Delete, contentDescription = "Remove image template")
+                    }
+                }
             }
         }
     }
@@ -607,6 +704,7 @@ private fun StepListEditor(
     heading: String,
     onDraftChange: (WorkflowDraft) -> Unit,
     onEditGeometry: (StepListPath, Int) -> Unit,
+    onEditCondition: (StepListPath, Int) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(heading, style = MaterialTheme.typography.titleMedium)
@@ -625,6 +723,7 @@ private fun StepListEditor(
                 step = step,
                 onDraftChange = onDraftChange,
                 onEditGeometry = onEditGeometry,
+                onEditCondition = onEditCondition,
             )
         }
         AddBlockMenu(
@@ -642,6 +741,7 @@ private fun StepCard(
     step: WorkflowStep,
     onDraftChange: (WorkflowDraft) -> Unit,
     onEditGeometry: (StepListPath, Int) -> Unit,
+    onEditCondition: (StepListPath, Int) -> Unit,
 ) {
     val expanded = step.id !in draft.collapsedStepIds
     Card(
@@ -692,6 +792,7 @@ private fun StepCard(
                     step = step,
                     onDraftChange = onDraftChange,
                     onEditGeometry = onEditGeometry,
+                    onEditCondition = onEditCondition,
                 )
             }
         }
@@ -706,6 +807,7 @@ private fun StepEditorFields(
     step: WorkflowStep,
     onDraftChange: (WorkflowDraft) -> Unit,
     onEditGeometry: (StepListPath, Int) -> Unit,
+    onEditCondition: (StepListPath, Int) -> Unit,
 ) {
     when (step) {
         is Wait -> {
@@ -740,10 +842,12 @@ private fun StepEditorFields(
                 heading = "Repeat body",
                 onDraftChange = onDraftChange,
                 onEditGeometry = onEditGeometry,
+                onEditCondition = onEditCondition,
             )
         }
 
         is WhileStep -> {
+            OutlinedButton(onClick = { onEditCondition(path, index) }) { Text("Edit condition") }
             LongEditorField(
                 label = "Maximum iterations",
                 value = step.maxIterations.toLong(),
@@ -759,20 +863,19 @@ private fun StepEditorFields(
                 heading = "While body",
                 onDraftChange = onDraftChange,
                 onEditGeometry = onEditGeometry,
+                onEditCondition = onEditCondition,
             )
         }
 
         is IfElse -> {
-            Text(
-                "Condition: foreground package must match an allowed package.",
-                style = MaterialTheme.typography.bodySmall,
-            )
+            OutlinedButton(onClick = { onEditCondition(path, index) }) { Text("Edit condition") }
             StepListEditor(
                 draft = draft,
                 path = path.child(step.id, NestedBranch.IF_THEN),
                 heading = "Then branch",
                 onDraftChange = onDraftChange,
                 onEditGeometry = onEditGeometry,
+                onEditCondition = onEditCondition,
             )
             StepListEditor(
                 draft = draft,
@@ -780,6 +883,7 @@ private fun StepEditorFields(
                 heading = "Else branch",
                 onDraftChange = onDraftChange,
                 onEditGeometry = onEditGeometry,
+                onEditCondition = onEditCondition,
             )
         }
 
@@ -794,11 +898,29 @@ private fun StepEditorFields(
         }
 
         is WaitUntil,
+        -> {
+            OutlinedButton(onClick = { onEditCondition(path, index) }) { Text("Edit condition") }
+            LongEditorField(
+                label = "Timeout (ms)",
+                value = step.timeoutMs.value,
+                onValueChange = { value ->
+                    if (value >= 0) onDraftChange(draft.updateStep(path, index) { step.copy(timeoutMs = com.veyarc.model.DurationMillis(value)) })
+                },
+            )
+            LongEditorField(
+                label = "Poll interval (ms)",
+                value = step.pollIntervalMs.value,
+                onValueChange = { value ->
+                    if (value > 0) onDraftChange(draft.updateStep(path, index) { step.copy(pollIntervalMs = com.veyarc.model.DurationMillis(value)) })
+                },
+            )
+        }
+
         is LaunchApp,
         is Stop,
         -> {
             Text(
-                "This block’s geometry and advanced settings are edited in the next editor increment.",
+                "This block has no additional editor fields yet.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -864,6 +986,13 @@ private fun String.firstPackageOrDefault(): String = split(',', ' ', '\n', '\t')
     .map(String::trim)
     .firstOrNull { it.isNotEmpty() }
     ?: "com.veyarc.app"
+
+private fun WorkflowStep.conditionOrNull(): Condition? = when (this) {
+    is WaitUntil -> condition
+    is IfElse -> condition
+    is WhileStep -> condition
+    else -> null
+}
 
 private fun viewportFor(context: Context): com.veyarc.model.ViewportSpec {
     val metrics = context.resources.displayMetrics
