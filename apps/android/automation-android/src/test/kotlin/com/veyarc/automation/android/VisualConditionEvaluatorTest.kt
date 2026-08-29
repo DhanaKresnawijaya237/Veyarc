@@ -116,6 +116,39 @@ class VisualConditionEvaluatorTest {
     }
 
     @Test
+    fun imagePresentFindsAMatchAfterSlidingAcrossRowsAndColumns() {
+        val template = RgbaTemplate.fromRgba(
+            widthPx = 2,
+            heightPx = 2,
+            rgbaBytes = rgba(
+                color(10, 20, 30),
+                color(40, 50, 60),
+                color(70, 80, 90),
+                color(100, 110, 120),
+            ),
+        )
+        val colors = MutableList(5 * 4) { color(0, 0, 0) }
+        val matchOriginX = 2
+        val matchOriginY = 1
+        colors[matchOriginY * 5 + matchOriginX] = color(10, 20, 30)
+        colors[matchOriginY * 5 + matchOriginX + 1] = color(40, 50, 60)
+        colors[(matchOriginY + 1) * 5 + matchOriginX] = color(70, 80, 90)
+        colors[(matchOriginY + 1) * 5 + matchOriginX + 1] = color(100, 110, 120)
+        val frame = frame(5, 4, colors)
+
+        val matched = VisualConditionEvaluator({ frame }, templateSource(template)).evaluate(
+            ImagePresentCondition(
+                assetId = ASSET_ID,
+                region = NormalizedRect(0.0, 0.0, 1.0, 1.0),
+                matchThreshold = 1.0,
+            ),
+        )
+
+        assertTrue(matched)
+        assertTrue(frame.isClosed)
+    }
+
+    @Test
     fun imageAbsentIsTheInverseOfAContainedMatch() {
         val template = RgbaTemplate.fromRgba(1, 1, rgba(color(100, 100, 100)))
         val matchingFrame = frame(2, 1, listOf(color(0, 0, 0), color(100, 100, 100)))
@@ -185,6 +218,31 @@ class VisualConditionEvaluatorTest {
             rejected = error.message?.contains("safety budget") == true
         }
         assertTrue(rejected)
+        assertTrue(frame.isClosed)
+    }
+
+    @Test
+    fun channelPrefilterKeepsAReasonableSearchWithinTheBudget() {
+        val template = RgbaTemplate.fromRgba(
+            widthPx = 8,
+            heightPx = 8,
+            rgbaBytes = rgba(*Array(64) { color(255, 255, 255) }),
+        )
+        val frame = frame(48, 48, List(48 * 48) { color(0, 0, 0) })
+
+        val matched = VisualConditionEvaluator(
+            frameSource = { frame },
+            templateSource = templateSource(template),
+            maxComparisons = 10_000,
+        ).evaluate(
+            ImagePresentCondition(
+                assetId = ASSET_ID,
+                region = NormalizedRect(0.0, 0.0, 1.0, 1.0),
+                matchThreshold = 0.9,
+            ),
+        )
+
+        assertFalse(matched)
         assertTrue(frame.isClosed)
     }
 

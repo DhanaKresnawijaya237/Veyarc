@@ -156,10 +156,19 @@ class VisualConditionEvaluator(
         val maxOriginY = bounds.bottomExclusive - template.heightPx
         val maxError = (1.0 - threshold) * MAX_CHANNEL_ERROR * template.widthPx.toLong() * template.heightPx
         val budget = ComparisonBudget(maxComparisons)
+        val prefilter = TemplateWindowPrefilter(
+            frameWidth = frame.widthPx,
+            frameBytes = frameBytes,
+            template = template,
+            templateBytes = templateBytes,
+            bounds = bounds,
+            budget = budget,
+        )
 
         for (originY in bounds.top until maxOriginY + 1) {
+            if (originY > bounds.top) prefilter.moveDown()
             for (originX in bounds.left until maxOriginX + 1) {
-                if (matchesAt(
+                if (prefilter.mayMatch(maxError) && matchesAt(
                         frameWidth = frame.widthPx,
                         frameBytes = frameBytes,
                         template = template,
@@ -172,9 +181,150 @@ class VisualConditionEvaluator(
                 ) {
                     return true
                 }
+                if (originX < maxOriginX) prefilter.moveRight()
             }
         }
         return false
+    }
+
+    /**
+     * Rejects impossible origins using channel sums over up to sixteen spatial cells before the expensive
+     * pixel-by-pixel comparison. The triangle inequality makes this a safe lower bound: a cell's
+     * absolute channel-sum difference cannot exceed its total per-pixel channel error, so a lower
+     * bound above [maxError] can never be a match. Rolling sums keep the prefilter bounded without
+     * allocating a full-frame integral-image buffer.
+     */
+    private class TemplateWindowPrefilter(
+        private val frameWidth: Int,
+        private val frameBytes: ByteArray,
+        template: RgbaTemplate,
+        templateBytes: ByteArray,
+        private val bounds: PixelBounds,
+        private val budget: ComparisonBudget,
+    ) {
+        private val xBandCount = minOf(PREFILTER_BANDS, template.widthPx)
+        private val yBandCount = minOf(PREFILTER_BANDS, template.heightPx)
+        private val xStarts = partitionStarts(template.widthPx, xBandCount)
+        private val xEnds = partitionEnds(template.widthPx, xBandCount)
+        private val yStarts = partitionStarts(template.heightPx, yBandCount)
+        private val yEnds = partitionEnds(template.heightPx, yBandCount)
+        private val templateCellSums = IntArray(xBandCount * yBandCount * CHANNEL_COUNT)
+        private val columnSums = IntArray(yBandCount * frameWidth * CHANNEL_COUNT)
+        private val windowSums = IntArray(yBandCount * xBandCount * CHANNEL_COUNT)
+        private var originY = bounds.top
+        private var originX = bounds.left
+
+        init {
+            sumTemplateCells(template, templateBytes)
+            initializeColumns()
+            rebuildWindowSums()
+        }
+
+        fun mayMatch(maxError: Double): Boolean {
+            var lowerBound = 0L
+            for (yBand in 0 until yBandCount) {
+                for (xBand in 0 until xBandCount) {
+                    val cellOffset = cellOffset(yBand, xBand)
+                    for (channel in 0 until CHANNEL_COUNT) {
+                        val difference = windowSums[cellOffset + channel] - templateCellSums[cellOffset + channel]
+                        lowerBound += abs(difference).toLong()
+                    }
+                    budget.consume()
+                    if (lowerBound.toDouble() > maxError) return false
+                }
+            }
+            return true
+        }
+
+        fun moveRight() {
+            check(originX < bounds.rightExclusive) { "Template prefilter moved beyond its region" }
+            val previousOriginX = originX
+            originX++
+            for (yBand in 0 until yBandCount) {
+                for (xBand in 0 until xBandCount) {
+                    val removeX = previousOriginX + xStarts[xBand]
+                    val addX = previousOriginX + xEnds[xBand]
+                    val windowOffset = cellOffset(yBand, xBand)
+                    val columnOffset = columnOffset(yBand, removeX)
+                    val addedColumnOffset = columnOffset(yBand, addX)
+                    for (channel in 0 until CHANNEL_COUNT) {
+                        windowSums[windowOffset + channel] +=
+                            columnSums[addedColumnOffset + channel] - columnSums[columnOffset + channel]
+                    }
+                }
+            }
+        }
+
+        fun moveDown() {
+            check(originY < bounds.bottomExclusive) { "Template prefilter moved beyond its region" }
+            val previousOriginY = originY
+            originY++
+            for (yBand in 0 until yBandCount) {
+                val removeY = previousOriginY + yStarts[yBand]
+                val addY = previousOriginY + yEnds[yBand]
+                for (x in bounds.left until bounds.rightExclusive) {
+                    val removeOffset = rgbaOffset(x, removeY, frameWidth)
+                    val addOffset = rgbaOffset(x, addY, frameWidth)
+                    val columnOffset = columnOffset(yBand, x)
+                    for (channel in 0 until CHANNEL_COUNT) {
+                        columnSums[columnOffset + channel] +=
+                            channelValue(frameBytes, addOffset + channel) - channelValue(frameBytes, removeOffset + channel)
+                    }
+                }
+            }
+            rebuildWindowSums()
+        }
+
+        private fun initializeColumns() {
+            for (yBand in 0 until yBandCount) {
+                for (y in yStarts[yBand] until yEnds[yBand]) {
+                    val frameY = originY + y
+                    for (x in bounds.left until bounds.rightExclusive) {
+                        val frameOffset = rgbaOffset(x, frameY, frameWidth)
+                        val columnOffset = columnOffset(yBand, x)
+                        for (channel in 0 until CHANNEL_COUNT) {
+                            columnSums[columnOffset + channel] += channelValue(frameBytes, frameOffset + channel)
+                        }
+                    }
+                }
+            }
+        }
+
+        private fun rebuildWindowSums() {
+            windowSums.fill(0)
+            originX = bounds.left
+            for (yBand in 0 until yBandCount) {
+                for (xBand in 0 until xBandCount) {
+                    val windowOffset = cellOffset(yBand, xBand)
+                    for (x in xStarts[xBand] until xEnds[xBand]) {
+                        val columnOffset = columnOffset(yBand, originX + x)
+                        for (channel in 0 until CHANNEL_COUNT) {
+                            windowSums[windowOffset + channel] += columnSums[columnOffset + channel]
+                        }
+                    }
+                }
+            }
+        }
+
+        private fun sumTemplateCells(template: RgbaTemplate, bytes: ByteArray) {
+            template.withRgbaBytes {
+                for (y in 0 until template.heightPx) {
+                    val yBand = bandFor(y, yStarts, yEnds)
+                    for (x in 0 until template.widthPx) {
+                        val xBand = bandFor(x, xStarts, xEnds)
+                        val cellOffset = cellOffset(yBand, xBand)
+                        val templateOffset = rgbaOffset(x, y, template.widthPx)
+                        for (channel in 0 until CHANNEL_COUNT) {
+                            templateCellSums[cellOffset + channel] += channelValue(bytes, templateOffset + channel)
+                        }
+                    }
+                }
+            }
+        }
+
+        private fun columnOffset(yBand: Int, x: Int): Int = (yBand * frameWidth + x) * CHANNEL_COUNT
+
+        private fun cellOffset(yBand: Int, xBand: Int): Int = (yBand * xBandCount + xBand) * CHANNEL_COUNT
     }
 
     /** Compares a candidate exactly until it either meets the threshold or cannot meet it. */
@@ -239,8 +389,24 @@ class VisualConditionEvaluator(
     companion object {
         /** Limits worst-case CPU work for a single image-condition observation. */
         const val DEFAULT_MAX_COMPARISONS = 12_000_000L
+        private const val CHANNEL_COUNT = 4
+        private const val PREFILTER_BANDS = 4
         private const val MAX_CHANNEL_ERROR = 255L * 4L
         private const val BYTES_PER_PIXEL = 4
+
+        private fun partitionStarts(size: Int, bands: Int): IntArray = IntArray(bands) { band ->
+            band * size / bands
+        }
+
+        private fun partitionEnds(size: Int, bands: Int): IntArray = IntArray(bands) { band ->
+            (band + 1) * size / bands
+        }
+
+        private fun bandFor(value: Int, starts: IntArray, ends: IntArray): Int = starts.indices.first { band ->
+            value in starts[band] until ends[band]
+        }
+
+        private fun channelValue(bytes: ByteArray, offset: Int): Int = bytes[offset].toInt() and 0xFF
 
         private fun mapPoint(point: NormalizedCoordinate, widthPx: Int, heightPx: Int): Pair<Int, Int> = (point.x * (widthPx - 1)).roundToInt().coerceIn(0, widthPx - 1) to
             (point.y * (heightPx - 1)).roundToInt().coerceIn(0, heightPx - 1)
