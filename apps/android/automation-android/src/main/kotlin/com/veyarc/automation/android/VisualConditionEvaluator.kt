@@ -1,5 +1,6 @@
 package com.veyarc.automation.android
 
+import com.veyarc.engine.ConditionObserver
 import com.veyarc.model.AssetId
 import com.veyarc.model.Condition
 import com.veyarc.model.ImageAbsentCondition
@@ -43,6 +44,11 @@ class RgbaTemplate private constructor(
     /** Returns a defensive copy so callers cannot mutate the evaluator's template. */
     fun copyRgbaBytes(): ByteArray = rgbaBytes.copyOf()
 
+    /** Clears the decoded template after the run releases its condition assets. */
+    fun clear() {
+        rgbaBytes.fill(0)
+    }
+
     internal fun <T> withRgbaBytes(block: (ByteArray) -> T): T = block(rgbaBytes)
 
     companion object {
@@ -65,7 +71,7 @@ class VisualConditionEvaluator(
     private val frameSource: () -> EphemeralScreenFrame?,
     private val templateSource: ImageTemplateSource,
     private val maxComparisons: Long = DEFAULT_MAX_COMPARISONS,
-) {
+) : ConditionObserver {
     init {
         require(maxComparisons > 0L) { "Visual comparison budget must be positive" }
     }
@@ -82,6 +88,8 @@ class VisualConditionEvaluator(
             "Visual evaluator does not support ${condition::class.simpleName} conditions",
         )
     }
+
+    override fun observe(condition: Condition): Boolean = evaluate(condition)
 
     private fun evaluatePixelColor(condition: PixelColorCondition): Boolean {
         val frame = frameSource.invoke() ?: return false

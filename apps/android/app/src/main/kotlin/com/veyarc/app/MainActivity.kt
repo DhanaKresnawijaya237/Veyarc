@@ -258,7 +258,7 @@ class MainRunSession(application: Application) : AndroidViewModel(application) {
 
     fun open(bundle: WorkflowBundle) {
         controller?.close("a different workflow was opened")
-        controller = WorkflowRunController(getApplication(), repository, bundle.document)
+        controller = WorkflowRunController(getApplication(), repository, bundle.document, bundle.assets)
         this.bundle = bundle
     }
 

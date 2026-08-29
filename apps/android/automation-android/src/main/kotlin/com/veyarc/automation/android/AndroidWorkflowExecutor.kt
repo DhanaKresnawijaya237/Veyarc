@@ -4,6 +4,7 @@ import android.content.Context
 import com.veyarc.engine.AutomationDriver
 import com.veyarc.engine.CancellationSignal
 import com.veyarc.engine.CancellationSignals
+import com.veyarc.engine.ConditionObserver
 import com.veyarc.engine.ExecutionClock
 import com.veyarc.engine.PauseSignal
 import com.veyarc.engine.PauseSignals
@@ -14,6 +15,7 @@ import com.veyarc.engine.WorkflowRunResult
 import com.veyarc.engine.WorkflowRunner
 import com.veyarc.model.PackageName
 import com.veyarc.model.WorkflowDocument
+import com.veyarc.model.usesVisualConditions
 
 /** Compiles and executes a workflow through the current Android capability snapshot. */
 class AndroidWorkflowExecutor private constructor(
@@ -24,7 +26,9 @@ class AndroidWorkflowExecutor private constructor(
             capabilitiesProvider = {
                 AndroidAutomationCapabilities.snapshot(context.applicationContext)
             },
-            driverProvider = { AndroidAutomationDriver(context.applicationContext) },
+            driverProvider = { visualConditionObserver ->
+                AndroidAutomationDriver(context.applicationContext, visualConditionObserver)
+            },
             clock = AndroidExecutionClock,
             runner = WorkflowRunner(),
             startupPackage = PackageName(context.applicationContext.packageName),
@@ -40,7 +44,23 @@ class AndroidWorkflowExecutor private constructor(
     ) : this(
         dependencies = Dependencies(
             capabilitiesProvider = capabilities,
-            driverProvider = driver,
+            driverProvider = { _ -> driver() },
+            clock = clock,
+            runner = runner,
+            startupPackage = startupPackage,
+        ),
+    )
+
+    internal constructor(
+        capabilities: () -> AndroidCapabilitySnapshot,
+        driverProvider: (ConditionObserver?) -> AutomationDriver,
+        clock: ExecutionClock,
+        runner: WorkflowRunner,
+        startupPackage: PackageName? = null,
+    ) : this(
+        dependencies = Dependencies(
+            capabilitiesProvider = capabilities,
+            driverProvider = driverProvider,
             clock = clock,
             runner = runner,
             startupPackage = startupPackage,
@@ -52,6 +72,7 @@ class AndroidWorkflowExecutor private constructor(
         cancellation: CancellationSignal = CancellationSignals.NONE,
         pause: PauseSignal = PauseSignals.NONE,
         eventSink: (RunEvent) -> Unit = {},
+        templateSource: ImageTemplateSource? = null,
     ): AndroidWorkflowExecution {
         val capabilities = dependencies.capabilitiesProvider.invoke()
         val compilation = WorkflowCompiler.compile(document, capabilities.engineCapabilities)
@@ -61,9 +82,17 @@ class AndroidWorkflowExecutor private constructor(
                 compilation = compilation,
                 run = null,
             )
+        val visualConditionObserver = if (document.usesVisualConditions()) {
+            VisualConditionEvaluator(
+                frameSource = MediaProjectionCaptureRuntime::captureLatestFrame,
+                templateSource = templateSource ?: ImageTemplateSource { null },
+            )
+        } else {
+            null
+        }
         val run = dependencies.runner.run(
             plan = plan,
-            driver = dependencies.driverProvider.invoke(),
+            driver = dependencies.driverProvider.invoke(visualConditionObserver),
             clock = dependencies.clock,
             cancellation = cancellation,
             pause = pause,
@@ -75,7 +104,7 @@ class AndroidWorkflowExecutor private constructor(
 
     private data class Dependencies(
         val capabilitiesProvider: () -> AndroidCapabilitySnapshot,
-        val driverProvider: () -> AutomationDriver,
+        val driverProvider: (ConditionObserver?) -> AutomationDriver,
         val clock: ExecutionClock,
         val runner: WorkflowRunner,
         val startupPackage: PackageName?,

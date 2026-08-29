@@ -41,8 +41,22 @@ class AndroidAutomationCapabilitiesTest {
             serviceConnected = true,
         )
 
+        assertFalse(snapshot.mediaProjectionAvailable)
         assertFalse(snapshot.supports(EngineCapability.PIXEL_COLOR_CONDITION))
         assertFalse(snapshot.supports(EngineCapability.IMAGE_TEMPLATE_CONDITION))
         assertTrue(snapshot.supports(EngineCapability.ORIENTATION_CONDITION))
+    }
+
+    @Test
+    fun reportsVisualConditionsWhenMediaProjectionIsAvailable() {
+        val snapshot = AndroidAutomationCapabilities.snapshot(
+            accessibilityEnabled = true,
+            serviceConnected = true,
+            mediaProjectionAvailable = true,
+        )
+
+        assertTrue(snapshot.mediaProjectionAvailable)
+        assertTrue(snapshot.supports(EngineCapability.PIXEL_COLOR_CONDITION))
+        assertTrue(snapshot.supports(EngineCapability.IMAGE_TEMPLATE_CONDITION))
     }
 }

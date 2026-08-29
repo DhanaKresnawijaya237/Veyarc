@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Looper
 import com.veyarc.engine.ActiveViewport
 import com.veyarc.engine.AutomationDriver
+import com.veyarc.engine.ConditionObserver
 import com.veyarc.engine.DisplayCoordinate
 import com.veyarc.engine.DisplayTimedPoint
 import com.veyarc.model.Condition
@@ -21,12 +22,16 @@ import java.util.concurrent.atomic.AtomicReference
 class AndroidAutomationDriver private constructor(
     private val delegate: AutomationDriver,
 ) : AutomationDriver by delegate {
-    constructor(context: Context) : this(
+    constructor(
+        context: Context,
+        visualConditionObserver: ConditionObserver? = null,
+    ) : this(
         delegate = BlockingAndroidAutomationDriver(
             gesturePort = AccessibilityGesturePort,
             foregroundPackage = ForegroundPackageTracker::current,
             viewport = AndroidViewportSource(context.applicationContext)::currentViewport,
             launch = AndroidAppLauncher(context.applicationContext)::launchApp,
+            visualConditionObserver = visualConditionObserver,
             isMainThread = {
                 val mainLooper = Looper.getMainLooper()
                 mainLooper != null && Looper.myLooper() == mainLooper
@@ -40,12 +45,14 @@ class AndroidAutomationDriver private constructor(
         viewport: () -> ActiveViewport?,
         launch: (PackageName) -> Unit,
         isMainThread: () -> Boolean,
+        visualConditionObserver: ConditionObserver? = null,
     ) : this(
         delegate = BlockingAndroidAutomationDriver(
             gesturePort = gesturePort,
             foregroundPackage = foregroundPackage,
             viewport = viewport,
             launch = launch,
+            visualConditionObserver = visualConditionObserver,
             isMainThread = isMainThread,
         ),
     )
@@ -56,6 +63,7 @@ private class BlockingAndroidAutomationDriver(
     private val foregroundPackage: () -> PackageName?,
     private val viewport: () -> ActiveViewport?,
     private val launch: (PackageName) -> Unit,
+    private val visualConditionObserver: ConditionObserver?,
     private val isMainThread: () -> Boolean,
 ) : AutomationDriver {
     override fun tap(point: DisplayCoordinate) {
@@ -96,9 +104,10 @@ private class BlockingAndroidAutomationDriver(
         is PixelColorCondition,
         is ImagePresentCondition,
         is ImageAbsentCondition,
-        -> throw AndroidAutomationException(
-            "This Android build does not yet support pixel or image conditions",
-        )
+        -> visualConditionObserver?.observe(condition)
+            ?: throw AndroidAutomationException(
+                "Visual condition capture is not configured for this workflow run",
+            )
 
         else -> throw AndroidAutomationException(
             "Condition ${condition::class.simpleName} is evaluated by the workflow engine",

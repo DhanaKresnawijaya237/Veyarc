@@ -1,6 +1,7 @@
 package com.veyarc.automation.android
 
 import android.content.Context
+import android.media.projection.MediaProjectionManager
 import com.veyarc.engine.EngineCapabilities
 import com.veyarc.engine.EngineCapability
 
@@ -9,6 +10,8 @@ data class AndroidCapabilitySnapshot(
     val accessibilityEnabled: Boolean,
     val serviceConnected: Boolean,
     val engineCapabilities: EngineCapabilities,
+    /** True when Android exposes MediaProjection for a consented per-run capture. */
+    val mediaProjectionAvailable: Boolean = false,
 ) {
     val gestureDispatchReady: Boolean
         get() = accessibilityEnabled && serviceConnected
@@ -23,21 +26,25 @@ object AndroidAutomationCapabilities {
     fun snapshot(context: Context): AndroidCapabilitySnapshot = snapshot(
         accessibilityEnabled = AccessibilityGestureDispatcher.isEnabled(context),
         serviceConnected = AccessibilityGestureDispatcher.isConnected,
+        mediaProjectionAvailable = context.getSystemService(MediaProjectionManager::class.java) != null,
     )
 
     internal fun snapshot(
         accessibilityEnabled: Boolean,
         serviceConnected: Boolean,
+        mediaProjectionAvailable: Boolean = false,
     ): AndroidCapabilitySnapshot {
         val capabilities = buildSet {
             addAll(CORE_CAPABILITIES)
             add(EngineCapability.ORIENTATION_CONDITION)
+            if (mediaProjectionAvailable) addAll(VISUAL_CONDITION_CAPABILITIES)
             if (serviceConnected) add(EngineCapability.FOREGROUND_PACKAGE_CONDITION)
             if (accessibilityEnabled && serviceConnected) addAll(GESTURE_CAPABILITIES)
         }
         return AndroidCapabilitySnapshot(
             accessibilityEnabled = accessibilityEnabled,
             serviceConnected = serviceConnected,
+            mediaProjectionAvailable = mediaProjectionAvailable,
             engineCapabilities = EngineCapabilities.of(capabilities),
         )
     }
@@ -61,5 +68,10 @@ object AndroidAutomationCapabilities {
         EngineCapability.TAP_REGION,
         EngineCapability.LONG_PRESS,
         EngineCapability.SWIPE_PATH,
+    )
+
+    private val VISUAL_CONDITION_CAPABILITIES = setOf(
+        EngineCapability.PIXEL_COLOR_CONDITION,
+        EngineCapability.IMAGE_TEMPLATE_CONDITION,
     )
 }

@@ -1,12 +1,15 @@
 package com.veyarc.automation.android
 
 import com.veyarc.engine.ActiveViewport
+import com.veyarc.engine.ConditionObserver
 import com.veyarc.engine.DisplayCoordinate
 import com.veyarc.engine.DisplayTimedPoint
 import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.ForegroundPackageCondition
+import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.OrientationCondition
 import com.veyarc.model.PackageName
+import com.veyarc.model.PixelColorCondition
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -64,6 +67,58 @@ class AndroidAutomationDriverTest {
         assertEquals(viewport, driver.currentViewport())
         assertTrue(driver.observe(OrientationCondition(DisplayOrientation.PORTRAIT)))
         assertTrue(driver.observe(ForegroundPackageCondition(targetPackage)))
+    }
+
+    @Test
+    fun delegatesVisualConditionsToTheRunScopedObserver() {
+        val observed = mutableListOf<com.veyarc.model.Condition>()
+        val observer = object : ConditionObserver {
+            override fun observe(condition: com.veyarc.model.Condition): Boolean {
+                observed += condition
+                return true
+            }
+        }
+        val condition = PixelColorCondition(
+            point = NormalizedCoordinate(0.25, 0.75),
+            expectedArgb = 0xFF00FF00,
+            tolerance = 4,
+        )
+        val driver = AndroidAutomationDriver(
+            gesturePort = RecordingGesturePort(),
+            foregroundPackage = { targetPackage },
+            viewport = { viewport },
+            launch = { },
+            isMainThread = { false },
+            visualConditionObserver = observer,
+        )
+
+        assertTrue(driver.observe(condition))
+        assertEquals(listOf(condition), observed)
+    }
+
+    @Test
+    fun refusesVisualConditionsWhenNoRunScopedObserverIsConfigured() {
+        val driver = AndroidAutomationDriver(
+            gesturePort = RecordingGesturePort(),
+            foregroundPackage = { targetPackage },
+            viewport = { viewport },
+            launch = { },
+            isMainThread = { false },
+        )
+
+        var failed = false
+        try {
+            driver.observe(
+                PixelColorCondition(
+                    point = NormalizedCoordinate(0.5, 0.5),
+                    expectedArgb = 0xFFFFFFFF,
+                    tolerance = 0,
+                ),
+            )
+        } catch (error: AndroidAutomationException) {
+            failed = error.message?.contains("not configured") == true
+        }
+        assertTrue(failed)
     }
 
     @Test

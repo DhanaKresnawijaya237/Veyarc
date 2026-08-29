@@ -23,6 +23,7 @@ import com.veyarc.engine.RunOutcome
 import com.veyarc.engine.WorkflowCompilationResult
 import com.veyarc.engine.WorkflowCompiler
 import com.veyarc.model.WorkflowDocument
+import com.veyarc.model.bundle.BundleAsset
 import com.veyarc.model.usesVisualConditions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -87,6 +88,7 @@ class WorkflowRunController(
     context: Context,
     private val repository: WorkflowRepository,
     private val document: WorkflowDocument,
+    private val assets: List<BundleAsset> = emptyList(),
 ) {
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -262,6 +264,7 @@ class WorkflowRunController(
 
     private suspend fun execute(executionControl: MutableExecutionControl) {
         var runId: String? = null
+        var templateSource: BundleImageTemplateSource? = null
         var terminalStatus = StoredRunStatus.FAILED
         var terminalReason: String? = null
         try {
@@ -276,11 +279,13 @@ class WorkflowRunController(
                 check(MediaProjectionCaptureRuntime.awaitActive(MEDIA_PROJECTION_START_TIMEOUT_MILLIS)) {
                     "MediaProjection capture did not become ready before the workflow started"
                 }
+                templateSource = BundleImageTemplateSource(assets)
             }
 
             val execution = withContext(Dispatchers.Default) {
                 executor.execute(
                     document = document,
+                    templateSource = templateSource,
                     cancellation = executionControl,
                     pause = executionControl,
                     eventSink = ::onEvent,
@@ -365,6 +370,7 @@ class WorkflowRunController(
             ReplayFloatingController.showIdle()
             WorkflowRunRuntime.unregister(this)
             stopOwnedMediaProjection()
+            templateSource?.close()
             if (!closed) {
                 notifications.showTerminal(_state.value.message ?: "Workflow finished")
             }

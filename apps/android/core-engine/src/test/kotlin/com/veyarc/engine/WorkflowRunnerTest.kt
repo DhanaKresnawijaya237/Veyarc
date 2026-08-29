@@ -104,6 +104,41 @@ class WorkflowRunnerTest {
     }
 
     @Test
+    fun evaluatesVisualConditionsInsideIfAndWhileSteps() {
+        val condition = PixelColorCondition(
+            point = NormalizedCoordinate(0.5, 0.5),
+            expectedArgb = 0xFFFFFFFF,
+            tolerance = 0,
+        )
+        val plan = plan(
+            steps = listOf(
+                IfElse(
+                    id = STEP_1,
+                    condition = condition,
+                    thenSteps = listOf(TapPoint(STEP_2, NormalizedCoordinate(0.1, 0.1))),
+                    elseSteps = listOf(TapPoint(STEP_3, NormalizedCoordinate(0.9, 0.9))),
+                ),
+                WhileStep(
+                    id = STEP_4,
+                    condition = condition,
+                    maxIterations = 2,
+                    bodySteps = listOf(TapPoint(STEP_5, NormalizedCoordinate(0.2, 0.2))),
+                ),
+            ),
+        )
+        val driver = FakeDriver(observations = listOf(true, true, false))
+
+        val result = WorkflowRunner().run(plan, driver, FakeClock())
+
+        assertTrue(result.isSuccess)
+        assertEquals(
+            listOf("tap:10.0,20.0", "tap:20.0,40.0"),
+            driver.actions,
+        )
+        assertEquals(3, result.events.filterIsInstance<RunEvent.ConditionEvaluated>().size)
+    }
+
+    @Test
     fun waitsUntilConditionBecomesTrueUsingInjectedClock() {
         val plan = plan(
             steps = listOf(
