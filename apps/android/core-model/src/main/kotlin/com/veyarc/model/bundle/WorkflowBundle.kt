@@ -75,7 +75,7 @@ data class BundleLimits(
     val maxEntryNameLength: Int = 256,
     val maxWorkflowJsonBytes: Long = 2L * 1024L * 1024L,
     val maxManifestBytes: Long = 512L * 1024L,
-    val maxAssetBytes: Long = 8L * 1024L * 1024L,
+    val maxAssetBytes: Long = 12L * 1024L * 1024L,
     val maxTotalAssetBytes: Long = 24L * 1024L * 1024L,
 ) {
     init {

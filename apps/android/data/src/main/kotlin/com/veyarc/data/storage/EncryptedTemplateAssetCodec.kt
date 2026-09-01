@@ -38,7 +38,7 @@ class DecodedTemplate(
     }
 
     companion object {
-        const val MAX_TEMPLATE_PIXELS: Long = 2_000_000L
+        const val MAX_TEMPLATE_PIXELS: Long = 3_000_000L
         private const val BYTES_PER_PIXEL = 4L
     }
 }
@@ -131,6 +131,6 @@ class EncryptedTemplateAssetCodec(
         const val FORMAT_VERSION: Byte = 1
         const val HEADER_BYTES = 4 + 1 + 4 + 4
         const val ENCRYPTION_OVERHEAD_BYTES = 4 + 2 + 16 + 16
-        const val DEFAULT_MAX_ENCRYPTED_BYTES = 8L * 1024L * 1024L
+        const val DEFAULT_MAX_ENCRYPTED_BYTES = 12L * 1024L * 1024L
     }
 }

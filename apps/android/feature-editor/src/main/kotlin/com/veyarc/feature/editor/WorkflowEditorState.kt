@@ -8,6 +8,7 @@ import com.veyarc.model.DurationMillis
 import com.veyarc.model.ForegroundPackageCondition
 import com.veyarc.model.IfElse
 import com.veyarc.model.ImageAbsentCondition
+import com.veyarc.model.ImageMatchMode
 import com.veyarc.model.ImagePresentCondition
 import com.veyarc.model.LaunchApp
 import com.veyarc.model.LongPress
@@ -402,13 +403,25 @@ fun WorkflowStep.summary(): String = when (this) {
 
 fun Condition.summary(): String = when (this) {
     is PixelColorCondition -> "Pixel ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}%"
-    is ImagePresentCondition -> "Image ${assetId.value} present"
+
+    is ImagePresentCondition -> when (matchMode) {
+        ImageMatchMode.APPEARS_WITHIN_REGION -> "Image ${assetId.value} appears in region"
+        ImageMatchMode.SCREEN_STATE -> "Screen state matches ${assetId.value}"
+    }
+
     is ImageAbsentCondition -> "Image ${assetId.value} absent"
+
     is ForegroundPackageCondition -> "Foreground ${packageName.value}"
+
     is com.veyarc.model.OrientationCondition -> "Orientation ${orientation.name.lowercase()}"
+
     is com.veyarc.model.VariableComparisonCondition -> "Variable comparison"
+
     is com.veyarc.model.StepResultCondition -> "Step result ${stepId.take(8)}…"
+
     is AndCondition -> "All of ${conditions.size} conditions"
+
     is OrCondition -> "Any of ${conditions.size} conditions"
+
     is NotCondition -> "Not (${condition.summary()})"
 }

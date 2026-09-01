@@ -21,6 +21,30 @@ class WorkflowContractTest {
     }
 
     @Test
+    fun imageMatchModeRoundTripsAndOlderDocumentsUseRegionSearch() {
+        val originalJson = WorkflowJson.encode(validDocument())
+        assertTrue(originalJson.contains("\"matchMode\":\"appearsWithinRegion\""))
+        val legacyJson = originalJson.replace(",\"matchMode\":\"appearsWithinRegion\"", "")
+
+        val decodedLegacy = WorkflowJson.decode(legacyJson)
+        val legacyCondition = (decodedLegacy.steps.filterIsInstance<WaitUntil>().single().condition as ImagePresentCondition)
+        assertEquals(ImageMatchMode.APPEARS_WITHIN_REGION, legacyCondition.matchMode)
+
+        val screenState = validDocument().copy(
+            steps = validDocument().steps.map { step ->
+                if (step is WaitUntil && step.condition is ImagePresentCondition) {
+                    step.copy(condition = step.condition.copy(matchMode = ImageMatchMode.SCREEN_STATE))
+                } else {
+                    step
+                }
+            },
+        )
+        val screenStateJson = WorkflowJson.encode(screenState)
+        assertTrue(screenStateJson.contains("\"matchMode\":\"screenState\""))
+        assertEquals(screenStateJson, WorkflowJson.encode(WorkflowJson.decode(screenStateJson)))
+    }
+
+    @Test
     fun canonicalSerializationSortsMetadataWithoutReorderingSteps() {
         val original = validDocument()
         val reordered = original.copy(

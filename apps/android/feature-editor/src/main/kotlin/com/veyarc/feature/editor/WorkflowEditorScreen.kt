@@ -104,22 +104,22 @@ fun WorkflowEditorScreen(
     var refreshGeneration by remember { mutableIntStateOf(0) }
     var geometryTarget by remember { mutableStateOf<GeometryTarget?>(null) }
     var conditionTarget by remember { mutableStateOf<ConditionTarget?>(null) }
+    var pendingTemplateCrop by remember { mutableStateOf<TemplateCropSource?>(null) }
 
     val templatePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        val draftAtImport = editingDraft ?: return@rememberLauncherForActivityResult
         scope.launch {
             isBusy = true
             statusMessage = null
             runCatching {
                 withContext(Dispatchers.Default) {
-                    importTemplateAsset(context.contentResolver, uri)
+                    loadTemplateCropSource(context.contentResolver, uri)
                 }
-            }.onSuccess { asset ->
-                editingDraft = draftAtImport.addAsset(asset)
-                statusMessage = "Encrypted image template added. Select it from an image condition."
+            }.onSuccess { source ->
+                pendingTemplateCrop = source
+                statusMessage = "Select the stable part of the image that Veyarc should match."
             }.onFailure { error ->
-                statusMessage = "Could not add image template: ${error.userMessage()}"
+                statusMessage = "Could not open image: ${error.userMessage()}"
             }
             isBusy = false
         }
@@ -277,19 +277,48 @@ fun WorkflowEditorScreen(
             val targetStep = draft.stepsAt(target.path).getOrNull(target.index)
             val condition = targetStep?.conditionOrNull()
             if (condition != null) {
+                val previewViewport = viewportFor(context)
                 ConditionEditorDialog(
                     initialCondition = condition,
                     assets = draft.assets,
                     defaultPackage = draft.allowedPackagesText.firstPackageOrDefault(),
                     onAddTemplate = { templatePicker.launch("image/*") },
+                    previewWidthPx = previewViewport.recordedWidthPx,
+                    previewHeightPx = previewViewport.recordedHeightPx,
                     onDismiss = { conditionTarget = null },
-                    onApply = { updatedCondition ->
-                        editingDraft = draft.updateCondition(target.path, target.index) { updatedCondition }
+                    onApply = { updatedCondition, removedAssetIds ->
+                        editingDraft = removedAssetIds.fold(
+                            draft.updateCondition(target.path, target.index) { updatedCondition },
+                        ) { currentDraft, assetId -> currentDraft.removeAsset(assetId) }
                         conditionTarget = null
                     },
                 )
             }
         }
+    }
+    pendingTemplateCrop?.let { source ->
+        TemplateCropEditorDialog(
+            source = source,
+            onDismiss = { pendingTemplateCrop = null },
+            onApply = { crop ->
+                scope.launch {
+                    isBusy = true
+                    statusMessage = null
+                    runCatching {
+                        withContext(Dispatchers.Default) {
+                            importTemplateAsset(context.contentResolver, source.uri, crop)
+                        }
+                    }.onSuccess { asset ->
+                        editingDraft = editingDraft?.addAsset(asset)
+                        pendingTemplateCrop = null
+                        statusMessage = "Encrypted cropped image template added. Select it from the image condition."
+                    }.onFailure { error ->
+                        statusMessage = "Could not add image crop: ${error.userMessage()}"
+                    }
+                    isBusy = false
+                }
+            },
+        )
     }
 }
 

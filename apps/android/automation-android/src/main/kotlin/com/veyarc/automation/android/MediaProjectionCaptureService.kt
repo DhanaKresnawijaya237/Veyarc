@@ -30,18 +30,9 @@ class MediaProjectionCaptureService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (capture != null) return START_NOT_STICKY
-        val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, Int.MIN_VALUE) ?: Int.MIN_VALUE
-        val resultData = intent?.parcelableExtra<Intent>(EXTRA_RESULT_DATA)
-        val displaySpec = intent?.let(::readDisplaySpec)
         var startedSession: MediaProjectionFrameCapture? = null
         var runtimeAttached = false
         return try {
-            notificationUnavailableReason(this)?.let { reason ->
-                throw MediaProjectionCaptureException(reason)
-            }
-            require(resultData != null) { "MediaProjection consent data is missing" }
-            require(displaySpec != null) { "MediaProjection display dimensions are missing" }
             val notification = buildNotification(this)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
@@ -52,6 +43,15 @@ class MediaProjectionCaptureService : Service() {
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
+            notificationUnavailableReason(this)?.let { reason ->
+                throw MediaProjectionCaptureException(reason)
+            }
+            if (capture != null) return START_NOT_STICKY
+            val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, Int.MIN_VALUE) ?: Int.MIN_VALUE
+            val resultData = intent?.parcelableExtra<Intent>(EXTRA_RESULT_DATA)
+            val displaySpec = intent?.let(::readDisplaySpec)
+            require(resultData != null) { "MediaProjection consent data is missing" }
+            require(displaySpec != null) { "MediaProjection display dimensions are missing" }
             val session = MediaProjectionFrameCapture(this) { reason ->
                 MediaProjectionCaptureRuntime.notifyTerminated(reason)
                 expectedStop.set(true)
@@ -125,6 +125,9 @@ class MediaProjectionCaptureService : Service() {
             }
             check(!MediaProjectionCaptureRuntime.isActive) {
                 "Another MediaProjection capture is already active"
+            }
+            notificationUnavailableReason(context)?.let { reason ->
+                throw MediaProjectionCaptureException(reason)
             }
             MediaProjectionCaptureRuntime.prepare()
             createChannel(context)

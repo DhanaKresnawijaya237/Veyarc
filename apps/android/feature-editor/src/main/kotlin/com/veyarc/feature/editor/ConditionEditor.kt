@@ -12,6 +12,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
@@ -41,6 +42,7 @@ import com.veyarc.model.Condition
 import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.ForegroundPackageCondition
 import com.veyarc.model.ImageAbsentCondition
+import com.veyarc.model.ImageMatchMode
 import com.veyarc.model.ImagePresentCondition
 import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.NormalizedRect
@@ -52,6 +54,7 @@ import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.bundle.BundleAsset
 
 private const val MAX_COMPOSED_CONDITIONS = 8
+private const val MISSING_TEMPLATE_ASSET_ID = "template-missing"
 
 @Composable
 internal fun ConditionEditorDialog(
@@ -59,10 +62,14 @@ internal fun ConditionEditorDialog(
     assets: List<BundleAsset>,
     defaultPackage: String,
     onAddTemplate: () -> Unit,
+    previewWidthPx: Int,
+    previewHeightPx: Int,
     onDismiss: () -> Unit,
-    onApply: (Condition) -> Unit,
+    onApply: (Condition, Set<AssetId>) -> Unit,
 ) {
     var condition by remember(initialCondition) { mutableStateOf(initialCondition) }
+    var removedTemplateIds by remember(initialCondition) { mutableStateOf(emptySet<AssetId>()) }
+    val visibleAssets = assets.filterNot { it.assetId in removedTemplateIds }
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -82,7 +89,7 @@ internal fun ConditionEditorDialog(
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.titleLarge,
                     )
-                    Button(onClick = { onApply(condition) }) { Text("Apply") }
+                    Button(onClick = { onApply(condition, removedTemplateIds) }) { Text("Apply") }
                 }
                 Text(
                     "Conditions are checked only at their step's polling interval. Screen checks use temporary frames; no video is saved.",
@@ -91,9 +98,14 @@ internal fun ConditionEditorDialog(
                 )
                 ConditionNodeEditor(
                     condition = condition,
-                    assets = assets,
+                    assets = visibleAssets,
                     defaultPackage = defaultPackage,
                     onAddTemplate = onAddTemplate,
+                    previewWidthPx = previewWidthPx,
+                    previewHeightPx = previewHeightPx,
+                    onRemoveTemplate = { assetId ->
+                        removedTemplateIds = removedTemplateIds + assetId
+                    },
                     onChange = { condition = it },
                 )
             }
@@ -107,6 +119,9 @@ private fun ConditionNodeEditor(
     assets: List<BundleAsset>,
     defaultPackage: String,
     onAddTemplate: () -> Unit,
+    previewWidthPx: Int,
+    previewHeightPx: Int,
+    onRemoveTemplate: (AssetId) -> Unit,
     onChange: (Condition) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -123,6 +138,9 @@ private fun ConditionNodeEditor(
                 condition = condition,
                 assets = assets,
                 onAddTemplate = onAddTemplate,
+                onRemoveTemplate = onRemoveTemplate,
+                previewWidthPx = previewWidthPx,
+                previewHeightPx = previewHeightPx,
                 onChange = { onChange(it) },
             )
 
@@ -130,6 +148,9 @@ private fun ConditionNodeEditor(
                 condition = condition,
                 assets = assets,
                 onAddTemplate = onAddTemplate,
+                onRemoveTemplate = onRemoveTemplate,
+                previewWidthPx = previewWidthPx,
+                previewHeightPx = previewHeightPx,
                 onChange = { onChange(it) },
             )
 
@@ -143,6 +164,9 @@ private fun ConditionNodeEditor(
                 assets = assets,
                 defaultPackage = defaultPackage,
                 onAddTemplate = onAddTemplate,
+                onRemoveTemplate = onRemoveTemplate,
+                previewWidthPx = previewWidthPx,
+                previewHeightPx = previewHeightPx,
                 onChange = { children -> onChange(condition.copy(conditions = children)) },
             )
 
@@ -152,6 +176,9 @@ private fun ConditionNodeEditor(
                 assets = assets,
                 defaultPackage = defaultPackage,
                 onAddTemplate = onAddTemplate,
+                onRemoveTemplate = onRemoveTemplate,
+                previewWidthPx = previewWidthPx,
+                previewHeightPx = previewHeightPx,
                 onChange = { children -> onChange(condition.copy(conditions = children)) },
             )
 
@@ -162,6 +189,9 @@ private fun ConditionNodeEditor(
                     assets = assets,
                     defaultPackage = defaultPackage,
                     onAddTemplate = onAddTemplate,
+                    onRemoveTemplate = onRemoveTemplate,
+                    previewWidthPx = previewWidthPx,
+                    previewHeightPx = previewHeightPx,
                     onChange = { onChange(condition.copy(condition = it)) },
                 )
             }
@@ -251,6 +281,9 @@ private fun ImageConditionFields(
     condition: Condition,
     assets: List<BundleAsset>,
     onAddTemplate: () -> Unit,
+    onRemoveTemplate: (AssetId) -> Unit,
+    previewWidthPx: Int,
+    previewHeightPx: Int,
     onChange: (Condition) -> Unit,
 ) {
     val assetId = when (condition) {
@@ -258,6 +291,10 @@ private fun ImageConditionFields(
         is ImageAbsentCondition -> condition.assetId
         else -> error("Image editor received a non-image condition")
     }
+    val selectedAsset = assets.firstOrNull { it.assetId == assetId }
+    val selectedAssetIndex = assets.indexOfFirst { it.assetId == assetId }
+    val isScreenState = condition is ImagePresentCondition && condition.matchMode == ImageMatchMode.SCREEN_STATE
+    var removeConfirmationVisible by remember(assetId) { mutableStateOf(false) }
     var assetMenuExpanded by remember(condition) { mutableStateOf(false) }
     val update: (AssetId, NormalizedRect, Double) -> Unit = { selectedAsset, region, threshold ->
         onChange(
@@ -267,18 +304,44 @@ private fun ImageConditionFields(
             },
         )
     }
-    Text("Search for an encrypted template inside a normalized screen region.", style = MaterialTheme.typography.bodySmall)
+    Text(
+        if (isScreenState) {
+            "Compare one screenshot against the entire current screen at a fixed position. Veyarc checks a coarse representation first, then verifies the full-resolution pixels."
+        } else {
+            "Set where to look. X and Y are the top-left position; W and H are the search-area size. All values are normalized to the recorded display."
+        },
+        style = MaterialTheme.typography.bodySmall,
+    )
+    ImageConditionPreview(
+        region = if (isScreenState) FULL_SCREEN_REGION else condition.region(),
+        displayWidthPx = previewWidthPx,
+        displayHeightPx = previewHeightPx,
+        asset = selectedAsset,
+        screenStateMode = isScreenState,
+        onRegionChange = if (isScreenState) {
+            null
+        } else {
+            { region ->
+                update(assetId, region, condition.threshold())
+            }
+        },
+    )
     Row(verticalAlignment = Alignment.CenterVertically) {
         OutlinedButton(onClick = { assetMenuExpanded = true }, enabled = assets.isNotEmpty()) {
-            Text(assets.firstOrNull { it.assetId == assetId }?.assetId?.value ?: "Missing template")
+            Text("Change image")
         }
         DropdownMenu(
             expanded = assetMenuExpanded,
             onDismissRequest = { assetMenuExpanded = false },
         ) {
-            assets.forEach { asset ->
+            assets.forEachIndexed { index, asset ->
                 DropdownMenuItem(
-                    text = { Text(asset.assetId.value) },
+                    text = {
+                        Column {
+                            Text("Image ${index + 1}")
+                            Text(asset.assetId.value, style = MaterialTheme.typography.labelSmall)
+                        }
+                    },
                     onClick = {
                         assetMenuExpanded = false
                         val region = condition.region()
@@ -287,17 +350,61 @@ private fun ImageConditionFields(
                 )
             }
         }
-        OutlinedButton(onClick = onAddTemplate) { Text("Add template") }
+        OutlinedButton(onClick = onAddTemplate) { Text("Add cropped template") }
     }
-    RegionConditionFields(
-        region = condition.region(),
-        onRegionChange = { update(assetId, it, condition.threshold()) },
+    Text(
+        selectedAsset?.let { "Selected image ${selectedAssetIndex + 1}" } ?: "No image selected",
+        style = MaterialTheme.typography.bodySmall,
+        color = if (selectedAsset == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    if (selectedAsset != null) {
+        OutlinedButton(
+            onClick = { removeConfirmationVisible = true },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(Icons.Outlined.Delete, contentDescription = null)
+            Text("Remove selected image template")
+        }
+    }
+    if (!isScreenState) {
+        RegionConditionFields(
+            region = condition.region(),
+            onRegionChange = { update(assetId, it, condition.threshold()) },
+        )
+    }
     var thresholdText by remember(condition) { mutableStateOf(condition.threshold().toEditorText()) }
     ConditionNumberField("Match threshold (0 to 1)", thresholdText, { next ->
         thresholdText = next
         next.toDoubleOrNull()?.takeIf { it in 0.0..1.0 }?.let { update(assetId, condition.region(), it) }
     })
+    if (removeConfirmationVisible) {
+        AlertDialog(
+            onDismissRequest = { removeConfirmationVisible = false },
+            title = { Text("Remove image template?") },
+            text = {
+                Text(
+                    "This removes the selected encrypted template from the workflow. " +
+                        "Other conditions that use it will need a replacement.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        removeConfirmationVisible = false
+                        update(
+                            AssetId(MISSING_TEMPLATE_ASSET_ID),
+                            condition.region(),
+                            condition.threshold(),
+                        )
+                        onRemoveTemplate(assetId)
+                    },
+                ) { Text("Remove") }
+            },
+            dismissButton = {
+                TextButton(onClick = { removeConfirmationVisible = false }) { Text("Cancel") }
+            },
+        )
+    }
 }
 
 @Composable
@@ -378,6 +485,9 @@ private fun ComposedConditionFields(
     assets: List<BundleAsset>,
     defaultPackage: String,
     onAddTemplate: () -> Unit,
+    onRemoveTemplate: (AssetId) -> Unit,
+    previewWidthPx: Int,
+    previewHeightPx: Int,
     onChange: (List<Condition>) -> Unit,
 ) {
     Text(label, style = MaterialTheme.typography.bodySmall)
@@ -398,6 +508,9 @@ private fun ComposedConditionFields(
                     assets = assets,
                     defaultPackage = defaultPackage,
                     onAddTemplate = onAddTemplate,
+                    onRemoveTemplate = onRemoveTemplate,
+                    previewWidthPx = previewWidthPx,
+                    previewHeightPx = previewHeightPx,
                     onChange = { updated ->
                         onChange(conditions.toMutableList().apply { this[index] = updated })
                     },
@@ -432,7 +545,8 @@ private fun ConditionNumberField(
 
 private enum class EditableConditionKind(val label: String) {
     PIXEL("Pixel colour"),
-    IMAGE_PRESENT("Image present"),
+    SCREEN_STATE("Screen state matches"),
+    IMAGE_PRESENT("Image appears somewhere"),
     IMAGE_ABSENT("Image absent"),
     FOREGROUND("Foreground package"),
     ORIENTATION("Orientation"),
@@ -444,14 +558,21 @@ private enum class EditableConditionKind(val label: String) {
     fun defaultCondition(defaultPackage: String, assets: List<BundleAsset>): Condition = when (this) {
         PIXEL -> PixelColorCondition(NormalizedCoordinate(0.5, 0.5), 0xFFFFFFFFL, 16)
 
+        SCREEN_STATE -> ImagePresentCondition(
+            assetId = assets.firstOrNull()?.assetId ?: AssetId(MISSING_TEMPLATE_ASSET_ID),
+            region = FULL_SCREEN_REGION,
+            matchThreshold = 0.98,
+            matchMode = ImageMatchMode.SCREEN_STATE,
+        )
+
         IMAGE_PRESENT -> ImagePresentCondition(
-            assetId = assets.firstOrNull()?.assetId ?: AssetId("template-missing"),
+            assetId = assets.firstOrNull()?.assetId ?: AssetId(MISSING_TEMPLATE_ASSET_ID),
             region = NormalizedRect(0.25, 0.25, 0.5, 0.5),
             matchThreshold = 0.9,
         )
 
         IMAGE_ABSENT -> ImageAbsentCondition(
-            assetId = assets.firstOrNull()?.assetId ?: AssetId("template-missing"),
+            assetId = assets.firstOrNull()?.assetId ?: AssetId(MISSING_TEMPLATE_ASSET_ID),
             region = NormalizedRect(0.25, 0.25, 0.5, 0.5),
             matchThreshold = 0.9,
         )
@@ -470,13 +591,24 @@ private enum class EditableConditionKind(val label: String) {
 
 private fun Condition.kind(): EditableConditionKind = when (this) {
     is PixelColorCondition -> EditableConditionKind.PIXEL
-    is ImagePresentCondition -> EditableConditionKind.IMAGE_PRESENT
+
+    is ImagePresentCondition -> when (matchMode) {
+        ImageMatchMode.APPEARS_WITHIN_REGION -> EditableConditionKind.IMAGE_PRESENT
+        ImageMatchMode.SCREEN_STATE -> EditableConditionKind.SCREEN_STATE
+    }
+
     is ImageAbsentCondition -> EditableConditionKind.IMAGE_ABSENT
+
     is ForegroundPackageCondition -> EditableConditionKind.FOREGROUND
+
     is OrientationCondition -> EditableConditionKind.ORIENTATION
+
     is AndCondition -> EditableConditionKind.AND
+
     is OrCondition -> EditableConditionKind.OR
+
     is NotCondition -> EditableConditionKind.NOT
+
     else -> EditableConditionKind.FOREGROUND
 }
 
@@ -485,7 +617,7 @@ private fun defaultCondition(defaultPackage: String, assets: List<BundleAsset>):
 private fun String.toPackageName(): PackageName = runCatching { PackageName(trim()) }
     .getOrElse { PackageName("com.veyarc.app") }
 
-private fun Double.toEditorText(): String = "%.4f".format(java.util.Locale.US, this).trimEnd('0').trimEnd('.')
+internal fun Double.toEditorText(): String = "%.4f".format(java.util.Locale.US, this).trimEnd('0').trimEnd('.')
 
 private fun Long.toArgbText(): String = "#%08X".format(this)
 
@@ -506,3 +638,5 @@ private fun Condition.threshold(): Double = when (this) {
     is ImageAbsentCondition -> matchThreshold
     else -> 0.9
 }
+
+private val FULL_SCREEN_REGION = NormalizedRect(0.0, 0.0, 1.0, 1.0)

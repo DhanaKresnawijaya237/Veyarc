@@ -211,11 +211,21 @@ data class ImagePresentCondition(
     val assetId: AssetId,
     val region: NormalizedRect,
     val matchThreshold: Double,
+    val matchMode: ImageMatchMode = ImageMatchMode.APPEARS_WITHIN_REGION,
 ) : Condition {
     init {
         ContractChecks.requireFinite(matchThreshold, "matchThreshold")
         require(matchThreshold in 0.0..1.0) { "Match threshold must be between 0 and 1" }
     }
+}
+
+@Serializable
+enum class ImageMatchMode {
+    @SerialName("appearsWithinRegion")
+    APPEARS_WITHIN_REGION,
+
+    @SerialName("screenState")
+    SCREEN_STATE,
 }
 
 @Serializable
