@@ -98,6 +98,7 @@ fun WorkflowEditorScreen(
     val scope = rememberCoroutineScope()
     var summaries by remember { mutableStateOf<List<WorkflowSummary>>(emptyList()) }
     var runHistory by remember { mutableStateOf<List<StoredRunRecord>>(emptyList()) }
+    var selectedRun by remember { mutableStateOf<StoredRunRecord?>(null) }
     var editingDraft by remember { mutableStateOf<WorkflowDraft?>(null) }
     var isBusy by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
@@ -225,7 +226,14 @@ fun WorkflowEditorScreen(
     }
 
     val draft = editingDraft
-    if (draft == null) {
+    val runDetail = selectedRun
+    if (runDetail != null) {
+        StoredRunDetailScreen(
+            record = runDetail,
+            onBack = { selectedRun = null },
+            modifier = modifier,
+        )
+    } else if (draft == null) {
         WorkflowLibraryScreen(
             summaries = summaries,
             runHistory = runHistory,
@@ -236,6 +244,7 @@ fun WorkflowEditorScreen(
                 statusMessage = null
             },
             onOpen = ::openWorkflow,
+            onOpenRun = { selectedRun = it },
             onOpenAutomationHarness = onOpenAutomationHarness,
             onDeleteWorkflow = ::deleteWorkflow,
             onDeleteRun = ::deleteRun,
@@ -345,6 +354,7 @@ private fun WorkflowLibraryScreen(
     statusMessage: String?,
     onCreate: () -> Unit,
     onOpen: (WorkflowSummary) -> Unit,
+    onOpenRun: (StoredRunRecord) -> Unit,
     onOpenAutomationHarness: () -> Unit,
     onDeleteWorkflow: (WorkflowSummary) -> Unit,
     onDeleteRun: (StoredRunRecord) -> Unit,
@@ -442,6 +452,7 @@ private fun WorkflowLibraryScreen(
                 items(runHistory, key = { it.runId }) { record ->
                     RunHistoryCard(
                         record = record,
+                        onClick = { onOpenRun(record) },
                         onDelete = { pendingDelete = DeleteTarget.Run(record) },
                         deleteEnabled = !isBusy && record.status != StoredRunStatus.RUNNING,
                     )
@@ -487,10 +498,16 @@ private fun WorkflowLibraryScreen(
 @Composable
 private fun RunHistoryCard(
     record: StoredRunRecord,
+    onClick: () -> Unit,
     onDelete: () -> Unit,
     deleteEnabled: Boolean,
 ) {
-    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+    ) {
         Row(
             modifier = Modifier.padding(16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),

@@ -56,7 +56,28 @@ class WorkflowRepositoryTest {
             assertTrue(interrupted.interruptionReason!!.isNotBlank())
             assertEquals(listOf(RUN_ID), repository.listRunHistory().map { it.runId })
 
+            repository.beginRun(WORKFLOW_ID, 2, runId = DETAILED_RUN_ID, startedAtMs = 4000L)
+            repository.finishRun(
+                runId = DETAILED_RUN_ID,
+                status = StoredRunStatus.CANCELLED,
+                finishedAtMs = 5000L,
+                interruptionReason = "Stopped by user",
+                completedSteps = 2,
+                totalSteps = 4,
+                eventHistory = listOf(
+                    StoredRunEvent(4000L, "Run started"),
+                    StoredRunEvent(4100L, "Step completed"),
+                ),
+            )
+            val detailed = repository.listRunHistory().first()
+            assertEquals(DETAILED_RUN_ID, detailed.runId)
+            assertEquals(2, detailed.completedSteps)
+            assertEquals(4L, detailed.totalSteps)
+            assertEquals("Run started", detailed.eventHistory.first().message)
+            assertTrue(detailed.hasStoredDetails)
+
             repository.deleteRun(RUN_ID)
+            repository.deleteRun(DETAILED_RUN_ID)
             assertTrue(repository.listRunHistory().isEmpty())
             repository.deleteWorkflow(WORKFLOW_ID)
             assertTrue(repository.listWorkflows().isEmpty())
@@ -101,5 +122,6 @@ class WorkflowRepositoryTest {
         const val WORKFLOW_ID = "00000000-0000-4000-8000-000000000301"
         const val STEP_ID = "00000000-0000-4000-8000-000000000302"
         const val RUN_ID = "00000000-0000-4000-8000-000000000303"
+        const val DETAILED_RUN_ID = "00000000-0000-4000-8000-000000000304"
     }
 }

@@ -4,6 +4,8 @@ import android.content.Context
 import com.veyarc.model.WorkflowIds
 import com.veyarc.model.bundle.VeyarcBundle
 import com.veyarc.model.bundle.WorkflowBundle
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 
 data class WorkflowSummary(
@@ -38,6 +40,15 @@ data class StoredRunRecord(
     val startedAtMs: Long,
     val finishedAtMs: Long?,
     val interruptionReason: String?,
+    val completedSteps: Int,
+    val totalSteps: Long?,
+    val eventHistory: List<StoredRunEvent>,
+    val hasStoredDetails: Boolean,
+)
+
+data class StoredRunEvent(
+    val atMs: Long,
+    val message: String,
 )
 
 class WorkflowStorageException(message: String, cause: Throwable? = null) : Exception(message, cause)
@@ -186,15 +197,28 @@ class WorkflowRepository internal constructor(
         status: StoredRunStatus,
         finishedAtMs: Long = nowMs(),
         interruptionReason: String? = null,
+        completedSteps: Int = 0,
+        totalSteps: Long? = null,
+        eventHistory: List<StoredRunEvent> = emptyList(),
     ) = synchronized(this) {
         require(status != StoredRunStatus.RUNNING) { "A running record must finish with a terminal status" }
         require(finishedAtMs >= 0L) { "Run clock must be nonnegative" }
+        require(completedSteps >= 0) { "Completed step count must be nonnegative" }
+        require(totalSteps == null || totalSteps >= completedSteps) {
+            "Total step count must not be less than completed steps"
+        }
+        require(eventHistory.size <= MAX_STORED_RUN_EVENTS) {
+            "Run event history cannot exceed $MAX_STORED_RUN_EVENTS entries"
+        }
         val updated = database.workflowDao().finishRun(
             runId = runId,
             runningStatus = StoredRunStatus.RUNNING.name,
             status = status.name,
             finishedAtMs = finishedAtMs,
             interruptionReason = interruptionReason,
+            completedSteps = completedSteps,
+            totalSteps = totalSteps,
+            eventHistoryJson = encodeRunEvents(eventHistory),
         )
         check(updated == 1) { "Run record is missing or already finished" }
     }
@@ -272,7 +296,39 @@ class WorkflowRepository internal constructor(
         startedAtMs = record.startedAtMs,
         finishedAtMs = record.finishedAtMs,
         interruptionReason = record.interruptionReason,
+        completedSteps = record.completedSteps,
+        totalSteps = record.totalSteps,
+        eventHistory = decodeRunEvents(record.eventHistoryJson),
+        hasStoredDetails = record.eventHistoryJson != null,
     )
+
+    private fun encodeRunEvents(events: List<StoredRunEvent>): String = JSONArray().apply {
+        events.forEach { event ->
+            put(
+                JSONObject()
+                    .put("atMs", event.atMs)
+                    .put("message", event.message),
+            )
+        }
+    }.toString()
+
+    private fun decodeRunEvents(encoded: String?): List<StoredRunEvent> {
+        if (encoded == null) return emptyList()
+        return runCatching {
+            val array = JSONArray(encoded)
+            buildList(array.length()) {
+                repeat(array.length()) { index ->
+                    val item = array.getJSONObject(index)
+                    add(
+                        StoredRunEvent(
+                            atMs = item.getLong("atMs"),
+                            message = item.getString("message"),
+                        ),
+                    )
+                }
+            }
+        }.getOrElse { emptyList() }
+    }
 
     private fun runStatus(value: String): StoredRunStatus = runCatching {
         StoredRunStatus.valueOf(value)
@@ -283,6 +339,7 @@ class WorkflowRepository internal constructor(
         const val DEFAULT_INTERRUPTION_REASON = "Run was interrupted when the process ended"
         const val MAX_REASON_LENGTH = 256
         const val MAX_HISTORY_LIMIT = 1_000
+        const val MAX_STORED_RUN_EVENTS = 50
 
         fun revisionFileName(workflowId: String, revision: Int): String {
             require(revision > 0) { "Workflow revision must be positive" }

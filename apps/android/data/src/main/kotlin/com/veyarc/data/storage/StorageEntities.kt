@@ -1,5 +1,6 @@
 package com.veyarc.data.storage
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -48,4 +49,10 @@ internal data class RunRecordEntity(
     val startedAtMs: Long,
     val finishedAtMs: Long?,
     val interruptionReason: String?,
+    @ColumnInfo(defaultValue = "0")
+    val completedSteps: Int = 0,
+    @ColumnInfo(defaultValue = "NULL")
+    val totalSteps: Long? = null,
+    @ColumnInfo(defaultValue = "NULL")
+    val eventHistoryJson: String? = null,
 )

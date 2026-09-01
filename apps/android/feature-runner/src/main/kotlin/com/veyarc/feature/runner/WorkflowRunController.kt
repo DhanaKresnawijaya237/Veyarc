@@ -14,6 +14,7 @@ import com.veyarc.automation.android.MediaProjectionConsent
 import com.veyarc.automation.android.MediaProjectionDisplaySpec
 import com.veyarc.automation.android.ReplayControllerActions
 import com.veyarc.automation.android.ReplayFloatingController
+import com.veyarc.data.storage.StoredRunEvent
 import com.veyarc.data.storage.StoredRunStatus
 import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.engine.MutableExecutionControl
@@ -359,9 +360,19 @@ class WorkflowRunController(
                 val completedRunId = runId
                 val status = terminalStatus
                 val reason = terminalReason
+                val terminalState = _state.value
                 withContext(NonCancellable + Dispatchers.IO) {
                     runCatching {
-                        repository.finishRun(completedRunId, status, interruptionReason = reason)
+                        repository.finishRun(
+                            runId = completedRunId,
+                            status = status,
+                            interruptionReason = reason,
+                            completedSteps = terminalState.completedSteps,
+                            totalSteps = terminalState.review.plan?.analysis?.worstCaseStepCount,
+                            eventHistory = terminalState.eventHistory.map { event ->
+                                StoredRunEvent(event.atMs, event.message)
+                            },
+                        )
                     }
                 }
             }

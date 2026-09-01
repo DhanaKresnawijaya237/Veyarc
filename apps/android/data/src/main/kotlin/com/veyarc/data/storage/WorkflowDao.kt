@@ -39,7 +39,8 @@ internal interface WorkflowDao {
 
     @Query(
         "UPDATE run_records SET status = :status, finishedAtMs = :finishedAtMs, " +
-            "interruptionReason = :interruptionReason " +
+            "interruptionReason = :interruptionReason, completedSteps = :completedSteps, " +
+            "totalSteps = :totalSteps, eventHistoryJson = :eventHistoryJson " +
             "WHERE runId = :runId AND status = :runningStatus",
     )
     fun finishRun(
@@ -48,6 +49,9 @@ internal interface WorkflowDao {
         status: String,
         finishedAtMs: Long,
         interruptionReason: String?,
+        completedSteps: Int,
+        totalSteps: Long?,
+        eventHistoryJson: String?,
     ): Int
 
     @Query(
