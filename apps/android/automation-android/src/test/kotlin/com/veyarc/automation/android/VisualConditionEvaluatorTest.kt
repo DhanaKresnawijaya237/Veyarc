@@ -7,6 +7,7 @@ import com.veyarc.model.ImagePresentCondition
 import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.NormalizedRect
 import com.veyarc.model.PixelColorCondition
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -196,24 +197,29 @@ class VisualConditionEvaluatorTest {
     }
 
     @Test
-    fun screenStateCoarseCheckRejectsBeforeExactComparisonBudget() {
+    fun screenStateActualScoreRemainsBoundedByTheComparisonBudget() {
         val template = RgbaTemplate.fromRgba(8, 8, rgba(*Array(64) { color(255, 255, 255) }))
         val frame = frame(8, 8, List(64) { color(0, 0, 0) })
 
-        val matched = VisualConditionEvaluator(
-            frameSource = { frame },
-            templateSource = templateSource(template),
-            maxComparisons = 1,
-        ).evaluate(
-            ImagePresentCondition(
-                assetId = ASSET_ID,
-                region = NormalizedRect(0.0, 0.0, 1.0, 1.0),
-                matchThreshold = 0.9,
-                matchMode = ImageMatchMode.SCREEN_STATE,
-            ),
-        )
+        var rejected = false
+        try {
+            VisualConditionEvaluator(
+                frameSource = { frame },
+                templateSource = templateSource(template),
+                maxComparisons = 1,
+            ).observe(
+                ImagePresentCondition(
+                    assetId = ASSET_ID,
+                    region = NormalizedRect(0.0, 0.0, 1.0, 1.0),
+                    matchThreshold = 0.9,
+                    matchMode = ImageMatchMode.SCREEN_STATE,
+                ),
+            )
+        } catch (error: VisualConditionEvaluationException) {
+            rejected = error.message?.contains("safety budget") == true
+        }
 
-        assertFalse(matched)
+        assertTrue(rejected)
         assertTrue(frame.isClosed)
     }
 
@@ -284,6 +290,45 @@ class VisualConditionEvaluatorTest {
                 ImagePresentCondition(ASSET_ID, NormalizedRect(0.0, 0.0, 1.0, 1.0), 0.995),
             ),
         )
+    }
+
+    @Test
+    fun reportsExactScoreForAnAcceptedImageCandidate() {
+        val template = RgbaTemplate.fromRgba(1, 1, rgba(color(100, 100, 100)))
+        val frame = frame(1, 1, listOf(color(110, 100, 100)))
+
+        val observation = VisualConditionEvaluator({ frame }, templateSource(template)).observe(
+            ImagePresentCondition(
+                ASSET_ID,
+                NormalizedRect(0.0, 0.0, 1.0, 1.0),
+                matchThreshold = 0.9,
+            ),
+        )
+
+        assertTrue(observation.result)
+        assertEquals(0.9, observation.threshold!!, 0.0)
+        assertEquals(1.0 - 10.0 / 1020.0, observation.matchScore!!, 0.000_001)
+        assertTrue(frame.isClosed)
+    }
+
+    @Test
+    fun reportsExactScoreForARejectedScreenState() {
+        val template = RgbaTemplate.fromRgba(1, 1, rgba(color(100, 100, 100)))
+        val frame = frame(1, 1, listOf(color(110, 100, 100)))
+
+        val observation = VisualConditionEvaluator({ frame }, templateSource(template)).observe(
+            ImagePresentCondition(
+                ASSET_ID,
+                NormalizedRect(0.0, 0.0, 1.0, 1.0),
+                matchThreshold = 0.995,
+                matchMode = ImageMatchMode.SCREEN_STATE,
+            ),
+        )
+
+        assertFalse(observation.result)
+        assertEquals(0.995, observation.threshold!!, 0.0)
+        assertEquals(1.0 - 10.0 / 1020.0, observation.matchScore!!, 0.000_001)
+        assertTrue(frame.isClosed)
     }
 
     @Test

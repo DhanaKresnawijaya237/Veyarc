@@ -1,5 +1,6 @@
 package com.veyarc.automation.android
 
+import com.veyarc.engine.ConditionObservation
 import com.veyarc.engine.ConditionObserver
 import com.veyarc.model.AssetId
 import com.veyarc.model.Condition
@@ -80,8 +81,10 @@ class VisualConditionEvaluator(
     }
 
     /** Evaluates only visual conditions; other condition types are owned by the engine/driver. */
-    fun evaluate(condition: Condition): Boolean = when (condition) {
-        is PixelColorCondition -> evaluatePixelColor(condition)
+    fun evaluate(condition: Condition): Boolean = observe(condition).result
+
+    override fun observe(condition: Condition): ConditionObservation = when (condition) {
+        is PixelColorCondition -> ConditionObservation(evaluatePixelColor(condition))
 
         is ImagePresentCondition -> evaluateImage(
             assetId = condition.assetId,
@@ -103,8 +106,6 @@ class VisualConditionEvaluator(
             "Visual evaluator does not support ${condition::class.simpleName} conditions",
         )
     }
-
-    override fun observe(condition: Condition): Boolean = evaluate(condition)
 
     private fun evaluatePixelColor(condition: PixelColorCondition): Boolean {
         val frame = frameSource.invoke() ?: return false
@@ -132,14 +133,17 @@ class VisualConditionEvaluator(
         threshold: Double,
         present: Boolean,
         matchMode: ImageMatchMode,
-    ): Boolean {
+    ): ConditionObservation {
         val template = templateSource.templateFor(assetId)
             ?: throw VisualConditionEvaluationException(
                 "Image template asset ${assetId.value} is unavailable",
             )
-        val frame = frameSource.invoke() ?: return false
+        val frame = frameSource.invoke() ?: return ConditionObservation(
+            result = false,
+            threshold = threshold,
+        )
         return try {
-            val matched = template.withRgbaBytes { templateBytes ->
+            val match = template.withRgbaBytes { templateBytes ->
                 frame.withRgbaBytes { frameBytes ->
                     when (matchMode) {
                         ImageMatchMode.APPEARS_WITHIN_REGION -> containsTemplate(
@@ -161,37 +165,29 @@ class VisualConditionEvaluator(
                     }
                 }
             }
-            if (present) matched else !matched
+            ConditionObservation(
+                result = if (present) match.matched else !match.matched,
+                matchScore = match.score,
+                threshold = threshold,
+            )
         } finally {
             frame.close()
         }
     }
 
-    /** Coarsely rejects a different screen, then verifies one known full-screen position exactly. */
+    /** Measures the full fixed-position screen similarity so diagnostics never substitute the threshold. */
     private fun matchesScreenState(
         frame: EphemeralScreenFrame,
         frameBytes: ByteArray,
         template: RgbaTemplate,
         templateBytes: ByteArray,
         threshold: Double,
-    ): Boolean {
-        if (template.widthPx != frame.widthPx || template.heightPx != frame.heightPx) return false
-        val bounds = PixelBounds(
-            left = 0,
-            top = 0,
-            rightExclusive = frame.widthPx,
-            bottomExclusive = frame.heightPx,
-        )
+    ): ImageMatchResult {
+        if (template.widthPx != frame.widthPx || template.heightPx != frame.heightPx) {
+            return ImageMatchResult.Unmatched
+        }
         val maxError = (1.0 - threshold) * MAX_CHANNEL_ERROR * template.widthPx.toLong() * template.heightPx
-        val coarseMatcher = TemplateWindowPrefilter(
-            frameWidth = frame.widthPx,
-            frameBytes = frameBytes,
-            template = template,
-            templateBytes = templateBytes,
-            bounds = bounds,
-        )
-        if (!coarseMatcher.mayMatch(maxError)) return false
-        return matchesAt(
+        return scoreAt(
             frameWidth = frame.widthPx,
             frameBytes = frameBytes,
             template = template,
@@ -206,6 +202,35 @@ class VisualConditionEvaluator(
         )
     }
 
+    /** Fully compares one fixed candidate and returns its actual normalized RGBA similarity. */
+    private fun scoreAt(
+        frameWidth: Int,
+        frameBytes: ByteArray,
+        template: RgbaTemplate,
+        templateBytes: ByteArray,
+        originX: Int,
+        originY: Int,
+        maxError: Double,
+        budget: ComparisonBudget,
+    ): ImageMatchResult {
+        var error = 0L
+        template.withRgbaBytes {
+            for (templateY in 0 until template.heightPx) {
+                for (templateX in 0 until template.widthPx) {
+                    budget.consume()
+                    val frameOffset = rgbaOffset(originX + templateX, originY + templateY, frameWidth)
+                    val templateOffset = rgbaOffset(templateX, templateY, template.widthPx)
+                    error += channelError(frameBytes, frameOffset, templateBytes, templateOffset)
+                }
+            }
+        }
+        val maximumError = MAX_CHANNEL_ERROR.toDouble() * template.widthPx * template.heightPx
+        return ImageMatchResult(
+            matched = error.toDouble() <= maxError,
+            score = (1.0 - error / maximumError).coerceIn(0.0, 1.0),
+        )
+    }
+
     private fun containsTemplate(
         frame: EphemeralScreenFrame,
         frameBytes: ByteArray,
@@ -213,9 +238,11 @@ class VisualConditionEvaluator(
         templateBytes: ByteArray,
         region: NormalizedRect,
         threshold: Double,
-    ): Boolean {
+    ): ImageMatchResult {
         val bounds = PixelBounds.from(region, frame.widthPx, frame.heightPx)
-        if (template.widthPx > bounds.width || template.heightPx > bounds.height) return false
+        if (template.widthPx > bounds.width || template.heightPx > bounds.height) {
+            return ImageMatchResult.Unmatched
+        }
 
         val maxOriginX = bounds.rightExclusive - template.widthPx
         val maxOriginY = bounds.bottomExclusive - template.heightPx
@@ -243,7 +270,8 @@ class VisualConditionEvaluator(
             initialOriginX = preferredOriginX,
             initialOriginY = preferredOriginY,
         )
-        if (preferredPrefilter.mayMatch(maxError) && matchesAt(
+        if (preferredPrefilter.mayMatch(maxError)) {
+            val preferredMatch = matchesAt(
                 frameWidth = frame.widthPx,
                 frameBytes = frameBytes,
                 template = template,
@@ -253,8 +281,7 @@ class VisualConditionEvaluator(
                 maxError = maxError,
                 budget = budget,
             )
-        ) {
-            return true
+            if (preferredMatch.matched) return preferredMatch
         }
         val prefilter = TemplateWindowPrefilter(
             frameWidth = frame.widthPx,
@@ -268,7 +295,8 @@ class VisualConditionEvaluator(
             if (originY > bounds.top) prefilter.moveDown()
             for (originX in bounds.left until maxOriginX + 1) {
                 val isPreferredOrigin = originX == preferredOriginX && originY == preferredOriginY
-                if (!isPreferredOrigin && prefilter.mayMatch(maxError) && matchesAt(
+                if (!isPreferredOrigin && prefilter.mayMatch(maxError)) {
+                    val match = matchesAt(
                         frameWidth = frame.widthPx,
                         frameBytes = frameBytes,
                         template = template,
@@ -278,13 +306,12 @@ class VisualConditionEvaluator(
                         maxError = maxError,
                         budget = budget,
                     )
-                ) {
-                    return true
+                    if (match.matched) return match
                 }
                 if (originX < maxOriginX) prefilter.moveRight()
             }
         }
-        return false
+        return ImageMatchResult.Unmatched
     }
 
     /**
@@ -439,7 +466,7 @@ class VisualConditionEvaluator(
         originY: Int,
         maxError: Double,
         budget: ComparisonBudget,
-    ): Boolean {
+    ): ImageMatchResult {
         var error = 0L
         return template.withRgbaBytes {
             for (templateY in 0 until template.heightPx) {
@@ -448,10 +475,23 @@ class VisualConditionEvaluator(
                     val frameOffset = rgbaOffset(originX + templateX, originY + templateY, frameWidth)
                     val templateOffset = rgbaOffset(templateX, templateY, template.widthPx)
                     error += channelError(frameBytes, frameOffset, templateBytes, templateOffset)
-                    if (error.toDouble() > maxError) return@withRgbaBytes false
+                    if (error.toDouble() > maxError) return@withRgbaBytes ImageMatchResult.Unmatched
                 }
             }
-            true
+            val maximumError = MAX_CHANNEL_ERROR.toDouble() * template.widthPx * template.heightPx
+            ImageMatchResult(
+                matched = true,
+                score = (1.0 - error / maximumError).coerceIn(0.0, 1.0),
+            )
+        }
+    }
+
+    private data class ImageMatchResult(
+        val matched: Boolean,
+        val score: Double?,
+    ) {
+        companion object {
+            val Unmatched = ImageMatchResult(matched = false, score = null)
         }
     }
 

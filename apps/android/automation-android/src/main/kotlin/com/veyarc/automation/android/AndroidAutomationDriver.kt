@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Looper
 import com.veyarc.engine.ActiveViewport
 import com.veyarc.engine.AutomationDriver
+import com.veyarc.engine.ConditionObservation
 import com.veyarc.engine.ConditionObserver
 import com.veyarc.engine.DisplayCoordinate
 import com.veyarc.engine.DisplayTimedPoint
@@ -96,10 +97,14 @@ private class BlockingAndroidAutomationDriver(
 
     override fun currentViewport(): ActiveViewport? = viewport.invoke()
 
-    override fun observe(condition: Condition): Boolean = when (condition) {
-        is OrientationCondition -> currentViewport()?.orientation == condition.orientation
+    override fun observe(condition: Condition): ConditionObservation = when (condition) {
+        is OrientationCondition -> ConditionObservation(
+            currentViewport()?.orientation == condition.orientation,
+        )
 
-        is ForegroundPackageCondition -> currentForegroundPackage() == condition.packageName
+        is ForegroundPackageCondition -> ConditionObservation(
+            currentForegroundPackage() == condition.packageName,
+        )
 
         is PixelColorCondition,
         is ImagePresentCondition,

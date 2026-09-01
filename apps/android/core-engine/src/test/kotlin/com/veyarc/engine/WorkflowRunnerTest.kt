@@ -469,7 +469,9 @@ class WorkflowRunnerTest {
 
         override fun currentViewport(): ActiveViewport = viewport
 
-        override fun observe(condition: com.veyarc.model.Condition): Boolean = if (conditionResults.isEmpty()) false else conditionResults.removeFirst()
+        override fun observe(condition: com.veyarc.model.Condition): ConditionObservation = ConditionObservation(
+            if (conditionResults.isEmpty()) false else conditionResults.removeFirst(),
+        )
     }
 
     private companion object {

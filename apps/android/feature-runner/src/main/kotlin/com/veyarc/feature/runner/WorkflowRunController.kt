@@ -95,6 +95,7 @@ class WorkflowRunController(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val notifications = RunNotificationController(appContext)
     private val executor = AndroidWorkflowExecutor(appContext)
+    private val eventFormatter = RunEventFormatter(document)
     private val _state = MutableStateFlow(initialState())
     private var runJob: Job? = null
     private var control: MutableExecutionControl? = null
@@ -415,7 +416,7 @@ class WorkflowRunController(
     }
 
     private fun onEvent(event: RunEvent) {
-        val redacted = RedactedRunEvent(event.atMs, redactEvent(event))
+        val redacted = RedactedRunEvent(event.atMs, eventFormatter.format(event))
         _state.update { current ->
             val nextPhase = when (event) {
                 is RunEvent.Paused -> WorkflowRunPhase.PAUSED
@@ -481,15 +482,5 @@ class WorkflowRunController(
         const val TAG = "Veyarc.WorkflowRun"
         const val MAX_EVENT_HISTORY = 50
         const val MEDIA_PROJECTION_START_TIMEOUT_MILLIS = 5_000L
-
-        fun redactEvent(event: RunEvent): String = when (event) {
-            is RunEvent.Started -> "Run started"
-            is RunEvent.StepStarted -> "Step started"
-            is RunEvent.ConditionEvaluated -> "Condition evaluated: ${event.result}"
-            is RunEvent.StepFinished -> "Step ${event.outcome.name.lowercase()}"
-            is RunEvent.Paused -> "Paused"
-            is RunEvent.Resumed -> "Resumed"
-            is RunEvent.Finished -> "Run finished: ${event.outcome.name.lowercase()}"
-        }
     }
 }

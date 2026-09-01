@@ -33,7 +33,22 @@ interface ViewportSource {
 
 /** Observes conditions that require platform state, such as pixels or orientation. */
 interface ConditionObserver {
-    fun observe(condition: Condition): Boolean
+    fun observe(condition: Condition): ConditionObservation
+}
+
+data class ConditionObservation(
+    val result: Boolean,
+    val matchScore: Double? = null,
+    val threshold: Double? = null,
+) {
+    init {
+        require(matchScore == null || matchScore in 0.0..1.0) {
+            "Condition match score must be between 0 and 1"
+        }
+        require(threshold == null || threshold in 0.0..1.0) {
+            "Condition threshold must be between 0 and 1"
+        }
+    }
 }
 
 /** Composite driver used by the runner. Android will implement this with platform adapters. */
@@ -141,6 +156,8 @@ sealed interface RunEvent {
         val stepId: String,
         val path: String,
         val result: Boolean,
+        val matchScore: Double? = null,
+        val threshold: Double? = null,
     ) : RunEvent
 
     data class StepFinished(

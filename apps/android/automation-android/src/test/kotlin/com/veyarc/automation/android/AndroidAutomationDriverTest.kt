@@ -1,6 +1,7 @@
 package com.veyarc.automation.android
 
 import com.veyarc.engine.ActiveViewport
+import com.veyarc.engine.ConditionObservation
 import com.veyarc.engine.ConditionObserver
 import com.veyarc.engine.DisplayCoordinate
 import com.veyarc.engine.DisplayTimedPoint
@@ -65,17 +66,17 @@ class AndroidAutomationDriverTest {
 
         assertEquals(targetPackage, driver.currentForegroundPackage())
         assertEquals(viewport, driver.currentViewport())
-        assertTrue(driver.observe(OrientationCondition(DisplayOrientation.PORTRAIT)))
-        assertTrue(driver.observe(ForegroundPackageCondition(targetPackage)))
+        assertTrue(driver.observe(OrientationCondition(DisplayOrientation.PORTRAIT)).result)
+        assertTrue(driver.observe(ForegroundPackageCondition(targetPackage)).result)
     }
 
     @Test
     fun delegatesVisualConditionsToTheRunScopedObserver() {
         val observed = mutableListOf<com.veyarc.model.Condition>()
         val observer = object : ConditionObserver {
-            override fun observe(condition: com.veyarc.model.Condition): Boolean {
+            override fun observe(condition: com.veyarc.model.Condition): ConditionObservation {
                 observed += condition
-                return true
+                return ConditionObservation(true)
             }
         }
         val condition = PixelColorCondition(
@@ -92,7 +93,7 @@ class AndroidAutomationDriverTest {
             visualConditionObserver = observer,
         )
 
-        assertTrue(driver.observe(condition))
+        assertTrue(driver.observe(condition).result)
         assertEquals(listOf(condition), observed)
     }
 

@@ -301,12 +301,13 @@ class WorkflowRunner {
         path: String,
         state: RunState,
     ): Boolean {
+        var observation: ConditionObservation? = null
         val result = when (condition) {
             is PixelColorCondition,
             is ImagePresentCondition,
             is ImageAbsentCondition,
             is OrientationCondition,
-            -> state.driver.observe(condition)
+            -> state.driver.observe(condition).also { observation = it }.result
 
             is ForegroundPackageCondition -> {
                 ensureForeground(state)
@@ -327,7 +328,16 @@ class WorkflowRunner {
 
             is NotCondition -> !evaluateCondition(condition.condition, stepId, "$path/condition", state)
         }
-        state.emit(RunEvent.ConditionEvaluated(state.nowMs(), stepId, path, result))
+        state.emit(
+            RunEvent.ConditionEvaluated(
+                atMs = state.nowMs(),
+                stepId = stepId,
+                path = path,
+                result = result,
+                matchScore = observation?.matchScore,
+                threshold = observation?.threshold,
+            ),
+        )
         return result
     }
 

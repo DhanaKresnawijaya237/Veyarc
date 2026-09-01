@@ -2,6 +2,7 @@ package com.veyarc.automation.android
 
 import com.veyarc.engine.ActiveViewport
 import com.veyarc.engine.AutomationDriver
+import com.veyarc.engine.ConditionObservation
 import com.veyarc.engine.ConditionObserver
 import com.veyarc.engine.ExecutionClock
 import com.veyarc.engine.WorkflowRunner
@@ -99,7 +100,7 @@ class AndroidWorkflowExecutorTest {
             orientation = DisplayOrientation.PORTRAIT,
         )
 
-        override fun observe(condition: com.veyarc.model.Condition): Boolean = true
+        override fun observe(condition: com.veyarc.model.Condition): ConditionObservation = ConditionObservation(true)
     }
 
     private object ImmediateClock : ExecutionClock {
