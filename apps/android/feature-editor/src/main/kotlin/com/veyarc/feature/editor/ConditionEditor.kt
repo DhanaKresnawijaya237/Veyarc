@@ -2,11 +2,15 @@
 
 package com.veyarc.feature.editor
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -22,6 +26,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -32,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -52,6 +58,7 @@ import com.veyarc.model.OrientationCondition
 import com.veyarc.model.PackageName
 import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.bundle.BundleAsset
+import kotlin.math.roundToInt
 
 private const val MAX_COMPOSED_CONDITIONS = 8
 private const val MISSING_TEMPLATE_ASSET_ID = "template-missing"
@@ -246,6 +253,34 @@ private fun PixelConditionFields(
     var colorText by remember(condition) { mutableStateOf(condition.expectedArgb.toArgbText()) }
     var toleranceText by remember(condition) { mutableStateOf(condition.tolerance.toString()) }
     Text("Compare one normalized screen point (0 to 1) with an ARGB colour.", style = MaterialTheme.typography.bodySmall)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(72.dp)
+                .background(Color(condition.expectedArgb.toInt()), MaterialTheme.shapes.medium)
+                .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.medium),
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("Colour preview", style = MaterialTheme.typography.labelLarge)
+            Text(
+                condition.expectedArgb.toArgbText(),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                "R ${condition.red} · G ${condition.green} · B ${condition.blue}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    RgbSlider("Red", condition.red) { red -> onChange(condition.withRgb(red = red)) }
+    RgbSlider("Green", condition.green) { green -> onChange(condition.withRgb(green = green)) }
+    RgbSlider("Blue", condition.blue) { blue -> onChange(condition.withRgb(blue = blue)) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         ConditionNumberField("X", xText, { next ->
             xText = next
@@ -274,6 +309,26 @@ private fun PixelConditionFields(
         toleranceText = next
         next.toIntOrNull()?.takeIf { it in 0..255 }?.let { onChange(condition.copy(tolerance = it)) }
     })
+}
+
+@Composable
+private fun RgbSlider(
+    label: String,
+    value: Int,
+    onValueChange: (Int) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+            Text(value.toString(), style = MaterialTheme.typography.bodyMedium)
+        }
+        Slider(
+            value = value.toFloat(),
+            onValueChange = { onValueChange(it.roundToInt().coerceIn(0, 255)) },
+            valueRange = 0f..255f,
+            steps = 254,
+        )
+    }
 }
 
 @Composable
@@ -543,7 +598,7 @@ private fun ConditionNumberField(
     )
 }
 
-private enum class EditableConditionKind(val label: String) {
+internal enum class EditableConditionKind(val label: String) {
     PIXEL("Pixel colour"),
     SCREEN_STATE("Screen state matches"),
     IMAGE_PRESENT("Image appears somewhere"),
@@ -581,11 +636,21 @@ private enum class EditableConditionKind(val label: String) {
 
         ORIENTATION -> OrientationCondition(DisplayOrientation.PORTRAIT)
 
-        AND -> AndCondition(listOf(defaultCondition(defaultPackage, assets), ForegroundPackageCondition(defaultPackage.toPackageName())))
+        AND -> AndCondition(
+            listOf(
+                PIXEL.defaultCondition(defaultPackage, assets),
+                ForegroundPackageCondition(defaultPackage.toPackageName()),
+            ),
+        )
 
-        OR -> OrCondition(listOf(defaultCondition(defaultPackage, assets), ForegroundPackageCondition(defaultPackage.toPackageName())))
+        OR -> OrCondition(
+            listOf(
+                PIXEL.defaultCondition(defaultPackage, assets),
+                ForegroundPackageCondition(defaultPackage.toPackageName()),
+            ),
+        )
 
-        NOT -> NotCondition(defaultCondition(defaultPackage, assets))
+        NOT -> NotCondition(PIXEL.defaultCondition(defaultPackage, assets))
     }
 }
 
@@ -625,6 +690,28 @@ private fun String.parseArgb(): Long? {
     val normalized = trim().removePrefix("#").removePrefix("0x").removePrefix("0X")
     if (normalized.length != 8) return null
     return normalized.toLongOrNull(16)?.takeIf { it in 0L..0xFFFF_FFFFL }
+}
+
+private val PixelColorCondition.red: Int
+    get() = ((expectedArgb shr 16) and 0xFF).toInt()
+
+private val PixelColorCondition.green: Int
+    get() = ((expectedArgb shr 8) and 0xFF).toInt()
+
+private val PixelColorCondition.blue: Int
+    get() = (expectedArgb and 0xFF).toInt()
+
+private fun PixelColorCondition.withRgb(
+    red: Int = this.red,
+    green: Int = this.green,
+    blue: Int = this.blue,
+): PixelColorCondition {
+    val alpha = (expectedArgb shr 24) and 0xFF
+    val argb = (alpha shl 24) or
+        (red.coerceIn(0, 255).toLong() shl 16) or
+        (green.coerceIn(0, 255).toLong() shl 8) or
+        blue.coerceIn(0, 255).toLong()
+    return copy(expectedArgb = argb)
 }
 
 private fun Condition.region(): NormalizedRect = when (this) {
