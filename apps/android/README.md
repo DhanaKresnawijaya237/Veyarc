@@ -28,6 +28,16 @@ Start an emulator or connect an authorized Android device, then run:
 
 On macOS or Linux, run `./gradlew verifyDevice` instead. This builds and runs the Android instrumentation tests on every Android module.
 
+Check the device API level before using the result as cross-version evidence:
+
+```powershell
+adb shell getprop ro.build.version.sdk
+```
+
+Run the suite once on API 24 or 25 and once on API 33 or newer. API 24 and 25 cover short-tap playback only; Veyarc capability-gates long presses and swipe paths on those releases because Android cannot safely interrupt a continued gesture there. The API 33+ suite checks recording permissions and foreground-service declarations without starting recording or changing device settings.
+
+Physical recording, replay, and MediaProjection acceptance remains manual because Android requires user-controlled Accessibility, Shizuku, and screen-capture consent. Use the fixture and cleanup procedure in [`acceptance/README.md`](acceptance/README.md). The instrumentation suite never enables Accessibility or injects input by itself.
+
 ## Accessibility gesture spike
 
 The current Phase 0 screen is a manual harness for Android gesture dispatch:

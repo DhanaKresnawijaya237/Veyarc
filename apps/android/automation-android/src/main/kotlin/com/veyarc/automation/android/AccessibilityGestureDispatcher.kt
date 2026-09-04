@@ -35,7 +35,8 @@ sealed interface GestureDispatchResult {
 
 object AccessibilityGestureDispatcher {
     private const val MAX_GESTURE_DURATION_MILLIS = 60_000L
-    private const val MAX_INTERRUPTIBLE_SEGMENT_MILLIS = 100L
+    private const val MAX_INTERRUPTIBLE_SEGMENT_MILLIS =
+        AccessibilityGesturePolicy.MAX_LEGACY_GESTURE_DURATION_MILLIS
     private const val RELEASE_SEGMENT_DURATION_MILLIS = 1L
     private const val LONG_PRESS_MARGIN_MILLIS = 100L
 
@@ -149,10 +150,10 @@ object AccessibilityGestureDispatcher {
             )
             return
         }
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O && durationMillis > MAX_INTERRUPTIBLE_SEGMENT_MILLIS) {
+        AccessibilityGesturePolicy.durationRejectionReason(Build.VERSION.SDK_INT, durationMillis)?.let { reason ->
             onResult(
                 GestureDispatchResult.InvalidRequest(
-                    "Gestures longer than $MAX_INTERRUPTIBLE_SEGMENT_MILLIS ms require Android 8.0 or later for safe interruption.",
+                    reason,
                 ),
             )
             return

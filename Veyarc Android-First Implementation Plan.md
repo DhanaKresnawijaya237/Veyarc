@@ -145,7 +145,7 @@ Settings tile and the notification remain independent emergency fallbacks).
 
 Recording controls are excluded from the trace, while their foreground transitions may be retained as review metadata. A failed or unsupported observation source must stop safely, avoid changing accessibility input routing, terminate any privileged helper, preserve the recoverable journal when possible, and report that exact global recording is unavailable on that device rather than allowing recorded and actual app state to diverge.
 
-Playback remains available on API 24–32, but exact third-party recording is capability-gated. If the rooted/privileged evdev feasibility spike fails on a device family, mark recording unsupported for that device and retain manual authoring rather than silently producing incomplete traces.
+Short-tap playback remains available on API 24 and 25. Long presses and swipe paths require API 26 because safe interruption depends on continued strokes. Exact third-party recording is capability-gated. If the rooted/privileged evdev feasibility spike fails on a device family, mark recording unsupported for that device and retain manual authoring rather than silently producing incomplete traces.
 
 ### Visual conditions
 
@@ -308,7 +308,7 @@ bounded Shizuku helper; multi-touch and pressure/contact-area fidelity remain fo
 - Display name: **Veyarc**; package: `com.veyarc.app`.
 - Initial audience: technical early adopters.
 - Distribution: sideloaded APK first; Play Store later.
-- Playback: Android API 24+; exact recording: API 33+.
+- Playback: short taps on Android API 24 and 25, full bounded gestures on API 26+; exact recording: API 33+.
 - Recording: coordinate/timing events only, with a root/privileged read-only touchscreen observer for third-party apps when a device-specific source proves transparent pass-through. Public accessibility touch exploration is never used for production recording. Without the capability, recording is visibly unavailable and manual authoring remains supported. No replay or touch injection occurs during recording.
 - No semantic UI recording and no stored video.
 - Touch regions and shapes are editor/path abstractions; Android receives point contacts following paths.

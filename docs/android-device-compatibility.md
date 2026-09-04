@@ -1,6 +1,6 @@
 # Android device compatibility findings
 
-Status date: 2026-08-24
+Status date: 2026-09-05
 
 This report covers the Phase 0 feasibility spike. It records observed behavior, known limits, and the tests still required before the workflow editor is expanded. The first beta is scoped to the vivo V50 target; untested OEM families are not treated as supported.
 
@@ -90,7 +90,7 @@ For each physical test, record manufacturer, model, Android version, OEM build, 
 
 ## Known behavior and failure modes
 
-- Playback dispatch is available from API 24. The original one-gesture intercept/replay experiment uses `TouchInteractionController` on API 33+, while the proposed third-party recorder uses a privileged read-only evdev path instead of accessibility touch exploration.
+- Short-tap playback is available from API 24. API 24 and 25 do not advertise long presses or swipe paths because Android cannot safely interrupt a gesture longer than 100 ms before API 26. API 26 and newer advertise the full bounded gesture set. The recorder uses a privileged read-only evdev path instead of accessibility touch exploration.
 - Accessibility must be enabled by the user. The app cannot silently grant its own accessibility permission.
 - The service stays in normal pass-through mode. The global recorder safety gate currently refuses
   to request touch exploration or motion-event reporting, because doing so can make one-finger input

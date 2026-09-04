@@ -229,7 +229,7 @@ class MediaProjectionStopReceiver : BroadcastReceiver() {
 /** Process-owned bridge between the foreground service and the workflow runner. */
 object MediaProjectionCaptureRuntime {
     private val lock = Any()
-    private var activeCapture: MediaProjectionFrameCapture? = null
+    private var activeCapture: MediaProjectionSession? = null
     private var terminationListener: ((String) -> Unit)? = null
     private var lastTerminationReason: String? = null
     private var activeSignal = CountDownLatch(1)
@@ -270,7 +270,7 @@ object MediaProjectionCaptureRuntime {
         }
     }
 
-    internal fun attach(capture: MediaProjectionFrameCapture) {
+    internal fun attach(capture: MediaProjectionSession) {
         synchronized(lock) {
             check(activeCapture == null) { "Another MediaProjection capture is already active" }
             activeCapture = capture
@@ -279,7 +279,7 @@ object MediaProjectionCaptureRuntime {
         }
     }
 
-    internal fun detach(capture: MediaProjectionFrameCapture) {
+    internal fun detach(capture: MediaProjectionSession) {
         synchronized(lock) {
             if (activeCapture === capture) activeCapture = null
             activeSignal.countDown()

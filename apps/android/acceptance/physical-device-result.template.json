@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": null,
+  "device": {
+    "manufacturer": null,
+    "model": null,
+    "androidApi": null,
+    "oemBuild": null,
+    "displayWidthPx": null,
+    "displayHeightPx": null
+  },
+  "scenarios": [
+    {
+      "id": "playback-short-tap",
+      "orientation": null,
+      "gestureSampleCount": null,
+      "gestureDurationMs": null,
+      "status": "not_run",
+      "serviceDisconnects": 0,
+      "permissionPrompts": []
+    },
+    {
+      "id": "recording-pass-through",
+      "orientation": null,
+      "gestureSampleCount": null,
+      "gestureDurationMs": null,
+      "status": "not_run",
+      "serviceDisconnects": 0,
+      "permissionPrompts": []
+    },
+    {
+      "id": "media-projection-revocation",
+      "orientation": null,
+      "gestureSampleCount": null,
+      "gestureDurationMs": null,
+      "status": "not_run",
+      "serviceDisconnects": 0,
+      "permissionPrompts": []
+    }
+  ],
+  "cleanup": {
+    "ordinaryTouchWorks": null,
+    "systemNavigationWorks": null,
+    "noVeyarcNotification": null,
+    "noVeyarcOverlay": null,
+    "accessibilityStateUnchanged": null,
+    "shizukuObserverClosed": null
+  },
+  "notes": null
+}

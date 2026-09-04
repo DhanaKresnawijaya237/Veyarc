@@ -1,5 +1,6 @@
 package com.veyarc.automation.android
 
+import android.os.Build
 import com.veyarc.engine.EngineCapability
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -11,6 +12,7 @@ class AndroidAutomationCapabilitiesTest {
         val snapshot = AndroidAutomationCapabilities.snapshot(
             accessibilityEnabled = true,
             serviceConnected = true,
+            apiLevel = Build.VERSION_CODES.O,
         )
 
         assertTrue(snapshot.gestureDispatchReady)
@@ -19,6 +21,34 @@ class AndroidAutomationCapabilitiesTest {
         assertTrue(snapshot.supports(EngineCapability.LONG_PRESS))
         assertTrue(snapshot.supports(EngineCapability.SWIPE_PATH))
         assertTrue(snapshot.supports(EngineCapability.FOREGROUND_PACKAGE_CONDITION))
+    }
+
+    @Test
+    fun api24And25AdvertiseOnlyGesturesTheyCanInterruptSafely() {
+        listOf(Build.VERSION_CODES.N, Build.VERSION_CODES.N_MR1).forEach { apiLevel ->
+            val snapshot = AndroidAutomationCapabilities.snapshot(
+                accessibilityEnabled = true,
+                serviceConnected = true,
+                apiLevel = apiLevel,
+            )
+
+            assertTrue(snapshot.supports(EngineCapability.TAP_POINT))
+            assertTrue(snapshot.supports(EngineCapability.TAP_REGION))
+            assertFalse(snapshot.supports(EngineCapability.LONG_PRESS))
+            assertFalse(snapshot.supports(EngineCapability.SWIPE_PATH))
+        }
+    }
+
+    @Test
+    fun api26AdvertisesInterruptibleLongGestures() {
+        val snapshot = AndroidAutomationCapabilities.snapshot(
+            accessibilityEnabled = true,
+            serviceConnected = true,
+            apiLevel = Build.VERSION_CODES.O,
+        )
+
+        assertTrue(snapshot.supports(EngineCapability.LONG_PRESS))
+        assertTrue(snapshot.supports(EngineCapability.SWIPE_PATH))
     }
 
     @Test

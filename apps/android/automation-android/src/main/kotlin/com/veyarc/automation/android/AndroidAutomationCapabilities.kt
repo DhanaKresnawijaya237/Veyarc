@@ -2,6 +2,7 @@ package com.veyarc.automation.android
 
 import android.content.Context
 import android.media.projection.MediaProjectionManager
+import android.os.Build
 import com.veyarc.engine.EngineCapabilities
 import com.veyarc.engine.EngineCapability
 
@@ -42,6 +43,7 @@ object AndroidAutomationCapabilities {
         return snapshot(
             accessibilityEnabled = accessibilityEnabled,
             serviceConnected = serviceConnected,
+            apiLevel = Build.VERSION.SDK_INT,
             mediaProjectionAvailable = appContext.getSystemService(MediaProjectionManager::class.java) != null,
             unsafeDeviceState = AndroidDeviceSafety.current(appContext),
         )
@@ -50,6 +52,7 @@ object AndroidAutomationCapabilities {
     internal fun snapshot(
         accessibilityEnabled: Boolean,
         serviceConnected: Boolean,
+        apiLevel: Int = Build.VERSION_CODES.O,
         mediaProjectionAvailable: Boolean = false,
         unsafeDeviceState: AndroidUnsafeDeviceState? = null,
     ): AndroidCapabilitySnapshot {
@@ -58,7 +61,12 @@ object AndroidAutomationCapabilities {
             add(EngineCapability.ORIENTATION_CONDITION)
             if (mediaProjectionAvailable) addAll(VISUAL_CONDITION_CAPABILITIES)
             if (serviceConnected) add(EngineCapability.FOREGROUND_PACKAGE_CONDITION)
-            if (accessibilityEnabled && serviceConnected) addAll(GESTURE_CAPABILITIES)
+            if (accessibilityEnabled && serviceConnected) {
+                addAll(BASE_GESTURE_CAPABILITIES)
+                if (AccessibilityGesturePolicy.supportsLongGestures(apiLevel)) {
+                    addAll(LONG_GESTURE_CAPABILITIES)
+                }
+            }
         }
         return AndroidCapabilitySnapshot(
             accessibilityEnabled = accessibilityEnabled,
@@ -83,9 +91,12 @@ object AndroidAutomationCapabilities {
         EngineCapability.LOGICAL_CONDITION,
     )
 
-    private val GESTURE_CAPABILITIES = setOf(
+    private val BASE_GESTURE_CAPABILITIES = setOf(
         EngineCapability.TAP_POINT,
         EngineCapability.TAP_REGION,
+    )
+
+    private val LONG_GESTURE_CAPABILITIES = setOf(
         EngineCapability.LONG_PRESS,
         EngineCapability.SWIPE_PATH,
     )

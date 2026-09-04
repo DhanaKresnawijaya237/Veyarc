@@ -1,5 +1,6 @@
 package com.veyarc.automation.android
 
+import android.os.Build
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -39,5 +40,16 @@ class AccessibilityGestureDispatcherTest {
             )
 
         assertNotNull(result)
+    }
+
+    @Test
+    fun api24AllowsOnlyShortSingleSegmentDurations() {
+        assertNull(AccessibilityGesturePolicy.durationRejectionReason(Build.VERSION_CODES.N, 100L))
+        assertNotNull(AccessibilityGesturePolicy.durationRejectionReason(Build.VERSION_CODES.N, 101L))
+    }
+
+    @Test
+    fun api26AllowsTheFullBoundedGestureDuration() {
+        assertNull(AccessibilityGesturePolicy.durationRejectionReason(Build.VERSION_CODES.O, 60_000L))
     }
 }

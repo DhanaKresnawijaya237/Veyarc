@@ -149,6 +149,13 @@ class MediaProjectionCaptureException(
     cause: Throwable? = null,
 ) : IllegalStateException(message, cause)
 
+/** Minimal lifecycle contract used by the process bridge and its cleanup tests. */
+internal interface MediaProjectionSession : Closeable {
+    val isActive: Boolean
+
+    fun captureLatestFrame(): EphemeralScreenFrame?
+}
+
 /** Builds the one-shot consent request required for each capture session. */
 object MediaProjectionConsent {
     fun createRequestIntent(context: Context): Intent {
@@ -167,7 +174,7 @@ object MediaProjectionConsent {
 class MediaProjectionFrameCapture(
     context: Context,
     private val onRevoked: (String) -> Unit = {},
-) : Closeable {
+) : MediaProjectionSession {
     private val appContext = context.applicationContext
     private val lock = Any()
     private val callbackHandler = Handler(Looper.getMainLooper())
@@ -178,7 +185,7 @@ class MediaProjectionFrameCapture(
     private var imageReader: ImageReader? = null
     private var state = State.NEW
 
-    val isActive: Boolean
+    override val isActive: Boolean
         get() = synchronized(lock) { state == State.ACTIVE }
 
     fun start(
@@ -237,7 +244,7 @@ class MediaProjectionFrameCapture(
     }
 
     /** Copies the newest frame, closes Android's Image immediately, and returns memory-only data. */
-    fun captureLatestFrame(): EphemeralScreenFrame? = synchronized(lock) {
+    override fun captureLatestFrame(): EphemeralScreenFrame? = synchronized(lock) {
         check(state == State.ACTIVE) { "MediaProjection capture is not active" }
         val image = try {
             imageReader?.acquireLatestImage()
