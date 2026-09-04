@@ -7,6 +7,7 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.graphics.Path
+import android.os.Build
 import android.provider.Settings
 import android.view.ViewConfiguration
 import android.view.accessibility.AccessibilityManager
@@ -34,6 +35,8 @@ sealed interface GestureDispatchResult {
 
 object AccessibilityGestureDispatcher {
     private const val MAX_GESTURE_DURATION_MILLIS = 60_000L
+    private const val MAX_INTERRUPTIBLE_SEGMENT_MILLIS = 100L
+    private const val RELEASE_SEGMENT_DURATION_MILLIS = 1L
     private const val LONG_PRESS_MARGIN_MILLIS = 100L
 
     @Volatile
@@ -116,7 +119,7 @@ object AccessibilityGestureDispatcher {
         }
     }
 
-    /** Requests cancellation of the active platform gesture, if one exists. */
+    /** Ends an active continued gesture at its next bounded segment boundary. */
     fun cancelActiveGesture() {
         if (dispatchInProgress.get()) cancellationRequested.set(true)
     }
@@ -146,6 +149,14 @@ object AccessibilityGestureDispatcher {
             )
             return
         }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O && durationMillis > MAX_INTERRUPTIBLE_SEGMENT_MILLIS) {
+            onResult(
+                GestureDispatchResult.InvalidRequest(
+                    "Gestures longer than $MAX_INTERRUPTIBLE_SEGMENT_MILLIS ms require Android 8.0 or later for safe interruption.",
+                ),
+            )
+            return
+        }
 
         val activeService = service
         if (activeService == null) {
@@ -157,45 +168,152 @@ object AccessibilityGestureDispatcher {
             return
         }
         cancellationRequested.set(false)
-        val generation = dispatchGeneration.get()
+        val generation = dispatchGeneration.incrementAndGet()
 
-        val path = Path().apply {
-            moveTo(points.first().x, points.first().y)
-            points.drop(1).forEach { point -> lineTo(point.x, point.y) }
+        val segments = AccessibilityGestureSegmenter.split(
+            points = points,
+            durationMillis = durationMillis,
+            maximumSegmentDurationMillis = MAX_INTERRUPTIBLE_SEGMENT_MILLIS,
+        )
+        if (segments.size == 1) {
+            dispatchSingleSegment(activeService, segments.single(), generation, onResult)
+        } else {
+            dispatchSegment(
+                activeService = activeService,
+                segments = segments,
+                segmentIndex = 0,
+                previousStroke = null,
+                generation = generation,
+                onResult = onResult,
+            )
         }
-        val gesture =
-            GestureDescription.Builder()
-                .addStroke(GestureDescription.StrokeDescription(path, 0, durationMillis))
-                .build()
-        val accepted =
-            activeService.dispatchGesture(
-                gesture,
-                object : AccessibilityService.GestureResultCallback() {
-                    override fun onCompleted(gestureDescription: GestureDescription?) {
-                        if (generation != dispatchGeneration.get()) return
-                        dispatchInProgress.set(false)
-                        onResult(
-                            if (cancellationRequested.get()) {
-                                GestureDispatchResult.Cancelled
-                            } else {
-                                GestureDispatchResult.Completed
-                            },
+    }
+
+    private fun dispatchSingleSegment(
+        activeService: AccessibilityService,
+        segment: AccessibilityGestureSegment,
+        generation: Long,
+        onResult: (GestureDispatchResult) -> Unit,
+    ) {
+        val stroke = GestureDescription.StrokeDescription(segment.points.toPath(), 0, segment.durationMillis)
+        val accepted = activeService.dispatchGesture(
+            GestureDescription.Builder().addStroke(stroke).build(),
+            object : AccessibilityService.GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription?) {
+                    if (generation == dispatchGeneration.get()) {
+                        finishDispatch(
+                            if (cancellationRequested.get()) GestureDispatchResult.Cancelled else GestureDispatchResult.Completed,
+                            onResult,
                         )
                     }
+                }
 
-                    override fun onCancelled(gestureDescription: GestureDescription?) {
-                        if (generation != dispatchGeneration.get()) return
-                        dispatchInProgress.set(false)
-                        onResult(GestureDispatchResult.Cancelled)
+                override fun onCancelled(gestureDescription: GestureDescription?) {
+                    if (generation == dispatchGeneration.get()) {
+                        finishDispatch(GestureDispatchResult.Cancelled, onResult)
                     }
-                },
-                null,
-            )
+                }
+            },
+            null,
+        )
+        if (!accepted) finishDispatch(GestureDispatchResult.RejectedBySystem, onResult)
+    }
 
-        if (!accepted) {
-            dispatchInProgress.set(false)
+    @android.annotation.TargetApi(Build.VERSION_CODES.O)
+    private fun dispatchSegment(
+        activeService: AccessibilityService,
+        segments: List<AccessibilityGestureSegment>,
+        segmentIndex: Int,
+        previousStroke: GestureDescription.StrokeDescription?,
+        generation: Long,
+        onResult: (GestureDispatchResult) -> Unit,
+    ) {
+        if (generation != dispatchGeneration.get()) return
+        val segment = segments[segmentIndex]
+        val willContinue = segmentIndex < segments.lastIndex
+        val path = segment.points.toPath()
+        val stroke = previousStroke?.continueStroke(path, 0, segment.durationMillis, willContinue)
+            ?: GestureDescription.StrokeDescription(path, 0, segment.durationMillis, willContinue)
+        val accepted = activeService.dispatchGesture(
+            GestureDescription.Builder().addStroke(stroke).build(),
+            object : AccessibilityService.GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription?) {
+                    if (generation != dispatchGeneration.get()) return
+                    when {
+                        cancellationRequested.get() && stroke.willContinue() -> dispatchRelease(
+                            activeService = activeService,
+                            previousStroke = stroke,
+                            point = segment.points.last(),
+                            generation = generation,
+                            onResult = onResult,
+                        )
+
+                        cancellationRequested.get() -> finishDispatch(GestureDispatchResult.Cancelled, onResult)
+
+                        willContinue -> dispatchSegment(
+                            activeService = activeService,
+                            segments = segments,
+                            segmentIndex = segmentIndex + 1,
+                            previousStroke = stroke,
+                            generation = generation,
+                            onResult = onResult,
+                        )
+
+                        else -> finishDispatch(GestureDispatchResult.Completed, onResult)
+                    }
+                }
+
+                override fun onCancelled(gestureDescription: GestureDescription?) {
+                    if (generation != dispatchGeneration.get()) return
+                    finishDispatch(GestureDispatchResult.Cancelled, onResult)
+                }
+            },
+            null,
+        )
+        if (!accepted) finishDispatch(GestureDispatchResult.RejectedBySystem, onResult)
+    }
+
+    @android.annotation.TargetApi(Build.VERSION_CODES.O)
+    private fun dispatchRelease(
+        activeService: AccessibilityService,
+        previousStroke: GestureDescription.StrokeDescription,
+        point: ScreenPoint,
+        generation: Long,
+        onResult: (GestureDispatchResult) -> Unit,
+    ) {
+        val releaseStroke = previousStroke.continueStroke(
+            point.toPath(),
+            0,
+            RELEASE_SEGMENT_DURATION_MILLIS,
+            false,
+        )
+        val accepted = activeService.dispatchGesture(
+            GestureDescription.Builder().addStroke(releaseStroke).build(),
+            object : AccessibilityService.GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription?) {
+                    if (generation == dispatchGeneration.get()) {
+                        finishDispatch(GestureDispatchResult.Cancelled, onResult)
+                    }
+                }
+
+                override fun onCancelled(gestureDescription: GestureDescription?) {
+                    if (generation == dispatchGeneration.get()) {
+                        finishDispatch(GestureDispatchResult.Cancelled, onResult)
+                    }
+                }
+            },
+            null,
+        )
+        if (!accepted) finishDispatch(GestureDispatchResult.RejectedBySystem, onResult)
+    }
+
+    private fun finishDispatch(
+        result: GestureDispatchResult,
+        onResult: (GestureDispatchResult) -> Unit,
+    ) {
+        if (dispatchInProgress.compareAndSet(true, false)) {
             cancellationRequested.set(false)
-            onResult(GestureDispatchResult.RejectedBySystem)
+            onResult(result)
         }
     }
 
@@ -216,3 +334,10 @@ object AccessibilityGestureDispatcher {
         return null
     }
 }
+
+private fun List<ScreenPoint>.toPath(): Path = Path().also { path ->
+    path.moveTo(first().x, first().y)
+    drop(1).forEach { point -> path.lineTo(point.x, point.y) }
+}
+
+private fun ScreenPoint.toPath(): Path = Path().apply { moveTo(x, y) }

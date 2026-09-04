@@ -125,6 +125,12 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
     private var workerThread: Thread? = null
 
     @Volatile
+    private var leaseWatchdogThread: Thread? = null
+
+    @Volatile
+    private var clientLeaseDeadlineMillis = 0L
+
+    @Volatile
     private var currentProcess: Process? = null
 
     @Volatile
@@ -161,6 +167,13 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
     }
 
     override fun isPaused(): Boolean = paused
+
+    override fun renewClientLease() {
+        clientLeaseDeadlineMillis = ReplayClientLeasePolicy.renewedDeadline(
+            nowMillis = SystemClock.elapsedRealtime(),
+            timeoutMillis = CLIENT_LEASE_TIMEOUT_MILLIS,
+        )
+    }
 
     @Volatile
     private var capabilities: Int? = null
@@ -335,6 +348,12 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
                 return
             }
             check(queue.isNotEmpty()) { "Replay queue is empty" }
+            check(
+                !ReplayClientLeasePolicy.isExpired(
+                    nowMillis = SystemClock.elapsedRealtime(),
+                    deadlineMillis = clientLeaseDeadlineMillis,
+                ),
+            ) { "Replay client lease was not established" }
             cancelRequested = false
             pauseRequested = false
             paused = false
@@ -347,6 +366,7 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
                 name = "VeyarcShizukuInputReplay",
                 block = ::runQueue,
             )
+            startLeaseWatchdog()
         }
     }
 
@@ -357,7 +377,9 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
         running.set(false)
         currentProcess?.destroy()
         workerThread?.interrupt()
+        stopLeaseWatchdog()
         synchronized(stateLock) { queue.clear() }
+        clientLeaseDeadlineMillis = 0L
         val directCancel = synchronized(directMotionLock) {
             if (!directTouchActive) {
                 null
@@ -426,6 +448,7 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
             }
         } finally {
             cancelDirectTouchIfNeeded()
+            stopLeaseWatchdog()
             resetReplayTiming()
             running.set(false)
             currentCommand = null
@@ -438,6 +461,42 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
                 pauseLock.notifyAll()
             }
         }
+    }
+
+    private fun startLeaseWatchdog() {
+        stopLeaseWatchdog()
+        leaseWatchdogThread = thread(
+            start = true,
+            isDaemon = true,
+            name = "VeyarcReplayClientLease",
+        ) {
+            try {
+                while (running.get() && !cancelRequested) {
+                    if (ReplayClientLeasePolicy.isExpired(
+                            nowMillis = SystemClock.elapsedRealtime(),
+                            deadlineMillis = clientLeaseDeadlineMillis,
+                        )
+                    ) {
+                        lastError = "Replay client lease expired; input was cancelled"
+                        cancel()
+                        return@thread
+                    }
+                    Thread.sleep(CLIENT_LEASE_POLL_MILLIS)
+                }
+            } catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+            } finally {
+                if (leaseWatchdogThread === Thread.currentThread()) {
+                    leaseWatchdogThread = null
+                }
+            }
+        }
+    }
+
+    private fun stopLeaseWatchdog() {
+        val watchdog = leaseWatchdogThread
+        leaseWatchdogThread = null
+        if (watchdog != null && watchdog !== Thread.currentThread()) watchdog.interrupt()
     }
 
     /** Pausing before a DOWN prevents a new gesture from starting after the request. */
@@ -773,6 +832,8 @@ class ShizukuInputReplayUserService : IShizukuInputReplayService.Stub() {
         const val TARGETED_INJECTION_RETRY_DELAY_MILLIS = 100L
         const val MAX_ERROR_LENGTH = 240
         const val PAUSE_POLL_MILLIS = 100L
+        const val CLIENT_LEASE_TIMEOUT_MILLIS = 2_000L
+        const val CLIENT_LEASE_POLL_MILLIS = 100L
 
         fun inputArguments(command: String, vararg args: String): List<String> = buildList {
             add(INPUT_BINARY)

@@ -33,6 +33,7 @@ class AndroidAutomationDriver private constructor(
             viewport = AndroidViewportSource(context.applicationContext)::currentViewport,
             launch = AndroidAppLauncher(context.applicationContext)::launchApp,
             visualConditionObserver = visualConditionObserver,
+            unsafeDeviceState = { AndroidDeviceSafety.current(context.applicationContext) },
             isMainThread = {
                 val mainLooper = Looper.getMainLooper()
                 mainLooper != null && Looper.myLooper() == mainLooper
@@ -47,6 +48,7 @@ class AndroidAutomationDriver private constructor(
         launch: (PackageName) -> Unit,
         isMainThread: () -> Boolean,
         visualConditionObserver: ConditionObserver? = null,
+        unsafeDeviceState: () -> AndroidUnsafeDeviceState? = { null },
     ) : this(
         delegate = BlockingAndroidAutomationDriver(
             gesturePort = gesturePort,
@@ -54,6 +56,7 @@ class AndroidAutomationDriver private constructor(
             viewport = viewport,
             launch = launch,
             visualConditionObserver = visualConditionObserver,
+            unsafeDeviceState = unsafeDeviceState,
             isMainThread = isMainThread,
         ),
     )
@@ -65,58 +68,82 @@ private class BlockingAndroidAutomationDriver(
     private val viewport: () -> ActiveViewport?,
     private val launch: (PackageName) -> Unit,
     private val visualConditionObserver: ConditionObserver?,
+    private val unsafeDeviceState: () -> AndroidUnsafeDeviceState?,
     private val isMainThread: () -> Boolean,
 ) : AutomationDriver {
     override fun tap(point: DisplayCoordinate) {
         requireBackgroundThread()
+        requireSafeDeviceState()
+        val expectedViewport = requireGestureViewport()
+        val expectedPackage = requireGesturePackage()
         val screenPoint = point.toScreenPoint()
-        awaitGesture(DEFAULT_TAP_WAIT_MILLIS) { callback ->
+        awaitGesture(DEFAULT_TAP_WAIT_MILLIS, expectedViewport, expectedPackage) { callback ->
             gesturePort.dispatchTap(screenPoint, callback)
         }
     }
 
     override fun longPress(point: DisplayCoordinate, durationMs: Long) {
         requireBackgroundThread()
+        requireSafeDeviceState()
+        val expectedViewport = requireGestureViewport()
+        val expectedPackage = requireGesturePackage()
         val screenPoint = point.toScreenPoint()
-        awaitGesture(durationMs) { callback ->
+        awaitGesture(durationMs, expectedViewport, expectedPackage) { callback ->
             gesturePort.dispatchLongPress(screenPoint, durationMs, callback)
         }
     }
 
     override fun swipePath(points: List<DisplayTimedPoint>, durationMs: Long) {
         requireBackgroundThread()
+        requireSafeDeviceState()
+        val expectedViewport = requireGestureViewport()
+        val expectedPackage = requireGesturePackage()
         val screenPoints = points.map { it.point.toScreenPoint() }
-        awaitGesture(durationMs) { callback ->
+        awaitGesture(durationMs, expectedViewport, expectedPackage) { callback ->
             gesturePort.dispatchPath(screenPoints, durationMs, callback)
         }
     }
 
-    override fun launchApp(packageName: PackageName) = launch.invoke(packageName)
+    override fun launchApp(packageName: PackageName) {
+        requireSafeDeviceState()
+        launch.invoke(packageName)
+    }
 
-    override fun currentForegroundPackage(): PackageName? = foregroundPackage.invoke()
+    override fun currentForegroundPackage(): PackageName? {
+        requireSafeDeviceState()
+        return foregroundPackage.invoke()
+    }
 
-    override fun currentViewport(): ActiveViewport? = viewport.invoke()
+    override fun currentViewport(): ActiveViewport? {
+        requireSafeDeviceState()
+        return viewport.invoke()
+    }
 
-    override fun observe(condition: Condition): ConditionObservation = when (condition) {
-        is OrientationCondition -> ConditionObservation(
-            currentViewport()?.orientation == condition.orientation,
-        )
-
-        is ForegroundPackageCondition -> ConditionObservation(
-            currentForegroundPackage() == condition.packageName,
-        )
-
-        is PixelColorCondition,
-        is ImagePresentCondition,
-        is ImageAbsentCondition,
-        -> visualConditionObserver?.observe(condition)
-            ?: throw AndroidAutomationException(
-                "Visual condition capture is not configured for this workflow run",
+    override fun observe(condition: Condition): ConditionObservation {
+        requireSafeDeviceState()
+        val observation = when (condition) {
+            is OrientationCondition -> ConditionObservation(
+                currentViewport()?.orientation == condition.orientation,
             )
 
-        else -> throw AndroidAutomationException(
-            "Condition ${condition::class.simpleName} is evaluated by the workflow engine",
-        )
+            is ForegroundPackageCondition -> ConditionObservation(
+                currentForegroundPackage() == condition.packageName,
+            )
+
+            is PixelColorCondition,
+            is ImagePresentCondition,
+            is ImageAbsentCondition,
+            -> visualConditionObserver?.observe(condition)
+                ?: throw AndroidAutomationException(
+                    "Visual condition capture is not configured for this workflow run",
+                )
+
+            else -> throw AndroidAutomationException(
+                "Condition ${condition::class.simpleName} is evaluated by the workflow engine",
+            )
+        }
+        requireSafeDeviceState()
+        return observation
     }
 
     private fun requireBackgroundThread() {
@@ -127,6 +154,8 @@ private class BlockingAndroidAutomationDriver(
 
     private fun awaitGesture(
         requestedDurationMs: Long,
+        expectedViewport: ActiveViewport,
+        expectedPackage: PackageName,
         dispatch: ((GestureDispatchResult) -> Unit) -> Unit,
     ) {
         val result = AtomicReference<GestureDispatchResult?>(null)
@@ -137,9 +166,29 @@ private class BlockingAndroidAutomationDriver(
         }
 
         val waitMillis = gestureWaitMillis(requestedDurationMs)
-        if (!completed.await(waitMillis, TimeUnit.MILLISECONDS)) {
+        var remainingMillis = waitMillis
+        while (remainingMillis > 0L && !completed.await(
+                minOf(GESTURE_SAFETY_POLL_MILLIS, remainingMillis),
+                TimeUnit.MILLISECONDS,
+            )
+        ) {
+            remainingMillis -= minOf(GESTURE_SAFETY_POLL_MILLIS, remainingMillis)
+            try {
+                requireSafeDeviceState()
+                requireGestureViewport(expectedViewport)
+                requireGesturePackage(expectedPackage)
+            } catch (error: AndroidAutomationException) {
+                gesturePort.cancelActiveGesture()
+                throw error
+            }
+        }
+        if (result.get() == null) {
+            gesturePort.cancelActiveGesture()
             throw AndroidAutomationException("Android gesture dispatch timed out")
         }
+        requireSafeDeviceState()
+        requireGestureViewport(expectedViewport)
+        requireGesturePackage(expectedPackage)
 
         when (val dispatchResult = result.get()) {
             GestureDispatchResult.Completed -> Unit
@@ -173,11 +222,36 @@ private class BlockingAndroidAutomationDriver(
             .coerceAtLeast(MIN_GESTURE_WAIT_MILLIS)
     }
 
+    private fun requireSafeDeviceState() {
+        unsafeDeviceState.invoke()?.let { unsafe ->
+            throw AndroidAutomationException("Workflow stopped because ${unsafe.reason}.")
+        }
+    }
+
+    private fun requireGestureViewport(expected: ActiveViewport? = null): ActiveViewport {
+        val current = viewport.invoke()
+            ?: throw AndroidAutomationException("Workflow stopped because the active viewport is unavailable.")
+        if (expected != null && current != expected) {
+            throw AndroidAutomationException("Workflow stopped because the display changed during a gesture.")
+        }
+        return current
+    }
+
+    private fun requireGesturePackage(expected: PackageName? = null): PackageName {
+        val current = foregroundPackage.invoke()
+            ?: throw AndroidAutomationException("Workflow stopped because the foreground app is unavailable.")
+        if (expected != null && current != expected) {
+            throw AndroidAutomationException("Workflow stopped because the foreground app changed during a gesture.")
+        }
+        return current
+    }
+
     private companion object {
         const val DEFAULT_TAP_WAIT_MILLIS = 10_000L
         const val GESTURE_CALLBACK_GRACE_MILLIS = 5_000L
         const val MAX_GESTURE_WAIT_MILLIS = 65_000L
         const val MIN_GESTURE_WAIT_MILLIS = 1_000L
+        const val GESTURE_SAFETY_POLL_MILLIS = 100L
     }
 }
 
@@ -201,6 +275,8 @@ internal interface GestureDispatchPort {
         durationMillis: Long,
         onResult: (GestureDispatchResult) -> Unit,
     )
+
+    fun cancelActiveGesture() = Unit
 }
 
 private object AccessibilityGesturePort : GestureDispatchPort {
@@ -217,6 +293,8 @@ private object AccessibilityGesturePort : GestureDispatchPort {
         durationMillis: Long,
         onResult: (GestureDispatchResult) -> Unit,
     ) = AccessibilityGestureDispatcher.dispatchPath(points, durationMillis, onResult)
+
+    override fun cancelActiveGesture() = AccessibilityGestureDispatcher.cancelActiveGesture()
 }
 
 private fun DisplayCoordinate.toScreenPoint(): ScreenPoint {

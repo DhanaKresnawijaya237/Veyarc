@@ -58,7 +58,7 @@ class RecordingRawTraceTest {
     }
 
     @Test
-    fun legacyTraceRefusesOrientationChange() {
+    fun legacyTraceRefusesDifferentOrientationFamily() {
         val trace = RecordingRawTrace(
             recordedViewport = viewport(),
             frames = listOf(
@@ -79,7 +79,7 @@ class RecordingRawTraceTest {
     }
 
     @Test
-    fun rotationAwareTraceRemapsLogicalCoordinatesAcrossOrientation() {
+    fun rotationAwareTraceAlsoRefusesDifferentOrientationFamily() {
         val trace = RecordingRawTrace(
             recordedViewport = viewport(),
             coordinateSpace = RecordingCoordinateSpace.LOGICAL_DISPLAY_NORMALIZED,
@@ -89,16 +89,15 @@ class RecordingRawTraceTest {
             ),
         )
 
-        val remapped = trace.remapTo(
-            viewport(
-                width = 2_000,
-                height = 1_000,
-                orientation = DisplayOrientation.LANDSCAPE,
-            ),
-        )
-
-        assertEquals(100.0 / 999.0 * 1_999.0, remapped.first().xPx, 0.000001)
-        assertEquals(200.0 / 1_999.0 * 999.0, remapped.first().yPx, 0.000001)
+        assertThrows(IllegalArgumentException::class.java) {
+            trace.remapTo(
+                viewport(
+                    width = 2_000,
+                    height = 1_000,
+                    orientation = DisplayOrientation.LANDSCAPE,
+                ),
+            )
+        }
     }
 
     private fun snapshot(vararg lines: RecordingJournalLine): RecordingJournalSnapshot {

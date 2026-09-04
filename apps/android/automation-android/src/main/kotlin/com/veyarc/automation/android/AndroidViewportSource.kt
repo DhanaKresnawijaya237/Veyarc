@@ -19,6 +19,8 @@ internal class AndroidViewportSource(
         val metrics = DisplayMetrics()
         @Suppress("DEPRECATION")
         windowManager.defaultDisplay.getRealMetrics(metrics)
+        @Suppress("DEPRECATION")
+        val displayRotation = windowManager.defaultDisplay.rotation
         if (metrics.widthPixels <= 0 || metrics.heightPixels <= 0) return null
 
         val bounds = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -34,6 +36,7 @@ internal class AndroidViewportSource(
                 else -> DisplayOrientation.PORTRAIT
             },
             windowMode = classifyWindowMode(bounds, metrics.widthPixels, metrics.heightPixels),
+            rotationQuarterTurns = displayRotation,
         )
     }.getOrNull()
 

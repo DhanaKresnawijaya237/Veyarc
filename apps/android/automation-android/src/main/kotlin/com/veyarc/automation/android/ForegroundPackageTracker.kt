@@ -28,6 +28,20 @@ internal object ForegroundPackageTracker {
         return currentPackage
     }
 
+    /** True only for a focused or active TYPE_SYSTEM window, not keyboards or Veyarc overlays. */
+    internal fun hasActiveSystemWindow(): Boolean {
+        val service = attachedService ?: return false
+        return runCatching {
+            service.windows.any { window ->
+                isBlockingSystemWindow(
+                    windowType = window.type,
+                    isActive = window.isActive,
+                    isFocused = window.isFocused,
+                )
+            }
+        }.getOrDefault(false)
+    }
+
     fun attach(service: AccessibilityService) {
         attachedService = service
         currentPackage = readActiveApplicationPackage(service).also {
@@ -94,6 +108,12 @@ internal object ForegroundPackageTracker {
     }
 
     internal fun isApplicationWindow(windowType: Int?): Boolean = windowType == AccessibilityWindowInfo.TYPE_APPLICATION
+
+    internal fun isBlockingSystemWindow(
+        windowType: Int?,
+        isActive: Boolean,
+        isFocused: Boolean,
+    ): Boolean = windowType == AccessibilityWindowInfo.TYPE_SYSTEM && (isActive || isFocused)
 
     internal fun isOwnAccessibilityOverlay(windowType: Int?, eventPackage: PackageName, servicePackage: String): Boolean = windowType == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY && eventPackage.value == servicePackage
 

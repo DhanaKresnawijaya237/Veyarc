@@ -84,7 +84,7 @@ class ShizukuInputReplay(
         ComponentName(applicationContext.packageName, ShizukuInputReplayUserService::class.java.name),
     ).daemon(false)
         .tag("veyarc-input-replay")
-        .version(1)
+        .version(2)
         .processNameSuffix("input-replay")
 
     @Volatile
@@ -570,6 +570,7 @@ class ShizukuInputReplay(
                     }
                 }
                 requireActiveSubmission(service, generation)
+                service.renewClientLease()
                 service.startQueue()
                 if (pendingPause && isActiveSubmission(service, generation)) service.pause()
                 val submissionStillCurrent = synchronized(bindingLock) {
@@ -650,6 +651,7 @@ class ShizukuInputReplay(
     private fun pollRemoteService(service: IShizukuInputReplayService, generation: Long) {
         if (!isActiveSubmission(service, generation)) return
         try {
+            service.renewClientLease()
             val running = service.isRunning()
             val paused = service.isPaused()
             val completedCount = service.getCompletedCount()

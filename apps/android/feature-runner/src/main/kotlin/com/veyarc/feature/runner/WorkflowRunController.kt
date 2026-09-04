@@ -14,6 +14,7 @@ import com.veyarc.automation.android.MediaProjectionConsent
 import com.veyarc.automation.android.MediaProjectionDisplaySpec
 import com.veyarc.automation.android.ReplayControllerActions
 import com.veyarc.automation.android.ReplayFloatingController
+import com.veyarc.automation.android.currentRecordingViewport
 import com.veyarc.data.storage.StoredRunEvent
 import com.veyarc.data.storage.StoredRunStatus
 import com.veyarc.data.storage.WorkflowRepository
@@ -23,6 +24,7 @@ import com.veyarc.engine.RunFailureCode
 import com.veyarc.engine.RunOutcome
 import com.veyarc.engine.WorkflowCompilationResult
 import com.veyarc.engine.WorkflowCompiler
+import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.WorkflowDocument
 import com.veyarc.model.bundle.BundleAsset
 import com.veyarc.model.usesVisualConditions
@@ -55,12 +57,14 @@ enum class WorkflowRunPhase {
 data class WorkflowRunReview(
     val capabilities: AndroidCapabilitySnapshot,
     val compilation: WorkflowCompilationResult,
+    val currentOrientation: DisplayOrientation?,
+    val orientationBlockReason: String?,
 ) {
     val isValid: Boolean
         get() = compilation.isSuccess
 
     val isRunnable: Boolean
-        get() = isValid && capabilities.serviceConnected
+        get() = isValid && capabilities.runReady && orientationBlockReason == null
 
     val plan
         get() = compilation.plan
@@ -129,10 +133,20 @@ class WorkflowRunController(
         if (_state.value.phase != WorkflowRunPhase.REVIEW) return
         val capabilities = AndroidAutomationCapabilities.snapshot(appContext)
         val compilation = WorkflowCompiler.compile(document, capabilities.engineCapabilities)
+        val currentOrientation = currentRecordingViewport(appContext)?.recordedOrientation
+        val orientationBlockReason = workflowOrientationBlockReason(
+            required = document.viewport.recordedOrientation,
+            current = currentOrientation,
+        )
         _state.update {
             it.copy(
-                review = WorkflowRunReview(capabilities, compilation),
-                message = if (compilation.isSuccess) "Review workflow before starting" else "Workflow cannot run",
+                review = WorkflowRunReview(
+                    capabilities,
+                    compilation,
+                    currentOrientation,
+                    orientationBlockReason,
+                ),
+                message = reviewMessage(capabilities, compilation, orientationBlockReason),
                 notificationReady = notifications.isReady(),
             )
         }
@@ -184,6 +198,23 @@ class WorkflowRunController(
 
     fun start() {
         if (!isStartReady()) return
+        val currentOrientation = currentRecordingViewport(appContext)?.recordedOrientation
+        val orientationBlockReason = workflowOrientationBlockReason(
+            required = document.viewport.recordedOrientation,
+            current = currentOrientation,
+        )
+        if (orientationBlockReason != null) {
+            _state.update {
+                it.copy(
+                    review = it.review.copy(
+                        currentOrientation = currentOrientation,
+                        orientationBlockReason = orientationBlockReason,
+                    ),
+                    message = orientationBlockReason,
+                )
+            }
+            return
+        }
         if (requiresMediaProjectionConsent() && !mediaProjectionOwned) {
             _state.update { it.copy(message = "Screen-capture consent is required before this workflow can start.") }
             return
@@ -468,12 +499,22 @@ class WorkflowRunController(
     private fun initialState(): WorkflowRunUiState {
         val capabilities = AndroidAutomationCapabilities.snapshot(appContext)
         val compilation = WorkflowCompiler.compile(document, capabilities.engineCapabilities)
+        val currentOrientation = currentRecordingViewport(appContext)?.recordedOrientation
+        val orientationBlockReason = workflowOrientationBlockReason(
+            required = document.viewport.recordedOrientation,
+            current = currentOrientation,
+        )
         return WorkflowRunUiState(
             phase = WorkflowRunPhase.REVIEW,
             workflowName = document.name,
             revision = document.revision,
-            review = WorkflowRunReview(capabilities, compilation),
-            message = if (compilation.isSuccess) "Review workflow before starting" else "Workflow cannot run",
+            review = WorkflowRunReview(
+                capabilities,
+                compilation,
+                currentOrientation,
+                orientationBlockReason,
+            ),
+            message = reviewMessage(capabilities, compilation, orientationBlockReason),
             notificationReady = notifications.isReady(),
         )
     }
@@ -483,4 +524,22 @@ class WorkflowRunController(
         const val MAX_EVENT_HISTORY = 50
         const val MEDIA_PROJECTION_START_TIMEOUT_MILLIS = 5_000L
     }
+}
+
+private fun reviewMessage(
+    capabilities: AndroidCapabilitySnapshot,
+    compilation: WorkflowCompilationResult,
+    orientationBlockReason: String?,
+): String {
+    if (!compilation.isSuccess) return "Workflow cannot run"
+    return capabilities.runBlockReason ?: orientationBlockReason ?: "Review workflow before starting"
+}
+
+internal fun workflowOrientationBlockReason(
+    required: DisplayOrientation,
+    current: DisplayOrientation?,
+): String? = when {
+    current == null -> "Run unavailable because the current full-display orientation could not be determined."
+    current != required -> "Rotate the device to ${required.name.lowercase()} before starting this workflow."
+    else -> null
 }

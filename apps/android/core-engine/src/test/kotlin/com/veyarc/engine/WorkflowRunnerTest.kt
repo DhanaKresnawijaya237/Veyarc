@@ -330,7 +330,7 @@ class WorkflowRunnerTest {
             driver.viewport = ActiveViewport(
                 widthPx = 201,
                 heightPx = 101,
-                orientation = DisplayOrientation.LANDSCAPE,
+                orientation = DisplayOrientation.PORTRAIT,
             )
         })
         val plan = plan(
@@ -376,6 +376,58 @@ class WorkflowRunnerTest {
         assertEquals(RunFailureCode.UNSUPPORTED_WINDOW_MODE, result.failure?.code)
         assertTrue(driver.actions.isEmpty())
         assertEquals(StepOutcome.NOT_EXECUTED, result.stepOutcomes[STEP_1])
+    }
+
+    @Test
+    fun rejectsAWorkflowRecordedForTheOtherOrientationBeforeInput() {
+        val driver = FakeDriver()
+        driver.viewport = ActiveViewport(
+            widthPx = 201,
+            heightPx = 101,
+            orientation = DisplayOrientation.LANDSCAPE,
+            rotationQuarterTurns = 1,
+        )
+        val plan = plan(steps = listOf(TapPoint(STEP_1, NormalizedCoordinate(0.5, 0.5))))
+
+        val result = WorkflowRunner().run(plan, driver, FakeClock())
+
+        assertEquals(RunOutcome.FAILED, result.outcome)
+        assertEquals(RunFailureCode.ORIENTATION_MISMATCH, result.failure?.code)
+        assertTrue(driver.actions.isEmpty())
+        assertEquals(StepOutcome.NOT_EXECUTED, result.stepOutcomes[STEP_1])
+    }
+
+    @Test
+    fun acceptsASettledReverseRotationWithinTheRecordedOrientation() {
+        val driver = FakeDriver()
+        driver.viewport = driver.viewport.copy(rotationQuarterTurns = 2)
+        val plan = plan(steps = listOf(TapPoint(STEP_1, NormalizedCoordinate(0.5, 0.5))))
+
+        val result = WorkflowRunner().run(plan, driver, FakeClock())
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf("tap:50.0,100.0"), driver.actions)
+    }
+
+    @Test
+    fun stopsWhenThePhysicalRotationChangesBetweenSteps() {
+        val driver = FakeDriver()
+        val clock = FakeClock(onSleep = {
+            driver.viewport = driver.viewport.copy(rotationQuarterTurns = 2)
+        })
+        val plan = plan(
+            steps = listOf(
+                Wait(STEP_1, DurationMillis(100)),
+                TapPoint(STEP_2, NormalizedCoordinate(0.5, 0.5)),
+            ),
+        )
+
+        val result = WorkflowRunner().run(plan, driver, clock)
+
+        assertEquals(RunOutcome.FAILED, result.outcome)
+        assertEquals(RunFailureCode.DISPLAY_ROTATION_CHANGED_DURING_RUN, result.failure?.code)
+        assertTrue(driver.actions.isEmpty())
+        assertEquals(StepOutcome.NOT_EXECUTED, result.stepOutcomes[STEP_2])
     }
 
     private fun plan(

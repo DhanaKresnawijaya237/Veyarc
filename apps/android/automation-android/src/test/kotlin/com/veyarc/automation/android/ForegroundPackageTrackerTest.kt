@@ -19,6 +19,38 @@ class ForegroundPackageTrackerTest {
     }
 
     @Test
+    fun onlyActiveOrFocusedSystemWindowsBlockAutomation() {
+        assertTrue(
+            ForegroundPackageTracker.isBlockingSystemWindow(
+                AccessibilityWindowInfo.TYPE_SYSTEM,
+                isActive = true,
+                isFocused = false,
+            ),
+        )
+        assertTrue(
+            ForegroundPackageTracker.isBlockingSystemWindow(
+                AccessibilityWindowInfo.TYPE_SYSTEM,
+                isActive = false,
+                isFocused = true,
+            ),
+        )
+        assertFalse(
+            ForegroundPackageTracker.isBlockingSystemWindow(
+                AccessibilityWindowInfo.TYPE_SYSTEM,
+                isActive = false,
+                isFocused = false,
+            ),
+        )
+        assertFalse(
+            ForegroundPackageTracker.isBlockingSystemWindow(
+                AccessibilityWindowInfo.TYPE_INPUT_METHOD,
+                isActive = true,
+                isFocused = true,
+            ),
+        )
+    }
+
+    @Test
     fun recognizesOnlyVeyarcsOwnAccessibilityOverlay() {
         assertTrue(
             ForegroundPackageTracker.isOwnAccessibilityOverlay(

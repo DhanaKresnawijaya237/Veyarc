@@ -17,10 +17,13 @@ data class ActiveViewport(
     val heightPx: Int,
     val orientation: DisplayOrientation,
     val windowMode: ActiveWindowMode = ActiveWindowMode.FULL_DISPLAY,
+    /** Android display rotation as clockwise quarter turns; zero on platforms without rotation data. */
+    val rotationQuarterTurns: Int = 0,
 ) {
     init {
         require(widthPx > 0) { "Active viewport width must be positive" }
         require(heightPx > 0) { "Active viewport height must be positive" }
+        require(rotationQuarterTurns in 0..3) { "Display rotation must be between zero and three quarter turns" }
     }
 }
 

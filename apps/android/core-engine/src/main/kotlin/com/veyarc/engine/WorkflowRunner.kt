@@ -499,6 +499,22 @@ class WorkflowRunner {
                 message = "Workflow playback requires full-display mode",
             )
         }
+        val initialRotation = state.initialRotationQuarterTurns
+        if (initialRotation != null && viewport.rotationQuarterTurns != initialRotation) {
+            throw viewportAbort(
+                state = state,
+                code = RunFailureCode.DISPLAY_ROTATION_CHANGED_DURING_RUN,
+                message = "Display rotation changed during the workflow",
+            )
+        }
+        if (viewport.orientation != state.plan.viewport.recordedOrientation) {
+            throw viewportAbort(
+                state = state,
+                code = RunFailureCode.ORIENTATION_MISMATCH,
+                message = "Workflow requires ${state.plan.viewport.recordedOrientation.name.lowercase()} orientation",
+            )
+        }
+        if (initialRotation == null) state.initialRotationQuarterTurns = viewport.rotationQuarterTurns
         return viewport
     }
 
@@ -605,6 +621,7 @@ class WorkflowRunner {
         var currentPath: String = "/"
         var startupHandoffPending: Boolean = startupPackage != null && plan.steps.firstOrNull() is ExecutionStep.LaunchApp
         var pauseEventPublished = false
+        var initialRotationQuarterTurns: Int? = null
 
         fun nowMs(): Long = clock.nowMs()
 

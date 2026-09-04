@@ -161,6 +161,115 @@ class AndroidAutomationDriverTest {
         assertTrue(failed)
     }
 
+    @Test
+    fun refusesInputBeforeDispatchWhenDeviceStateIsUnsafe() {
+        val gestures = RecordingGesturePort()
+        val driver = AndroidAutomationDriver(
+            gesturePort = gestures,
+            foregroundPackage = { targetPackage },
+            viewport = { viewport },
+            launch = { },
+            isMainThread = { false },
+            unsafeDeviceState = { AndroidUnsafeDeviceState.LOCK_SCREEN_ACTIVE },
+        )
+
+        var failed = false
+        try {
+            driver.tap(DisplayCoordinate(1.0, 1.0))
+        } catch (error: AndroidAutomationException) {
+            failed = error.message?.contains("lock screen") == true
+        }
+
+        assertTrue(failed)
+        assertTrue(gestures.taps.isEmpty())
+    }
+
+    @Test
+    fun cancelsAnInFlightGestureWhenDeviceStateBecomesUnsafe() {
+        var unsafeState: AndroidUnsafeDeviceState? = null
+        val gestures = PendingGesturePort {
+            unsafeState = AndroidUnsafeDeviceState.SYSTEM_WINDOW_ACTIVE
+        }
+        val driver = AndroidAutomationDriver(
+            gesturePort = gestures,
+            foregroundPackage = { targetPackage },
+            viewport = { viewport },
+            launch = { },
+            isMainThread = { false },
+            unsafeDeviceState = { unsafeState },
+        )
+
+        var failed = false
+        try {
+            driver.tap(DisplayCoordinate(1.0, 1.0))
+        } catch (error: AndroidAutomationException) {
+            failed = error.message?.contains("system dialog") == true
+        }
+
+        assertTrue(failed)
+        assertTrue(gestures.cancelled)
+    }
+
+    @Test
+    fun cancelsAnInFlightGestureWhenViewportChanges() {
+        var activeViewport = viewport
+        val gestures = PendingGesturePort {
+            activeViewport = viewport.copy(
+                widthPx = viewport.heightPx,
+                heightPx = viewport.widthPx,
+                orientation = DisplayOrientation.LANDSCAPE,
+            )
+        }
+        val driver = AndroidAutomationDriver(
+            gesturePort = gestures,
+            foregroundPackage = { targetPackage },
+            viewport = { activeViewport },
+            launch = { },
+            isMainThread = { false },
+        )
+
+        var failed = false
+        try {
+            driver.swipePath(
+                points = listOf(
+                    DisplayTimedPoint(DisplayCoordinate(1.0, 2.0), offsetMs = 0L),
+                    DisplayTimedPoint(DisplayCoordinate(3.0, 4.0), offsetMs = 500L),
+                ),
+                durationMs = 500L,
+            )
+        } catch (error: AndroidAutomationException) {
+            failed = error.message?.contains("display changed") == true
+        }
+
+        assertTrue(failed)
+        assertTrue(gestures.cancelled)
+    }
+
+    @Test
+    fun cancelsAnInFlightGestureWhenForegroundPackageChanges() {
+        var activePackage = targetPackage
+        val gestures = PendingGesturePort {
+            activePackage = PackageName("com.example.unexpected")
+        }
+        val driver = AndroidAutomationDriver(
+            gesturePort = gestures,
+            foregroundPackage = { activePackage },
+            viewport = { viewport },
+            launch = { },
+            isMainThread = { false },
+        )
+
+        var failed = false
+        try {
+            driver.longPress(DisplayCoordinate(1.0, 1.0), durationMs = 1_000L)
+        } catch (error: AndroidAutomationException) {
+            failed = error.message?.contains("foreground app changed") == true
+        }
+
+        assertTrue(failed)
+        assertTrue(gestures.cancelled)
+    }
+
     private class RecordingGesturePort(
         private val result: GestureDispatchResult = GestureDispatchResult.Completed,
     ) : GestureDispatchPort {
@@ -189,6 +298,32 @@ class AndroidAutomationDriverTest {
         ) {
             paths += points to durationMillis
             onResult(result)
+        }
+    }
+
+    private class PendingGesturePort(
+        private val onDispatch: () -> Unit,
+    ) : GestureDispatchPort {
+        var cancelled = false
+
+        override fun dispatchTap(point: ScreenPoint, onResult: (GestureDispatchResult) -> Unit) {
+            onDispatch()
+        }
+
+        override fun dispatchLongPress(
+            point: ScreenPoint,
+            durationMillis: Long,
+            onResult: (GestureDispatchResult) -> Unit,
+        ) = onDispatch()
+
+        override fun dispatchPath(
+            points: List<ScreenPoint>,
+            durationMillis: Long,
+            onResult: (GestureDispatchResult) -> Unit,
+        ) = onDispatch()
+
+        override fun cancelActiveGesture() {
+            cancelled = true
         }
     }
 }

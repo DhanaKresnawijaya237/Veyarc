@@ -59,4 +59,17 @@ class AndroidAutomationCapabilitiesTest {
         assertTrue(snapshot.supports(EngineCapability.PIXEL_COLOR_CONDITION))
         assertTrue(snapshot.supports(EngineCapability.IMAGE_TEMPLATE_CONDITION))
     }
+
+    @Test
+    fun blocksRunStartWhileTheDeviceStateIsUnsafeWithoutChangingCapabilities() {
+        val snapshot = AndroidAutomationCapabilities.snapshot(
+            accessibilityEnabled = true,
+            serviceConnected = true,
+            unsafeDeviceState = AndroidUnsafeDeviceState.LOCK_SCREEN_ACTIVE,
+        )
+
+        assertFalse(snapshot.runReady)
+        assertTrue(snapshot.runBlockReason?.contains("lock screen") == true)
+        assertTrue(snapshot.supports(EngineCapability.TAP_POINT))
+    }
 }

@@ -2,7 +2,7 @@
 
 Build Veyarc as a native Kotlin Android application for coordinate-based device automation. The first release will be a sideloaded technical beta with local storage, a nested block editor, Android 7+ playback, Android 13+ touch recording, explicit multi-app workflows, pixel/image conditions, and no semantic UI inspection.
 
-Success means a user can record or manually create a workflow containing taps, holds, paths, waits, bounded loops, conditions, app switches, and stops; review it; save it locally; and replay it safely across different resolutions and orientations.
+Success means a user can record or manually create a workflow containing taps, holds, paths, waits, bounded loops, conditions, app switches, and stops; review it; save it locally; and replay it safely across different resolutions within its recorded portrait or landscape orientation.
 
 The AI assistant follows the stable core beta. It may generate or edit typed workflows but can never execute them. Windows support follows through a separate native adapter sharing the workflow format.
 
@@ -58,7 +58,7 @@ Supported conditions:
 
 Do not support arbitrary jumps, executable scripting, unbounded loops, simultaneous multi-touch, semantic selectors, text capture, or physical touch pressure/contact shape in the first beta.
 
-Use normalized full-display coordinates. `(0.10, 0.10)` remains 10% from the current screen’s left and top in portrait or landscape. X and Y scale independently to current logical display dimensions. UI reflow or redesign is treated as a new workflow revision, not automatically adapted. Disallow split-screen and desktop/freeform window modes in the beta.
+Use normalized full-display coordinates. `(0.10, 0.10)` remains 10% from the current screen’s left and top when replaying in the workflow's recorded portrait or landscape orientation. X and Y scale independently to current logical display dimensions. Portrait and landscape are separate workflow variants because app layouts can reflow; Veyarc must refuse cross-orientation replay rather than transform it. A settled 180-degree starting rotation is allowed within the same orientation family. Any physical rotation during recording or replay stops safely. Disallow split-screen and desktop/freeform window modes in the beta.
 
 Persist exportable workflows as `.veyarc` ZIP bundles containing `workflow.json`, `manifest.json`, and encrypted condition-image assets. Maintain an append-only internal JSON Lines journal during recording. Enforce archive entry count, decompressed-size and path-traversal limits during import.
 
@@ -80,8 +80,8 @@ Implement the runner as a single-coroutine deterministic state machine with:
 - Typed run events for UI and audit history.
 - No automatic restart after process death.
 - Immediate failure when Accessibility is disabled, the device locks, screen capture is revoked, or an undeclared package becomes foreground.
-- Viewport recalculation between steps.
-- Pause-and-fail behavior if orientation changes during an active gesture, preventing accidental duplicate execution.
+- Viewport recalculation between steps without crossing the workflow's recorded orientation family.
+- Fail-before-input behavior when the starting orientation differs from the recording, and fail-closed behavior after any physical rotation during recording or replay.
 
 Replay safety controls are separate from the workflow engine and must be service-owned:
 
@@ -251,7 +251,7 @@ Every workflow declares allowed packages. `LaunchApp` may switch only to a decla
 - Cancellation at every step boundary.
 - Fake-clock timing and timeout behavior.
 - Resolution scaling across representative aspect ratios.
-- Current-screen-relative orientation behavior.
+- Resolution scaling within the workflow's recorded portrait or landscape orientation.
 - Golden raw traces for tap, hold, curved swipe, rectangle path and wait inference.
 - Process interruption never resumes a run automatically.
 
@@ -294,7 +294,7 @@ Record:
 4. Draw a bottom-left-to-bottom-right path.
 5. Stop recording.
 
-The resulting draft must reproduce the actions, allow insertion of a bounded loop and image condition, scale across two resolutions, keep top-left relative to the visible screen after rotation, stop on an undeclared app, and replay only after explicit user approval.
+The resulting draft must reproduce the actions, allow insertion of a bounded loop and image condition, scale across two resolutions in the recorded orientation, refuse the opposite orientation before input, stop on an undeclared app, and replay only after explicit user approval.
 
 The privileged input-source feasibility gate is now passed on the scoped vivo V50 without altering
 ordinary one-finger touch behavior. The vivo V50 touch-exploration spike remains disabled because it
@@ -314,7 +314,7 @@ bounded Shizuku helper; multi-touch and pressure/contact-area fidelity remain fo
 - Touch regions and shapes are editor/path abstractions; Android receives point contacts following paths.
 - Single-pointer arbitrary paths are included; simultaneous multi-touch is deferred.
 - Workflows may span multiple explicitly declared apps.
-- Resolution is normalized automatically; orientation remains relative to the current visible screen.
+- Resolution is normalized automatically within the recorded orientation; portrait and landscape require separate workflow variants.
 - UI layout changes require a new workflow revision.
 - Pixel and image conditions use ephemeral screen frames.
 - The core beta is local-only with no accounts or synchronization.

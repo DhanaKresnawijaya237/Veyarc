@@ -32,4 +32,5 @@ interface IShizukuInputReplayService {
     void pause() = 16;
     void resume() = 17;
     boolean isPaused() = 18;
+    void renewClientLease() = 19;
 }

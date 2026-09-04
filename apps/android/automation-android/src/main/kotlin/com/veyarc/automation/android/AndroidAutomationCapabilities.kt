@@ -12,6 +12,7 @@ data class AndroidCapabilitySnapshot(
     val engineCapabilities: EngineCapabilities,
     /** True when Android exposes MediaProjection for a consented per-run capture. */
     val mediaProjectionAvailable: Boolean = false,
+    val unsafeDeviceState: AndroidUnsafeDeviceState? = null,
 ) {
     val gestureDispatchReady: Boolean
         get() = accessibilityEnabled && serviceConnected
@@ -19,20 +20,38 @@ data class AndroidCapabilitySnapshot(
     val foregroundPackageReady: Boolean
         get() = serviceConnected
 
+    val runReady: Boolean
+        get() = accessibilityEnabled && serviceConnected && unsafeDeviceState == null
+
+    val runBlockReason: String?
+        get() = unsafeDeviceState?.let { "Run unavailable because ${it.reason}." }
+            ?: when {
+                !accessibilityEnabled -> "Run unavailable because Veyarc Accessibility is disabled."
+                !serviceConnected -> "Run unavailable because Veyarc Accessibility is disconnected."
+                else -> null
+            }
+
     fun supports(capability: EngineCapability): Boolean = engineCapabilities.supports(capability)
 }
 
 object AndroidAutomationCapabilities {
-    fun snapshot(context: Context): AndroidCapabilitySnapshot = snapshot(
-        accessibilityEnabled = AccessibilityGestureDispatcher.isEnabled(context),
-        serviceConnected = AccessibilityGestureDispatcher.isConnected,
-        mediaProjectionAvailable = context.getSystemService(MediaProjectionManager::class.java) != null,
-    )
+    fun snapshot(context: Context): AndroidCapabilitySnapshot {
+        val appContext = context.applicationContext
+        val accessibilityEnabled = AccessibilityGestureDispatcher.isEnabled(appContext)
+        val serviceConnected = AccessibilityGestureDispatcher.isConnected
+        return snapshot(
+            accessibilityEnabled = accessibilityEnabled,
+            serviceConnected = serviceConnected,
+            mediaProjectionAvailable = appContext.getSystemService(MediaProjectionManager::class.java) != null,
+            unsafeDeviceState = AndroidDeviceSafety.current(appContext),
+        )
+    }
 
     internal fun snapshot(
         accessibilityEnabled: Boolean,
         serviceConnected: Boolean,
         mediaProjectionAvailable: Boolean = false,
+        unsafeDeviceState: AndroidUnsafeDeviceState? = null,
     ): AndroidCapabilitySnapshot {
         val capabilities = buildSet {
             addAll(CORE_CAPABILITIES)
@@ -46,6 +65,7 @@ object AndroidAutomationCapabilities {
             serviceConnected = serviceConnected,
             mediaProjectionAvailable = mediaProjectionAvailable,
             engineCapabilities = EngineCapabilities.of(capabilities),
+            unsafeDeviceState = unsafeDeviceState,
         )
     }
 

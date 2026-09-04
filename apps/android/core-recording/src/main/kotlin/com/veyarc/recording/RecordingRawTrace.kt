@@ -47,10 +47,13 @@ data class RecordingRawTrace(
             "Raw replay requires the same full-display window mode"
         }
         require(
-            coordinateSpace == RecordingCoordinateSpace.LOGICAL_DISPLAY_NORMALIZED ||
-                recordedViewport.recordedOrientation == currentViewport.recordedOrientation,
+            RecordingOrientationPolicy.canReplay(
+                recorded = recordedViewport.recordedOrientation,
+                current = currentViewport.recordedOrientation,
+            ),
         ) {
-            "This recording predates rotation-aware capture. Record it again before replaying across orientations."
+            "Raw replay requires ${recordedViewport.recordedOrientation.name.lowercase()} orientation. " +
+                "Rotate the device before replaying."
         }
         val recordedWidthDenominator = max(1, recordedViewport.recordedWidthPx - 1).toDouble()
         val recordedHeightDenominator = max(1, recordedViewport.recordedHeightPx - 1).toDouble()

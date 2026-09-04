@@ -247,6 +247,22 @@ object ReplayFloatingController {
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         .getBoolean(PREF_ENABLED, false)
 
+    /**
+     * Observes controller preference changes made outside the host activity, such as the close
+     * action in the accessibility overlay. The returned function must be called when the observer
+     * leaves composition.
+     */
+    fun observeEnabled(context: Context, onChanged: (Boolean) -> Unit): () -> Unit {
+        val preferences = context.applicationContext
+            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, key ->
+            if (key == PREF_ENABLED) onChanged(prefs.getBoolean(PREF_ENABLED, false))
+        }
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        onChanged(preferences.getBoolean(PREF_ENABLED, false))
+        return { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
+
     fun setEnabled(context: Context, enabled: Boolean) {
         val appContext = context.applicationContext
         appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

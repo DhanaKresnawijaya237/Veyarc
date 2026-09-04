@@ -47,6 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -363,6 +364,12 @@ private fun WorkflowLibraryScreen(
     val context = LocalContext.current
     var replayControllerEnabled by remember {
         mutableStateOf(ReplayFloatingController.isEnabled(context))
+    }
+    DisposableEffect(context) {
+        val stopObserving = ReplayFloatingController.observeEnabled(context) { enabled ->
+            replayControllerEnabled = enabled
+        }
+        onDispose(stopObserving)
     }
     var pendingDelete by remember { mutableStateOf<DeleteTarget?>(null) }
 

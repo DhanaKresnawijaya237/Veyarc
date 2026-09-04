@@ -172,6 +172,8 @@ private fun ReviewContent(
             Text("Allowed packages: ${state.review.plan?.allowedPackages?.joinToString { it.value } ?: "none"}")
             Text("Maximum runtime: ${plan?.runLimits?.maxRuntimeMs ?: "—"} ms")
             Text("Worst-case steps: ${plan?.analysis?.worstCaseStepCount ?: "—"}")
+            Text("Required orientation: ${plan?.viewport?.recordedOrientation?.name?.lowercase() ?: "unknown"}")
+            Text("Current orientation: ${state.review.currentOrientation?.name?.lowercase() ?: "unknown"}")
             Text("Accessibility setting: ${if (state.review.capabilities.accessibilityEnabled) "enabled" else "disabled"}")
             Text("Service connection: ${if (state.review.capabilities.serviceConnected) "ready" else "not ready"}")
             if (requiresMediaProjectionConsent) {
@@ -181,6 +183,9 @@ private fun ReviewContent(
                 OutlinedButton(onClick = { AccessibilityGestureDispatcher.openAccessibilitySettings(context) }) {
                     Text("Open accessibility settings")
                 }
+            }
+            state.review.orientationBlockReason?.let { reason ->
+                Text(reason, color = MaterialTheme.colorScheme.error)
             }
         }
     }

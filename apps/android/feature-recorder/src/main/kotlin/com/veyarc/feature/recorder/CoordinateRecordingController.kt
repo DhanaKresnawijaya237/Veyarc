@@ -17,7 +17,7 @@ import com.veyarc.automation.android.ReplayWorkflowCatalog
 import com.veyarc.automation.android.ShizukuTouchRecording
 import com.veyarc.automation.android.ShizukuTouchRecordingEvent
 import com.veyarc.automation.android.currentDisplayRotation
-import com.veyarc.automation.android.currentRecordingViewport
+import com.veyarc.automation.android.currentRecordingViewportSnapshot
 import com.veyarc.data.storage.AesGcmFileCodec
 import com.veyarc.data.storage.AndroidKeystoreKeySource
 import com.veyarc.data.storage.EncryptedRecordingJournalStore
@@ -29,6 +29,7 @@ import com.veyarc.recording.RecordingClassificationConfig
 import com.veyarc.recording.RecordingCoordinateSpace
 import com.veyarc.recording.RecordingJournalLine
 import com.veyarc.recording.RecordingJournalSnapshot
+import com.veyarc.recording.RecordingOrientationPolicy
 import com.veyarc.recording.RecordingRawTrace
 import com.veyarc.recording.RecordingTouchAction
 import com.veyarc.recording.RecordingWorkflowConverter
@@ -115,6 +116,7 @@ class CoordinateRecordingController(
     private var pendingTouchSawControlSurface = false
     private var ignoredTouchActive = false
     private var activeTouchRotation: TouchDisplayRotation? = null
+    private var sessionRotation: TouchDisplayRotation? = null
 
     private val controlCenterActions = RecordingControllerActions(
         onStart = ::start,
@@ -189,6 +191,10 @@ class CoordinateRecordingController(
                 observeForeground(AndroidForegroundPackage.current())
                 if (active && isKeyguardLocked()) {
                     failSession("Recording stopped because the lock screen became active.")
+                    return@enqueue
+                }
+                if (active && !isCurrentSessionRotation()) {
+                    failSession("Recording stopped because the display rotated during recording.")
                 }
             }
             mainHandler.postDelayed(this, FOREGROUND_POLL_INTERVAL_MILLIS)
@@ -219,13 +225,16 @@ class CoordinateRecordingController(
             _state.value = CoordinateRecordingState.Unavailable(notificationUnavailableReason)
             return
         }
-        val recordingViewport = currentRecordingViewport(appContext)
-        if (recordingViewport == null) {
+        val recordingSnapshot = currentRecordingViewportSnapshot(appContext)
+        val recordingRotation = recordingSnapshot?.displayRotation
+            ?.let(TouchDisplayRotation::fromAndroidRotation)
+        if (recordingSnapshot == null || recordingRotation == null) {
             _state.value = CoordinateRecordingState.Unavailable(
                 "Recording requires a full-display viewport. Close split-screen or freeform windows and try again.",
             )
             return
         }
+        val recordingViewport = recordingSnapshot.viewport
         if (!source.isReady()) {
             _state.value = CoordinateRecordingState.Unavailable(
                 "Start Shizuku and grant Veyarc permission before recording.",
@@ -272,6 +281,7 @@ class CoordinateRecordingController(
         pendingTouchSawControlSurface = false
         ignoredTouchActive = false
         activeTouchRotation = null
+        sessionRotation = recordingRotation
         stopRequested = false
         pauseRequested = false
         paused = false
@@ -354,6 +364,10 @@ class CoordinateRecordingController(
     /** Resumes raw observation using the same encrypted journal and session clock. */
     fun resume() {
         if (!active || stopRequested || !paused || pauseRequested) return
+        if (!isCurrentSessionRotation()) {
+            failSession("Recording stopped because the display rotated while recording was paused.")
+            return
+        }
         val elapsed = elapsedMillis()
         val remaining = MAX_RECORDING_DURATION_MILLIS - elapsed
         if (remaining < MIN_RESUME_DURATION_MILLIS) {
@@ -484,6 +498,13 @@ class CoordinateRecordingController(
                 failSession("The display rotation could not be read safely during recording.")
                 return
             }
+        val initialRotation = sessionRotation
+        if (initialRotation == null ||
+            !RecordingOrientationPolicy.captureRotationUnchanged(initialRotation, rotation)
+        ) {
+            failSession("Recording stopped because the display rotated during recording.")
+            return
+        }
         if (startingTouch) {
             activeTouchRotation = rotation
         } else if (activeTouchRotation != rotation) {
@@ -857,6 +878,7 @@ class CoordinateRecordingController(
         pendingTouchSawControlSurface = false
         ignoredTouchActive = false
         activeTouchRotation = null
+        sessionRotation = null
         stopRequested = false
         pauseRequested = false
         paused = false
@@ -893,6 +915,13 @@ class CoordinateRecordingController(
     }
 
     private fun elapsedMillis(): Long = (SystemClock.elapsedRealtime() - sessionStartedElapsedRealtime).coerceAtLeast(0L)
+
+    private fun isCurrentSessionRotation(): Boolean {
+        val initial = sessionRotation ?: return false
+        val current = currentDisplayRotation(appContext)?.let(TouchDisplayRotation::fromAndroidRotation)
+            ?: return false
+        return RecordingOrientationPolicy.captureRotationUnchanged(initial, current)
+    }
 
     private fun enqueue(block: () -> Unit) {
         if (!active) return

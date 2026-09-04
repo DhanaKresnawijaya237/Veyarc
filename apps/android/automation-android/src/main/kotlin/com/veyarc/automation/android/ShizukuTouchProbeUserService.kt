@@ -1,5 +1,6 @@
 package com.veyarc.automation.android
 
+import android.os.IBinder
 import android.os.SystemClock
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -41,6 +42,9 @@ class ShizukuTouchProbeUserService : IShizukuTouchProbeService.Stub() {
     @Volatile
     private var recordingCallback: IShizukuTouchRecordingCallback? = null
 
+    @Volatile
+    private var recordingCallbackDeathRecipient: IBinder.DeathRecipient? = null
+
     override fun startObservation(durationMillis: Long) {
         startInternal(durationMillis, callback = null)
     }
@@ -58,8 +62,30 @@ class ShizukuTouchProbeUserService : IShizukuTouchProbeService.Stub() {
     ) {
         val maxDuration = if (callback == null) MAX_PROBE_DURATION_MILLIS else MAX_RECORDING_DURATION_MILLIS
         val duration = durationMillis.coerceIn(MIN_DURATION_MILLIS, maxDuration)
+        val callbackDied = AtomicBoolean(false)
+        val callbackDeathRecipient = callback?.let {
+            IBinder.DeathRecipient {
+                callbackDied.set(true)
+                stopObservation()
+            }
+        }
+        if (callback != null && callbackDeathRecipient != null) {
+            val linked = runCatching {
+                callback.asBinder().linkToDeath(callbackDeathRecipient, 0)
+            }.isSuccess
+            if (!linked) {
+                runCatching { callback.onError("Recording callback was unavailable before capture started") }
+                runCatching { callback.onCompleted() }
+                return
+            }
+        }
         synchronized(stateLock) {
-            if (running.get()) return
+            if (running.get() || callbackDied.get() || callback?.asBinder()?.isBinderAlive == false) {
+                if (callback != null && callbackDeathRecipient != null) {
+                    runCatching { callback.asBinder().unlinkToDeath(callbackDeathRecipient, 0) }
+                }
+                return
+            }
             eventCount.set(0L)
             touchContactCount.set(0L)
             positionSampleCount.set(0L)
@@ -71,6 +97,7 @@ class ShizukuTouchProbeUserService : IShizukuTouchProbeService.Stub() {
             deviceSummary = null
             lastError = null
             recordingCallback = callback
+            recordingCallbackDeathRecipient = callbackDeathRecipient
             running.set(true)
             workerThread = thread(
                 start = true,
@@ -81,8 +108,8 @@ class ShizukuTouchProbeUserService : IShizukuTouchProbeService.Stub() {
     }
 
     override fun stopObservation() {
-        running.set(false)
         synchronized(stateLock) {
+            running.set(false)
             readerProcess?.destroy()
             workerThread?.interrupt()
         }
@@ -183,6 +210,7 @@ class ShizukuTouchProbeUserService : IShizukuTouchProbeService.Stub() {
             parser?.finish()
             parser?.let(::publishParserCounters)
             val callback = recordingCallback
+            val callbackDeathRecipient = recordingCallbackDeathRecipient
             val error = lastError
             if (callback != null) {
                 if (!error.isNullOrBlank()) {
@@ -191,6 +219,10 @@ class ShizukuTouchProbeUserService : IShizukuTouchProbeService.Stub() {
                 runCatching { callback.onCompleted() }
             }
             recordingCallback = null
+            recordingCallbackDeathRecipient = null
+            if (callback != null && callbackDeathRecipient != null) {
+                runCatching { callback.asBinder().unlinkToDeath(callbackDeathRecipient, 0) }
+            }
             running.set(false)
             process?.destroy()
             reader?.interrupt()
