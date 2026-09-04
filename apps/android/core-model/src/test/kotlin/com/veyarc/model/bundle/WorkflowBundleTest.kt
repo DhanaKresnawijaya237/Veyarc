@@ -84,6 +84,102 @@ class WorkflowBundleTest {
     }
 
     @Test
+    fun assetPayloadIsDefensivelyCopied() {
+        val source = byteArrayOf(1, 2, 3, 4)
+        val asset = BundleAsset(
+            assetId = AssetId("template-copy"),
+            kind = AssetKind.IMAGE_TEMPLATE,
+            mimeType = "image/png",
+            bytes = source,
+            encrypted = true,
+        )
+
+        source[0] = 9
+        val firstRead = asset.bytes
+        firstRead[1] = 8
+
+        assertArrayEquals(byteArrayOf(1, 2, 3, 4), asset.bytes)
+    }
+
+    @Test
+    fun importerRejectsMalformedUtf8() {
+        val malformed = replaceEntry(
+            VeyarcBundle.export(sampleBundle()),
+            "workflow.json",
+            byteArrayOf(0xC3.toByte(), 0x28),
+        )
+
+        assertBundleRejected(malformed, "workflow.json is not valid UTF-8")
+    }
+
+    @Test
+    fun importerRejectsMalformedManifestUtf8() {
+        val malformed = replaceEntry(
+            VeyarcBundle.export(sampleBundle()),
+            "manifest.json",
+            byteArrayOf(0xC3.toByte(), 0x28),
+        )
+
+        assertBundleRejected(malformed, "manifest.json is not valid UTF-8")
+    }
+
+    @Test
+    fun importerRejectsExcessiveJsonNestingBeforeParsing() {
+        val deeplyNested = "[".repeat(129) + "]".repeat(129)
+        val malformed = replaceEntry(
+            VeyarcBundle.export(sampleBundle()),
+            "workflow.json",
+            deeplyNested.encodeToByteArray(),
+        )
+
+        assertBundleRejected(malformed, "workflow.json exceeds its nesting safety limit")
+    }
+
+    @Test
+    fun importerRejectsDocumentCollectionsOverTheirBudget() {
+        val original = sampleBundle()
+        val expanded = original.copy(
+            document = original.document.copy(
+                allowedPackages = original.document.allowedPackages + PackageName("com.example.second"),
+            ),
+        )
+        val bytes = VeyarcBundle.export(expanded)
+
+        assertBundleRejected(bytes, "Bundle contains too many allowed packages", BundleLimits(maxAllowedPackages = 1))
+    }
+
+    @Test
+    fun importerNormalizesInvalidManifestMetadataToAFormatError() {
+        val original = VeyarcBundle.export(sampleBundle())
+        val malformed = replaceEntryText(original, "manifest.json") { json ->
+            json.replace("\"producerVersion\":\"test-producer\"", "\"producerVersion\":\"\"")
+        }
+
+        assertBundleRejected(malformed, "Bundle metadata is invalid")
+    }
+
+    @Test
+    fun importerRejectsInvalidManifestAssetMimeType() {
+        val original = VeyarcBundle.export(sampleBundle())
+        val malformed = replaceEntryText(original, "manifest.json") { json ->
+            json.replace("\"mimeType\":\"image/png\"", "\"mimeType\":\"text/plain\"")
+        }
+
+        assertBundleRejected(malformed, "Manifest asset MIME type is invalid")
+    }
+
+    @Test
+    fun importerRejectsDeclaredOversizedDeflatedEntry() {
+        val oversized = zipOf("workflow.json" to ByteArray(1_024))
+
+        assertBundleRejected(
+            oversized,
+            "Entry workflow.json exceeds its safety limit",
+            BundleLimits(maxWorkflowJsonBytes = 128),
+        )
+    }
+
+    @Test
     fun migrationEntryPointRejectsUnknownVersions() {
         var rejected = false
         try {
@@ -168,6 +264,35 @@ class WorkflowBundleTest {
             }
         }
         return output.toByteArray()
+    }
+
+    private fun replaceEntryText(
+        bundle: ByteArray,
+        target: String,
+        transform: (String) -> String,
+    ): ByteArray {
+        val original = entryBytes(bundle, target)
+        return replaceEntry(bundle, target, transform(original.decodeToString()).encodeToByteArray())
+    }
+
+    private fun entryBytes(bundle: ByteArray, target: String): ByteArray {
+        java.util.zip.ZipInputStream(bundle.inputStream()).use { input ->
+            while (true) {
+                val entry = input.nextEntry ?: break
+                if (entry.name == target) return input.readBytes()
+            }
+        }
+        error("Missing test entry $target")
+    }
+
+    private fun assertBundleRejected(
+        bytes: ByteArray,
+        expectedMessage: String,
+        limits: BundleLimits = BundleLimits(),
+    ) {
+        val error = runCatching { VeyarcBundle.import(bytes, limits) }.exceptionOrNull()
+        assertTrue(error is BundleFormatException)
+        assertEquals(expectedMessage, error?.message)
     }
 
     private companion object {

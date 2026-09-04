@@ -1,6 +1,7 @@
 package com.veyarc.data.storage
 
 import android.content.Context
+import com.veyarc.model.AssetKind
 import com.veyarc.model.WorkflowIds
 import com.veyarc.model.bundle.VeyarcBundle
 import com.veyarc.model.bundle.WorkflowBundle
@@ -58,6 +59,9 @@ class WorkflowRepository internal constructor(
     private val database: VeyarcDatabase,
     private val files: EncryptedFileStore,
     private val nowMs: () -> Long,
+    private val templateCodec: EncryptedTemplateAssetCodec = EncryptedTemplateAssetCodec(
+        AndroidKeystoreKeySource(TEMPLATE_ASSET_KEY_ALIAS),
+    ),
 ) {
     constructor(
         context: Context,
@@ -73,6 +77,7 @@ class WorkflowRepository internal constructor(
 
     fun saveRevision(bundle: WorkflowBundle): RevisionSummary = synchronized(this) {
         val document = bundle.document
+        verifyAssetIntegrity(bundle)
         val existingWorkflow = database.workflowDao().findWorkflow(document.id)
         val existingRevision = database.workflowDao().findRevision(document.id, document.revision)
         require(existingRevision == null) {
@@ -141,6 +146,7 @@ class WorkflowRepository internal constructor(
         } catch (error: Exception) {
             throw WorkflowStorageException("Stored workflow revision is invalid", error)
         }
+        verifyAssetIntegrity(bundle)
         require(bundle.document.id == workflowId && bundle.document.revision == revision) {
             "Stored workflow revision identity does not match its metadata"
         }
@@ -333,6 +339,19 @@ class WorkflowRepository internal constructor(
     private fun runStatus(value: String): StoredRunStatus = runCatching {
         StoredRunStatus.valueOf(value)
     }.getOrElse { throw WorkflowStorageException("Unknown stored run status") }
+
+    private fun verifyAssetIntegrity(bundle: WorkflowBundle) {
+        try {
+            bundle.assets.forEach { asset ->
+                require(asset.kind == AssetKind.IMAGE_TEMPLATE && asset.encrypted) {
+                    "Workflow assets must be encrypted image templates"
+                }
+                templateCodec.verify(asset.assetId, asset.bytes)
+            }
+        } catch (error: Exception) {
+            throw WorkflowStorageException("Workflow asset integrity check failed", error)
+        }
+    }
 
     private companion object {
         const val WORKFLOW_DIRECTORY = "workflows"

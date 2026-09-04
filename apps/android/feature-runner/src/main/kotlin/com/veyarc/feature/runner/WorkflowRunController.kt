@@ -383,7 +383,7 @@ class WorkflowRunController(
                 ?.let { "$exceptionType: $it" }
                 ?: exceptionType
             val displayMessage = "Execution error: $detail"
-            Log.e(TAG, "Workflow execution failed for ${document.id}", error)
+            Log.e(TAG, "Workflow execution failed")
             terminalStatus = StoredRunStatus.FAILED
             terminalReason = "EXECUTION_ERROR: $detail"
             updateTerminal(WorkflowRunPhase.FAILED, displayMessage)

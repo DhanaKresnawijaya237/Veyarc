@@ -47,6 +47,16 @@ class EncryptedTemplateAssetCodecTest {
         assertRejected { codec.encrypt(assetId, tooLarge) }
     }
 
+    @Test
+    fun verificationRejectsTamperedCiphertext() {
+        val codec = EncryptedTemplateAssetCodec(::keySource)
+        val encrypted = codec.encrypt(assetId, DecodedTemplate(1, 1, ByteArray(4) { 7 }))
+        val tampered = encrypted.copyOf().also { it[it.lastIndex] = (it.last().toInt() xor 1).toByte() }
+
+        codec.verify(assetId, encrypted)
+        assertRejected { codec.verify(assetId, tampered) }
+    }
+
     private fun keySource() = key
 
     private fun assertRejected(block: () -> Unit) {

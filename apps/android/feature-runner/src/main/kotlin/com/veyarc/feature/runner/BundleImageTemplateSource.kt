@@ -5,6 +5,7 @@ import com.veyarc.automation.android.ImageTemplateSource
 import com.veyarc.automation.android.RgbaTemplate
 import com.veyarc.data.storage.AndroidKeystoreKeySource
 import com.veyarc.data.storage.EncryptedTemplateAssetCodec
+import com.veyarc.data.storage.TEMPLATE_ASSET_KEY_ALIAS
 import com.veyarc.model.AssetId
 import com.veyarc.model.AssetKind
 import com.veyarc.model.bundle.BundleAsset
@@ -20,7 +21,7 @@ import java.io.Closeable
 internal class BundleImageTemplateSource(
     assets: List<BundleAsset>,
     private val codec: EncryptedTemplateAssetCodec = EncryptedTemplateAssetCodec(
-        AndroidKeystoreKeySource(TEMPLATE_KEY_ALIAS),
+        AndroidKeystoreKeySource(TEMPLATE_ASSET_KEY_ALIAS),
     ),
 ) : ImageTemplateSource,
     Closeable {
@@ -35,7 +36,7 @@ internal class BundleImageTemplateSource(
             "Only image-template assets can be evaluated as visual conditions"
         }
         require(asset.encrypted) { "Visual condition assets must be encrypted" }
-        asset.assetId to EncryptedAsset(asset.bytes.copyOf())
+        asset.assetId to EncryptedAsset(asset.bytes)
     }
     private val decodedTemplates = mutableMapOf<AssetId, RgbaTemplate>()
     private var closed = false
@@ -49,7 +50,7 @@ internal class BundleImageTemplateSource(
             codec.decrypt(assetId, asset.encryptedBytes)
         } catch (error: Exception) {
             throw AndroidAutomationException(
-                "Could not decrypt image template ${assetId.value}",
+                "Could not decrypt an image template",
                 error,
             )
         }
@@ -64,7 +65,7 @@ internal class BundleImageTemplateSource(
             }
         } catch (error: Exception) {
             throw AndroidAutomationException(
-                "Could not decode image template ${assetId.value}",
+                "Could not decode an image template",
                 error,
             )
         } finally {
@@ -84,8 +85,4 @@ internal class BundleImageTemplateSource(
     private data class EncryptedAsset(
         val encryptedBytes: ByteArray,
     )
-
-    private companion object {
-        const val TEMPLATE_KEY_ALIAS = "veyarc.template-assets.v1"
-    }
 }

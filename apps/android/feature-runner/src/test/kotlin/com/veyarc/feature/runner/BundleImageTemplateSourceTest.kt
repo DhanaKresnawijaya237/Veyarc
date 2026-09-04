@@ -61,7 +61,7 @@ class BundleImageTemplateSourceTest {
         try {
             source.templateFor(ASSET_ID)
         } catch (error: IllegalStateException) {
-            failed = error.message?.contains("Could not decrypt image template") == true
+            failed = error.message == "Could not decrypt an image template"
         } finally {
             source.close()
         }

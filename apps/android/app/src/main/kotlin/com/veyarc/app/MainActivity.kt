@@ -249,8 +249,8 @@ class MainRunSession(application: Application) : AndroidViewModel(application) {
             try {
                 repository.recoverInterruptedRuns()
                 _recoveryState.value = RunRecoveryState.READY
-            } catch (error: Exception) {
-                Log.e(TAG, "Could not recover unfinished workflow runs", error)
+            } catch (_: Exception) {
+                Log.e(TAG, "Could not recover unfinished workflow runs")
                 _recoveryState.value = RunRecoveryState.FAILED
             }
         }

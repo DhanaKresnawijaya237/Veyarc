@@ -11,17 +11,21 @@ import androidx.compose.ui.graphics.asImageBitmap
 import com.veyarc.data.storage.AndroidKeystoreKeySource
 import com.veyarc.data.storage.DecodedTemplate
 import com.veyarc.data.storage.EncryptedTemplateAssetCodec
+import com.veyarc.data.storage.TEMPLATE_ASSET_KEY_ALIAS
 import com.veyarc.model.AssetId
 import com.veyarc.model.AssetKind
 import com.veyarc.model.NormalizedRect
 import com.veyarc.model.WorkflowIds
 import com.veyarc.model.bundle.BundleAsset
+import java.io.FilterInputStream
 import java.io.IOException
+import java.io.InputStream
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
 
 private const val CROP_PREVIEW_MAX_PIXELS = 1_000_000L
+private const val MAX_SOURCE_IMAGE_BYTES = 64L * 1024L * 1024L
 
 private const val TEMPLATE_MIME_TYPE = "image/x-veyarc-rgba"
 
@@ -37,10 +41,7 @@ internal data class TemplateCropSource(
 /** Loads a bounded display copy while retaining the original dimensions used for the final crop. */
 internal fun loadTemplateCropSource(contentResolver: ContentResolver, uri: Uri): TemplateCropSource {
     val bounds = readImageBounds(contentResolver, uri)
-    var sampleSize = 1
-    while (ceil(bounds.first.toDouble() / sampleSize) * ceil(bounds.second.toDouble() / sampleSize) > CROP_PREVIEW_MAX_PIXELS) {
-        sampleSize *= 2
-    }
+    val sampleSize = calculatePreviewSampleSize(bounds.first, bounds.second)
     val preview = decodeBitmap(contentResolver, uri, sampleSize)
     return TemplateCropSource(
         uri = uri,
@@ -49,6 +50,21 @@ internal fun loadTemplateCropSource(contentResolver: ContentResolver, uri: Uri):
         preview = preview.asImageBitmap(),
     )
 }
+
+/** Chooses a power-of-two preview sample without overflowing on hostile image dimensions. */
+internal fun calculatePreviewSampleSize(widthPx: Int, heightPx: Int): Int {
+    require(widthPx > 0 && heightPx > 0) { "Image dimensions must be positive" }
+    var sampleSize = 1L
+    while (ceilDivide(widthPx, sampleSize) * ceilDivide(heightPx, sampleSize) > CROP_PREVIEW_MAX_PIXELS) {
+        sampleSize *= 2L
+        if (sampleSize > Int.MAX_VALUE) {
+            throw TemplateAssetImportException("The selected image dimensions are too large")
+        }
+    }
+    return sampleSize.toInt()
+}
+
+private fun ceilDivide(value: Int, divisor: Long): Long = (value.toLong() + divisor - 1L) / divisor
 
 /** Imports only the user-selected crop and preserves its original pixel scale before encryption. */
 internal fun importTemplateAsset(
@@ -72,8 +88,7 @@ internal fun importTemplateAsset(
 private fun readImageBounds(contentResolver: ContentResolver, uri: Uri): Pair<Int, Int> {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     try {
-        val input = contentResolver.openInputStream(uri)
-            ?: throw TemplateAssetImportException("The selected file could not be opened")
+        val input = openBoundedImageStream(contentResolver, uri)
         input.use {
             BitmapFactory.decodeStream(input, null, bounds)
         }
@@ -89,8 +104,7 @@ private fun readImageBounds(contentResolver: ContentResolver, uri: Uri): Pair<In
 }
 
 private fun decodeBitmap(contentResolver: ContentResolver, uri: Uri, sampleSize: Int): Bitmap = try {
-    val input = contentResolver.openInputStream(uri)
-        ?: throw TemplateAssetImportException("The selected file could not be opened")
+    val input = openBoundedImageStream(contentResolver, uri)
     input.use {
         BitmapFactory.decodeStream(
             input,
@@ -110,8 +124,7 @@ private fun decodeBitmap(contentResolver: ContentResolver, uri: Uri, sampleSize:
 
 private fun decodeRegion(contentResolver: ContentResolver, uri: Uri, bounds: Rect): Bitmap {
     val decoder = try {
-        val input = contentResolver.openInputStream(uri)
-            ?: throw TemplateAssetImportException("The selected file could not be opened")
+        val input = openBoundedImageStream(contentResolver, uri)
         input.use {
             BitmapRegionDecoder.newInstance(input, false)
         } ?: throw TemplateAssetImportException("The selected file does not support region decoding")
@@ -133,6 +146,40 @@ private fun decodeRegion(contentResolver: ContentResolver, uri: Uri, bounds: Rec
     }
 }
 
+private fun openBoundedImageStream(contentResolver: ContentResolver, uri: Uri): InputStream {
+    val input = contentResolver.openInputStream(uri)
+        ?: throw TemplateAssetImportException("The selected file could not be opened")
+    return ByteLimitInputStream(input, MAX_SOURCE_IMAGE_BYTES)
+}
+
+internal class ByteLimitInputStream(
+    input: InputStream,
+    private val maximumBytes: Long,
+) : FilterInputStream(input) {
+    private var consumedBytes = 0L
+
+    init {
+        require(maximumBytes > 0L) { "maximumBytes must be positive" }
+    }
+
+    override fun read(): Int = super.read().also { value ->
+        if (value >= 0) recordRead(1L)
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int = super.read(buffer, offset, length).also { count ->
+        if (count > 0) recordRead(count.toLong())
+    }
+
+    override fun skip(byteCount: Long): Long = super.skip(byteCount).also(::recordRead)
+
+    private fun recordRead(count: Long) {
+        consumedBytes += count
+        if (consumedBytes > maximumBytes) {
+            throw IOException("Image source exceeds its read safety limit")
+        }
+    }
+}
+
 private fun encryptTemplateBitmap(bitmap: Bitmap): BundleAsset = try {
     val pixelCount = bitmap.width.toLong() * bitmap.height
     if (pixelCount > DecodedTemplate.MAX_TEMPLATE_PIXELS) {
@@ -143,7 +190,7 @@ private fun encryptTemplateBitmap(bitmap: Bitmap): BundleAsset = try {
     val decoded = DecodedTemplate(bitmap.width, bitmap.height, rgba)
     val encrypted = try {
         EncryptedTemplateAssetCodec(
-            keySource = AndroidKeystoreKeySource("veyarc.template-assets.v1"),
+            keySource = AndroidKeystoreKeySource(TEMPLATE_ASSET_KEY_ALIAS),
         ).encrypt(
             assetId = assetId,
             template = decoded,

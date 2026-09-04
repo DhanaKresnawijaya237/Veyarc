@@ -60,7 +60,7 @@ Do not support arbitrary jumps, executable scripting, unbounded loops, simultane
 
 Use normalized full-display coordinates. `(0.10, 0.10)` remains 10% from the current screen’s left and top when replaying in the workflow's recorded portrait or landscape orientation. X and Y scale independently to current logical display dimensions. Portrait and landscape are separate workflow variants because app layouts can reflow; Veyarc must refuse cross-orientation replay rather than transform it. A settled 180-degree starting rotation is allowed within the same orientation family. Any physical rotation during recording or replay stops safely. Disallow split-screen and desktop/freeform window modes in the beta.
 
-Persist exportable workflows as `.veyarc` ZIP bundles containing `workflow.json`, `manifest.json`, and encrypted condition-image assets. Maintain an append-only internal JSON Lines journal during recording. Enforce archive entry count, decompressed-size and path-traversal limits during import.
+Persist exportable workflows as `.veyarc` ZIP bundles containing `workflow.json`, `manifest.json`, and encrypted condition-image assets. Maintain an append-only internal JSON Lines journal during recording. Import uses strict UTF-8 and JSON, rejects excessive nesting and document collections, and enforces archive entry count, decompressed-size, declared-size, and path-traversal limits. Manifest hashes and per-asset AES-GCM authentication must pass before a stored workflow can run.
 
 ### Validation and execution
 
@@ -177,7 +177,7 @@ Build a single-activity Compose application with:
 - Run history and diagnostics
 - AI assistant screen added later
 
-Use Room only for workflow metadata, revision indexes and redacted run summaries. Store workflow bodies, raw journals and template assets as AES-GCM encrypted files using a key protected by Android Keystore. Never store screenshots except deliberate template crops.
+Use Room only for workflow metadata, revision indexes and bounded local run diagnostics. Those diagnostics may include action coordinates and declared package names requested by the user, but never screen pixels, variable values or raw exception text. Store workflow bodies, raw journals and template assets as AES-GCM encrypted files using a key protected by Android Keystore. Never store screenshots except deliberate template crops, and never emit workflow identifiers or throwable details to Logcat.
 
 Every workflow declares allowed packages. `LaunchApp` may switch only to a declared package. Unexpected apps, system dialogs, lock screens or permission screens terminate execution.
 

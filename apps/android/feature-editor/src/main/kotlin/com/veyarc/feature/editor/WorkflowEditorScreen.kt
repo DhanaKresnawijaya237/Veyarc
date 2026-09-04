@@ -709,7 +709,7 @@ private fun TemplateAssetSection(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(asset.assetId.value, style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            "${asset.mimeType} · ${asset.bytes.size} encrypted bytes",
+                            "${asset.mimeType} · ${asset.byteLength} encrypted bytes",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

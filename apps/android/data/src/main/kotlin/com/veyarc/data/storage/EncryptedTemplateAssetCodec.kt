@@ -4,6 +4,8 @@ import com.veyarc.model.AssetId
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
+const val TEMPLATE_ASSET_KEY_ALIAS = "veyarc.template-assets.v1"
+
 /**
  * A tightly packed RGBA template held only while an editor or evaluator needs it.
  *
@@ -84,6 +86,11 @@ class EncryptedTemplateAssetCodec(
         } finally {
             plaintext.fill(0)
         }
+    }
+
+    /** Authenticates and validates a stored asset without retaining its decoded pixels. */
+    fun verify(assetId: AssetId, encrypted: ByteArray) {
+        decrypt(assetId, encrypted).clear()
     }
 
     private val codec = AesGcmFileCodec(keySource)
