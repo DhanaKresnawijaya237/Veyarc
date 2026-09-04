@@ -17,6 +17,9 @@ captures/
 # Signing and secrets
 *.jks
 *.keystore
+*.p12
+*.pfx
+*.pkcs12
 secrets.properties
 
 # Operating system files

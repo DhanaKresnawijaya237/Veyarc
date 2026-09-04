@@ -38,6 +38,32 @@ Run the suite once on API 24 or 25 and once on API 33 or newer. API 24 and 25 co
 
 Physical recording, replay, and MediaProjection acceptance remains manual because Android requires user-controlled Accessibility, Shizuku, and screen-capture consent. Use the fixture and cleanup procedure in [`acceptance/README.md`](acceptance/README.md). The instrumentation suite never enables Accessibility or injects input by itself.
 
+## Signed sideload release
+
+Release APKs fail closed unless all signing values are supplied through the process environment. Keep the keystore outside this repository and back it up securely: sideloaded updates must use the same signing key as the installed app.
+
+Set these environment variables without committing or printing their values:
+
+- `VEYARC_RELEASE_STORE_FILE`: absolute path to an external JKS, PKCS12, or compatible keystore
+- `VEYARC_RELEASE_STORE_PASSWORD`: keystore password
+- `VEYARC_RELEASE_KEY_ALIAS`: signing-key alias
+- `VEYARC_RELEASE_KEY_PASSWORD`: signing-key password
+
+Build with Gradle caches disabled so passwords are not retained in project caches:
+
+```powershell
+.\gradlew.bat --no-configuration-cache --no-build-cache :app:assembleRelease
+```
+
+On macOS or Linux, use `./gradlew` with the same flags. The signed APK is written to `app/build/outputs/apk/release/app-release.apk`. Verify it before distribution using the `apksigner` from the installed Android SDK Build Tools:
+
+```powershell
+apksigner verify --verbose --print-certs app\build\outputs\apk\release\app-release.apk
+Get-FileHash app\build\outputs\apk\release\app-release.apk -Algorithm SHA256
+```
+
+The release build rejects missing values, relative or missing keystores, keystores inside the repository, and invocations that leave the Gradle configuration or build cache enabled. Debug and ordinary local verification do not require release credentials.
+
 ## Accessibility gesture spike
 
 The current Phase 0 screen is a manual harness for Android gesture dispatch:

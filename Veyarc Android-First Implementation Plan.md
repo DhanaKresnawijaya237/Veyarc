@@ -224,7 +224,7 @@ Every workflow declares allowed packages. `LaunchApp` may switch only to a decla
    - Add condition authoring, polling, timeouts and template-asset encryption.
 
 6. **Hardening and sideloaded release**
-   - Add signed release builds using a keystore stored outside the repository.
+   - Add signed release builds using a keystore stored outside the repository. Release packaging must fail closed when external signing inputs are missing, invalid, stored inside the repository, or invoked with secret-retaining Gradle caches enabled; it must never fall back to debug signing.
    - Add permission diagnostics, device compatibility reporting, import limits, crash-safe journals and privacy documentation.
    - Produce APK release notes identifying recording as Android 13+ and device-dependent.
 
