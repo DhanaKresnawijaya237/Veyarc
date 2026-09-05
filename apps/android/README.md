@@ -2,6 +2,12 @@
 
 Run commands from this directory with JDK 17 and the Android SDK configured.
 
+User-facing beta documentation:
+
+- [`docs/android-beta-guide.md`](../../docs/android-beta-guide.md): setup, permissions, emergency controls, privacy, and current limits
+- [`docs/android-device-compatibility.md`](../../docs/android-device-compatibility.md): verified devices and Android-version support
+- [`docs/android-beta-v0.1.0-release-notes.md`](../../docs/android-beta-v0.1.0-release-notes.md): technical-beta release notes
+
 ## Local verification
 
 The local gate does not require an emulator or physical device:
@@ -64,9 +70,9 @@ Get-FileHash app\build\outputs\apk\release\app-release.apk -Algorithm SHA256
 
 The release build rejects missing values, relative or missing keystores, keystores inside the repository, and invocations that leave the Gradle configuration or build cache enabled. Debug and ordinary local verification do not require release credentials.
 
-## Accessibility gesture spike
+## Accessibility test screen
 
-The current Phase 0 screen is a manual harness for Android gesture dispatch:
+The accessibility test screen is a manual diagnostic for Android gesture dispatch:
 
 1. Install and open the debug APK.
 2. Select **Open accessibility settings**.
@@ -75,4 +81,4 @@ The current Phase 0 screen is a manual harness for Android gesture dispatch:
 5. Use **Dispatch tap**, **Dispatch hold**, and **Dispatch rectangle**.
 6. Confirm that the test surface reports the corresponding received input and draws the rectangular path.
 
-The spike requests permission to perform gestures but explicitly disables accessibility window-content retrieval. It does not inspect semantic UI content.
+The service can perform gestures and read the active window package for safety checks. Veyarc does not traverse child views or inspect semantic UI content.
