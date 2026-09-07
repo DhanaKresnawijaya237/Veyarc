@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Upsert
 
 @Dao
 internal interface WorkflowDao {
@@ -13,7 +14,7 @@ internal interface WorkflowDao {
     @Query("SELECT * FROM workflows WHERE workflowId = :workflowId")
     fun findWorkflow(workflowId: String): WorkflowEntity?
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Upsert
     fun upsertWorkflow(workflow: WorkflowEntity)
 
     @Query(
