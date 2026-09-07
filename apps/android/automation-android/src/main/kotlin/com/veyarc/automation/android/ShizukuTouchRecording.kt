@@ -269,9 +269,27 @@ class ShizukuTouchRecording(
         mainHandler.post { finishServiceOnMain(generation) }
     }
 
-    fun isReady(): Boolean = !closed && runCatching { Shizuku.pingBinder() }.getOrDefault(false) &&
-        runCatching { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }
-            .getOrDefault(false)
+    /** Returns null when recording may start, otherwise requests missing permission when possible. */
+    fun prepareForRecording(): String? {
+        if (closed) return "The raw-input recorder is closed."
+        if (!runCatching { Shizuku.pingBinder() }.getOrDefault(false)) {
+            return "Start Shizuku before recording."
+        }
+        if (runCatching { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }
+                .getOrDefault(false)
+        ) {
+            return null
+        }
+        if (runCatching { Shizuku.shouldShowRequestPermissionRationale() }.getOrDefault(false)) {
+            return "Open Shizuku, allow Veyarc under Authorized applications, then press Start recording again."
+        }
+        return runCatching {
+            Shizuku.requestPermission(PERMISSION_REQUEST_CODE)
+            "Approve Veyarc in the Shizuku permission prompt, then press Start recording again."
+        }.getOrElse { error ->
+            "Could not request Shizuku permission: ${error.message ?: error.javaClass.simpleName}"
+        }
+    }
 
     override fun close() {
         if (closed) return
@@ -317,6 +335,7 @@ class ShizukuTouchRecording(
     }
 
     private companion object {
+        const val PERMISSION_REQUEST_CODE = 20_428
         const val MIN_DURATION_MILLIS = 1_000L
         const val DEFAULT_DURATION_MILLIS = 60_000L
         const val MAX_DURATION_MILLIS = 5L * 60L * 1_000L

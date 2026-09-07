@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.ViewConfiguration
+import android.widget.Toast
 import com.veyarc.automation.android.AndroidForegroundPackage
 import com.veyarc.automation.android.ControlCenterRecordingState
 import com.veyarc.automation.android.RecordingControllerActions
@@ -222,23 +223,22 @@ class CoordinateRecordingController(
         if (active) return
         val notificationUnavailableReason = RecordingForegroundService.notificationUnavailableReason(appContext)
         if (notificationUnavailableReason != null) {
-            _state.value = CoordinateRecordingState.Unavailable(notificationUnavailableReason)
+            showUnavailable(notificationUnavailableReason)
             return
         }
         val recordingSnapshot = currentRecordingViewportSnapshot(appContext)
         val recordingRotation = recordingSnapshot?.displayRotation
             ?.let(TouchDisplayRotation::fromAndroidRotation)
         if (recordingSnapshot == null || recordingRotation == null) {
-            _state.value = CoordinateRecordingState.Unavailable(
+            showUnavailable(
                 "Recording requires a full-display viewport. Close split-screen or freeform windows and try again.",
             )
             return
         }
         val recordingViewport = recordingSnapshot.viewport
-        if (!source.isReady()) {
-            _state.value = CoordinateRecordingState.Unavailable(
-                "Start Shizuku and grant Veyarc permission before recording.",
-            )
+        val shizukuUnavailableReason = source.prepareForRecording()
+        if (shizukuUnavailableReason != null) {
+            showUnavailable(shizukuUnavailableReason)
             return
         }
 
@@ -258,7 +258,7 @@ class CoordinateRecordingController(
                 codec = AesGcmFileCodec(AndroidKeystoreKeySource()),
             )
         }.getOrElse { error ->
-            _state.value = CoordinateRecordingState.Unavailable(
+            showUnavailable(
                 "Could not create the encrypted recording journal: ${error.message ?: error.javaClass.simpleName}",
             )
             return
@@ -288,7 +288,7 @@ class CoordinateRecordingController(
         stopFailureReason = null
         if (!sessionCleanup.begin()) {
             runCatching { openedJournal.close() }
-            _state.value = CoordinateRecordingState.Unavailable(
+            showUnavailable(
                 "The previous recording is still cleaning up. Try again in a moment.",
             )
             return
@@ -310,6 +310,11 @@ class CoordinateRecordingController(
         } catch (error: Throwable) {
             failImmediately("Could not start recording safely: ${error.message ?: error.javaClass.simpleName}")
         }
+    }
+
+    private fun showUnavailable(reason: String) {
+        _state.value = CoordinateRecordingState.Unavailable(reason)
+        Toast.makeText(appContext, reason, Toast.LENGTH_LONG).show()
     }
 
     private fun startInputSource(durationMillis: Long) {
