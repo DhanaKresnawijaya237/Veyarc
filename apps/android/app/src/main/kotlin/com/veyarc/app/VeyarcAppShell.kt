@@ -25,7 +25,6 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -100,21 +99,6 @@ private fun DestinationIcon(destination: VeyarcDestination) {
         imageVector = destination.icon,
         contentDescription = destination.label,
     )
-}
-
-@Composable
-fun HomeFoundationScreen(
-    onRecord: () -> Unit,
-    onOpenWorkflows: () -> Unit,
-) {
-    FoundationScreen(
-        eyebrow = "VEYARC",
-        title = "Automate what you repeat",
-        body = "Record a workflow, refine its steps, then run it again when you need it.",
-    ) {
-        Button(onClick = onRecord) { Text("Start recording") }
-        OutlinedButton(onClick = onOpenWorkflows) { Text("Open workflows") }
-    }
 }
 
 @Composable

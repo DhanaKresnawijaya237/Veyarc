@@ -88,6 +88,12 @@ class WorkflowRepositoryTest {
             assertEquals(4L, detailed.totalSteps)
             assertEquals("Run started", detailed.eventHistory.first().message)
             assertTrue(detailed.hasStoredDetails)
+            val dashboard = repository.loadRunDashboard()
+            assertEquals(2L, dashboard.totalRuns)
+            assertEquals(2L, dashboard.terminalRuns)
+            assertEquals(0.0, dashboard.completionRate, 0.0)
+            assertEquals(1000L, dashboard.averageFinishedRunDurationMs)
+            assertEquals(listOf(DETAILED_RUN_ID, RUN_ID), dashboard.recentRuns.map { it.runId })
 
             repository.deleteWorkflowFolder(WORKFLOW_FOLDER_ID)
             assertTrue(repository.listWorkflowFolders().isEmpty())

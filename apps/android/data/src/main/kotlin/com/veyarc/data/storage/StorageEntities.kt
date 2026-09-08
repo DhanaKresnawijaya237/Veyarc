@@ -84,3 +84,8 @@ internal data class RunRecordEntity(
     @ColumnInfo(defaultValue = "NULL")
     val folderId: String? = null,
 )
+
+internal data class RunStatusCountRow(
+    val status: String,
+    val count: Long,
+)

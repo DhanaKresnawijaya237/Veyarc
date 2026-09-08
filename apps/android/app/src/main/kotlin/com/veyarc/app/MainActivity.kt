@@ -24,6 +24,7 @@ import com.veyarc.automation.android.ReplayControllerWorkflow
 import com.veyarc.automation.android.ReplayFloatingController
 import com.veyarc.automation.android.ReplayWorkflowCatalog
 import com.veyarc.data.storage.WorkflowRepository
+import com.veyarc.data.storage.WorkflowSummary
 import com.veyarc.feature.editor.WorkflowEditorScreen
 import com.veyarc.feature.recorder.CoordinateRecorderScreen
 import com.veyarc.feature.recorder.CoordinateRecordingRuntime
@@ -137,13 +138,13 @@ class MainActivity : ComponentActivity() {
                                     onDestinationSelected = { selectedDestination = it },
                                 ) {
                                     when (selectedDestination) {
-                                        VeyarcDestination.HOME -> HomeFoundationScreen(
+                                        VeyarcDestination.HOME -> HomeDashboardScreen(
+                                            repository = workflowRepository,
+                                            refreshGeneration = resumeGeneration,
                                             onRecord = {
                                                 fullScreenDestination = FullScreenDestination.RECORDER
                                             },
-                                            onOpenWorkflows = {
-                                                selectedDestination = VeyarcDestination.WORKFLOWS
-                                            },
+                                            onPlayWorkflow = ::playWorkflow,
                                         )
 
                                         VeyarcDestination.WORKFLOWS -> WorkflowEditorScreen(
@@ -205,6 +206,17 @@ class MainActivity : ComponentActivity() {
         runSession.open(bundle)
         workflowToRun = bundle
         if (autoStart) startControllerReplayWhenReady()
+    }
+
+    private fun playWorkflow(workflow: WorkflowSummary) {
+        catalogScope.launch {
+            val bundle = runCatching {
+                withContext(Dispatchers.IO) {
+                    workflowRepository.loadRevision(workflow.workflowId, workflow.latestRevision)
+                }
+            }.getOrNull() ?: return@launch
+            openRunScreen(bundle, autoStart = true)
+        }
     }
 
     /** Starts a controller-requested replay only after recovery and the normal safety checks pass. */

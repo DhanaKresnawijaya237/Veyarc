@@ -62,6 +62,21 @@ data class StoredRunEvent(
     val message: String,
 )
 
+data class RunDashboardSummary(
+    val statusCounts: Map<StoredRunStatus, Long>,
+    val averageFinishedRunDurationMs: Long?,
+    val recentRuns: List<StoredRunRecord>,
+) {
+    val totalRuns: Long = statusCounts.values.sum()
+    val terminalRuns: Long = totalRuns - statusCounts.getOrDefault(StoredRunStatus.RUNNING, 0L)
+    val completionRate: Double =
+        if (terminalRuns == 0L) {
+            0.0
+        } else {
+            statusCounts.getOrDefault(StoredRunStatus.COMPLETED, 0L).toDouble() / terminalRuns
+        }
+}
+
 class WorkflowStorageException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /** Local encrypted workflow storage with Room-backed metadata and revision history. */
@@ -355,6 +370,20 @@ class WorkflowRepository internal constructor(
             "Run history limit must be between 1 and $MAX_HISTORY_LIMIT"
         }
         return database.workflowDao().listAllRunRecords(limit).map(::toStoredRunRecord)
+    }
+
+    fun loadRunDashboard(recentLimit: Int = 20): RunDashboardSummary = synchronized(this) {
+        require(recentLimit in 1..MAX_HISTORY_LIMIT) {
+            "Recent run limit must be between 1 and $MAX_HISTORY_LIMIT"
+        }
+        database.runInTransaction<RunDashboardSummary> {
+            val dao = database.workflowDao()
+            RunDashboardSummary(
+                statusCounts = dao.countRunsByStatus().associate { runStatus(it.status) to it.count },
+                averageFinishedRunDurationMs = dao.averageFinishedRunDurationMs()?.toLong(),
+                recentRuns = dao.listAllRunRecords(recentLimit).map(::toStoredRunRecord),
+            )
+        }
     }
 
     /** Deletes a terminal run record. Running records stay protected until they finish. */

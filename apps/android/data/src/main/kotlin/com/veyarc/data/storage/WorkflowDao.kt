@@ -117,6 +117,15 @@ internal interface WorkflowDao {
     @Query("SELECT * FROM run_records ORDER BY startedAtMs DESC LIMIT :limit")
     fun listAllRunRecords(limit: Int): List<RunRecordEntity>
 
+    @Query("SELECT status, COUNT(*) AS count FROM run_records GROUP BY status")
+    fun countRunsByStatus(): List<RunStatusCountRow>
+
+    @Query(
+        "SELECT AVG(finishedAtMs - startedAtMs) FROM run_records " +
+            "WHERE finishedAtMs IS NOT NULL AND finishedAtMs >= startedAtMs",
+    )
+    fun averageFinishedRunDurationMs(): Double?
+
     @Query(
         "SELECT COUNT(*) FROM run_records " +
             "WHERE workflowId = :workflowId AND status = :status",
