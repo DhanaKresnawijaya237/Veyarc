@@ -7,23 +7,49 @@ import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.CutCornerShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.CallSplit
+import androidx.compose.material.icons.automirrored.outlined.HelpOutline
+import androidx.compose.material.icons.automirrored.outlined.Redo
+import androidx.compose.material.icons.automirrored.outlined.Undo
+import androidx.compose.material.icons.outlined.Apps
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.Loop
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.StopCircle
+import androidx.compose.material.icons.outlined.TouchApp
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -36,9 +62,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,6 +76,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -75,6 +106,7 @@ import kotlinx.coroutines.withContext
 @Composable
 fun WorkflowEditorScreen(
     repository: WorkflowRepository,
+    session: WorkflowEditorSession,
     onRunWorkflow: (WorkflowBundle) -> Unit,
     onOpenWorkflowManager: () -> Unit,
     initialBundle: WorkflowBundle? = null,
@@ -87,13 +119,13 @@ fun WorkflowEditorScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var editingDraft by remember { mutableStateOf<WorkflowDraft?>(null) }
     var isBusy by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var geometryTarget by remember { mutableStateOf<GeometryTarget?>(null) }
     var conditionTarget by remember { mutableStateOf<ConditionTarget?>(null) }
     var pendingTemplateCrop by remember { mutableStateOf<TemplateCropSource?>(null) }
-    var draftDestinationFolderId by remember { mutableStateOf<String?>(null) }
+    var pendingClose by remember { mutableStateOf(false) }
+    var pendingReplacement by remember { mutableStateOf<DraftReplacement?>(null) }
 
     val templatePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -114,34 +146,59 @@ fun WorkflowEditorScreen(
         }
     }
 
+    fun applyReplacement(request: DraftReplacement) {
+        when (request) {
+            is DraftReplacement.Existing -> {
+                session.open(request.bundle, request.journalFileName)
+                statusMessage = "Workflow opened. Saving edits creates the next revision."
+                onInitialBundleConsumed()
+            }
+
+            is DraftReplacement.New -> {
+                session.create(request.viewport, request.folderId)
+                statusMessage = null
+                onNewWorkflowRequestConsumed()
+            }
+        }
+        pendingReplacement = null
+    }
+
+    fun cancelReplacement(request: DraftReplacement) {
+        when (request) {
+            is DraftReplacement.Existing -> onInitialBundleConsumed()
+            is DraftReplacement.New -> onNewWorkflowRequestConsumed()
+        }
+        pendingReplacement = null
+    }
+
     LaunchedEffect(initialBundle, initialRecordingJournalFileName) {
         val bundle = initialBundle ?: return@LaunchedEffect
-        editingDraft = WorkflowDraft.fromBundle(bundle, initialRecordingJournalFileName)
-        draftDestinationFolderId = null
-        statusMessage = "Recording workflow opened. Saving edits creates the next revision."
-        onInitialBundleConsumed()
+        val current = session.draft
+        if (current?.workflowId == bundle.document.id && current.lastSavedRevision == bundle.document.revision) {
+            onInitialBundleConsumed()
+            return@LaunchedEffect
+        }
+        val request = DraftReplacement.Existing(bundle, initialRecordingJournalFileName)
+        if (session.isDirty) pendingReplacement = request else applyReplacement(request)
     }
 
     LaunchedEffect(newWorkflowRequestId) {
         if (newWorkflowRequestId == 0) return@LaunchedEffect
-        editingDraft = WorkflowDraft.newDefault(viewportFor(context))
-        draftDestinationFolderId = newWorkflowFolderId
-        statusMessage = null
-        onNewWorkflowRequestConsumed()
+        val request = DraftReplacement.New(viewportFor(context), newWorkflowFolderId)
+        if (session.isDirty) pendingReplacement = request else applyReplacement(request)
     }
 
     fun saveWorkflow(bundle: WorkflowBundle, afterSave: (() -> Unit)? = null) {
-        val sourceJournalFileName = editingDraft?.recordingJournalFileName
+        val sourceJournalFileName = session.draft?.recordingJournalFileName
         scope.launch {
             isBusy = true
             statusMessage = null
             runCatching {
                 withContext(Dispatchers.IO) {
-                    repository.saveRevision(bundle, draftDestinationFolderId)
+                    repository.saveRevision(bundle, session.destinationFolderId)
                 }
             }.onSuccess {
-                editingDraft = WorkflowDraft.fromBundle(bundle, sourceJournalFileName)
-                draftDestinationFolderId = null
+                session.markSaved(WorkflowDraft.fromBundle(bundle, sourceJournalFileName))
                 statusMessage = "Saved revision ${bundle.document.revision}."
                 afterSave?.invoke()
             }.onFailure { error ->
@@ -155,35 +212,44 @@ fun WorkflowEditorScreen(
         saveWorkflow(bundle) { onRunWorkflow(bundle) }
     }
 
-    fun closeDraft() {
+    fun discardDraft() {
         geometryTarget = null
-        editingDraft = null
-        draftDestinationFolderId = null
+        conditionTarget = null
+        session.close()
+        pendingClose = false
     }
 
-    val draft = editingDraft
+    fun requestCloseDraft() {
+        if (session.isDirty) pendingClose = true else discardDraft()
+    }
+
+    val draft = session.draft
     if (draft == null) {
         EmptyWorkflowEditorScreen(
             onCreate = {
-                editingDraft = WorkflowDraft.newDefault(viewportFor(context))
-                draftDestinationFolderId = null
+                session.create(viewportFor(context))
                 statusMessage = null
             },
             onOpenWorkflowManager = onOpenWorkflowManager,
             modifier = modifier,
         )
     } else {
-        BackHandler { closeDraft() }
+        BackHandler { requestCloseDraft() }
         val validation = remember(draft) { draft.buildBundle() }
         WorkflowDraftScreen(
             draft = draft,
             validation = validation,
             isBusy = isBusy,
             statusMessage = statusMessage,
-            onDraftChange = { editingDraft = it },
-            onBack = ::closeDraft,
+            session = session,
+            onDraftChange = session::update,
+            onBack = ::requestCloseDraft,
             onSave = { bundle -> saveWorkflow(bundle) },
             onRun = ::saveAndRun,
+            onValidate = {
+                statusMessage = validation.issues.firstOrNull()?.let { "${it.path}: ${it.message}" }
+                    ?: "Workflow is valid."
+            },
             onEditGeometry = { path, index -> geometryTarget = GeometryTarget(path, index) },
             onEditCondition = { path, index -> conditionTarget = ConditionTarget(path, index) },
             onAddTemplate = { templatePicker.launch("image/*") },
@@ -198,7 +264,7 @@ fun WorkflowEditorScreen(
                     maxPathPoints = draft.runLimits.maxPathPoints,
                     onDismiss = { geometryTarget = null },
                     onApply = { updatedStep ->
-                        editingDraft = draft.updateStep(target.path, target.index) { updatedStep }
+                        session.update(draft.updateStep(target.path, target.index) { updatedStep })
                         geometryTarget = null
                     },
                 )
@@ -218,9 +284,11 @@ fun WorkflowEditorScreen(
                     previewHeightPx = previewViewport.recordedHeightPx,
                     onDismiss = { conditionTarget = null },
                     onApply = { updatedCondition, removedAssetIds ->
-                        editingDraft = removedAssetIds.fold(
-                            draft.updateCondition(target.path, target.index) { updatedCondition },
-                        ) { currentDraft, assetId -> currentDraft.removeAsset(assetId) }
+                        session.update(
+                            removedAssetIds.fold(
+                                draft.updateCondition(target.path, target.index) { updatedCondition },
+                            ) { currentDraft, assetId -> currentDraft.removeAsset(assetId) },
+                        )
                         conditionTarget = null
                     },
                 )
@@ -240,7 +308,7 @@ fun WorkflowEditorScreen(
                             importTemplateAsset(context.contentResolver, source.uri, crop)
                         }
                     }.onSuccess { asset ->
-                        editingDraft = editingDraft?.addAsset(asset)
+                        session.draft?.addAsset(asset)?.let(session::update)
                         pendingTemplateCrop = null
                         statusMessage = "Encrypted cropped image template added. Select it from the image condition."
                     }.onFailure { error ->
@@ -251,6 +319,61 @@ fun WorkflowEditorScreen(
             },
         )
     }
+
+    val currentValidation = session.draft?.buildBundle()
+    if (pendingClose) {
+        UnsavedDraftDialog(
+            title = "Close this workflow?",
+            validation = currentValidation,
+            isBusy = isBusy,
+            onSave = { currentValidation?.bundle?.let { saveWorkflow(it, ::discardDraft) } },
+            onDiscard = ::discardDraft,
+            onCancel = { pendingClose = false },
+        )
+    }
+    pendingReplacement?.let { request ->
+        UnsavedDraftDialog(
+            title = "Replace unsaved changes?",
+            validation = currentValidation,
+            isBusy = isBusy,
+            onSave = { currentValidation?.bundle?.let { saveWorkflow(it) { applyReplacement(request) } } },
+            onDiscard = { applyReplacement(request) },
+            onCancel = { cancelReplacement(request) },
+        )
+    }
+}
+
+private sealed interface DraftReplacement {
+    data class Existing(val bundle: WorkflowBundle, val journalFileName: String?) : DraftReplacement
+
+    data class New(val viewport: com.veyarc.model.ViewportSpec, val folderId: String?) : DraftReplacement
+}
+
+@Composable
+private fun UnsavedDraftDialog(
+    title: String,
+    validation: DraftBuildResult?,
+    isBusy: Boolean,
+    onSave: () -> Unit,
+    onDiscard: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text(title) },
+        text = { Text("Save this revision, discard the changes, or keep editing.") },
+        confirmButton = {
+            TextButton(onClick = onSave, enabled = !isBusy && validation?.bundle != null) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onDiscard, enabled = !isBusy) { Text("Discard") }
+                TextButton(onClick = onCancel, enabled = !isBusy) { Text("Keep editing") }
+            }
+        },
+    )
 }
 
 private data class GeometryTarget(
@@ -303,93 +426,269 @@ private fun WorkflowDraftScreen(
     validation: DraftBuildResult,
     isBusy: Boolean,
     statusMessage: String?,
+    session: WorkflowEditorSession,
     onDraftChange: (WorkflowDraft) -> Unit,
     onBack: () -> Unit,
     onSave: (WorkflowBundle) -> Unit,
     onRun: (WorkflowBundle) -> Unit,
+    onValidate: () -> Unit,
     onEditGeometry: (StepListPath, Int) -> Unit,
     onEditCondition: (StepListPath, Int) -> Unit,
     onAddTemplate: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var selection by remember { mutableStateOf<BlockSelection?>(null) }
     Scaffold(
         modifier = modifier,
         topBar = {
             TopAppBar(
-                title = { Text(draft.name.ifBlank { "Workflow editor" }) },
-                navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
-                actions = {
-                    TextButton(
-                        enabled = !isBusy && validation.bundle != null,
-                        onClick = { validation.bundle?.let(onSave) },
-                    ) {
-                        Text("Save v${draft.nextRevision}")
-                    }
-                    TextButton(
-                        enabled = !isBusy && validation.bundle != null,
-                        onClick = { validation.bundle?.let(onRun) },
-                    ) {
-                        Text("Review & run")
-                    }
+                title = {
+                    Text(
+                        buildString {
+                            append(draft.name.ifBlank { "Workflow editor" })
+                            if (session.isDirty) append(" •")
+                        },
+                    )
                 },
+                navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
             )
         },
     ) { padding ->
-        Column(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing)
-                .verticalScroll(rememberScrollState())
-                .padding(padding)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(padding),
         ) {
-            OutlinedTextField(
-                value = draft.name,
-                onValueChange = { onDraftChange(draft.copy(name = it)) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Workflow name") },
-                singleLine = true,
-            )
-            OutlinedTextField(
-                value = draft.allowedPackagesText,
-                onValueChange = { onDraftChange(draft.copy(allowedPackagesText = it)) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Allowed Android packages") },
-                supportingText = { Text("Separate packages with commas or spaces. If opening another app, make Launch app the first block.") },
-                singleLine = true,
-            )
+            val wide = maxWidth >= 840.dp
+            if (wide) {
+                Row(modifier = Modifier.fillMaxSize()) {
+                    WorkflowDraftCanvas(
+                        draft = draft,
+                        validation = validation,
+                        session = session,
+                        isBusy = isBusy,
+                        statusMessage = statusMessage,
+                        selection = selection,
+                        showInlineInspector = false,
+                        onSelectionChange = { selection = it },
+                        onDraftChange = onDraftChange,
+                        onSave = onSave,
+                        onRun = onRun,
+                        onValidate = onValidate,
+                        onEditGeometry = onEditGeometry,
+                        onEditCondition = onEditCondition,
+                        onAddTemplate = onAddTemplate,
+                        modifier = Modifier.weight(0.62f),
+                    )
+                    VerticalDivider()
+                    BlockInspector(
+                        draft = draft,
+                        selection = selection,
+                        onDraftChange = onDraftChange,
+                        onEditGeometry = onEditGeometry,
+                        onEditCondition = onEditCondition,
+                        modifier = Modifier.weight(0.38f),
+                    )
+                }
+            } else {
+                WorkflowDraftCanvas(
+                    draft = draft,
+                    validation = validation,
+                    session = session,
+                    isBusy = isBusy,
+                    statusMessage = statusMessage,
+                    selection = selection,
+                    showInlineInspector = true,
+                    onSelectionChange = { selection = it },
+                    onDraftChange = onDraftChange,
+                    onSave = onSave,
+                    onRun = onRun,
+                    onValidate = onValidate,
+                    onEditGeometry = onEditGeometry,
+                    onEditCondition = onEditCondition,
+                    onAddTemplate = onAddTemplate,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+    }
+}
+
+private data class BlockSelection(val path: StepListPath, val stepId: String)
+
+@Composable
+private fun WorkflowDraftCanvas(
+    draft: WorkflowDraft,
+    validation: DraftBuildResult,
+    session: WorkflowEditorSession,
+    isBusy: Boolean,
+    statusMessage: String?,
+    selection: BlockSelection?,
+    showInlineInspector: Boolean,
+    onSelectionChange: (BlockSelection) -> Unit,
+    onDraftChange: (WorkflowDraft) -> Unit,
+    onSave: (WorkflowBundle) -> Unit,
+    onRun: (WorkflowBundle) -> Unit,
+    onValidate: () -> Unit,
+    onEditGeometry: (StepListPath, Int) -> Unit,
+    onEditCondition: (StepListPath, Int) -> Unit,
+    onAddTemplate: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        EditorToolbar(
+            draft = draft,
+            session = session,
+            validation = validation,
+            isBusy = isBusy,
+            onSave = onSave,
+            onRun = onRun,
+            onValidate = onValidate,
+        )
+        OutlinedTextField(
+            value = draft.name,
+            onValueChange = { onDraftChange(draft.copy(name = it)) },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Workflow name") },
+            singleLine = true,
+        )
+        OutlinedTextField(
+            value = draft.allowedPackagesText,
+            onValueChange = { onDraftChange(draft.copy(allowedPackagesText = it)) },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Allowed Android packages") },
+            supportingText = { Text("Separate packages with commas or spaces. Use Launch app first when the workflow opens another app.") },
+            singleLine = true,
+        )
+        draft.recordingJournalFileName?.let { journalFileName ->
             Text(
-                "${draft.lastSavedRevision?.let { "Saved revision $it" } ?: "New workflow"} · next save is revision ${draft.nextRevision}",
+                "Imported from encrypted recording: $journalFileName",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            draft.recordingJournalFileName?.let { journalFileName ->
-                Text(
-                    "Imported from encrypted recording: $journalFileName",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            ValidationCard(validation = validation)
-            TemplateAssetSection(
-                assets = draft.assets,
-                onAddTemplate = onAddTemplate,
-                onRemoveTemplate = { assetId -> onDraftChange(draft.removeAsset(assetId)) },
+        }
+        ValidationCard(validation = validation)
+        TemplateAssetSection(
+            assets = draft.assets,
+            onAddTemplate = onAddTemplate,
+            onRemoveTemplate = { assetId -> onDraftChange(draft.removeAsset(assetId)) },
+        )
+        HorizontalDivider()
+        Text("Execution", style = MaterialTheme.typography.titleLarge)
+        StepListEditor(
+            draft = draft,
+            path = StepListPath(),
+            heading = "Start",
+            validation = validation,
+            selection = selection,
+            showInlineInspector = showInlineInspector,
+            onSelectionChange = onSelectionChange,
+            onDraftChange = onDraftChange,
+            onEditGeometry = onEditGeometry,
+            onEditCondition = onEditCondition,
+        )
+        statusMessage?.let { message -> Text(message, color = MaterialTheme.colorScheme.primary) }
+    }
+}
+
+@Composable
+private fun EditorToolbar(
+    draft: WorkflowDraft,
+    session: WorkflowEditorSession,
+    validation: DraftBuildResult,
+    isBusy: Boolean,
+    onSave: (WorkflowBundle) -> Unit,
+    onRun: (WorkflowBundle) -> Unit,
+    onValidate: () -> Unit,
+) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        item {
+            EditorBadge(draft.viewport.recordedOrientation.name.lowercase().replaceFirstChar(Char::uppercase))
+        }
+        item {
+            EditorBadge(
+                draft.lastSavedRevision?.let { revision ->
+                    "Revision $revision" + if (session.isDirty) " • edited" else ""
+                } ?: "Unsaved workflow",
             )
-            HorizontalDivider()
-            Text("Blocks", style = MaterialTheme.typography.titleLarge)
-            StepListEditor(
+        }
+        item {
+            OutlinedButton(onClick = session::undo, enabled = session.canUndo && !isBusy) {
+                Icon(Icons.AutoMirrored.Outlined.Undo, contentDescription = null)
+                Text("Undo")
+            }
+        }
+        item {
+            OutlinedButton(onClick = session::redo, enabled = session.canRedo && !isBusy) {
+                Icon(Icons.AutoMirrored.Outlined.Redo, contentDescription = null)
+                Text("Redo")
+            }
+        }
+        item {
+            OutlinedButton(onClick = onValidate, enabled = !isBusy) {
+                Icon(Icons.Outlined.CheckCircle, contentDescription = null)
+                Text("Validate")
+            }
+        }
+        item {
+            Button(
+                onClick = { validation.bundle?.let(onSave) },
+                enabled = !isBusy && validation.bundle != null && session.isDirty,
+            ) { Text("Save v${draft.nextRevision}") }
+        }
+        item {
+            OutlinedButton(
+                onClick = { validation.bundle?.let(onRun) },
+                enabled = !isBusy && validation.bundle != null,
+            ) { Text("Run") }
+        }
+    }
+}
+
+@Composable
+private fun EditorBadge(text: String) {
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Text(text, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+    }
+}
+
+@Composable
+private fun BlockInspector(
+    draft: WorkflowDraft,
+    selection: BlockSelection?,
+    onDraftChange: (WorkflowDraft) -> Unit,
+    onEditGeometry: (StepListPath, Int) -> Unit,
+    onEditCondition: (StepListPath, Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val index = selection?.let { selected -> draft.stepsAt(selected.path).indexOfFirst { it.id == selected.stepId } } ?: -1
+    val step = selection?.let { draft.stepsAt(it.path).getOrNull(index) }
+    Column(
+        modifier = modifier.fillMaxHeight().verticalScroll(rememberScrollState()).padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Block inspector", style = MaterialTheme.typography.titleLarge)
+        if (selection == null || step == null) {
+            Text("Select a block to edit its fields.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            Text(step.displayName(), style = MaterialTheme.typography.titleMedium)
+            Text(step.summary(), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            StepEditorFields(
                 draft = draft,
-                path = StepListPath(),
-                heading = "Main sequence",
+                path = selection.path,
+                index = index,
+                step = step,
                 onDraftChange = onDraftChange,
                 onEditGeometry = onEditGeometry,
                 onEditCondition = onEditCondition,
             )
-            statusMessage?.let { message ->
-                Text(message, color = MaterialTheme.colorScheme.primary)
-            }
         }
     }
 }
@@ -467,6 +766,10 @@ private fun StepListEditor(
     draft: WorkflowDraft,
     path: StepListPath,
     heading: String,
+    validation: DraftBuildResult,
+    selection: BlockSelection?,
+    showInlineInspector: Boolean,
+    onSelectionChange: (BlockSelection) -> Unit,
     onDraftChange: (WorkflowDraft) -> Unit,
     onEditGeometry: (StepListPath, Int) -> Unit,
     onEditCondition: (StepListPath, Int) -> Unit,
@@ -481,11 +784,19 @@ private fun StepListEditor(
             )
         }
         steps.forEachIndexed { index, step ->
+            val issuePrefix = draft.modelPath(path, index)
             StepCard(
                 draft = draft,
                 path = path,
                 index = index,
                 step = step,
+                validation = validation,
+                issues = validation.issues.filter { issue ->
+                    issue.path == issuePrefix || issue.path.startsWith("$issuePrefix/")
+                },
+                selection = selection,
+                showInlineInspector = showInlineInspector,
+                onSelectionChange = onSelectionChange,
                 onDraftChange = onDraftChange,
                 onEditGeometry = onEditGeometry,
                 onEditCondition = onEditCondition,
@@ -504,64 +815,293 @@ private fun StepCard(
     path: StepListPath,
     index: Int,
     step: WorkflowStep,
+    validation: DraftBuildResult,
+    issues: List<DraftIssue>,
+    selection: BlockSelection?,
+    showInlineInspector: Boolean,
+    onSelectionChange: (BlockSelection) -> Unit,
     onDraftChange: (WorkflowDraft) -> Unit,
     onEditGeometry: (StepListPath, Int) -> Unit,
     onEditCondition: (StepListPath, Int) -> Unit,
 ) {
     val expanded = step.id !in draft.collapsedStepIds
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+    val category = step.blockCategory()
+    val accent = category.accent()
+    val selected = selection?.stepId == step.id
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(start = 30.dp).clickable { onSelectionChange(BlockSelection(path, step.id)) },
+            shape = category.shape(),
+            colors = CardDefaults.cardColors(containerColor = category.containerColor()),
+            border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(
-                    "${index + 1}. ${step.displayName()}",
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                IconButton(
-                    enabled = index > 0,
-                    onClick = { onDraftChange(draft.moveStep(path, index, -1)) },
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = "Move block up")
+                    Icon(category.icon, contentDescription = null, tint = accent)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(category.label.uppercase(), color = accent, style = MaterialTheme.typography.labelSmall)
+                        Text("${index + 1}. ${step.displayName()}", style = MaterialTheme.typography.titleSmall)
+                    }
+                    IconButton(onClick = { onDraftChange(draft.toggleCollapsed(step.id)) }) {
+                        Icon(
+                            if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                            contentDescription = if (expanded) "Collapse block" else "Expand block",
+                        )
+                    }
                 }
-                IconButton(
-                    enabled = index < draft.stepsAt(path).lastIndex,
-                    onClick = { onDraftChange(draft.moveStep(path, index, 1)) },
-                ) {
-                    Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "Move block down")
+                Text(step.summary(), style = MaterialTheme.typography.bodyMedium)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    item {
+                        TextButton(
+                            enabled = index > 0,
+                            onClick = { onDraftChange(draft.moveStep(path, index, -1)) },
+                        ) {
+                            Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = null)
+                            Text("Move up")
+                        }
+                    }
+                    item {
+                        TextButton(
+                            enabled = index < draft.stepsAt(path).lastIndex,
+                            onClick = { onDraftChange(draft.moveStep(path, index, 1)) },
+                        ) {
+                            Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
+                            Text("Move down")
+                        }
+                    }
+                    item {
+                        TextButton(onClick = { onDraftChange(draft.removeStep(path, index)) }) {
+                            Icon(Icons.Outlined.Delete, contentDescription = null)
+                            Text("Remove")
+                        }
+                    }
                 }
-                IconButton(
-                    onClick = { onDraftChange(draft.removeStep(path, index)) },
-                ) {
-                    Icon(Icons.Outlined.Delete, contentDescription = "Remove block")
+                issues.forEach { issue ->
+                    Text(issue.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 }
-                TextButton(onClick = { onDraftChange(draft.toggleCollapsed(step.id)) }) {
-                    Text(if (expanded) "Collapse" else "Expand")
+                if (expanded && showInlineInspector) {
+                    StepEditorFields(
+                        draft = draft,
+                        path = path,
+                        index = index,
+                        step = step,
+                        onDraftChange = onDraftChange,
+                        onEditGeometry = onEditGeometry,
+                        onEditCondition = onEditCondition,
+                    )
                 }
-            }
-            Text(step.summary(), style = MaterialTheme.typography.bodyMedium)
-            if (expanded) {
-                StepEditorFields(
-                    draft = draft,
-                    path = path,
-                    index = index,
-                    step = step,
-                    onDraftChange = onDraftChange,
-                    onEditGeometry = onEditGeometry,
-                    onEditCondition = onEditCondition,
-                )
+                if (expanded) {
+                    NestedStepLists(
+                        draft = draft,
+                        path = path,
+                        step = step,
+                        validation = validation,
+                        selection = selection,
+                        showInlineInspector = showInlineInspector,
+                        onSelectionChange = onSelectionChange,
+                        onDraftChange = onDraftChange,
+                        onEditGeometry = onEditGeometry,
+                        onEditCondition = onEditCondition,
+                    )
+                }
             }
         }
+        Box(modifier = Modifier.matchParentSize()) {
+            ExecutionRail(
+                accent = accent,
+                terminal = step is Stop,
+                modifier = Modifier.align(Alignment.TopStart).width(30.dp).fillMaxHeight(),
+            )
+        }
     }
+}
+
+@Composable
+private fun ExecutionRail(accent: Color, terminal: Boolean, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(Modifier.size(11.dp).background(accent, CircleShape))
+        Box(Modifier.width(2.dp).weight(1f).background(accent))
+        if (!terminal) Box(Modifier.size(11.dp).background(accent, CircleShape))
+    }
+}
+
+@Composable
+private fun NestedStepLists(
+    draft: WorkflowDraft,
+    path: StepListPath,
+    step: WorkflowStep,
+    validation: DraftBuildResult,
+    selection: BlockSelection?,
+    showInlineInspector: Boolean,
+    onSelectionChange: (BlockSelection) -> Unit,
+    onDraftChange: (WorkflowDraft) -> Unit,
+    onEditGeometry: (StepListPath, Int) -> Unit,
+    onEditCondition: (StepListPath, Int) -> Unit,
+) {
+    when (step) {
+        is Repeat -> BranchTray(
+            draft = draft,
+            path = path.child(step.id, NestedBranch.REPEAT_BODY),
+            heading = "Repeat body",
+            validation = validation,
+            selection = selection,
+            showInlineInspector = showInlineInspector,
+            onSelectionChange = onSelectionChange,
+            onDraftChange = onDraftChange,
+            onEditGeometry = onEditGeometry,
+            onEditCondition = onEditCondition,
+        )
+
+        is WhileStep -> BranchTray(
+            draft = draft,
+            path = path.child(step.id, NestedBranch.WHILE_BODY),
+            heading = "While body",
+            validation = validation,
+            selection = selection,
+            showInlineInspector = showInlineInspector,
+            onSelectionChange = onSelectionChange,
+            onDraftChange = onDraftChange,
+            onEditGeometry = onEditGeometry,
+            onEditCondition = onEditCondition,
+        )
+
+        is IfElse -> {
+            BranchTray(
+                draft = draft,
+                path = path.child(step.id, NestedBranch.IF_THEN),
+                heading = "Then",
+                validation = validation,
+                selection = selection,
+                showInlineInspector = showInlineInspector,
+                onSelectionChange = onSelectionChange,
+                onDraftChange = onDraftChange,
+                onEditGeometry = onEditGeometry,
+                onEditCondition = onEditCondition,
+            )
+            BranchTray(
+                draft = draft,
+                path = path.child(step.id, NestedBranch.IF_ELSE),
+                heading = "Else",
+                validation = validation,
+                selection = selection,
+                showInlineInspector = showInlineInspector,
+                onSelectionChange = onSelectionChange,
+                onDraftChange = onDraftChange,
+                onEditGeometry = onEditGeometry,
+                onEditCondition = onEditCondition,
+            )
+        }
+
+        else -> Unit
+    }
+}
+
+@Composable
+private fun BranchTray(
+    draft: WorkflowDraft,
+    path: StepListPath,
+    heading: String,
+    validation: DraftBuildResult,
+    selection: BlockSelection?,
+    showInlineInspector: Boolean,
+    onSelectionChange: (BlockSelection) -> Unit,
+    onDraftChange: (WorkflowDraft) -> Unit,
+    onEditGeometry: (StepListPath, Int) -> Unit,
+    onEditCondition: (StepListPath, Int) -> Unit,
+) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))) {
+        Box(modifier = Modifier.padding(10.dp)) {
+            StepListEditor(
+                draft = draft,
+                path = path,
+                heading = heading,
+                validation = validation,
+                selection = selection,
+                showInlineInspector = showInlineInspector,
+                onSelectionChange = onSelectionChange,
+                onDraftChange = onDraftChange,
+                onEditGeometry = onEditGeometry,
+                onEditCondition = onEditCondition,
+            )
+        }
+    }
+}
+
+private enum class BlockCategory(val label: String, val icon: ImageVector) {
+    ACTION("Action", Icons.Outlined.TouchApp),
+    TIMING("Timing", Icons.Outlined.Schedule),
+    CONDITION("Condition", Icons.AutoMirrored.Outlined.HelpOutline),
+    BRANCH("Branch", Icons.AutoMirrored.Outlined.CallSplit),
+    LOOP("Loop", Icons.Outlined.Loop),
+    APP("App", Icons.Outlined.Apps),
+    STOP("Stop", Icons.Outlined.StopCircle),
+}
+
+private fun WorkflowStep.blockCategory(): BlockCategory = when (this) {
+    is TapPoint, is TapRegion, is LongPress, is SwipePath -> BlockCategory.ACTION
+    is Wait -> BlockCategory.TIMING
+    is WaitUntil -> BlockCategory.CONDITION
+    is IfElse -> BlockCategory.BRANCH
+    is Repeat, is WhileStep -> BlockCategory.LOOP
+    is LaunchApp -> BlockCategory.APP
+    is Stop -> BlockCategory.STOP
+    else -> BlockCategory.ACTION
+}
+
+@Composable
+private fun BlockCategory.accent(): Color = when (this) {
+    BlockCategory.ACTION -> MaterialTheme.colorScheme.primary
+    BlockCategory.TIMING -> MaterialTheme.colorScheme.tertiary
+    BlockCategory.CONDITION -> MaterialTheme.colorScheme.secondary
+    BlockCategory.BRANCH -> MaterialTheme.colorScheme.primary
+    BlockCategory.LOOP -> MaterialTheme.colorScheme.tertiary
+    BlockCategory.APP -> MaterialTheme.colorScheme.secondary
+    BlockCategory.STOP -> MaterialTheme.colorScheme.error
+}
+
+@Composable
+private fun BlockCategory.containerColor(): Color = accent().copy(alpha = 0.14f)
+
+private fun BlockCategory.shape(): Shape = when (this) {
+    BlockCategory.CONDITION, BlockCategory.BRANCH -> CutCornerShape(topStart = 18.dp, bottomStart = 18.dp)
+    BlockCategory.LOOP -> RoundedCornerShape(22.dp)
+    BlockCategory.STOP -> RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 4.dp, bottomEnd = 4.dp)
+    else -> RoundedCornerShape(14.dp)
+}
+
+private fun WorkflowDraft.modelPath(path: StepListPath, index: Int): String {
+    var current = steps
+    var prefix = "/steps"
+    path.segments.forEach { segment ->
+        val parentIndex = current.indexOfFirst { it.id == segment.parentId }
+        if (parentIndex < 0) return "$prefix/$index"
+        val parent = current[parentIndex]
+        val childName = when (segment.branch) {
+            NestedBranch.REPEAT_BODY, NestedBranch.WHILE_BODY -> "bodySteps"
+            NestedBranch.IF_THEN -> "thenSteps"
+            NestedBranch.IF_ELSE -> "elseSteps"
+        }
+        prefix = "$prefix/$parentIndex/$childName"
+        current = parent.childrenForEditor(segment.branch)
+    }
+    return "$prefix/$index"
+}
+
+private fun WorkflowStep.childrenForEditor(branch: NestedBranch): List<WorkflowStep> = when (branch) {
+    NestedBranch.REPEAT_BODY -> (this as? Repeat)?.bodySteps.orEmpty()
+    NestedBranch.WHILE_BODY -> (this as? WhileStep)?.bodySteps.orEmpty()
+    NestedBranch.IF_THEN -> (this as? IfElse)?.thenSteps.orEmpty()
+    NestedBranch.IF_ELSE -> (this as? IfElse)?.elseSteps.orEmpty()
 }
 
 @Composable
@@ -601,14 +1141,6 @@ private fun StepEditorFields(
                     }
                 },
             )
-            StepListEditor(
-                draft = draft,
-                path = path.child(step.id, NestedBranch.REPEAT_BODY),
-                heading = "Repeat body",
-                onDraftChange = onDraftChange,
-                onEditGeometry = onEditGeometry,
-                onEditCondition = onEditCondition,
-            )
         }
 
         is WhileStep -> {
@@ -622,34 +1154,10 @@ private fun StepEditorFields(
                     }
                 },
             )
-            StepListEditor(
-                draft = draft,
-                path = path.child(step.id, NestedBranch.WHILE_BODY),
-                heading = "While body",
-                onDraftChange = onDraftChange,
-                onEditGeometry = onEditGeometry,
-                onEditCondition = onEditCondition,
-            )
         }
 
         is IfElse -> {
             OutlinedButton(onClick = { onEditCondition(path, index) }) { Text("Edit condition") }
-            StepListEditor(
-                draft = draft,
-                path = path.child(step.id, NestedBranch.IF_THEN),
-                heading = "Then branch",
-                onDraftChange = onDraftChange,
-                onEditGeometry = onEditGeometry,
-                onEditCondition = onEditCondition,
-            )
-            StepListEditor(
-                draft = draft,
-                path = path.child(step.id, NestedBranch.IF_ELSE),
-                heading = "Else branch",
-                onDraftChange = onDraftChange,
-                onEditGeometry = onEditGeometry,
-                onEditCondition = onEditCondition,
-            )
         }
 
         is TapPoint,

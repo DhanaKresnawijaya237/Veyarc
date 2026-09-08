@@ -8,12 +8,37 @@ import com.veyarc.model.SwipePath
 import com.veyarc.model.TapPoint
 import com.veyarc.model.WaitUntil
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WorkflowEditorStateTest {
+    @Test
+    fun editorSessionTracksDirtyStateAndUndoWithoutTreatingCollapseAsContent() {
+        val original = WorkflowDraft.newDefault()
+        val bundle = original.buildBundle().bundle ?: error("Expected a valid draft")
+        val session = WorkflowEditorSession()
+        session.open(bundle)
+
+        assertFalse(session.isDirty)
+        session.update(session.draft!!.toggleCollapsed(session.draft!!.steps.first().id))
+        assertFalse(session.isDirty)
+
+        session.update(session.draft!!.copy(name = "Changed"))
+        assertTrue(session.isDirty)
+        assertTrue(session.canUndo)
+        session.undo()
+        assertFalse(session.isDirty)
+        session.redo()
+        assertTrue(session.isDirty)
+
+        session.markSaved(session.draft!!)
+        assertFalse(session.isDirty)
+        assertFalse(session.canUndo)
+    }
+
     @Test
     fun newDraftBuildsAValidFirstRevision() {
         val draft = WorkflowDraft.newDefault()

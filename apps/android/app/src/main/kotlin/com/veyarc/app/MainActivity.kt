@@ -26,6 +26,7 @@ import com.veyarc.automation.android.ReplayWorkflowCatalog
 import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowSummary
 import com.veyarc.feature.editor.WorkflowEditorScreen
+import com.veyarc.feature.editor.WorkflowEditorSession
 import com.veyarc.feature.recorder.CoordinateRecorderScreen
 import com.veyarc.feature.recorder.CoordinateRecordingRuntime
 import com.veyarc.feature.runner.AccessibilitySpikeScreen
@@ -60,6 +61,9 @@ class MainActivity : ComponentActivity() {
         get() = runSession.repository
     private val recordingSession: MainRecordingSession by lazy {
         ViewModelProvider(this)[MainRecordingSession::class.java]
+    }
+    private val editorSession: MainEditorSession by lazy {
+        ViewModelProvider(this)[MainEditorSession::class.java]
     }
     private val catalogScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -175,6 +179,7 @@ class MainActivity : ComponentActivity() {
 
                                         VeyarcDestination.EDITOR -> WorkflowEditorScreen(
                                             repository = workflowRepository,
+                                            session = editorSession.state,
                                             onRunWorkflow = ::openRunScreen,
                                             onOpenWorkflowManager = {
                                                 selectedDestination = VeyarcDestination.WORKFLOWS
@@ -406,4 +411,8 @@ class MainRecordingSession(application: Application) : AndroidViewModel(applicat
         CoordinateRecordingRuntime.close()
         super.onCleared()
     }
+}
+
+class MainEditorSession : ViewModel() {
+    val state = WorkflowEditorSession()
 }

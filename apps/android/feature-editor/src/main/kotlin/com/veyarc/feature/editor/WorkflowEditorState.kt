@@ -1,5 +1,8 @@
 package com.veyarc.feature.editor
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import com.veyarc.model.AndCondition
 import com.veyarc.model.AssetReference
 import com.veyarc.model.Condition
@@ -79,6 +82,82 @@ data class DraftBuildResult(
     val bundle: WorkflowBundle?,
     val issues: List<DraftIssue>,
 )
+
+class WorkflowEditorSession {
+    var draft by mutableStateOf<WorkflowDraft?>(null)
+        private set
+    var destinationFolderId by mutableStateOf<String?>(null)
+        private set
+    private var savedDraft by mutableStateOf<WorkflowDraft?>(null)
+    private var undoStack by mutableStateOf<List<WorkflowDraft>>(emptyList())
+    private var redoStack by mutableStateOf<List<WorkflowDraft>>(emptyList())
+
+    val isDirty: Boolean
+        get() = draft?.persistedContent() != savedDraft?.persistedContent()
+    val canUndo: Boolean
+        get() = undoStack.isNotEmpty()
+    val canRedo: Boolean
+        get() = redoStack.isNotEmpty()
+
+    fun create(viewport: ViewportSpec, folderId: String? = null) {
+        draft = WorkflowDraft.newDefault(viewport)
+        destinationFolderId = folderId
+        savedDraft = null
+        clearHistory()
+    }
+
+    fun open(bundle: WorkflowBundle, recordingJournalFileName: String? = null) {
+        val opened = WorkflowDraft.fromBundle(bundle, recordingJournalFileName)
+        draft = opened
+        destinationFolderId = null
+        savedDraft = opened
+        clearHistory()
+    }
+
+    fun update(updated: WorkflowDraft) {
+        val current = draft ?: return
+        if (current.persistedContent() != updated.persistedContent()) {
+            undoStack = undoStack + current
+            redoStack = emptyList()
+        }
+        draft = updated
+    }
+
+    fun undo() {
+        val current = draft ?: return
+        val previous = undoStack.lastOrNull() ?: return
+        undoStack = undoStack.dropLast(1)
+        redoStack = redoStack + current
+        draft = previous
+    }
+
+    fun redo() {
+        val current = draft ?: return
+        val next = redoStack.lastOrNull() ?: return
+        redoStack = redoStack.dropLast(1)
+        undoStack = undoStack + current
+        draft = next
+    }
+
+    fun markSaved(saved: WorkflowDraft) {
+        draft = saved
+        savedDraft = saved
+        destinationFolderId = null
+        clearHistory()
+    }
+
+    fun close() {
+        draft = null
+        destinationFolderId = null
+        savedDraft = null
+        clearHistory()
+    }
+
+    private fun clearHistory() {
+        undoStack = emptyList()
+        redoStack = emptyList()
+    }
+}
 
 /** UI-owned editable state. It deliberately keeps text fields separate from the model. */
 data class WorkflowDraft(
@@ -289,6 +368,11 @@ data class WorkflowDraft(
         )
     }
 }
+
+private fun WorkflowDraft.persistedContent(): WorkflowDraft = copy(
+    collapsedStepIds = emptySet(),
+    recordingJournalFileName = null,
+)
 
 private fun WorkflowStep.childrenFor(branch: NestedBranch): List<WorkflowStep>? = when (branch) {
     NestedBranch.REPEAT_BODY -> (this as? Repeat)?.bodySteps
