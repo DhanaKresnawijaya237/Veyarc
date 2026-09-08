@@ -7,7 +7,6 @@ import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,17 +17,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -37,20 +32,16 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -60,12 +51,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import com.veyarc.automation.android.ReplayFloatingController
-import com.veyarc.data.storage.StoredRunRecord
-import com.veyarc.data.storage.StoredRunStatus
 import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowStorageException
-import com.veyarc.data.storage.WorkflowSummary
 import com.veyarc.model.Condition
 import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.IfElse
@@ -88,25 +75,25 @@ import kotlinx.coroutines.withContext
 @Composable
 fun WorkflowEditorScreen(
     repository: WorkflowRepository,
-    onOpenAutomationHarness: () -> Unit,
     onRunWorkflow: (WorkflowBundle) -> Unit,
+    onOpenWorkflowManager: () -> Unit,
     initialBundle: WorkflowBundle? = null,
     initialRecordingJournalFileName: String? = null,
     onInitialBundleConsumed: () -> Unit = {},
+    newWorkflowRequestId: Int = 0,
+    newWorkflowFolderId: String? = null,
+    onNewWorkflowRequestConsumed: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var summaries by remember { mutableStateOf<List<WorkflowSummary>>(emptyList()) }
-    var runHistory by remember { mutableStateOf<List<StoredRunRecord>>(emptyList()) }
-    var selectedRun by remember { mutableStateOf<StoredRunRecord?>(null) }
     var editingDraft by remember { mutableStateOf<WorkflowDraft?>(null) }
     var isBusy by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
-    var refreshGeneration by remember { mutableIntStateOf(0) }
     var geometryTarget by remember { mutableStateOf<GeometryTarget?>(null) }
     var conditionTarget by remember { mutableStateOf<ConditionTarget?>(null) }
     var pendingTemplateCrop by remember { mutableStateOf<TemplateCropSource?>(null) }
+    var draftDestinationFolderId by remember { mutableStateOf<String?>(null) }
 
     val templatePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -130,39 +117,17 @@ fun WorkflowEditorScreen(
     LaunchedEffect(initialBundle, initialRecordingJournalFileName) {
         val bundle = initialBundle ?: return@LaunchedEffect
         editingDraft = WorkflowDraft.fromBundle(bundle, initialRecordingJournalFileName)
+        draftDestinationFolderId = null
         statusMessage = "Recording workflow opened. Saving edits creates the next revision."
         onInitialBundleConsumed()
     }
 
-    LaunchedEffect(refreshGeneration) {
-        isBusy = true
+    LaunchedEffect(newWorkflowRequestId) {
+        if (newWorkflowRequestId == 0) return@LaunchedEffect
+        editingDraft = WorkflowDraft.newDefault(viewportFor(context))
+        draftDestinationFolderId = newWorkflowFolderId
         statusMessage = null
-        summaries = runCatching {
-            withContext(Dispatchers.IO) { repository.listWorkflows() }
-        }.onFailure { error ->
-            statusMessage = "Could not load workflows: ${error.userMessage()}"
-        }.getOrElse { emptyList() }
-        runHistory = runCatching {
-            withContext(Dispatchers.IO) { repository.listRunHistory(limit = 20) }
-        }.getOrElse { emptyList() }
-        isBusy = false
-    }
-
-    fun openWorkflow(summary: WorkflowSummary) {
-        scope.launch {
-            isBusy = true
-            statusMessage = null
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    repository.loadRevision(summary.workflowId, summary.latestRevision)
-                }
-            }.onSuccess { bundle ->
-                editingDraft = WorkflowDraft.fromBundle(bundle)
-            }.onFailure { error ->
-                statusMessage = "Could not open workflow: ${error.userMessage()}"
-            }
-            isBusy = false
-        }
+        onNewWorkflowRequestConsumed()
     }
 
     fun saveWorkflow(bundle: WorkflowBundle, afterSave: (() -> Unit)? = null) {
@@ -171,10 +136,12 @@ fun WorkflowEditorScreen(
             isBusy = true
             statusMessage = null
             runCatching {
-                withContext(Dispatchers.IO) { repository.saveRevision(bundle) }
+                withContext(Dispatchers.IO) {
+                    repository.saveRevision(bundle, draftDestinationFolderId)
+                }
             }.onSuccess {
                 editingDraft = WorkflowDraft.fromBundle(bundle, sourceJournalFileName)
-                refreshGeneration += 1
+                draftDestinationFolderId = null
                 statusMessage = "Saved revision ${bundle.document.revision}."
                 afterSave?.invoke()
             }.onFailure { error ->
@@ -188,67 +155,21 @@ fun WorkflowEditorScreen(
         saveWorkflow(bundle) { onRunWorkflow(bundle) }
     }
 
-    fun deleteWorkflow(summary: WorkflowSummary) {
-        scope.launch {
-            isBusy = true
-            statusMessage = null
-            runCatching {
-                withContext(Dispatchers.IO) { repository.deleteWorkflow(summary.workflowId) }
-            }.onSuccess {
-                refreshGeneration += 1
-                statusMessage = "Deleted workflow \"${summary.name}\"."
-            }.onFailure { error ->
-                statusMessage = "Could not delete workflow: ${error.userMessage()}"
-            }
-            isBusy = false
-        }
-    }
-
-    fun deleteRun(record: StoredRunRecord) {
-        scope.launch {
-            isBusy = true
-            statusMessage = null
-            runCatching {
-                withContext(Dispatchers.IO) { repository.deleteRun(record.runId) }
-            }.onSuccess {
-                refreshGeneration += 1
-                statusMessage = "Deleted run ${record.runId}."
-            }.onFailure { error ->
-                statusMessage = "Could not delete run: ${error.userMessage()}"
-            }
-            isBusy = false
-        }
-    }
-
     fun closeDraft() {
         geometryTarget = null
         editingDraft = null
-        refreshGeneration += 1
+        draftDestinationFolderId = null
     }
 
     val draft = editingDraft
-    val runDetail = selectedRun
-    if (runDetail != null) {
-        StoredRunDetailScreen(
-            record = runDetail,
-            onBack = { selectedRun = null },
-            modifier = modifier,
-        )
-    } else if (draft == null) {
-        WorkflowLibraryScreen(
-            summaries = summaries,
-            runHistory = runHistory,
-            isBusy = isBusy,
-            statusMessage = statusMessage,
+    if (draft == null) {
+        EmptyWorkflowEditorScreen(
             onCreate = {
                 editingDraft = WorkflowDraft.newDefault(viewportFor(context))
+                draftDestinationFolderId = null
                 statusMessage = null
             },
-            onOpen = ::openWorkflow,
-            onOpenRun = { selectedRun = it },
-            onOpenAutomationHarness = onOpenAutomationHarness,
-            onDeleteWorkflow = ::deleteWorkflow,
-            onDeleteRun = ::deleteRun,
+            onOpenWorkflowManager = onOpenWorkflowManager,
             modifier = modifier,
         )
     } else {
@@ -342,244 +263,35 @@ private data class ConditionTarget(
     val index: Int,
 )
 
-private sealed interface DeleteTarget {
-    data class Workflow(val summary: WorkflowSummary) : DeleteTarget
-    data class Run(val record: StoredRunRecord) : DeleteTarget
-}
-
 @Composable
-private fun WorkflowLibraryScreen(
-    summaries: List<WorkflowSummary>,
-    runHistory: List<StoredRunRecord>,
-    isBusy: Boolean,
-    statusMessage: String?,
+private fun EmptyWorkflowEditorScreen(
     onCreate: () -> Unit,
-    onOpen: (WorkflowSummary) -> Unit,
-    onOpenRun: (StoredRunRecord) -> Unit,
-    onOpenAutomationHarness: () -> Unit,
-    onDeleteWorkflow: (WorkflowSummary) -> Unit,
-    onDeleteRun: (StoredRunRecord) -> Unit,
+    onOpenWorkflowManager: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
-    var replayControllerEnabled by remember {
-        mutableStateOf(ReplayFloatingController.isEnabled(context))
-    }
-    DisposableEffect(context) {
-        val stopObserving = ReplayFloatingController.observeEnabled(context) { enabled ->
-            replayControllerEnabled = enabled
-        }
-        onDispose(stopObserving)
-    }
-    var pendingDelete by remember { mutableStateOf<DeleteTarget?>(null) }
-
     Scaffold(
         modifier = modifier,
         topBar = {
-            TopAppBar(
-                title = { Text("Workflow library") },
-                actions = {
-                    TextButton(onClick = onOpenAutomationHarness) { Text("Accessibility test") }
-                },
-            )
+            TopAppBar(title = { Text("Workflow Editor") })
         },
     ) { padding ->
-        LazyColumn(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing)
                 .padding(padding)
-                .padding(horizontal = 16.dp),
+                .padding(24.dp)
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        "Create, review, and save versioned automation workflows locally.",
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    Text(
-                        "Coordinates are normalized to the recorded display. Point, region, and path geometry editing is the next editor increment.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                            ) {
-                                Text("Veyarc edge-latch control center", style = MaterialTheme.typography.titleMedium)
-                                Switch(
-                                    checked = replayControllerEnabled,
-                                    onCheckedChange = { enabled ->
-                                        replayControllerEnabled = enabled
-                                        ReplayFloatingController.setEnabled(context, enabled)
-                                    },
-                                )
-                            }
-                            Text(
-                                "When enabled, a small latch stays attached to the left or right screen edge during recording and replay. Drag it continuously along an edge; release near the other side to switch between left and right, and it remembers the position along that edge without moving through app content or gesture regions. Press it to open the adjacent control center. Opening it during active replay stops the replay first. The panel provides recording controls, one square button for the latest saved workflow, and a separate library button; the persistent notification remains an independent emergency fallback. Strict screen freeze is unavailable, so replay remains touch pass-through.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            OutlinedButton(onClick = { ReplayFloatingController.resetPosition(context) }) {
-                                Text("Reset latch position")
-                            }
-                        }
-                    }
-                    Button(onClick = onCreate, enabled = !isBusy) { Text("New workflow") }
-                }
-            }
-            if (isBusy) item { LinearProgressIndicator(modifier = Modifier.fillMaxWidth()) }
-            statusMessage?.let { message ->
-                item { Text(message, color = MaterialTheme.colorScheme.primary) }
-            }
-            if (!isBusy && summaries.isEmpty()) {
-                item {
-                    Text(
-                        "No saved workflows yet. Create and save one before using Replay.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            items(summaries, key = { it.workflowId }) { summary ->
-                WorkflowSummaryCard(
-                    summary = summary,
-                    onClick = { onOpen(summary) },
-                    onDelete = { pendingDelete = DeleteTarget.Workflow(summary) },
-                    deleteEnabled = !isBusy,
-                )
-            }
-            if (runHistory.isNotEmpty()) {
-                item {
-                    Text("Recent runs", style = MaterialTheme.typography.titleLarge)
-                }
-                items(runHistory, key = { it.runId }) { record ->
-                    RunHistoryCard(
-                        record = record,
-                        onClick = { onOpenRun(record) },
-                        onDelete = { pendingDelete = DeleteTarget.Run(record) },
-                        deleteEnabled = !isBusy && record.status != StoredRunStatus.RUNNING,
-                    )
-                }
-            }
-        }
-    }
-
-    pendingDelete?.let { target ->
-        val isWorkflow = target is DeleteTarget.Workflow
-        AlertDialog(
-            onDismissRequest = { pendingDelete = null },
-            title = { Text(if (isWorkflow) "Delete workflow?" else "Delete run?") },
-            text = {
-                Text(
-                    if (isWorkflow) {
-                        "This removes the workflow, every saved revision, and its run history from this phone."
-                    } else {
-                        "This permanently removes the selected run record from this phone."
-                    },
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        when (target) {
-                            is DeleteTarget.Workflow -> onDeleteWorkflow(target.summary)
-                            is DeleteTarget.Run -> onDeleteRun(target.record)
-                        }
-                        pendingDelete = null
-                    },
-                ) {
-                    Text("Delete")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
-            },
-        )
-    }
-}
-
-@Composable
-private fun RunHistoryCard(
-    record: StoredRunRecord,
-    onClick: () -> Unit,
-    onDelete: () -> Unit,
-    deleteEnabled: Boolean,
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
-    ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(
-                    "${record.status.name.lowercase()} · revision ${record.revision}",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Text(
-                    "Started ${record.startedAtMs} · finished ${record.finishedAtMs ?: "—"}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                record.interruptionReason?.let { reason ->
-                    Text(reason, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-            IconButton(onClick = onDelete, enabled = deleteEnabled) {
-                Icon(Icons.Outlined.Delete, contentDescription = "Delete run")
-            }
-        }
-    }
-}
-
-@Composable
-private fun WorkflowSummaryCard(
-    summary: WorkflowSummary,
-    onClick: () -> Unit,
-    onDelete: () -> Unit,
-    deleteEnabled: Boolean,
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
-    ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(summary.name, style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "Revision ${summary.latestRevision} · Updated ${summary.updatedAtMs}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    summary.workflowId,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            IconButton(onClick = onDelete, enabled = deleteEnabled) {
-                Icon(Icons.Outlined.Delete, contentDescription = "Delete workflow")
+            Text(
+                "Create a workflow or choose one from Workflow Manager.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Button(onClick = onCreate) { Text("New workflow") }
+            OutlinedButton(onClick = onOpenWorkflowManager) {
+                Text("Choose workflow")
             }
         }
     }

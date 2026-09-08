@@ -127,6 +127,12 @@ internal interface WorkflowDao {
     fun averageFinishedRunDurationMs(): Double?
 
     @Query(
+        "SELECT workflowId, COUNT(*) AS runCount, MAX(startedAtMs) AS lastRunAtMs " +
+            "FROM run_records GROUP BY workflowId",
+    )
+    fun listWorkflowRunActivity(): List<WorkflowRunActivityRow>
+
+    @Query(
         "SELECT COUNT(*) FROM run_records " +
             "WHERE workflowId = :workflowId AND status = :status",
     )

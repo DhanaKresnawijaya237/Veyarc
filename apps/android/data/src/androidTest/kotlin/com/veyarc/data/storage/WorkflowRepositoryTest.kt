@@ -39,10 +39,9 @@ class WorkflowRepositoryTest {
             val first = workflow(revision = 1)
             val second = workflow(revision = 2)
 
-            assertEquals(1, repository.saveRevision(first).revision)
             val workflowFolder = repository.createWorkflowFolder(" Personal ", WORKFLOW_FOLDER_ID)
             assertEquals("Personal", workflowFolder.name)
-            repository.moveWorkflowToFolder(WORKFLOW_ID, WORKFLOW_FOLDER_ID)
+            assertEquals(1, repository.saveRevision(first, WORKFLOW_FOLDER_ID).revision)
             repository.setWorkflowFavorite(WORKFLOW_ID, true)
             assertEquals(2, repository.saveRevision(second).revision)
             val storedWorkflow = repository.listWorkflows().single()
@@ -94,6 +93,9 @@ class WorkflowRepositoryTest {
             assertEquals(0.0, dashboard.completionRate, 0.0)
             assertEquals(1000L, dashboard.averageFinishedRunDurationMs)
             assertEquals(listOf(DETAILED_RUN_ID, RUN_ID), dashboard.recentRuns.map { it.runId })
+            val activity = repository.listWorkflowRunActivity().getValue(WORKFLOW_ID)
+            assertEquals(2L, activity.runCount)
+            assertEquals(4000L, activity.lastRunAtMs)
 
             repository.deleteWorkflowFolder(WORKFLOW_FOLDER_ID)
             assertTrue(repository.listWorkflowFolders().isEmpty())

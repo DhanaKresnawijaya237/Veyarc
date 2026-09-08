@@ -89,3 +89,9 @@ internal data class RunStatusCountRow(
     val status: String,
     val count: Long,
 )
+
+internal data class WorkflowRunActivityRow(
+    val workflowId: String,
+    val runCount: Long,
+    val lastRunAtMs: Long?,
+)

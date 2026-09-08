@@ -37,6 +37,7 @@ fun CoordinateRecorderScreen(
     controller: CoordinateRecordingController,
     onBack: () -> Unit,
     onEditWorkflow: (WorkflowBundle, String) -> Unit,
+    destinationFolderId: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val state by controller.state.collectAsState()
@@ -82,7 +83,7 @@ fun CoordinateRecorderScreen(
 
         when (val current = state) {
             CoordinateRecordingState.Idle -> {
-                Button(onClick = controller::start) { Text("Arm recording") }
+                Button(onClick = { controller.start(destinationFolderId) }) { Text("Arm recording") }
             }
 
             is CoordinateRecordingState.Unavailable -> {
@@ -95,7 +96,7 @@ fun CoordinateRecorderScreen(
                         Text("Open notification settings")
                     }
                 }
-                Button(onClick = controller::start) { Text("Try again") }
+                Button(onClick = { controller.start(destinationFolderId) }) { Text("Try again") }
             }
 
             is CoordinateRecordingState.Arming -> {

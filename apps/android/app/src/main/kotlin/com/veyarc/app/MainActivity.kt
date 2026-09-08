@@ -48,8 +48,11 @@ class MainActivity : ComponentActivity() {
     private var selectedDestination by mutableStateOf(VeyarcDestination.HOME)
     private var fullScreenDestination by mutableStateOf<FullScreenDestination?>(null)
     private var workflowToRun by mutableStateOf<WorkflowBundle?>(null)
-    private var recordedWorkflowToEdit by mutableStateOf<WorkflowBundle?>(null)
+    private var workflowToEdit by mutableStateOf<WorkflowBundle?>(null)
     private var recordedJournalFileName by mutableStateOf<String?>(null)
+    private var newWorkflowRequestId by mutableIntStateOf(0)
+    private var newWorkflowFolderId by mutableStateOf<String?>(null)
+    private var recordingFolderId by mutableStateOf<String?>(null)
     private val runSession: MainRunSession by lazy {
         ViewModelProvider(this)[MainRunSession::class.java]
     }
@@ -105,19 +108,25 @@ class MainActivity : ComponentActivity() {
                             resumeGeneration = resumeGeneration,
                             onBack = { fullScreenDestination = null },
                             onStartRecording = {
+                                recordingFolderId = null
                                 fullScreenDestination = FullScreenDestination.RECORDER
                             },
                         )
 
                         FullScreenDestination.RECORDER -> CoordinateRecorderScreen(
                             controller = recordingSession.controller,
-                            onBack = { fullScreenDestination = null },
-                            onEditWorkflow = { bundle, journalFileName ->
-                                recordedWorkflowToEdit = bundle
-                                recordedJournalFileName = journalFileName
-                                selectedDestination = VeyarcDestination.WORKFLOWS
+                            onBack = {
+                                recordingFolderId = null
                                 fullScreenDestination = null
                             },
+                            onEditWorkflow = { bundle, journalFileName ->
+                                workflowToEdit = bundle
+                                recordedJournalFileName = journalFileName
+                                recordingFolderId = null
+                                selectedDestination = VeyarcDestination.EDITOR
+                                fullScreenDestination = null
+                            },
+                            destinationFolderId = recordingFolderId,
                         )
 
                         null ->
@@ -142,22 +151,45 @@ class MainActivity : ComponentActivity() {
                                             repository = workflowRepository,
                                             refreshGeneration = resumeGeneration,
                                             onRecord = {
+                                                recordingFolderId = null
                                                 fullScreenDestination = FullScreenDestination.RECORDER
                                             },
                                             onPlayWorkflow = ::playWorkflow,
                                         )
 
-                                        VeyarcDestination.WORKFLOWS -> WorkflowEditorScreen(
+                                        VeyarcDestination.WORKFLOWS -> WorkflowManagerScreen(
                                             repository = workflowRepository,
-                                            onOpenAutomationHarness = {
-                                                fullScreenDestination = FullScreenDestination.ACCESSIBILITY
+                                            refreshGeneration = resumeGeneration,
+                                            onCreateWorkflow = { folderId ->
+                                                newWorkflowFolderId = folderId
+                                                newWorkflowRequestId += 1
+                                                selectedDestination = VeyarcDestination.EDITOR
                                             },
+                                            onRecordWorkflow = { folderId ->
+                                                recordingFolderId = folderId
+                                                fullScreenDestination = FullScreenDestination.RECORDER
+                                            },
+                                            onEditWorkflow = ::editWorkflow,
+                                            onPlayWorkflow = ::playWorkflow,
+                                        )
+
+                                        VeyarcDestination.EDITOR -> WorkflowEditorScreen(
+                                            repository = workflowRepository,
                                             onRunWorkflow = ::openRunScreen,
-                                            initialBundle = recordedWorkflowToEdit,
+                                            onOpenWorkflowManager = {
+                                                selectedDestination = VeyarcDestination.WORKFLOWS
+                                            },
+                                            initialBundle = workflowToEdit,
                                             initialRecordingJournalFileName = recordedJournalFileName,
                                             onInitialBundleConsumed = {
-                                                recordedWorkflowToEdit = null
+                                                workflowToEdit = null
                                                 recordedJournalFileName = null
+                                            },
+                                            newWorkflowRequestId = newWorkflowRequestId,
+                                            newWorkflowFolderId = newWorkflowFolderId,
+                                            onNewWorkflowRequestConsumed = {
+                                                newWorkflowRequestId = 0
+                                                newWorkflowFolderId = null
                                             },
                                         )
 
@@ -216,6 +248,19 @@ class MainActivity : ComponentActivity() {
                 }
             }.getOrNull() ?: return@launch
             openRunScreen(bundle, autoStart = true)
+        }
+    }
+
+    private fun editWorkflow(workflow: WorkflowSummary) {
+        catalogScope.launch {
+            val bundle = runCatching {
+                withContext(Dispatchers.IO) {
+                    workflowRepository.loadRevision(workflow.workflowId, workflow.latestRevision)
+                }
+            }.getOrNull() ?: return@launch
+            workflowToEdit = bundle
+            recordedJournalFileName = null
+            selectedDestination = VeyarcDestination.EDITOR
         }
     }
 

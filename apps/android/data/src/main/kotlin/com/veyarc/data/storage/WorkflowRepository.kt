@@ -33,6 +33,11 @@ data class RevisionSummary(
     val createdAtMs: Long,
 )
 
+data class WorkflowRunActivity(
+    val runCount: Long,
+    val lastRunAtMs: Long?,
+)
+
 enum class StoredRunStatus {
     RUNNING,
     COMPLETED,
@@ -100,10 +105,19 @@ class WorkflowRepository internal constructor(
         nowMs = nowMs,
     )
 
-    fun saveRevision(bundle: WorkflowBundle): RevisionSummary = synchronized(this) {
+    fun saveRevision(
+        bundle: WorkflowBundle,
+        destinationFolderId: String? = null,
+    ): RevisionSummary = synchronized(this) {
         val document = bundle.document
         verifyAssetIntegrity(bundle)
         val existingWorkflow = database.workflowDao().findWorkflow(document.id)
+        if (existingWorkflow == null && destinationFolderId != null) {
+            requireValidFolderId(destinationFolderId)
+            require(database.workflowDao().findWorkflowFolder(destinationFolderId) != null) {
+                "Workflow folder does not exist"
+            }
+        }
         val existingRevision = database.workflowDao().findRevision(document.id, document.revision)
         require(existingRevision == null) {
             "Workflow ${document.id} revision ${document.revision} already exists"
@@ -137,7 +151,7 @@ class WorkflowRepository internal constructor(
                         latestRevision = document.revision,
                         createdAtMs = createdAt,
                         updatedAtMs = timestamp,
-                        folderId = existingWorkflow?.folderId,
+                        folderId = existingWorkflow?.folderId ?: destinationFolderId,
                         isFavorite = existingWorkflow?.isFavorite ?: false,
                     ),
                 )
@@ -204,6 +218,10 @@ class WorkflowRepository internal constructor(
     }
 
     fun listWorkflowFolders(): List<FolderSummary> = database.workflowDao().listWorkflowFolders().map { it.toSummary() }
+
+    fun listWorkflowRunActivity(): Map<String, WorkflowRunActivity> = database.workflowDao().listWorkflowRunActivity().associate { row ->
+        row.workflowId to WorkflowRunActivity(row.runCount, row.lastRunAtMs)
+    }
 
     fun renameWorkflowFolder(folderId: String, name: String) = synchronized(this) {
         requireValidFolderId(folderId)

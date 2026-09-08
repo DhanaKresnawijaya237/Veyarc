@@ -107,6 +107,7 @@ class CoordinateRecordingController(
     private var frameCount = 0L
     private var sourceError: String? = null
     private var stopFailureReason: String? = null
+    private var destinationWorkflowFolderId: String? = null
 
     /**
      * Touch frames stay in memory until the raw contact ends. This lets us discard an entire
@@ -219,7 +220,9 @@ class CoordinateRecordingController(
         }
     }
 
-    fun start() {
+    fun start() = start(destinationFolderId = null)
+
+    fun start(destinationFolderId: String?) {
         if (active) return
         val notificationUnavailableReason = RecordingForegroundService.notificationUnavailableReason(appContext)
         if (notificationUnavailableReason != null) {
@@ -293,6 +296,7 @@ class CoordinateRecordingController(
             )
             return
         }
+        destinationWorkflowFolderId = destinationFolderId
         active = true
         sessionStartedElapsedRealtime = SystemClock.elapsedRealtime()
         lastElapsedMillis = 0L
@@ -730,7 +734,9 @@ class CoordinateRecordingController(
             }
             val convertedWorkflow = workflowConversion?.getOrNull()
             val workflowSave = convertedWorkflow?.let { draft ->
-                runCatching { workflowRepository.saveRevision(draft.bundle) }
+                runCatching {
+                    workflowRepository.saveRevision(draft.bundle, destinationWorkflowFolderId)
+                }
             }
             workflowSave?.getOrNull()?.let {
                 runCatching {
@@ -873,6 +879,7 @@ class CoordinateRecordingController(
         recordingStartReceivedTimestampMicros = null
         sourceError = null
         stopFailureReason = null
+        destinationWorkflowFolderId = null
         minX = 0L
         maxX = 0L
         minY = 0L
