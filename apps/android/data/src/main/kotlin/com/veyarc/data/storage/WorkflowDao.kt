@@ -17,6 +17,30 @@ internal interface WorkflowDao {
     @Upsert
     fun upsertWorkflow(workflow: WorkflowEntity)
 
+    @Query("UPDATE workflows SET folderId = :folderId WHERE workflowId = :workflowId")
+    fun moveWorkflowToFolder(workflowId: String, folderId: String?): Int
+
+    @Query("UPDATE workflows SET isFavorite = :favorite WHERE workflowId = :workflowId")
+    fun setWorkflowFavorite(workflowId: String, favorite: Boolean): Int
+
+    @Query("SELECT * FROM workflow_folders ORDER BY name COLLATE NOCASE, folderId")
+    fun listWorkflowFolders(): List<WorkflowFolderEntity>
+
+    @Query("SELECT * FROM workflow_folders WHERE folderId = :folderId")
+    fun findWorkflowFolder(folderId: String): WorkflowFolderEntity?
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    fun insertWorkflowFolder(folder: WorkflowFolderEntity)
+
+    @Query("UPDATE workflow_folders SET name = :name, updatedAtMs = :updatedAtMs WHERE folderId = :folderId")
+    fun renameWorkflowFolder(folderId: String, name: String, updatedAtMs: Long): Int
+
+    @Query("UPDATE workflows SET folderId = NULL WHERE folderId = :folderId")
+    fun clearWorkflowFolderAssignments(folderId: String): Int
+
+    @Query("DELETE FROM workflow_folders WHERE folderId = :folderId")
+    fun deleteWorkflowFolder(folderId: String): Int
+
     @Query(
         "SELECT * FROM workflow_revisions " +
             "WHERE workflowId = :workflowId ORDER BY revision DESC",
@@ -37,6 +61,27 @@ internal interface WorkflowDao {
 
     @Query("SELECT * FROM run_records WHERE runId = :runId")
     fun findRunRecord(runId: String): RunRecordEntity?
+
+    @Query("UPDATE run_records SET folderId = :folderId WHERE runId = :runId AND status != :runningStatus")
+    fun moveRunToFolder(runId: String, folderId: String?, runningStatus: String): Int
+
+    @Query("SELECT * FROM run_folders ORDER BY name COLLATE NOCASE, folderId")
+    fun listRunFolders(): List<RunFolderEntity>
+
+    @Query("SELECT * FROM run_folders WHERE folderId = :folderId")
+    fun findRunFolder(folderId: String): RunFolderEntity?
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    fun insertRunFolder(folder: RunFolderEntity)
+
+    @Query("UPDATE run_folders SET name = :name, updatedAtMs = :updatedAtMs WHERE folderId = :folderId")
+    fun renameRunFolder(folderId: String, name: String, updatedAtMs: Long): Int
+
+    @Query("UPDATE run_records SET folderId = NULL WHERE folderId = :folderId")
+    fun clearRunFolderAssignments(folderId: String): Int
+
+    @Query("DELETE FROM run_folders WHERE folderId = :folderId")
+    fun deleteRunFolder(folderId: String): Int
 
     @Query(
         "UPDATE run_records SET status = :status, finishedAtMs = :finishedAtMs, " +

@@ -15,6 +15,15 @@ data class WorkflowSummary(
     val latestRevision: Int,
     val createdAtMs: Long,
     val updatedAtMs: Long,
+    val folderId: String?,
+    val isFavorite: Boolean,
+)
+
+data class FolderSummary(
+    val folderId: String,
+    val name: String,
+    val createdAtMs: Long,
+    val updatedAtMs: Long,
 )
 
 data class RevisionSummary(
@@ -45,6 +54,7 @@ data class StoredRunRecord(
     val totalSteps: Long?,
     val eventHistory: List<StoredRunEvent>,
     val hasStoredDetails: Boolean,
+    val folderId: String?,
 )
 
 data class StoredRunEvent(
@@ -112,6 +122,8 @@ class WorkflowRepository internal constructor(
                         latestRevision = document.revision,
                         createdAtMs = createdAt,
                         updatedAtMs = timestamp,
+                        folderId = existingWorkflow?.folderId,
+                        isFavorite = existingWorkflow?.isFavorite ?: false,
                     ),
                 )
                 database.workflowDao().insertRevision(
@@ -160,7 +172,96 @@ class WorkflowRepository internal constructor(
             latestRevision = workflow.latestRevision,
             createdAtMs = workflow.createdAtMs,
             updatedAtMs = workflow.updatedAtMs,
+            folderId = workflow.folderId,
+            isFavorite = workflow.isFavorite,
         )
+    }
+
+    fun createWorkflowFolder(
+        name: String,
+        folderId: String = WorkflowIds.newUuid(),
+    ): FolderSummary = synchronized(this) {
+        val timestamp = storageTimestamp()
+        val folder = WorkflowFolderEntity(folderId, validFolderName(name), timestamp, timestamp)
+        requireValidFolderId(folderId)
+        database.workflowDao().insertWorkflowFolder(folder)
+        folder.toSummary()
+    }
+
+    fun listWorkflowFolders(): List<FolderSummary> = database.workflowDao().listWorkflowFolders().map { it.toSummary() }
+
+    fun renameWorkflowFolder(folderId: String, name: String) = synchronized(this) {
+        requireValidFolderId(folderId)
+        check(
+            database.workflowDao().renameWorkflowFolder(folderId, validFolderName(name), storageTimestamp()) == 1,
+        ) { "Workflow folder does not exist" }
+    }
+
+    fun deleteWorkflowFolder(folderId: String) = synchronized(this) {
+        requireValidFolderId(folderId)
+        database.runInTransaction {
+            database.workflowDao().clearWorkflowFolderAssignments(folderId)
+            check(database.workflowDao().deleteWorkflowFolder(folderId) == 1) {
+                "Workflow folder does not exist"
+            }
+        }
+    }
+
+    fun moveWorkflowToFolder(workflowId: String, folderId: String?) = synchronized(this) {
+        val dao = database.workflowDao()
+        require(dao.findWorkflow(workflowId) != null) { "Workflow does not exist" }
+        if (folderId != null) {
+            requireValidFolderId(folderId)
+            require(dao.findWorkflowFolder(folderId) != null) { "Workflow folder does not exist" }
+        }
+        check(dao.moveWorkflowToFolder(workflowId, folderId) == 1) { "Workflow does not exist" }
+    }
+
+    fun setWorkflowFavorite(workflowId: String, favorite: Boolean) = synchronized(this) {
+        check(database.workflowDao().setWorkflowFavorite(workflowId, favorite) == 1) {
+            "Workflow does not exist"
+        }
+    }
+
+    fun createRunFolder(
+        name: String,
+        folderId: String = WorkflowIds.newUuid(),
+    ): FolderSummary = synchronized(this) {
+        val timestamp = storageTimestamp()
+        val folder = RunFolderEntity(folderId, validFolderName(name), timestamp, timestamp)
+        requireValidFolderId(folderId)
+        database.workflowDao().insertRunFolder(folder)
+        folder.toSummary()
+    }
+
+    fun listRunFolders(): List<FolderSummary> = database.workflowDao().listRunFolders().map { it.toSummary() }
+
+    fun renameRunFolder(folderId: String, name: String) = synchronized(this) {
+        requireValidFolderId(folderId)
+        check(database.workflowDao().renameRunFolder(folderId, validFolderName(name), storageTimestamp()) == 1) {
+            "Run folder does not exist"
+        }
+    }
+
+    fun deleteRunFolder(folderId: String) = synchronized(this) {
+        requireValidFolderId(folderId)
+        database.runInTransaction {
+            database.workflowDao().clearRunFolderAssignments(folderId)
+            check(database.workflowDao().deleteRunFolder(folderId) == 1) { "Run folder does not exist" }
+        }
+    }
+
+    fun moveRunToFolder(runId: String, folderId: String?) = synchronized(this) {
+        val dao = database.workflowDao()
+        val run = requireNotNull(dao.findRunRecord(runId)) { "Run record does not exist" }
+        require(run.status != StoredRunStatus.RUNNING.name) { "Cannot move an active run" }
+        if (folderId != null) {
+            requireValidFolderId(folderId)
+            require(dao.findRunFolder(folderId) != null) { "Run folder does not exist" }
+        }
+        check(dao.moveRunToFolder(runId, folderId, StoredRunStatus.RUNNING.name) == 1) {
+            "Run record does not exist or is still running"
+        }
     }
 
     fun listRevisions(workflowId: String): List<RevisionSummary> = database.workflowDao()
@@ -306,7 +407,24 @@ class WorkflowRepository internal constructor(
         totalSteps = record.totalSteps,
         eventHistory = decodeRunEvents(record.eventHistoryJson),
         hasStoredDetails = record.eventHistoryJson != null,
+        folderId = record.folderId,
     )
+
+    private fun WorkflowFolderEntity.toSummary(): FolderSummary = FolderSummary(folderId, name, createdAtMs, updatedAtMs)
+
+    private fun RunFolderEntity.toSummary(): FolderSummary = FolderSummary(folderId, name, createdAtMs, updatedAtMs)
+
+    private fun storageTimestamp(): Long = nowMs().also { require(it >= 0L) { "Storage clock must be nonnegative" } }
+
+    private fun validFolderName(name: String): String = name.trim().also {
+        require(it.isNotEmpty() && it.length <= MAX_FOLDER_NAME_LENGTH) {
+            "Folder name must be 1 to $MAX_FOLDER_NAME_LENGTH characters"
+        }
+    }
+
+    private fun requireValidFolderId(folderId: String) {
+        require(folderId.matches(UUID_PATTERN)) { "Folder id must be a UUID" }
+    }
 
     private fun encodeRunEvents(events: List<StoredRunEvent>): String = JSONArray().apply {
         events.forEach { event ->
@@ -359,6 +477,7 @@ class WorkflowRepository internal constructor(
         const val MAX_REASON_LENGTH = 256
         const val MAX_HISTORY_LIMIT = 1_000
         const val MAX_STORED_RUN_EVENTS = 50
+        const val MAX_FOLDER_NAME_LENGTH = 80
 
         fun revisionFileName(workflowId: String, revision: Int): String {
             require(revision > 0) { "Workflow revision must be positive" }

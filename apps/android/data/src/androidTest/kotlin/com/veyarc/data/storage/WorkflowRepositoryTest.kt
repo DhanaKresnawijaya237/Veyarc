@@ -40,8 +40,17 @@ class WorkflowRepositoryTest {
             val second = workflow(revision = 2)
 
             assertEquals(1, repository.saveRevision(first).revision)
+            val workflowFolder = repository.createWorkflowFolder(" Personal ", WORKFLOW_FOLDER_ID)
+            assertEquals("Personal", workflowFolder.name)
+            repository.moveWorkflowToFolder(WORKFLOW_ID, WORKFLOW_FOLDER_ID)
+            repository.setWorkflowFavorite(WORKFLOW_ID, true)
             assertEquals(2, repository.saveRevision(second).revision)
-            assertEquals(2, repository.listWorkflows().single().latestRevision)
+            val storedWorkflow = repository.listWorkflows().single()
+            assertEquals(2, storedWorkflow.latestRevision)
+            assertEquals(WORKFLOW_FOLDER_ID, storedWorkflow.folderId)
+            assertTrue(storedWorkflow.isFavorite)
+            repository.renameWorkflowFolder(WORKFLOW_FOLDER_ID, "Daily")
+            assertEquals("Daily", repository.listWorkflowFolders().single().name)
             assertEquals(listOf(2, 1), repository.listRevisions(WORKFLOW_ID).map { it.revision })
             assertEquals(2, repository.loadRevision(WORKFLOW_ID, 2).document.revision)
 
@@ -55,6 +64,10 @@ class WorkflowRepositoryTest {
             assertEquals(StoredRunStatus.INTERRUPTED, interrupted.status)
             assertTrue(interrupted.interruptionReason!!.isNotBlank())
             assertEquals(listOf(RUN_ID), repository.listRunHistory().map { it.runId })
+            val runFolder = repository.createRunFolder("Archive", RUN_FOLDER_ID)
+            assertEquals(RUN_FOLDER_ID, runFolder.folderId)
+            repository.moveRunToFolder(RUN_ID, RUN_FOLDER_ID)
+            assertEquals(RUN_FOLDER_ID, repository.listRunHistory().single().folderId)
 
             repository.beginRun(WORKFLOW_ID, 2, runId = DETAILED_RUN_ID, startedAtMs = 4000L)
             repository.finishRun(
@@ -75,6 +88,14 @@ class WorkflowRepositoryTest {
             assertEquals(4L, detailed.totalSteps)
             assertEquals("Run started", detailed.eventHistory.first().message)
             assertTrue(detailed.hasStoredDetails)
+
+            repository.deleteWorkflowFolder(WORKFLOW_FOLDER_ID)
+            assertTrue(repository.listWorkflowFolders().isEmpty())
+            assertEquals(null, repository.listWorkflows().single().folderId)
+            assertTrue(repository.listWorkflows().single().isFavorite)
+            repository.deleteRunFolder(RUN_FOLDER_ID)
+            assertTrue(repository.listRunFolders().isEmpty())
+            assertEquals(null, repository.listRunHistory().last().folderId)
 
             repository.deleteRun(RUN_ID)
             repository.deleteRun(DETAILED_RUN_ID)
@@ -123,5 +144,7 @@ class WorkflowRepositoryTest {
         const val STEP_ID = "00000000-0000-4000-8000-000000000302"
         const val RUN_ID = "00000000-0000-4000-8000-000000000303"
         const val DETAILED_RUN_ID = "00000000-0000-4000-8000-000000000304"
+        const val WORKFLOW_FOLDER_ID = "00000000-0000-4000-8000-000000000305"
+        const val RUN_FOLDER_ID = "00000000-0000-4000-8000-000000000306"
     }
 }

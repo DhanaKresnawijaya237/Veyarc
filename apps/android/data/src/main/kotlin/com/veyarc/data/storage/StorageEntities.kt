@@ -6,11 +6,34 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "workflows")
+@Entity(
+    tableName = "workflows",
+    indices = [Index(value = ["folderId"])],
+)
 internal data class WorkflowEntity(
     @PrimaryKey val workflowId: String,
     val name: String,
     val latestRevision: Int,
+    val createdAtMs: Long,
+    val updatedAtMs: Long,
+    @ColumnInfo(defaultValue = "NULL")
+    val folderId: String? = null,
+    @ColumnInfo(defaultValue = "0")
+    val isFavorite: Boolean = false,
+)
+
+@Entity(tableName = "workflow_folders")
+internal data class WorkflowFolderEntity(
+    @PrimaryKey val folderId: String,
+    val name: String,
+    val createdAtMs: Long,
+    val updatedAtMs: Long,
+)
+
+@Entity(tableName = "run_folders")
+internal data class RunFolderEntity(
+    @PrimaryKey val folderId: String,
+    val name: String,
     val createdAtMs: Long,
     val updatedAtMs: Long,
 )
@@ -39,7 +62,10 @@ internal data class WorkflowRevisionEntity(
 
 @Entity(
     tableName = "run_records",
-    indices = [Index(value = ["workflowId", "startedAtMs"])],
+    indices = [
+        Index(value = ["workflowId", "startedAtMs"]),
+        Index(value = ["folderId"]),
+    ],
 )
 internal data class RunRecordEntity(
     @PrimaryKey val runId: String,
@@ -55,4 +81,6 @@ internal data class RunRecordEntity(
     val totalSteps: Long? = null,
     @ColumnInfo(defaultValue = "NULL")
     val eventHistoryJson: String? = null,
+    @ColumnInfo(defaultValue = "NULL")
+    val folderId: String? = null,
 )
