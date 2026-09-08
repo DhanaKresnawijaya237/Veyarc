@@ -4,7 +4,9 @@ Build Veyarc as a native Kotlin Android application for coordinate-based device 
 
 Success means a user can record or manually create a workflow containing taps, holds, paths, waits, bounded loops, conditions, app switches, and stops; review it; save it locally; and replay it safely across different resolutions within its recorded portrait or landscape orientation.
 
-The AI assistant follows the stable core beta. It may generate or edit typed workflows but can never execute them. Windows support follows through a separate native adapter sharing the workflow format.
+Before adding the AI assistant, complete a dedicated Android UI and user-experience phase. It replaces the current prototype-style screen switching with five stable destinations: Home, Workflow Manager, Workflow Editor, Runs Manager, and Settings. The phase improves organization and authoring without changing the validated workflow, recording, replay, or safety semantics.
+
+The AI assistant follows the Android UI and user-experience phase. It may generate or edit typed workflows but can never execute them. Windows support follows through a separate native adapter sharing the workflow format.
 
 ## Architecture and Interfaces
 
@@ -161,21 +163,29 @@ MediaProjection is used only when a workflow contains pixel or image conditions:
 
 ### UI and local data
 
-Build a single-activity Compose application with:
+Build a single-activity Compose application around five top-level destinations:
 
-- Workflow library and revision history
-- Nested, collapsible block editor
-- Full-screen point, region and path editor
-- Recording screen and timer overlay
-- Permission/capability setup
-- Pre-run validation and maximum-runtime summary
-- Live run status, pause and emergency stop
-- Explicit strict-freeze capability status (disabled until a privileged input filter exists)
-- Opt-in left/right edge-latch control-center toggle, continuous along-edge placement, and a direct replay-latest play action in one compact horizontal row
-- Recording start/pause/resume/save plus replay status and stop actions from the controller
-- Replay pause/cancel status with notification Pause/Resume/Stop and Quick Settings emergency stop
-- Run history and diagnostics
-- AI assistant screen added later
+- **Home:** local run statistics, meaningful charts, recording entry, and direct play actions for favourited workflows.
+- **Workflow Manager:** search, sorting, folders, favourites, revision access, creation, deletion, and opening a workflow in the editor.
+- **Workflow Editor:** a modern vertical block language with distinct action, condition, loop, and branch shapes; nested editing; geometry editors; validation; and revision saving.
+- **Runs Manager:** status filters, automatic grouping by workflow, custom folders, moving and deleting records, and persistent run-detail inspection.
+- **Settings:** Accessibility, Shizuku, notifications, MediaProjection guidance, theme, edge-latch controls, privacy, import/export, and diagnostics.
+
+`All workflows` and `Favorites` are system views rather than duplicated storage folders. A workflow may additionally belong to one user folder. Runs are grouped by workflow by default and may be assigned to one custom folder; deleting a custom folder returns its contents to their default view rather than deleting them.
+
+Keep the five destinations in a bottom navigation bar on compact phone windows. Preserve the same destinations in an adaptive navigation rail on larger windows when a bottom bar would waste usable space. Nested screens may temporarily hide primary navigation when it would conflict with recording, replay, full-screen geometry editing, or a destructive confirmation.
+
+The UI must also provide:
+
+- Full-screen point, region and path editors.
+- Permission and capability setup with live status and direct recovery actions.
+- Pre-run validation and maximum-runtime summaries.
+- Live run status, pause, stop, and independent emergency controls.
+- Explicit strict-freeze capability status, disabled until a privileged input filter exists.
+- An opt-in left/right edge-latch controller with recording and replay actions.
+- Recording review and encrypted-journal diagnostics.
+- Run history and detailed event diagnostics.
+- An AI assistant entry inside Workflow Editor only after the separate assistant phase begins; it does not become a sixth top-level destination.
 
 Use Room only for workflow metadata, revision indexes and bounded local run diagnostics. Those diagnostics may include action coordinates and declared package names requested by the user, but never screen pixels, variable values or raw exception text. Store workflow bodies, raw journals and template assets as AES-GCM encrypted files using a key protected by Android Keystore. Never store screenshots except deliberate template crops, and never emit workflow identifiers or throwable details to Logcat.
 
@@ -228,14 +238,22 @@ Every workflow declares allowed packages. `LaunchApp` may switch only to a decla
    - Add permission diagnostics, device compatibility reporting, import limits, crash-safe journals and privacy documentation.
    - Produce APK release notes identifying recording as Android 13+ and device-dependent.
 
-7. **AI assistant**
+7. **Android UI and user experience**
+   - Add the five-destination app shell while keeping active recording and replay owned by their existing process and service controllers.
+   - Add workflow favourites and folders, automatic run grouping by workflow, custom run folders, search, filters, sorting, and safe move/delete flows.
+   - Build a local dashboard from stored run facts only: run volume, completion rate, status distribution, duration trends, and recent failures. Do not invent metrics or collect additional screen content.
+   - Replace the prototype editor list with Veyarc's connected vertical block language. Keep ordered and nested execution visible without turning the workflow into an arbitrary node graph.
+   - Centralize capability, appearance, controller, privacy, and diagnostic settings.
+   - Verify compact, tall, wide, landscape, tablet, font-scale, and accessibility layouts without changing automation safety behavior.
+
+8. **AI assistant**
    - Add a Dockerized TypeScript/Fastify backend with a provider abstraction and OpenAI as the first provider.
    - Send only the workflow JSON and the user’s text request; do not send raw journals, screenshots or template images by default.
    - Require JSON Schema-constrained patch output, server validation, device validation, a human-readable diff and explicit acceptance.
    - Keep the assistant structurally isolated from the Android automation adapter. Follow official Structured Outputs and human-review guidance. [OpenAI Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs), [OpenAI safety guidance](https://developers.openai.com/api/docs/guides/safety-best-practices)
    - Production hosting, accounts and cross-device sync remain outside this phase; the service must first run locally and as a provider-neutral container.
 
-8. **Later platforms**
+9. **Later platforms**
    - Add Windows as C#/.NET using Windows UI Automation, `SendInput` and input hooks.
    - Reuse `.veyarc` schema, validation fixtures and execution semantics.
    - Implement a Windows-specific driver rather than attempting to share Android platform code or UI.
@@ -279,6 +297,8 @@ Every workflow declares allowed packages. `LaunchApp` may switch only to a decla
 - Foreground-package transitions, unknown windows, lock screen and system dialog behavior.
 - Recording-control surfaces excluded from recording.
 - No video file or unintended screenshot survives a run.
+- The five primary destinations retain their state across tab changes and configuration changes; compact phones use bottom navigation, while larger windows may use a rail without changing destination meaning.
+- Workflow and run folders, favourites, filters, editor nesting, and destructive confirmations remain usable with large fonts, screen readers, portrait, landscape, and representative narrow/tall aspect ratios.
 - Quick Settings/notification emergency stop prevents further capture, terminates the privileged helper, restores normal routing and removes recording controls on a best-effort basis within one second.
 - Replay input-guard tests remain deferred until a privileged backend exists; they must verify that
   conflicting target-app touches are consumed while system navigation and emergency controls
@@ -318,4 +338,5 @@ bounded Shizuku helper; multi-touch and pressure/contact-area fidelity remain fo
 - UI layout changes require a new workflow revision.
 - Pixel and image conditions use ephemeral screen frames.
 - The core beta is local-only with no accounts or synchronization.
+- The five-destination Android UI and organization phase is completed before AI work begins.
 - AI arrives after the core beta, uses OpenAI first behind a provider interface, proposes typed patches only, and never controls the device.
