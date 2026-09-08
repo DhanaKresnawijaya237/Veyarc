@@ -44,8 +44,8 @@ import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     private var resumeGeneration by mutableIntStateOf(0)
-    private var showAccessibilityHarness by mutableStateOf(false)
-    private var showRecorder by mutableStateOf(false)
+    private var selectedDestination by mutableStateOf(VeyarcDestination.HOME)
+    private var fullScreenDestination by mutableStateOf<FullScreenDestination?>(null)
     private var workflowToRun by mutableStateOf<WorkflowBundle?>(null)
     private var recordedWorkflowToEdit by mutableStateOf<WorkflowBundle?>(null)
     private var recordedJournalFileName by mutableStateOf<String?>(null)
@@ -61,6 +61,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        selectedDestination =
+            savedInstanceState
+                ?.getString(SELECTED_DESTINATION_KEY)
+                ?.let { saved -> VeyarcDestination.entries.firstOrNull { it.name == saved } }
+                ?: VeyarcDestination.HOME
         // Register the process-owned recording actions before the user leaves Veyarc. This lets
         // the fixed service-owned control center start a recording from a third-party app instead
         // of requiring the recorder screen to have been opened first.
@@ -70,13 +75,15 @@ class MainActivity : ComponentActivity() {
             this,
             object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
-                    if (showAccessibilityHarness) {
-                        showAccessibilityHarness = false
-                    } else if (showRecorder) {
+                    if (fullScreenDestination == FullScreenDestination.ACCESSIBILITY) {
+                        fullScreenDestination = null
+                    } else if (fullScreenDestination == FullScreenDestination.RECORDER) {
                         recordingSession.controller.stop()
-                        showRecorder = false
+                        fullScreenDestination = null
                     } else if (workflowToRun != null) {
                         leaveRunScreen()
+                    } else if (selectedDestination != VeyarcDestination.HOME) {
+                        selectedDestination = VeyarcDestination.HOME
                     } else {
                         isEnabled = false
                         onBackPressedDispatcher.onBackPressed()
@@ -92,48 +99,79 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background,
                 ) {
                     val bundle = workflowToRun
-                    when {
-                        showAccessibilityHarness -> AccessibilitySpikeScreen(
+                    when (fullScreenDestination) {
+                        FullScreenDestination.ACCESSIBILITY -> AccessibilitySpikeScreen(
                             resumeGeneration = resumeGeneration,
-                            onBack = { showAccessibilityHarness = false },
+                            onBack = { fullScreenDestination = null },
                             onStartRecording = {
-                                showAccessibilityHarness = false
-                                showRecorder = true
+                                fullScreenDestination = FullScreenDestination.RECORDER
                             },
                         )
 
-                        showRecorder -> CoordinateRecorderScreen(
+                        FullScreenDestination.RECORDER -> CoordinateRecorderScreen(
                             controller = recordingSession.controller,
-                            onBack = { showRecorder = false },
+                            onBack = { fullScreenDestination = null },
                             onEditWorkflow = { bundle, journalFileName ->
                                 recordedWorkflowToEdit = bundle
                                 recordedJournalFileName = journalFileName
-                                showRecorder = false
+                                selectedDestination = VeyarcDestination.WORKFLOWS
+                                fullScreenDestination = null
                             },
                         )
 
-                        bundle != null -> WorkflowRunScreen(
-                            bundle = bundle,
-                            controller = requireNotNull(runSession.controller) {
-                                "A workflow run screen requires an active run controller"
-                            },
-                            canStart = recoveryState == RunRecoveryState.READY,
-                            startBlockMessage = recoveryState.message,
-                            onStart = runSession::startRun,
-                            onBack = ::leaveRunScreen,
-                        )
+                        null ->
+                            if (bundle != null) {
+                                WorkflowRunScreen(
+                                    bundle = bundle,
+                                    controller = requireNotNull(runSession.controller) {
+                                        "A workflow run screen requires an active run controller"
+                                    },
+                                    canStart = recoveryState == RunRecoveryState.READY,
+                                    startBlockMessage = recoveryState.message,
+                                    onStart = runSession::startRun,
+                                    onBack = ::leaveRunScreen,
+                                )
+                            } else {
+                                VeyarcAppShell(
+                                    selectedDestination = selectedDestination,
+                                    onDestinationSelected = { selectedDestination = it },
+                                ) {
+                                    when (selectedDestination) {
+                                        VeyarcDestination.HOME -> HomeFoundationScreen(
+                                            onRecord = {
+                                                fullScreenDestination = FullScreenDestination.RECORDER
+                                            },
+                                            onOpenWorkflows = {
+                                                selectedDestination = VeyarcDestination.WORKFLOWS
+                                            },
+                                        )
 
-                        else -> WorkflowEditorScreen(
-                            repository = workflowRepository,
-                            onOpenAutomationHarness = { showAccessibilityHarness = true },
-                            onRunWorkflow = ::openRunScreen,
-                            initialBundle = recordedWorkflowToEdit,
-                            initialRecordingJournalFileName = recordedJournalFileName,
-                            onInitialBundleConsumed = {
-                                recordedWorkflowToEdit = null
-                                recordedJournalFileName = null
-                            },
-                        )
+                                        VeyarcDestination.WORKFLOWS -> WorkflowEditorScreen(
+                                            repository = workflowRepository,
+                                            onOpenAutomationHarness = {
+                                                fullScreenDestination = FullScreenDestination.ACCESSIBILITY
+                                            },
+                                            onRunWorkflow = ::openRunScreen,
+                                            initialBundle = recordedWorkflowToEdit,
+                                            initialRecordingJournalFileName = recordedJournalFileName,
+                                            onInitialBundleConsumed = {
+                                                recordedWorkflowToEdit = null
+                                                recordedJournalFileName = null
+                                            },
+                                        )
+
+                                        else -> DestinationFoundationScreen(
+                                            destination = selectedDestination,
+                                            onOpenWorkflows = {
+                                                selectedDestination = VeyarcDestination.WORKFLOWS
+                                            },
+                                            onOpenAccessibility = {
+                                                fullScreenDestination = FullScreenDestination.ACCESSIBILITY
+                                            },
+                                        )
+                                    }
+                                }
+                            }
                     }
                 }
             }
@@ -151,6 +189,11 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleControllerIntent(intent)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(SELECTED_DESTINATION_KEY, selectedDestination.name)
+        super.onSaveInstanceState(outState)
     }
 
     override fun onDestroy() {
@@ -210,10 +253,12 @@ class MainActivity : ComponentActivity() {
             // The library action is intentionally separate from Replay-latest. CLEAR_TOP/
             // SINGLE_TOP can deliver it to an existing run screen, so explicitly return to the
             // editor when the user asks for the library.
-            showAccessibilityHarness = false
-            if (showRecorder) recordingSession.controller.stop()
-            showRecorder = false
+            if (fullScreenDestination == FullScreenDestination.RECORDER) {
+                recordingSession.controller.stop()
+            }
+            fullScreenDestination = null
             leaveRunScreen()
+            selectedDestination = VeyarcDestination.WORKFLOWS
             return
         }
         catalogScope.launch {
@@ -225,6 +270,15 @@ class MainActivity : ComponentActivity() {
             openRunScreen(bundle, autoStart = autoStart)
         }
     }
+
+    private companion object {
+        const val SELECTED_DESTINATION_KEY = "selected_destination"
+    }
+}
+
+private enum class FullScreenDestination {
+    ACCESSIBILITY,
+    RECORDER,
 }
 
 enum class RunRecoveryState(val message: String?) {
