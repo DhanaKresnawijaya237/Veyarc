@@ -28,9 +28,10 @@ import com.veyarc.data.storage.StoredRunRecord
 import com.veyarc.data.storage.StoredRunStatus
 
 @Composable
-internal fun StoredRunDetailScreen(
+fun StoredRunDetailScreen(
     record: StoredRunRecord,
     onBack: () -> Unit,
+    onOpenWorkflowRevision: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     BackHandler(onBack = onBack)
@@ -81,7 +82,10 @@ internal fun StoredRunDetailScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        OutlinedButton(onClick = onBack) { Text("Back to editor") }
+                        OutlinedButton(onClick = onBack) { Text("Back to runs") }
+                        onOpenWorkflowRevision?.let { openRevision ->
+                            OutlinedButton(onClick = openRevision) { Text("Open revision ${record.revision}") }
+                        }
                     }
                     HorizontalDivider()
                     Text("Run events", style = MaterialTheme.typography.titleMedium)

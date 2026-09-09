@@ -23,6 +23,7 @@ import com.veyarc.app.ui.theme.VeyarcTheme
 import com.veyarc.automation.android.ReplayControllerWorkflow
 import com.veyarc.automation.android.ReplayFloatingController
 import com.veyarc.automation.android.ReplayWorkflowCatalog
+import com.veyarc.data.storage.StoredRunRecord
 import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowSummary
 import com.veyarc.feature.editor.WorkflowEditorScreen
@@ -198,6 +199,12 @@ class MainActivity : ComponentActivity() {
                                             },
                                         )
 
+                                        VeyarcDestination.RUNS -> RunManagerScreen(
+                                            repository = workflowRepository,
+                                            refreshGeneration = resumeGeneration,
+                                            onOpenWorkflowRevision = ::editRunWorkflowRevision,
+                                        )
+
                                         else -> DestinationFoundationScreen(
                                             destination = selectedDestination,
                                             onOpenWorkflows = {
@@ -261,6 +268,19 @@ class MainActivity : ComponentActivity() {
             val bundle = runCatching {
                 withContext(Dispatchers.IO) {
                     workflowRepository.loadRevision(workflow.workflowId, workflow.latestRevision)
+                }
+            }.getOrNull() ?: return@launch
+            workflowToEdit = bundle
+            recordedJournalFileName = null
+            selectedDestination = VeyarcDestination.EDITOR
+        }
+    }
+
+    private fun editRunWorkflowRevision(run: StoredRunRecord) {
+        catalogScope.launch {
+            val bundle = runCatching {
+                withContext(Dispatchers.IO) {
+                    workflowRepository.loadRevision(run.workflowId, run.revision)
                 }
             }.getOrNull() ?: return@launch
             workflowToEdit = bundle

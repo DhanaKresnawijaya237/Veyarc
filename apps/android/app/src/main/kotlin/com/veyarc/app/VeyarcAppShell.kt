@@ -28,6 +28,7 @@ import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -50,6 +51,7 @@ fun VeyarcAppShell(
     onDestinationSelected: (VeyarcDestination) -> Unit,
     content: @Composable () -> Unit,
 ) {
+    val destinationStates = rememberSaveableStateHolder()
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         if (usesNavigationRail(maxWidth.value, maxHeight.value)) {
             Row(modifier = Modifier.fillMaxSize()) {
@@ -63,7 +65,9 @@ fun VeyarcAppShell(
                         )
                     }
                 }
-                Box(modifier = Modifier.weight(1f)) { content() }
+                Box(modifier = Modifier.weight(1f)) {
+                    destinationStates.SaveableStateProvider(selectedDestination.name) { content() }
+                }
             }
         } else {
             Scaffold(
@@ -86,7 +90,7 @@ fun VeyarcAppShell(
                         .fillMaxSize()
                         .padding(padding),
                 ) {
-                    content()
+                    destinationStates.SaveableStateProvider(selectedDestination.name) { content() }
                 }
             }
         }

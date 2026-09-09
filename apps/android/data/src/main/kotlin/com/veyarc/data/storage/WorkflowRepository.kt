@@ -194,6 +194,8 @@ class WorkflowRepository internal constructor(
         bundle
     }
 
+    fun hasRevision(workflowId: String, revision: Int): Boolean = database.workflowDao().findRevision(workflowId, revision) != null
+
     fun listWorkflows(): List<WorkflowSummary> = database.workflowDao().listWorkflows().map { workflow ->
         WorkflowSummary(
             workflowId = workflow.workflowId,
@@ -261,7 +263,13 @@ class WorkflowRepository internal constructor(
         folderId: String = WorkflowIds.newUuid(),
     ): FolderSummary = synchronized(this) {
         val timestamp = storageTimestamp()
-        val folder = RunFolderEntity(folderId, validFolderName(name), timestamp, timestamp)
+        val folder = RunFolderEntity(
+            folderId,
+            validFolderName(name),
+            timestamp,
+            timestamp,
+            database.workflowDao().nextRunFolderSortOrder(),
+        )
         requireValidFolderId(folderId)
         database.workflowDao().insertRunFolder(folder)
         folder.toSummary()
@@ -273,6 +281,22 @@ class WorkflowRepository internal constructor(
         requireValidFolderId(folderId)
         check(database.workflowDao().renameRunFolder(folderId, validFolderName(name), storageTimestamp()) == 1) {
             "Run folder does not exist"
+        }
+    }
+
+    fun reorderRunFolders(folderIds: List<String>) = synchronized(this) {
+        val dao = database.workflowDao()
+        require(folderIds.toSet().size == folderIds.size) { "Run folders must be unique" }
+        require(folderIds.toSet() == dao.listRunFolders().mapTo(mutableSetOf()) { it.folderId }) {
+            "Run folder order must contain every folder"
+        }
+        val timestamp = storageTimestamp()
+        database.runInTransaction {
+            folderIds.forEachIndexed { index, folderId ->
+                check(dao.setRunFolderSortOrder(folderId, index, timestamp) == 1) {
+                    "Run folder does not exist"
+                }
+            }
         }
     }
 

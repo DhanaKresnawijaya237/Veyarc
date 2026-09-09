@@ -65,8 +65,11 @@ internal interface WorkflowDao {
     @Query("UPDATE run_records SET folderId = :folderId WHERE runId = :runId AND status != :runningStatus")
     fun moveRunToFolder(runId: String, folderId: String?, runningStatus: String): Int
 
-    @Query("SELECT * FROM run_folders ORDER BY name COLLATE NOCASE, folderId")
+    @Query("SELECT * FROM run_folders ORDER BY sortOrder, name COLLATE NOCASE, folderId")
     fun listRunFolders(): List<RunFolderEntity>
+
+    @Query("SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM run_folders")
+    fun nextRunFolderSortOrder(): Int
 
     @Query("SELECT * FROM run_folders WHERE folderId = :folderId")
     fun findRunFolder(folderId: String): RunFolderEntity?
@@ -76,6 +79,9 @@ internal interface WorkflowDao {
 
     @Query("UPDATE run_folders SET name = :name, updatedAtMs = :updatedAtMs WHERE folderId = :folderId")
     fun renameRunFolder(folderId: String, name: String, updatedAtMs: Long): Int
+
+    @Query("UPDATE run_folders SET sortOrder = :sortOrder, updatedAtMs = :updatedAtMs WHERE folderId = :folderId")
+    fun setRunFolderSortOrder(folderId: String, sortOrder: Int, updatedAtMs: Long): Int
 
     @Query("UPDATE run_records SET folderId = NULL WHERE folderId = :folderId")
     fun clearRunFolderAssignments(folderId: String): Int

@@ -36,6 +36,8 @@ internal data class RunFolderEntity(
     val name: String,
     val createdAtMs: Long,
     val updatedAtMs: Long,
+    @ColumnInfo(defaultValue = "0")
+    val sortOrder: Int = 0,
 )
 
 @Entity(

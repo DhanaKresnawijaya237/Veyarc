@@ -65,6 +65,12 @@ class WorkflowRepositoryTest {
             assertEquals(listOf(RUN_ID), repository.listRunHistory().map { it.runId })
             val runFolder = repository.createRunFolder("Archive", RUN_FOLDER_ID)
             assertEquals(RUN_FOLDER_ID, runFolder.folderId)
+            repository.createRunFolder("Later", SECOND_RUN_FOLDER_ID)
+            repository.reorderRunFolders(listOf(SECOND_RUN_FOLDER_ID, RUN_FOLDER_ID))
+            assertEquals(
+                listOf(SECOND_RUN_FOLDER_ID, RUN_FOLDER_ID),
+                repository.listRunFolders().map { it.folderId },
+            )
             repository.moveRunToFolder(RUN_ID, RUN_FOLDER_ID)
             assertEquals(RUN_FOLDER_ID, repository.listRunHistory().single().folderId)
 
@@ -102,6 +108,7 @@ class WorkflowRepositoryTest {
             assertEquals(null, repository.listWorkflows().single().folderId)
             assertTrue(repository.listWorkflows().single().isFavorite)
             repository.deleteRunFolder(RUN_FOLDER_ID)
+            repository.deleteRunFolder(SECOND_RUN_FOLDER_ID)
             assertTrue(repository.listRunFolders().isEmpty())
             assertEquals(null, repository.listRunHistory().last().folderId)
 
@@ -154,5 +161,6 @@ class WorkflowRepositoryTest {
         const val DETAILED_RUN_ID = "00000000-0000-4000-8000-000000000304"
         const val WORKFLOW_FOLDER_ID = "00000000-0000-4000-8000-000000000305"
         const val RUN_FOLDER_ID = "00000000-0000-4000-8000-000000000306"
+        const val SECOND_RUN_FOLDER_ID = "00000000-0000-4000-8000-000000000307"
     }
 }

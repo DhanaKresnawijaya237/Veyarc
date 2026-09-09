@@ -75,6 +75,42 @@ class VeyarcDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migrationThreeToFourAddsRunFolderOrdering() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-${System.nanoTime()}.db"
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(databaseName)
+                .callback(
+                    object : SupportSQLiteOpenHelper.Callback(3) {
+                        override fun onCreate(db: SupportSQLiteDatabase) {
+                            db.execSQL(
+                                "CREATE TABLE run_folders (folderId TEXT NOT NULL PRIMARY KEY, " +
+                                    "name TEXT NOT NULL, createdAtMs INTEGER NOT NULL, updatedAtMs INTEGER NOT NULL)",
+                            )
+                            db.execSQL("INSERT INTO run_folders VALUES ('folder', 'Saved', 10, 20)")
+                        }
+
+                        override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+                    },
+                )
+                .build(),
+        )
+        try {
+            val db = helper.writableDatabase
+            VeyarcDatabase.MIGRATION_3_4.migrate(db)
+            db.query("SELECT name, sortOrder FROM run_folders").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("Saved", cursor.getString(0))
+                assertEquals(0, cursor.getInt(1))
+            }
+        } finally {
+            helper.close()
+            context.deleteDatabase(databaseName)
+        }
+    }
+
     private fun assertTableExists(db: SupportSQLiteDatabase, tableName: String) {
         db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", arrayOf(tableName))
             .use { cursor -> assertTrue(cursor.moveToFirst()) }
