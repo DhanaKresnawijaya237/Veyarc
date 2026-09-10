@@ -437,6 +437,11 @@ class WorkflowRepository internal constructor(
         check(deleted == 1) { "Run record is missing or still running" }
     }
 
+    /** Clears finished history without mutating a run that is still active. */
+    fun clearRunHistory(): Int = synchronized(this) {
+        database.workflowDao().deleteTerminalRuns(StoredRunStatus.RUNNING.name)
+    }
+
     /** Deletes a workflow, its revisions, encrypted files, and all associated run records. */
     fun deleteWorkflow(workflowId: String) = synchronized(this) {
         val dao = database.workflowDao()

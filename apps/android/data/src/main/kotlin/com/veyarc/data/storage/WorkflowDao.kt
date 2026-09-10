@@ -158,4 +158,7 @@ internal interface WorkflowDao {
             "WHERE runId = :runId AND status != :runningStatus",
     )
     fun deleteRun(runId: String, runningStatus: String): Int
+
+    @Query("DELETE FROM run_records WHERE status != :runningStatus")
+    fun deleteTerminalRuns(runningStatus: String): Int
 }

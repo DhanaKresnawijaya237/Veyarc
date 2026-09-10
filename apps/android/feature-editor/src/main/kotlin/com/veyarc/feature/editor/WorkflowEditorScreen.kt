@@ -115,6 +115,7 @@ fun WorkflowEditorScreen(
     newWorkflowRequestId: Int = 0,
     newWorkflowFolderId: String? = null,
     onNewWorkflowRequestConsumed: () -> Unit = {},
+    reducedDensity: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -253,6 +254,7 @@ fun WorkflowEditorScreen(
             onEditGeometry = { path, index -> geometryTarget = GeometryTarget(path, index) },
             onEditCondition = { path, index -> conditionTarget = ConditionTarget(path, index) },
             onAddTemplate = { templatePicker.launch("image/*") },
+            reducedDensity = reducedDensity,
             modifier = modifier,
         )
         geometryTarget?.let { target ->
@@ -435,6 +437,7 @@ private fun WorkflowDraftScreen(
     onEditGeometry: (StepListPath, Int) -> Unit,
     onEditCondition: (StepListPath, Int) -> Unit,
     onAddTemplate: () -> Unit,
+    reducedDensity: Boolean,
     modifier: Modifier = Modifier,
 ) {
     var selection by remember { mutableStateOf<BlockSelection?>(null) }
@@ -479,6 +482,7 @@ private fun WorkflowDraftScreen(
                         onEditGeometry = onEditGeometry,
                         onEditCondition = onEditCondition,
                         onAddTemplate = onAddTemplate,
+                        reducedDensity = reducedDensity,
                         modifier = Modifier.weight(0.62f),
                     )
                     VerticalDivider()
@@ -508,6 +512,7 @@ private fun WorkflowDraftScreen(
                     onEditGeometry = onEditGeometry,
                     onEditCondition = onEditCondition,
                     onAddTemplate = onAddTemplate,
+                    reducedDensity = reducedDensity,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -534,11 +539,15 @@ private fun WorkflowDraftCanvas(
     onEditGeometry: (StepListPath, Int) -> Unit,
     onEditCondition: (StepListPath, Int) -> Unit,
     onAddTemplate: () -> Unit,
+    reducedDensity: Boolean,
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = modifier.verticalScroll(rememberScrollState()).padding(
+            horizontal = if (reducedDensity) 12.dp else 16.dp,
+            vertical = if (reducedDensity) 8.dp else 12.dp,
+        ),
+        verticalArrangement = Arrangement.spacedBy(if (reducedDensity) 8.dp else 12.dp),
     ) {
         EditorToolbar(
             draft = draft,

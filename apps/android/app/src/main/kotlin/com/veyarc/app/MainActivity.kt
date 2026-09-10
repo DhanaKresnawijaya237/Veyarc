@@ -7,6 +7,7 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -102,7 +103,18 @@ class MainActivity : ComponentActivity() {
         )
         setContent {
             val recoveryState by runSession.recoveryState.collectAsState()
-            VeyarcTheme {
+            val preferencesFlow = androidx.compose.runtime.remember {
+                AppPreferences.observe(this@MainActivity)
+            }
+            val uiPreferences by preferencesFlow.collectAsState(initial = AppUiPreferences())
+            val systemDark = isSystemInDarkTheme()
+            VeyarcTheme(
+                darkTheme = when (uiPreferences.theme) {
+                    ThemePreference.SYSTEM -> systemDark
+                    ThemePreference.LIGHT -> false
+                    ThemePreference.DARK -> true
+                },
+            ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
@@ -197,6 +209,7 @@ class MainActivity : ComponentActivity() {
                                                 newWorkflowRequestId = 0
                                                 newWorkflowFolderId = null
                                             },
+                                            reducedDensity = uiPreferences.reducedDensity,
                                         )
 
                                         VeyarcDestination.RUNS -> RunManagerScreen(
@@ -205,12 +218,22 @@ class MainActivity : ComponentActivity() {
                                             onOpenWorkflowRevision = ::editRunWorkflowRevision,
                                         )
 
-                                        else -> DestinationFoundationScreen(
-                                            destination = selectedDestination,
-                                            onOpenWorkflows = {
-                                                selectedDestination = VeyarcDestination.WORKFLOWS
+                                        VeyarcDestination.SETTINGS -> SettingsScreen(
+                                            repository = workflowRepository,
+                                            refreshGeneration = resumeGeneration,
+                                            themePreference = uiPreferences.theme,
+                                            onThemePreferenceChange = { preference ->
+                                                catalogScope.launch {
+                                                    AppPreferences.setTheme(this@MainActivity, preference)
+                                                }
                                             },
-                                            onOpenAccessibility = {
+                                            reducedDensity = uiPreferences.reducedDensity,
+                                            onReducedDensityChange = { reduced ->
+                                                catalogScope.launch {
+                                                    AppPreferences.setReducedDensity(this@MainActivity, reduced)
+                                                }
+                                            },
+                                            onOpenDiagnostics = {
                                                 fullScreenDestination = FullScreenDestination.ACCESSIBILITY
                                             },
                                         )
