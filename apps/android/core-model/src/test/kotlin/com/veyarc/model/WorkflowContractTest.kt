@@ -115,6 +115,21 @@ class WorkflowContractTest {
     }
 
     @Test
+    fun validatorAllowsUnusedTemplatesButRejectsDuplicateDisplayNames() {
+        val unused = AssetReference(AssetId("template-unused"), AssetKind.IMAGE_TEMPLATE, "Reference")
+        val validWithUnused = validDocument().copy(assets = validDocument().assets + unused)
+
+        assertFalse(WorkflowValidator.validate(validWithUnused).any { it.code == ValidationErrorCode.UNUSED_ASSET })
+
+        val duplicateNames = validWithUnused.copy(
+            assets = validWithUnused.assets.map { it.copy(displayName = "Same name") },
+        )
+        assertTrue(
+            WorkflowValidator.validate(duplicateNames).any { it.code == ValidationErrorCode.DUPLICATE_ASSET_NAME },
+        )
+    }
+
+    @Test
     fun strictDecoderRejectsUnknownFields() {
         val json = WorkflowJson.encode(validDocument()).replaceFirst("{", "{\"unknown\":true,")
 

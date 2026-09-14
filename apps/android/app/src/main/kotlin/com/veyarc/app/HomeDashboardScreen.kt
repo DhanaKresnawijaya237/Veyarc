@@ -1,13 +1,18 @@
 package com.veyarc.app
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -25,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -33,6 +39,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -44,6 +53,8 @@ import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowSummary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.text.DateFormat
+import java.util.Date
 import kotlin.math.roundToInt
 
 @Composable
@@ -55,17 +66,29 @@ fun HomeDashboardScreen(
 ) {
     var dashboard by remember { mutableStateOf<RunDashboardSummary?>(null) }
     var workflows by remember { mutableStateOf<List<WorkflowSummary>>(emptyList()) }
+    var latestRecording by remember { mutableStateOf<WorkflowSummary?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(repository, refreshGeneration) {
         error = null
         runCatching {
             withContext(Dispatchers.IO) {
-                repository.loadRunDashboard() to repository.listWorkflows()
+                val storedWorkflows = repository.listWorkflows()
+                Triple(
+                    repository.loadRunDashboard(),
+                    storedWorkflows,
+                    storedWorkflows.firstOrNull { workflow ->
+                        runCatching {
+                            repository.loadRevision(workflow.workflowId, workflow.latestRevision)
+                                .producerVersion == RECORDER_PRODUCER_VERSION
+                        }.getOrDefault(false)
+                    },
+                )
             }
-        }.onSuccess { (loadedDashboard, loadedWorkflows) ->
+        }.onSuccess { (loadedDashboard, loadedWorkflows, loadedRecording) ->
             dashboard = loadedDashboard
             workflows = loadedWorkflows
+            latestRecording = loadedRecording
         }.onFailure {
             error = "Dashboard data could not be loaded."
         }
@@ -73,24 +96,26 @@ fun HomeDashboardScreen(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "VEYARC",
-                    color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.labelLarge,
-                )
-                Text("Your automation overview", style = MaterialTheme.typography.headlineMedium)
-                Text(
-                    "Record a workflow or replay a favorite without digging through the library.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-                Button(onClick = onRecord, modifier = Modifier.padding(top = 8.dp)) {
-                    Text("Start recording")
+            Row(
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Home", style = MaterialTheme.typography.headlineSmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onRecord) { Text("Record") }
+                    OutlinedButton(
+                        onClick = { latestRecording?.let(onPlayWorkflow) },
+                        enabled = latestRecording != null,
+                    ) {
+                        Icon(Icons.Filled.PlayArrow, contentDescription = null)
+                        Spacer(Modifier.width(4.dp))
+                        Text("Play")
+                    }
                 }
             }
         }
@@ -112,27 +137,15 @@ fun HomeDashboardScreen(
             }
         } else {
             item { DashboardMetrics(loaded) }
-            item { RunOutcomeChart(loaded.recentRuns) }
+            val names = workflows.associate { it.workflowId to it.name }
+            item { RunOutcomeChart(loaded.recentRuns, names) }
             item { StatusDistribution(loaded) }
 
             val favorites = workflows.filter { it.isFavorite }
-            item { SectionTitle("Favorite workflows") }
-            if (favorites.isEmpty()) {
-                item { EmptyCard("Favorite workflows from the Workflow Manager will appear here.") }
-            } else {
+            if (favorites.isNotEmpty()) {
+                item { SectionTitle("Favorite workflows") }
                 items(favorites, key = WorkflowSummary::workflowId) { workflow ->
                     WorkflowQuickPlayCard(workflow, onPlayWorkflow)
-                }
-            }
-
-            val names = workflows.associate { it.workflowId to it.name }
-            val failures = loaded.recentRuns.filter(::isFailure).take(3)
-            item { SectionTitle("Recent failures") }
-            if (failures.isEmpty()) {
-                item { EmptyCard("No recent failures.") }
-            } else {
-                items(failures, key = StoredRunRecord::runId) { run ->
-                    FailureCard(run, names[run.workflowId] ?: "Deleted workflow")
                 }
             }
         }
@@ -177,7 +190,18 @@ private fun MetricCard(
 }
 
 @Composable
-private fun RunOutcomeChart(runs: List<StoredRunRecord>) {
+private fun RunOutcomeChart(
+    runs: List<StoredRunRecord>,
+    workflowNames: Map<String, String>,
+) {
+    var selectedIndex by remember(runs) { mutableStateOf<Int?>(null) }
+    var tooltipVisible by remember(runs) { mutableStateOf(false) }
+    val tooltipAlpha by animateFloatAsState(
+        targetValue = if (tooltipVisible) 1f else 0f,
+        animationSpec = tween(90),
+        label = "Run details tooltip",
+    )
+    var chartWidthPx by remember { mutableIntStateOf(0) }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("Recent run duration", style = MaterialTheme.typography.titleMedium)
@@ -189,33 +213,94 @@ private fun RunOutcomeChart(runs: List<StoredRunRecord>) {
                 val otherColor = MaterialTheme.colorScheme.secondary
                 val plottedRuns = runs.take(12).reversed()
                 val description = plottedRuns.joinToString { "${it.status.name.lowercase()} ${runDuration(it)} ms" }
-                Canvas(
-                    modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .height(120.dp)
-                        .semantics { contentDescription = "Recent run duration chart: $description" },
-                ) {
-                    val maximum = plottedRuns.maxOf { runDuration(it).coerceAtLeast(1L) }.toFloat()
-                    val slotWidth = size.width / plottedRuns.size
-                    val barWidth = (slotWidth * 0.58f).coerceAtMost(28.dp.toPx())
-                    plottedRuns.forEachIndexed { index, run ->
-                        val ratio = runDuration(run).coerceAtLeast(1L) / maximum
-                        val height = (size.height * ratio).coerceAtLeast(8.dp.toPx())
-                        val color = when (run.status) {
-                            StoredRunStatus.COMPLETED -> completedColor
-                            StoredRunStatus.FAILED, StoredRunStatus.INTERRUPTED -> failedColor
-                            else -> otherColor
+                BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(150.dp)) {
+                    Canvas(
+                        modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .height(120.dp)
+                            .align(Alignment.BottomCenter)
+                            .onSizeChanged { chartWidthPx = it.width }
+                            .pointerInput(plottedRuns, chartWidthPx) {
+                                detectTapGestures(
+                                    onTap = {
+                                        tooltipVisible = false
+                                        selectedIndex = null
+                                    },
+                                    onPress = {
+                                        tryAwaitRelease()
+                                        tooltipVisible = false
+                                        kotlinx.coroutines.delay(100)
+                                        selectedIndex = null
+                                    },
+                                    onLongPress = { point ->
+                                        if (chartWidthPx > 0) {
+                                            selectedIndex =
+                                                ((point.x / chartWidthPx) * plottedRuns.size)
+                                                    .toInt()
+                                                    .coerceIn(plottedRuns.indices)
+                                            tooltipVisible = true
+                                        }
+                                    },
+                                )
+                            }
+                            .semantics {
+                                contentDescription = "Recent run duration chart: $description. Long press a bar for details."
+                            },
+                    ) {
+                        val maximum = plottedRuns.maxOf { runDuration(it).coerceAtLeast(1L) }.toFloat()
+                        val slotWidth = size.width / plottedRuns.size
+                        val barWidth = (slotWidth * 0.58f).coerceAtMost(28.dp.toPx())
+                        plottedRuns.forEachIndexed { index, run ->
+                            val ratio = runDuration(run).coerceAtLeast(1L) / maximum
+                            val height = (size.height * ratio).coerceAtLeast(8.dp.toPx())
+                            val color = when (run.status) {
+                                StoredRunStatus.COMPLETED -> completedColor
+                                StoredRunStatus.FAILED, StoredRunStatus.INTERRUPTED -> failedColor
+                                else -> otherColor
+                            }
+                            drawRoundRect(
+                                color = color,
+                                topLeft = androidx.compose.ui.geometry.Offset(
+                                    x = index * slotWidth + (slotWidth - barWidth) / 2f,
+                                    y = size.height - height,
+                                ),
+                                size = androidx.compose.ui.geometry.Size(barWidth, height),
+                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()),
+                            )
                         }
-                        drawRoundRect(
-                            color = color,
-                            topLeft = androidx.compose.ui.geometry.Offset(
-                                x = index * slotWidth + (slotWidth - barWidth) / 2f,
-                                y = size.height - height,
-                            ),
-                            size = androidx.compose.ui.geometry.Size(barWidth, height),
-                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()),
-                        )
+                    }
+                    selectedIndex?.let { index ->
+                        val run = plottedRuns[index]
+                        val slotWidth = maxWidth / plottedRuns.size
+                        androidx.compose.material3.Surface(
+                            modifier = Modifier
+                                .graphicsLayer(alpha = tooltipAlpha)
+                                .padding(
+                                    start = (slotWidth * index)
+                                        .coerceIn(0.dp, (maxWidth - 190.dp).coerceAtLeast(0.dp)),
+                                )
+                                .width(190.dp),
+                            shape = MaterialTheme.shapes.small,
+                            tonalElevation = 6.dp,
+                            shadowElevation = 4.dp,
+                        ) {
+                            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    workflowNames[run.workflowId] ?: "Deleted workflow",
+                                    style = MaterialTheme.typography.labelLarge,
+                                )
+                                Text(
+                                    "${run.status.displayName()} · ${formatDuration(runDuration(run))}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                Text(
+                                    formatRunTime(run.startedAtMs),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -243,6 +328,7 @@ private fun StatusDistribution(dashboard: RunDashboardSummary) {
                                 progress = { count.toFloat() / dashboard.totalRuns },
                                 modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small),
                                 strokeCap = StrokeCap.Round,
+                                drawStopIndicator = {},
                             )
                         }
                     }
@@ -279,42 +365,20 @@ private fun WorkflowQuickPlayCard(
 }
 
 @Composable
-private fun FailureCard(run: StoredRunRecord, workflowName: String) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(workflowName, style = MaterialTheme.typography.titleMedium)
-            Text(run.status.displayName(), color = MaterialTheme.colorScheme.error)
-            run.interruptionReason?.let {
-                Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-    }
-}
-
-@Composable
 private fun SectionTitle(title: String) {
     Text(title, style = MaterialTheme.typography.titleLarge)
 }
 
-@Composable
-private fun EmptyCard(message: String) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Text(
-            message,
-            modifier = Modifier.padding(18.dp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
 private fun runDuration(run: StoredRunRecord): Long = ((run.finishedAtMs ?: run.startedAtMs) - run.startedAtMs).coerceAtLeast(0L)
 
-private fun isFailure(run: StoredRunRecord): Boolean = run.status == StoredRunStatus.FAILED || run.status == StoredRunStatus.INTERRUPTED
-
 private fun StoredRunStatus.displayName(): String = name.lowercase().replaceFirstChar(Char::uppercase)
+
+private fun formatRunTime(timestampMs: Long): String = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(timestampMs))
 
 internal fun formatDuration(durationMs: Long?): String {
     if (durationMs == null) return "—"
     val seconds = durationMs / 1000
     return if (seconds < 60) "${seconds}s" else "${seconds / 60}m ${seconds % 60}s"
 }
+
+private const val RECORDER_PRODUCER_VERSION = "android-recorder"

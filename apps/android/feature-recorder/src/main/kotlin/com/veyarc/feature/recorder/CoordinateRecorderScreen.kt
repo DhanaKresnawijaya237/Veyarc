@@ -66,7 +66,7 @@ fun CoordinateRecorderScreen(
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Coordinate recording", style = MaterialTheme.typography.headlineSmall)
+        Text("Record", style = MaterialTheme.typography.headlineSmall)
         Text(
             "Start recording here or from the Veyarc edge-latch control center, then use any apps normally. " +
                 "Veyarc records a global raw single-pointer " +
@@ -230,8 +230,6 @@ fun CoordinateRecorderScreen(
                 Button(onClick = controller::start) { Text("Try again") }
             }
         }
-
-        OutlinedButton(onClick = onBack) { Text("Back") }
     }
 
     pendingReplayReview?.let { review ->

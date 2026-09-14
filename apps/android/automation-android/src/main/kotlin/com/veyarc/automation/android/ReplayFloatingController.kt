@@ -4,10 +4,17 @@ import android.accessibilityservice.AccessibilityService
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
+import android.content.res.Configuration
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.PorterDuff
+import android.graphics.RectF
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.os.Handler
 import android.os.Looper
 import android.util.DisplayMetrics
@@ -479,6 +486,7 @@ object ReplayFloatingController {
         }
 
         panel?.let {
+            root.panel = it
             root.addView(
                 it,
                 FrameLayout.LayoutParams(panelWidth, panelHeight).apply {
@@ -487,9 +495,7 @@ object ReplayFloatingController {
                 },
             )
         }
-        val handle = LatchButton(activeService).apply {
-            // The latch is intentionally a plain tab. A logo/icon makes the small emergency
-            // surface look like a floating button and encourages users to drag it into content.
+        val handle = LatchButton(activeService, edge, latchAccentColor(activeService)).apply {
             setImageDrawable(null)
             contentDescription = when {
                 replayActive -> "Stop Veyarc replay"
@@ -540,6 +546,7 @@ object ReplayFloatingController {
         }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                handle.animate().scaleX(1.08f).scaleY(0.94f).setDuration(90L).start()
                 dragState = DragState(
                     startRawX = event.rawX,
                     startRawY = event.rawY,
@@ -561,6 +568,7 @@ object ReplayFloatingController {
             MotionEvent.ACTION_UP,
             MotionEvent.ACTION_CANCEL,
             -> {
+                handle.animate().scaleX(1f).scaleY(1f).setDuration(140L).start()
                 val state = dragState
                 dragState = null
                 if (state?.dragging == true) {
@@ -838,6 +846,11 @@ object ReplayFloatingController {
             overlayView = view
             layoutParams = params
             updateSurfaceGeometry(displayMetrics, view, measuredWidth, measuredHeight)
+            view.panel?.let { panel ->
+                panel.alpha = 0f
+                panel.translationX = dp(activeService, if (edge == EdgeLatchSide.LEFT) -8 else 8).toFloat()
+                panel.animate().alpha(1f).translationX(0f).setDuration(160L).start()
+            }
             true
         }.getOrElse {
             surfaceBounds = null
@@ -981,19 +994,36 @@ object ReplayFloatingController {
 
     private fun isEnabledForCurrentService(): Boolean = service?.let(::isEnabled) == true
 
-    private fun handleBackground(context: Context): GradientDrawable = GradientDrawable().apply {
-        shape = GradientDrawable.RECTANGLE
-        setColor(
-            when {
-                replayActive -> 0xFFE55B62.toInt()
-                replayPaused || recordingState == ControlCenterRecordingState.PAUSED -> 0xFFE8C8FF.toInt()
-                recordingState == ControlCenterRecordingState.RECORDING -> 0xFFE56B73.toInt()
-                else -> 0xFFBC8BFF.toInt()
-            },
+    private fun handleBackground(context: Context): Drawable {
+        val dark = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+            Configuration.UI_MODE_NIGHT_YES
+        val content = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(if (dark) 0xF23A323F.toInt() else 0xF2F3EDF7.toInt())
+            cornerRadii = edgeLatchCornerRadii(edge, dp(context, 16).toFloat())
+            setStroke(dp(context, 1), if (dark) 0xFF675B6E.toInt() else 0xFFD6C9DD.toInt())
+        }
+        val mask = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(Color.WHITE)
+            cornerRadii = edgeLatchCornerRadii(edge, dp(context, 16).toFloat())
+        }
+        return RippleDrawable(
+            ColorStateList.valueOf(if (dark) 0x33FFFFFF else 0x22000000),
+            content,
+            mask,
         )
-        val radius = dp(context, 18).toFloat()
-        cornerRadii = edgeLatchCornerRadii(edge, radius)
-        setStroke(1, 0xFFEFE4FF.toInt())
+    }
+
+    private fun latchAccentColor(context: Context): Int {
+        val dark = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+            Configuration.UI_MODE_NIGHT_YES
+        return when {
+            replayActive || recordingState == ControlCenterRecordingState.RECORDING -> 0xFFE55B62.toInt()
+            replayPaused || recordingState == ControlCenterRecordingState.PAUSED -> 0xFFE8C8FF.toInt()
+            dark -> 0xFFD0BCFF.toInt()
+            else -> 0xFF6F3FB2.toInt()
+        }
     }
 
     private fun iconBackground(): GradientDrawable = GradientDrawable().apply {
@@ -1081,13 +1111,34 @@ object ReplayFloatingController {
     )
 
     private class ControllerRoot(context: Context) : FrameLayout(context) {
+        var panel: View? = null
         var handleLeftPx: Int = 0
         var handleTopPx: Int = 0
         var handleWidthPx: Int = 0
         var handleHeightPx: Int = 0
     }
 
-    private class LatchButton(context: Context) : ImageButton(context) {
+    private class LatchButton(
+        context: Context,
+        private val side: EdgeLatchSide,
+        accentColor: Int,
+    ) : ImageButton(context) {
+        private val gripPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accentColor }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val gripWidth = dp(context, 3).toFloat()
+            val gripHeight = dp(context, 24).toFloat()
+            val visibleCenterX = if (side == EdgeLatchSide.LEFT) width * 0.75f else width * 0.25f
+            val top = (height - gripHeight) / 2f
+            canvas.drawRoundRect(
+                RectF(visibleCenterX - gripWidth / 2f, top, visibleCenterX + gripWidth / 2f, top + gripHeight),
+                gripWidth,
+                gripWidth,
+                gripPaint,
+            )
+        }
+
         override fun performClick(): Boolean {
             super.performClick()
             return true

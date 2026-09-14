@@ -67,6 +67,29 @@ object WorkflowValidator {
                     "Asset $duplicate is listed more than once",
                 )
             }
+        document.assets.forEachIndexed { index, asset ->
+            asset.displayName?.let { name ->
+                if (name.isBlank() || name.length > 64) {
+                    errors += error(
+                        ValidationErrorCode.INVALID_ASSET_NAME,
+                        "/assets/$index/displayName",
+                        "Template name must be 1 to 64 characters",
+                    )
+                }
+            }
+        }
+        document.assets.mapNotNull(AssetReference::displayName)
+            .groupingBy { it.trim().lowercase() }
+            .eachCount()
+            .filterValues { it > 1 }
+            .keys
+            .forEach { duplicate ->
+                errors += error(
+                    ValidationErrorCode.DUPLICATE_ASSET_NAME,
+                    "/assets",
+                    "Template name $duplicate is used more than once",
+                )
+            }
 
         val referencedAssets = mutableSetOf<String>()
         val seenStepIds = linkedSetOf<String>()
@@ -91,16 +114,6 @@ object WorkflowValidator {
                     "Asset $missing is referenced but not declared",
                 )
             }
-        declaredAssets.keys
-            .filterNot(referencedAssets::contains)
-            .forEach { unused ->
-                errors += error(
-                    ValidationErrorCode.UNUSED_ASSET,
-                    "/assets",
-                    "Asset $unused is declared but never referenced",
-                )
-            }
-
         return errors.sortedWith(compareBy<ValidationError> { it.path }.thenBy { it.code.name })
     }
 

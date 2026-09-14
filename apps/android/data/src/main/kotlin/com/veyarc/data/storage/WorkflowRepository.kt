@@ -24,6 +24,8 @@ data class FolderSummary(
     val name: String,
     val createdAtMs: Long,
     val updatedAtMs: Long,
+    val colorArgb: Int? = null,
+    val sortOrder: Int = 0,
 )
 
 data class RevisionSummary(
@@ -60,6 +62,7 @@ data class StoredRunRecord(
     val eventHistory: List<StoredRunEvent>,
     val hasStoredDetails: Boolean,
     val folderId: String?,
+    val name: String? = null,
 )
 
 data class StoredRunEvent(
@@ -213,7 +216,13 @@ class WorkflowRepository internal constructor(
         folderId: String = WorkflowIds.newUuid(),
     ): FolderSummary = synchronized(this) {
         val timestamp = storageTimestamp()
-        val folder = WorkflowFolderEntity(folderId, validFolderName(name), timestamp, timestamp)
+        val folder = WorkflowFolderEntity(
+            folderId,
+            validFolderName(name),
+            timestamp,
+            timestamp,
+            sortOrder = database.workflowDao().nextWorkflowFolderSortOrder(),
+        )
         requireValidFolderId(folderId)
         database.workflowDao().insertWorkflowFolder(folder)
         folder.toSummary()
@@ -230,6 +239,32 @@ class WorkflowRepository internal constructor(
         check(
             database.workflowDao().renameWorkflowFolder(folderId, validFolderName(name), storageTimestamp()) == 1,
         ) { "Workflow folder does not exist" }
+    }
+
+    fun setWorkflowFolderColor(folderId: String, colorArgb: Int?) = synchronized(this) {
+        requireValidFolderId(folderId)
+        val dao = database.workflowDao()
+        require(dao.findWorkflowFolder(folderId) != null) { "Workflow folder does not exist" }
+        val owner = colorArgb?.let(dao::findWorkflowFolderByColor)
+        require(owner == null || owner.folderId == folderId) { "That color is already used by another folder" }
+        check(dao.setWorkflowFolderColor(folderId, colorArgb, storageTimestamp()) == 1) {
+            "Workflow folder does not exist"
+        }
+    }
+
+    fun reorderWorkflowFolders(folderIds: List<String>) = synchronized(this) {
+        val dao = database.workflowDao()
+        require(folderIds.toSet() == dao.listWorkflowFolders().mapTo(mutableSetOf()) { it.folderId }) {
+            "Folder order must contain every workflow folder exactly once"
+        }
+        val timestamp = storageTimestamp()
+        database.runInTransaction {
+            folderIds.forEachIndexed { index, folderId ->
+                check(dao.setWorkflowFolderSortOrder(folderId, index, timestamp) == 1) {
+                    "Workflow folder does not exist"
+                }
+            }
+        }
     }
 
     fun deleteWorkflowFolder(folderId: String) = synchronized(this) {
@@ -250,6 +285,14 @@ class WorkflowRepository internal constructor(
             require(dao.findWorkflowFolder(folderId) != null) { "Workflow folder does not exist" }
         }
         check(dao.moveWorkflowToFolder(workflowId, folderId) == 1) { "Workflow does not exist" }
+    }
+
+    fun renameRun(runId: String, name: String) = synchronized(this) {
+        val validName = name.trim()
+        require(validName.isNotEmpty() && validName.length <= 128) { "Run name must be 1 to 128 characters" }
+        check(database.workflowDao().renameRun(runId, validName, StoredRunStatus.RUNNING.name) == 1) {
+            "Run does not exist or is still active"
+        }
     }
 
     fun setWorkflowFavorite(workflowId: String, favorite: Boolean) = synchronized(this) {
@@ -280,6 +323,17 @@ class WorkflowRepository internal constructor(
     fun renameRunFolder(folderId: String, name: String) = synchronized(this) {
         requireValidFolderId(folderId)
         check(database.workflowDao().renameRunFolder(folderId, validFolderName(name), storageTimestamp()) == 1) {
+            "Run folder does not exist"
+        }
+    }
+
+    fun setRunFolderColor(folderId: String, colorArgb: Int?) = synchronized(this) {
+        requireValidFolderId(folderId)
+        val dao = database.workflowDao()
+        require(dao.findRunFolder(folderId) != null) { "Run folder does not exist" }
+        val owner = colorArgb?.let(dao::findRunFolderByColor)
+        require(owner == null || owner.folderId == folderId) { "That color is already used by another run folder" }
+        check(dao.setRunFolderColor(folderId, colorArgb, storageTimestamp()) == 1) {
             "Run folder does not exist"
         }
     }
@@ -484,11 +538,12 @@ class WorkflowRepository internal constructor(
         eventHistory = decodeRunEvents(record.eventHistoryJson),
         hasStoredDetails = record.eventHistoryJson != null,
         folderId = record.folderId,
+        name = record.name,
     )
 
-    private fun WorkflowFolderEntity.toSummary(): FolderSummary = FolderSummary(folderId, name, createdAtMs, updatedAtMs)
+    private fun WorkflowFolderEntity.toSummary(): FolderSummary = FolderSummary(folderId, name, createdAtMs, updatedAtMs, colorArgb, sortOrder)
 
-    private fun RunFolderEntity.toSummary(): FolderSummary = FolderSummary(folderId, name, createdAtMs, updatedAtMs)
+    private fun RunFolderEntity.toSummary(): FolderSummary = FolderSummary(folderId, name, createdAtMs, updatedAtMs, colorArgb, sortOrder)
 
     private fun storageTimestamp(): Long = nowMs().also { require(it >= 0L) { "Storage clock must be nonnegative" } }
 

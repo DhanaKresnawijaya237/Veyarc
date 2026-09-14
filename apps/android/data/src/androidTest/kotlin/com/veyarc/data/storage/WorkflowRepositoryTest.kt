@@ -50,6 +50,22 @@ class WorkflowRepositoryTest {
             assertTrue(storedWorkflow.isFavorite)
             repository.renameWorkflowFolder(WORKFLOW_FOLDER_ID, "Daily")
             assertEquals("Daily", repository.listWorkflowFolders().single().name)
+            repository.setWorkflowFolderColor(WORKFLOW_FOLDER_ID, 0xFF336699.toInt())
+            assertEquals(0xFF336699.toInt(), repository.listWorkflowFolders().single().colorArgb)
+            val otherFolder = repository.createWorkflowFolder("Other", SECOND_WORKFLOW_FOLDER_ID)
+            assertEquals(null, otherFolder.colorArgb)
+            repository.reorderWorkflowFolders(listOf(SECOND_WORKFLOW_FOLDER_ID, WORKFLOW_FOLDER_ID))
+            assertEquals(
+                listOf(SECOND_WORKFLOW_FOLDER_ID, WORKFLOW_FOLDER_ID),
+                repository.listWorkflowFolders().map { it.folderId },
+            )
+            assertTrue(
+                runCatching {
+                    repository.setWorkflowFolderColor(SECOND_WORKFLOW_FOLDER_ID, 0xFF336699.toInt())
+                }.isFailure,
+            )
+            repository.setWorkflowFolderColor(WORKFLOW_FOLDER_ID, null)
+            repository.setWorkflowFolderColor(SECOND_WORKFLOW_FOLDER_ID, 0xFF336699.toInt())
             assertEquals(listOf(2, 1), repository.listRevisions(WORKFLOW_ID).map { it.revision })
             assertEquals(2, repository.loadRevision(WORKFLOW_ID, 2).document.revision)
 
@@ -68,6 +84,8 @@ class WorkflowRepositoryTest {
             val runFolder = repository.createRunFolder("Archive", RUN_FOLDER_ID)
             assertEquals(RUN_FOLDER_ID, runFolder.folderId)
             repository.createRunFolder("Later", SECOND_RUN_FOLDER_ID)
+            repository.setRunFolderColor(RUN_FOLDER_ID, 0xFF336699.toInt())
+            assertEquals(0xFF336699.toInt(), repository.listRunFolders().first { it.folderId == RUN_FOLDER_ID }.colorArgb)
             repository.reorderRunFolders(listOf(SECOND_RUN_FOLDER_ID, RUN_FOLDER_ID))
             assertEquals(
                 listOf(SECOND_RUN_FOLDER_ID, RUN_FOLDER_ID),
@@ -106,6 +124,7 @@ class WorkflowRepositoryTest {
             assertEquals(4000L, activity.lastRunAtMs)
 
             repository.deleteWorkflowFolder(WORKFLOW_FOLDER_ID)
+            repository.deleteWorkflowFolder(SECOND_WORKFLOW_FOLDER_ID)
             assertTrue(repository.listWorkflowFolders().isEmpty())
             assertEquals(null, repository.listWorkflows().single().folderId)
             assertTrue(repository.listWorkflows().single().isFavorite)
@@ -164,5 +183,6 @@ class WorkflowRepositoryTest {
         const val WORKFLOW_FOLDER_ID = "00000000-0000-4000-8000-000000000305"
         const val RUN_FOLDER_ID = "00000000-0000-4000-8000-000000000306"
         const val SECOND_RUN_FOLDER_ID = "00000000-0000-4000-8000-000000000307"
+        const val SECOND_WORKFLOW_FOLDER_ID = "00000000-0000-4000-8000-000000000308"
     }
 }

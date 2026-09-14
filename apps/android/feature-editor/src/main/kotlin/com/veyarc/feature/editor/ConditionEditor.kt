@@ -90,7 +90,6 @@ internal fun ConditionEditorDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = onDismiss) { Text("Cancel") }
                     Text(
                         "Edit condition",
                         modifier = Modifier.weight(1f),
@@ -551,11 +550,12 @@ private fun ComposedConditionFields(
             Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Condition ${index + 1}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
-                    IconButton(
-                        enabled = conditions.size > 2,
-                        onClick = { onChange(conditions.toMutableList().apply { removeAt(index) }) },
-                    ) {
-                        Icon(Icons.Outlined.Delete, contentDescription = "Remove nested condition")
+                    if (index >= 2) {
+                        IconButton(
+                            onClick = { onChange(conditions.toMutableList().apply { removeAt(index) }) },
+                        ) {
+                            Icon(Icons.Outlined.Delete, contentDescription = "Remove nested condition")
+                        }
                     }
                 }
                 ConditionNodeEditor(

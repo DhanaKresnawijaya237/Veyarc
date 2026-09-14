@@ -98,6 +98,13 @@ class WorkflowEditorSession {
         get() = undoStack.isNotEmpty()
     val canRedo: Boolean
         get() = redoStack.isNotEmpty()
+    val savedOrientation: DisplayOrientation?
+        get() = savedDraft?.viewport?.recordedOrientation
+    val requiresRevisionSave: Boolean
+        get() = draft?.let { current ->
+            current.lastSavedRevision != null &&
+                current.lastSavedRevision < (current.latestKnownRevision ?: current.lastSavedRevision)
+        } == true
 
     fun create(viewport: ViewportSpec, folderId: String? = null) {
         draft = WorkflowDraft.newDefault(viewport)
@@ -106,8 +113,12 @@ class WorkflowEditorSession {
         clearHistory()
     }
 
-    fun open(bundle: WorkflowBundle, recordingJournalFileName: String? = null) {
-        val opened = WorkflowDraft.fromBundle(bundle, recordingJournalFileName)
+    fun open(
+        bundle: WorkflowBundle,
+        recordingJournalFileName: String? = null,
+        latestKnownRevision: Int = bundle.document.revision,
+    ) {
+        val opened = WorkflowDraft.fromBundle(bundle, recordingJournalFileName, latestKnownRevision)
         draft = opened
         destinationFolderId = null
         savedDraft = opened
@@ -163,6 +174,7 @@ class WorkflowEditorSession {
 data class WorkflowDraft(
     val workflowId: String,
     val lastSavedRevision: Int?,
+    val latestKnownRevision: Int? = lastSavedRevision,
     val name: String,
     val allowedPackagesText: String,
     val viewport: ViewportSpec,
@@ -171,11 +183,12 @@ data class WorkflowDraft(
     val assets: List<BundleAsset>,
     val producerVersion: String,
     val steps: List<WorkflowStep>,
+    val assetNames: Map<String, String> = emptyMap(),
     val collapsedStepIds: Set<String> = emptySet(),
     val recordingJournalFileName: String? = null,
 ) {
     val nextRevision: Int
-        get() = (lastSavedRevision ?: 0) + 1
+        get() = maxOf(lastSavedRevision ?: 0, latestKnownRevision ?: 0) + 1
 
     fun buildBundle(revision: Int = nextRevision): DraftBuildResult {
         val issues = mutableListOf<DraftIssue>()
@@ -213,7 +226,9 @@ data class WorkflowDraft(
                 viewport = viewport,
                 runLimits = runLimits,
                 variables = variables,
-                assets = assets.map { asset -> AssetReference(asset.assetId, asset.kind) },
+                assets = assets.map { asset ->
+                    AssetReference(asset.assetId, asset.kind, assetNames[asset.assetId.value])
+                },
                 steps = steps,
             )
         }.getOrElse { error ->
@@ -248,7 +263,15 @@ data class WorkflowDraft(
 
     fun stepsAt(path: StepListPath): List<WorkflowStep> = readSteps(steps, path.segments)
 
-    fun addStep(path: StepListPath, kind: WorkflowStepKind, defaultPackage: String): WorkflowDraft = updateList(path) { current -> current + newStep(kind, defaultPackage) }
+    fun addStep(path: StepListPath, kind: WorkflowStepKind, defaultPackage: String): WorkflowDraft = insertStep(path, stepsAt(path).size, kind, defaultPackage)
+
+    fun insertStep(path: StepListPath, index: Int, kind: WorkflowStepKind, defaultPackage: String): WorkflowDraft {
+        val step = newStep(kind, defaultPackage)
+        return updateList(path) { current ->
+            current.toMutableList().apply { add(index.coerceIn(0, size), step) }
+        }
+            .copy(collapsedStepIds = collapsedStepIds + step.id)
+    }
 
     fun removeStep(path: StepListPath, index: Int): WorkflowDraft = updateList(path) { current ->
         current.toMutableList().apply {
@@ -257,9 +280,16 @@ data class WorkflowDraft(
     }
 
     fun moveStep(path: StepListPath, index: Int, direction: Int): WorkflowDraft = updateList(path) { current ->
-        val destination = index + direction
-        if (index !in current.indices || destination !in current.indices) return@updateList current
-        current.toMutableList().apply {
+        moveStepInList(current, index, index + direction)
+    }
+
+    fun moveStepTo(path: StepListPath, index: Int, destination: Int): WorkflowDraft = updateList(path) { current ->
+        moveStepInList(current, index, destination)
+    }
+
+    private fun moveStepInList(current: List<WorkflowStep>, index: Int, destination: Int): List<WorkflowStep> {
+        if (index !in current.indices || destination !in current.indices) return current
+        return current.toMutableList().apply {
             add(destination, removeAt(index))
         }
     }
@@ -283,14 +313,29 @@ data class WorkflowDraft(
         }
     }
 
-    fun addAsset(asset: BundleAsset): WorkflowDraft = copy(
-        assets = (assets.filterNot { it.assetId == asset.assetId } + asset)
-            .sortedBy { it.assetId.value },
-    )
+    fun addAsset(asset: BundleAsset): WorkflowDraft {
+        val usedNames = assetNames.values.mapTo(mutableSetOf()) { it.lowercase() }
+        var index = 1
+        while ("template $index" in usedNames) index += 1
+        return copy(
+            assets = (assets.filterNot { it.assetId == asset.assetId } + asset).sortedBy { it.assetId.value },
+            assetNames = assetNames + (asset.assetId.value to "Template $index"),
+        )
+    }
 
     fun removeAsset(assetId: com.veyarc.model.AssetId): WorkflowDraft = copy(
         assets = assets.filterNot { it.assetId == assetId },
+        assetNames = assetNames - assetId.value,
     )
+
+    fun renameAsset(assetId: com.veyarc.model.AssetId, name: String): WorkflowDraft {
+        val normalized = name.trim()
+        require(normalized.isNotEmpty() && normalized.length <= 64) { "Template name must be 1 to 64 characters" }
+        require(assetNames.none { (id, existing) -> id != assetId.value && existing.equals(normalized, ignoreCase = true) }) {
+            "Template names must be unique"
+        }
+        return copy(assetNames = assetNames + (assetId.value to normalized))
+    }
 
     private fun updateList(path: StepListPath, transform: (List<WorkflowStep>) -> List<WorkflowStep>): WorkflowDraft = copy(steps = replaceSteps(steps, path.segments, transform(readSteps(steps, path.segments))))
 
@@ -320,6 +365,10 @@ data class WorkflowDraft(
     companion object {
         fun newDefault(viewport: ViewportSpec = defaultViewport()): WorkflowDraft {
             val defaultPackage = "com.veyarc.app"
+            val defaultSteps = listOf(
+                TapPoint(WorkflowIds.newUuid(), NormalizedCoordinate(0.1, 0.1)),
+                Wait(WorkflowIds.newUuid(), DurationMillis(500)),
+            )
             return WorkflowDraft(
                 workflowId = WorkflowIds.newUuid(),
                 lastSavedRevision = null,
@@ -330,16 +379,20 @@ data class WorkflowDraft(
                 variables = emptyMap(),
                 assets = emptyList(),
                 producerVersion = "android-editor",
-                steps = listOf(
-                    TapPoint(WorkflowIds.newUuid(), NormalizedCoordinate(0.1, 0.1)),
-                    Wait(WorkflowIds.newUuid(), DurationMillis(500)),
-                ),
+                steps = defaultSteps,
+                assetNames = emptyMap(),
+                collapsedStepIds = defaultSteps.allStepIds(),
             )
         }
 
-        fun fromBundle(bundle: WorkflowBundle, recordingJournalFileName: String? = null): WorkflowDraft = WorkflowDraft(
+        fun fromBundle(
+            bundle: WorkflowBundle,
+            recordingJournalFileName: String? = null,
+            latestKnownRevision: Int = bundle.document.revision,
+        ): WorkflowDraft = WorkflowDraft(
             workflowId = bundle.document.id,
             lastSavedRevision = bundle.document.revision,
+            latestKnownRevision = latestKnownRevision,
             name = bundle.document.name,
             allowedPackagesText = bundle.document.allowedPackages.joinToString(", ") { it.value },
             viewport = bundle.document.viewport,
@@ -348,6 +401,8 @@ data class WorkflowDraft(
             assets = bundle.assets,
             producerVersion = bundle.producerVersion,
             steps = bundle.document.steps,
+            assetNames = defaultAssetNames(bundle.document.assets),
+            collapsedStepIds = bundle.document.steps.allStepIds(),
             recordingJournalFileName = recordingJournalFileName,
         )
 
@@ -366,10 +421,43 @@ data class WorkflowDraft(
             maxPathPoints = 128,
             maxStepDurationMs = 30_000,
         )
+
+        private fun defaultAssetNames(assets: List<AssetReference>): Map<String, String> {
+            val used = assets.mapNotNullTo(mutableSetOf()) { it.displayName?.lowercase() }
+            var index = 1
+            return assets.associate { asset ->
+                val name = asset.displayName ?: run {
+                    while ("template $index" in used) index += 1
+                    "Template ${index++}"
+                }
+                used += name.lowercase()
+                asset.assetId.value to name
+            }
+        }
     }
 }
 
+private fun List<WorkflowStep>.allStepIds(): Set<String> = buildSet {
+    fun collect(step: WorkflowStep) {
+        add(step.id)
+        when (step) {
+            is Repeat -> step.bodySteps.forEach(::collect)
+
+            is WhileStep -> step.bodySteps.forEach(::collect)
+
+            is IfElse -> {
+                step.thenSteps.forEach(::collect)
+                step.elseSteps.forEach(::collect)
+            }
+
+            else -> Unit
+        }
+    }
+    this@allStepIds.forEach(::collect)
+}
+
 private fun WorkflowDraft.persistedContent(): WorkflowDraft = copy(
+    latestKnownRevision = null,
     collapsedStepIds = emptySet(),
     recordingJournalFileName = null,
 )

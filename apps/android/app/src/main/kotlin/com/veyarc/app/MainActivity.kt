@@ -56,6 +56,7 @@ class MainActivity : ComponentActivity() {
     private var newWorkflowRequestId by mutableIntStateOf(0)
     private var newWorkflowFolderId by mutableStateOf<String?>(null)
     private var recordingFolderId by mutableStateOf<String?>(null)
+    private var managerSelectionBar by mutableStateOf<ManagerSelectionBarState?>(null)
     private val runSession: MainRunSession by lazy {
         ViewModelProvider(this)[MainRunSession::class.java]
     }
@@ -76,6 +77,11 @@ class MainActivity : ComponentActivity() {
                 ?.getString(SELECTED_DESTINATION_KEY)
                 ?.let { saved -> VeyarcDestination.entries.firstOrNull { it.name == saved } }
                 ?: VeyarcDestination.HOME
+        fullScreenDestination =
+            savedInstanceState
+                ?.getString(FULL_SCREEN_DESTINATION_KEY)
+                ?.let { saved -> FullScreenDestination.entries.firstOrNull { it.name == saved } }
+        recordingFolderId = savedInstanceState?.getString(RECORDING_FOLDER_ID_KEY)
         // Register the process-owned recording actions before the user leaves Veyarc. This lets
         // the fixed service-owned control center start a recording from a third-party app instead
         // of requiring the recorder screen to have been opened first.
@@ -93,6 +99,7 @@ class MainActivity : ComponentActivity() {
                     } else if (workflowToRun != null) {
                         leaveRunScreen()
                     } else if (selectedDestination != VeyarcDestination.HOME) {
+                        managerSelectionBar = null
                         selectedDestination = VeyarcDestination.HOME
                     } else {
                         isEnabled = false
@@ -161,7 +168,11 @@ class MainActivity : ComponentActivity() {
                             } else {
                                 VeyarcAppShell(
                                     selectedDestination = selectedDestination,
-                                    onDestinationSelected = { selectedDestination = it },
+                                    onDestinationSelected = {
+                                        managerSelectionBar = null
+                                        selectedDestination = it
+                                    },
+                                    selectionBar = managerSelectionBar,
                                 ) {
                                     when (selectedDestination) {
                                         VeyarcDestination.HOME -> HomeDashboardScreen(
@@ -177,17 +188,9 @@ class MainActivity : ComponentActivity() {
                                         VeyarcDestination.WORKFLOWS -> WorkflowManagerScreen(
                                             repository = workflowRepository,
                                             refreshGeneration = resumeGeneration,
-                                            onCreateWorkflow = { folderId ->
-                                                newWorkflowFolderId = folderId
-                                                newWorkflowRequestId += 1
-                                                selectedDestination = VeyarcDestination.EDITOR
-                                            },
-                                            onRecordWorkflow = { folderId ->
-                                                recordingFolderId = folderId
-                                                fullScreenDestination = FullScreenDestination.RECORDER
-                                            },
                                             onEditWorkflow = ::editWorkflow,
                                             onPlayWorkflow = ::playWorkflow,
+                                            onSelectionBarChange = { managerSelectionBar = it },
                                         )
 
                                         VeyarcDestination.EDITOR -> WorkflowEditorScreen(
@@ -216,6 +219,7 @@ class MainActivity : ComponentActivity() {
                                             repository = workflowRepository,
                                             refreshGeneration = resumeGeneration,
                                             onOpenWorkflowRevision = ::editRunWorkflowRevision,
+                                            onSelectionBarChange = { managerSelectionBar = it },
                                         )
 
                                         VeyarcDestination.SETTINGS -> SettingsScreen(
@@ -244,7 +248,9 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        handleControllerIntent(intent)
+        if (shouldHandleControllerRequest(savedInstanceState != null, intent?.action)) {
+            handleControllerIntent(intent)
+        }
     }
 
     override fun onResume() {
@@ -261,6 +267,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString(SELECTED_DESTINATION_KEY, selectedDestination.name)
+        fullScreenDestination?.let { outState.putString(FULL_SCREEN_DESTINATION_KEY, it.name) }
+        recordingFolderId?.let { outState.putString(RECORDING_FOLDER_ID_KEY, it) }
         super.onSaveInstanceState(outState)
     }
 
@@ -350,6 +358,7 @@ class MainActivity : ComponentActivity() {
 
     private fun handleControllerIntent(intent: Intent?) {
         if (intent?.action != ReplayFloatingController.ACTION_OPEN_WORKFLOW) return
+        intent.action = null
         val workflowId = intent.getStringExtra(ReplayFloatingController.EXTRA_WORKFLOW_ID)
             ?.takeIf { it.isNotBlank() }
         val revision = intent.getIntExtra(ReplayFloatingController.EXTRA_WORKFLOW_REVISION, -1)
@@ -378,8 +387,12 @@ class MainActivity : ComponentActivity() {
 
     private companion object {
         const val SELECTED_DESTINATION_KEY = "selected_destination"
+        const val FULL_SCREEN_DESTINATION_KEY = "full_screen_destination"
+        const val RECORDING_FOLDER_ID_KEY = "recording_folder_id"
     }
 }
+
+internal fun shouldHandleControllerRequest(restoringState: Boolean, action: String?): Boolean = !restoringState && action == ReplayFloatingController.ACTION_OPEN_WORKFLOW
 
 private enum class FullScreenDestination {
     ACCESSIBILITY,

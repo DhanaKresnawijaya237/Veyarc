@@ -27,10 +27,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -103,52 +100,42 @@ fun WorkflowRunScreen(
         }
     }
 
-    Scaffold(
-        modifier = modifier,
-        topBar = {
-            TopAppBar(
-                title = { Text(state.workflowName) },
-                navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
-            )
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-                .verticalScroll(rememberScrollState())
-                .padding(padding)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(
-                text = phaseTitle(state.phase),
-                style = MaterialTheme.typography.headlineSmall,
-            )
-            state.message?.let { message ->
-                Text(message, color = if (state.phase == WorkflowRunPhase.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
-            }
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .verticalScroll(rememberScrollState())
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(state.workflowName, style = MaterialTheme.typography.headlineSmall)
+        Text(
+            text = phaseTitle(state.phase),
+            style = MaterialTheme.typography.headlineSmall,
+        )
+        state.message?.let { message ->
+            Text(message, color = if (state.phase == WorkflowRunPhase.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+        }
 
-            if (state.phase == WorkflowRunPhase.REVIEW) {
-                ReviewContent(
-                    state = state,
-                    onStart = requestStart,
-                    onRefresh = controller::refreshReview,
-                    onOpenNotificationSettings = { openNotificationSettings(context) },
-                    canStart = canStart,
-                    startBlockMessage = startBlockMessage,
-                    requiresMediaProjectionConsent = controller.requiresMediaProjectionConsent(),
-                )
-            } else {
-                RunContent(state = state, onPause = controller::pause, onResume = controller::resume, onStop = controller::stop, onBack = onBack)
-            }
+        if (state.phase == WorkflowRunPhase.REVIEW) {
+            ReviewContent(
+                state = state,
+                onStart = requestStart,
+                onRefresh = controller::refreshReview,
+                onOpenNotificationSettings = { openNotificationSettings(context) },
+                canStart = canStart,
+                startBlockMessage = startBlockMessage,
+                requiresMediaProjectionConsent = controller.requiresMediaProjectionConsent(),
+            )
+        } else {
+            RunContent(state = state, onPause = controller::pause, onResume = controller::resume, onStop = controller::stop, onBack = onBack)
+        }
 
-            if (permissionRequestPending) {
-                Text("Waiting for notification permission…", style = MaterialTheme.typography.labelMedium)
-            }
-            if (projectionRequestPending) {
-                Text("Waiting for screen-capture consent…", style = MaterialTheme.typography.labelMedium)
-            }
+        if (permissionRequestPending) {
+            Text("Waiting for notification permission…", style = MaterialTheme.typography.labelMedium)
+        }
+        if (projectionRequestPending) {
+            Text("Waiting for screen-capture consent…", style = MaterialTheme.typography.labelMedium)
         }
     }
 }

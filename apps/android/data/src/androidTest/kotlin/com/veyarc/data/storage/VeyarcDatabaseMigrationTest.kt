@@ -111,6 +111,137 @@ class VeyarcDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migrationFourToFiveAddsUniqueOptionalWorkflowFolderColors() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-${System.nanoTime()}.db"
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(databaseName)
+                .callback(
+                    object : SupportSQLiteOpenHelper.Callback(4) {
+                        override fun onCreate(db: SupportSQLiteDatabase) {
+                            db.execSQL(
+                                "CREATE TABLE workflow_folders (folderId TEXT NOT NULL PRIMARY KEY, " +
+                                    "name TEXT NOT NULL, createdAtMs INTEGER NOT NULL, updatedAtMs INTEGER NOT NULL)",
+                            )
+                            db.execSQL("INSERT INTO workflow_folders VALUES ('one', 'One', 10, 20)")
+                            db.execSQL("INSERT INTO workflow_folders VALUES ('two', 'Two', 10, 20)")
+                        }
+
+                        override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+                    },
+                )
+                .build(),
+        )
+        try {
+            val db = helper.writableDatabase
+            VeyarcDatabase.MIGRATION_4_5.migrate(db)
+            db.query("SELECT colorArgb FROM workflow_folders").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertTrue(cursor.isNull(0))
+                assertTrue(cursor.moveToNext())
+                assertTrue(cursor.isNull(0))
+            }
+            db.execSQL("UPDATE workflow_folders SET colorArgb = 123 WHERE folderId = 'one'")
+            assertTrue(
+                runCatching {
+                    db.execSQL("UPDATE workflow_folders SET colorArgb = 123 WHERE folderId = 'two'")
+                }.isFailure,
+            )
+        } finally {
+            helper.close()
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun migrationFiveToSixAddsWorkflowOrderingAndRunFolderColors() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-${System.nanoTime()}.db"
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(databaseName)
+                .callback(
+                    object : SupportSQLiteOpenHelper.Callback(5) {
+                        override fun onCreate(db: SupportSQLiteDatabase) {
+                            db.execSQL(
+                                "CREATE TABLE workflow_folders (folderId TEXT NOT NULL PRIMARY KEY, " +
+                                    "name TEXT NOT NULL, createdAtMs INTEGER NOT NULL, updatedAtMs INTEGER NOT NULL, " +
+                                    "colorArgb INTEGER DEFAULT NULL)",
+                            )
+                            db.execSQL(
+                                "CREATE TABLE run_folders (folderId TEXT NOT NULL PRIMARY KEY, " +
+                                    "name TEXT NOT NULL, createdAtMs INTEGER NOT NULL, updatedAtMs INTEGER NOT NULL, " +
+                                    "sortOrder INTEGER NOT NULL DEFAULT 0)",
+                            )
+                            db.execSQL("INSERT INTO workflow_folders VALUES ('workflow-folder', 'One', 10, 20, NULL)")
+                            db.execSQL("INSERT INTO run_folders VALUES ('run-folder', 'Two', 10, 20, 0)")
+                        }
+
+                        override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+                    },
+                )
+                .build(),
+        )
+        try {
+            val db = helper.writableDatabase
+            VeyarcDatabase.MIGRATION_5_6.migrate(db)
+            db.query("SELECT sortOrder FROM workflow_folders").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(0, cursor.getInt(0))
+            }
+            db.query("SELECT colorArgb FROM run_folders").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertTrue(cursor.isNull(0))
+            }
+        } finally {
+            helper.close()
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun migrationSixToSevenAddsOptionalRunNames() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-${System.nanoTime()}.db"
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(databaseName)
+                .callback(
+                    object : SupportSQLiteOpenHelper.Callback(6) {
+                        override fun onCreate(db: SupportSQLiteDatabase) {
+                            db.execSQL(
+                                "CREATE TABLE run_records (runId TEXT NOT NULL PRIMARY KEY, " +
+                                    "workflowId TEXT NOT NULL, revision INTEGER NOT NULL, status TEXT NOT NULL, " +
+                                    "startedAtMs INTEGER NOT NULL, finishedAtMs INTEGER, interruptionReason TEXT, " +
+                                    "completedSteps INTEGER NOT NULL DEFAULT 0, totalSteps INTEGER DEFAULT NULL, " +
+                                    "eventHistoryJson TEXT DEFAULT NULL, folderId TEXT DEFAULT NULL)",
+                            )
+                            db.execSQL(
+                                "INSERT INTO run_records (runId, workflowId, revision, status, startedAtMs) " +
+                                    "VALUES ('run', 'workflow', 1, 'COMPLETED', 30)",
+                            )
+                        }
+
+                        override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+                    },
+                )
+                .build(),
+        )
+        try {
+            val db = helper.writableDatabase
+            VeyarcDatabase.MIGRATION_6_7.migrate(db)
+            db.query("SELECT name FROM run_records").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertTrue(cursor.isNull(0))
+            }
+        } finally {
+            helper.close()
+            context.deleteDatabase(databaseName)
+        }
+    }
+
     private fun assertTableExists(db: SupportSQLiteDatabase, tableName: String) {
         db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", arrayOf(tableName))
             .use { cursor -> assertTrue(cursor.moveToFirst()) }

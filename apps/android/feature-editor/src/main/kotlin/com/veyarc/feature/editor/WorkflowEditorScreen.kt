@@ -1,36 +1,57 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@file:OptIn(
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+    androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
+)
 
 package com.veyarc.feature.editor
 
 import android.content.Context
+import android.content.Intent
 import android.content.res.Configuration
+import android.widget.ImageView
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CutCornerShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -38,17 +59,20 @@ import androidx.compose.material.icons.automirrored.outlined.CallSplit
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.Undo
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Apps
+import androidx.compose.material.icons.outlined.ArrowDropDown
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.ExpandLess
-import androidx.compose.material.icons.outlined.ExpandMore
-import androidx.compose.material.icons.outlined.KeyboardArrowDown
-import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Loop
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.ScreenRotation
 import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material.icons.outlined.TouchApp
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -61,27 +85,43 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
+import com.veyarc.data.storage.RevisionSummary
 import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowStorageException
 import com.veyarc.model.Condition
@@ -127,6 +167,8 @@ fun WorkflowEditorScreen(
     var pendingTemplateCrop by remember { mutableStateOf<TemplateCropSource?>(null) }
     var pendingClose by remember { mutableStateOf(false) }
     var pendingReplacement by remember { mutableStateOf<DraftReplacement?>(null) }
+    var pendingOrientationSave by remember { mutableStateOf<PendingOrientationSave?>(null) }
+    var revisions by remember { mutableStateOf<List<RevisionSummary>>(emptyList()) }
 
     val templatePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -146,13 +188,28 @@ fun WorkflowEditorScreen(
             isBusy = false
         }
     }
+    val appPicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val packageName = result.data?.component?.packageName ?: return@rememberLauncherForActivityResult
+        val current = session.draft ?: return@rememberLauncherForActivityResult
+        val packages = current.allowedPackagesText.packageNames()
+        if (packageName !in packages) {
+            session.update(current.copy(allowedPackagesText = (packages + packageName).joinToString(", ")))
+        }
+    }
 
     fun applyReplacement(request: DraftReplacement) {
         when (request) {
             is DraftReplacement.Existing -> {
-                session.open(request.bundle, request.journalFileName)
+                val currentRevision = session.draft
+                    ?.takeIf { it.workflowId == request.bundle.document.id }
+                    ?.latestKnownRevision
+                session.open(
+                    request.bundle,
+                    request.journalFileName,
+                    maxOf(request.latestKnownRevision, currentRevision ?: 0),
+                )
                 statusMessage = "Workflow opened. Saving edits creates the next revision."
-                onInitialBundleConsumed()
+                if (request.consumeInitialBundle) onInitialBundleConsumed()
             }
 
             is DraftReplacement.New -> {
@@ -166,7 +223,7 @@ fun WorkflowEditorScreen(
 
     fun cancelReplacement(request: DraftReplacement) {
         when (request) {
-            is DraftReplacement.Existing -> onInitialBundleConsumed()
+            is DraftReplacement.Existing -> if (request.consumeInitialBundle) onInitialBundleConsumed()
             is DraftReplacement.New -> onNewWorkflowRequestConsumed()
         }
         pendingReplacement = null
@@ -179,7 +236,15 @@ fun WorkflowEditorScreen(
             onInitialBundleConsumed()
             return@LaunchedEffect
         }
-        val request = DraftReplacement.Existing(bundle, initialRecordingJournalFileName)
+        val latestRevision = withContext(Dispatchers.IO) {
+            repository.listRevisions(bundle.document.id).maxOfOrNull(RevisionSummary::revision)
+        } ?: bundle.document.revision
+        val request = DraftReplacement.Existing(
+            bundle,
+            initialRecordingJournalFileName,
+            latestRevision,
+            consumeInitialBundle = true,
+        )
         if (session.isDirty) pendingReplacement = request else applyReplacement(request)
     }
 
@@ -189,7 +254,48 @@ fun WorkflowEditorScreen(
         if (session.isDirty) pendingReplacement = request else applyReplacement(request)
     }
 
-    fun saveWorkflow(bundle: WorkflowBundle, afterSave: (() -> Unit)? = null) {
+    LaunchedEffect(session.draft?.workflowId, session.draft?.lastSavedRevision) {
+        val workflowId = session.draft?.workflowId ?: run {
+            revisions = emptyList()
+            return@LaunchedEffect
+        }
+        revisions = withContext(Dispatchers.IO) { repository.listRevisions(workflowId) }
+    }
+
+    fun openRevision(revision: Int) {
+        val current = session.draft ?: return
+        if (current.lastSavedRevision == revision) return
+        scope.launch {
+            isBusy = true
+            statusMessage = null
+            runCatching {
+                withContext(Dispatchers.IO) { repository.loadRevision(current.workflowId, revision) }
+            }.onSuccess { bundle ->
+                val request = DraftReplacement.Existing(
+                    bundle,
+                    journalFileName = null,
+                    latestKnownRevision = revisions.maxOfOrNull(RevisionSummary::revision)
+                        ?: bundle.document.revision,
+                    consumeInitialBundle = false,
+                )
+                if (session.isDirty) pendingReplacement = request else applyReplacement(request)
+            }.onFailure { error ->
+                statusMessage = "Could not open revision: ${error.userMessage()}"
+            }
+            isBusy = false
+        }
+    }
+
+    fun saveWorkflow(
+        bundle: WorkflowBundle,
+        afterSave: (() -> Unit)? = null,
+        orientationConfirmed: Boolean = false,
+    ) {
+        val savedOrientation = session.savedOrientation
+        if (!orientationConfirmed && savedOrientation != null && savedOrientation != bundle.document.viewport.recordedOrientation) {
+            pendingOrientationSave = PendingOrientationSave(bundle, afterSave)
+            return
+        }
         val sourceJournalFileName = session.draft?.recordingJournalFileName
         scope.launch {
             isBusy = true
@@ -210,7 +316,7 @@ fun WorkflowEditorScreen(
     }
 
     fun saveAndRun(bundle: WorkflowBundle) {
-        saveWorkflow(bundle) { onRunWorkflow(bundle) }
+        saveWorkflow(bundle, afterSave = { onRunWorkflow(bundle) })
     }
 
     fun discardDraft() {
@@ -244,7 +350,6 @@ fun WorkflowEditorScreen(
             statusMessage = statusMessage,
             session = session,
             onDraftChange = session::update,
-            onBack = ::requestCloseDraft,
             onSave = { bundle -> saveWorkflow(bundle) },
             onRun = ::saveAndRun,
             onValidate = {
@@ -254,6 +359,16 @@ fun WorkflowEditorScreen(
             onEditGeometry = { path, index -> geometryTarget = GeometryTarget(path, index) },
             onEditCondition = { path, index -> conditionTarget = ConditionTarget(path, index) },
             onAddTemplate = { templatePicker.launch("image/*") },
+            revisions = revisions,
+            onOpenRevision = ::openRevision,
+            onPickApplication = {
+                appPicker.launch(
+                    Intent(Intent.ACTION_PICK_ACTIVITY).putExtra(
+                        Intent.EXTRA_INTENT,
+                        Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER),
+                    ),
+                )
+            },
             reducedDensity = reducedDensity,
             modifier = modifier,
         )
@@ -264,6 +379,8 @@ fun WorkflowEditorScreen(
                     step = targetStep,
                     viewport = draft.viewport,
                     maxPathPoints = draft.runLimits.maxPathPoints,
+                    assets = draft.assets,
+                    assetNames = draft.assetNames,
                     onDismiss = { geometryTarget = null },
                     onApply = { updatedStep ->
                         session.update(draft.updateStep(target.path, target.index) { updatedStep })
@@ -338,15 +455,45 @@ fun WorkflowEditorScreen(
             title = "Replace unsaved changes?",
             validation = currentValidation,
             isBusy = isBusy,
-            onSave = { currentValidation?.bundle?.let { saveWorkflow(it) { applyReplacement(request) } } },
+            onSave = { currentValidation?.bundle?.let { saveWorkflow(it, afterSave = { applyReplacement(request) }) } },
             onDiscard = { applyReplacement(request) },
             onCancel = { cancelReplacement(request) },
         )
     }
+    pendingOrientationSave?.let { pending ->
+        AlertDialog(
+            onDismissRequest = { pendingOrientationSave = null },
+            title = { Text("Save orientation change?") },
+            text = {
+                Text(
+                    "This revision changes the workflow to ${pending.bundle.document.viewport.recordedOrientation.name.lowercase()}. Existing coordinates may need review.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingOrientationSave = null
+                    saveWorkflow(pending.bundle, pending.afterSave, orientationConfirmed = true)
+                }) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingOrientationSave = null }) { Text("Keep editing") }
+            },
+        )
+    }
 }
 
+private data class PendingOrientationSave(
+    val bundle: WorkflowBundle,
+    val afterSave: (() -> Unit)?,
+)
+
 private sealed interface DraftReplacement {
-    data class Existing(val bundle: WorkflowBundle, val journalFileName: String?) : DraftReplacement
+    data class Existing(
+        val bundle: WorkflowBundle,
+        val journalFileName: String?,
+        val latestKnownRevision: Int,
+        val consumeInitialBundle: Boolean,
+    ) : DraftReplacement
 
     data class New(val viewport: com.veyarc.model.ViewportSpec, val folderId: String?) : DraftReplacement
 }
@@ -394,26 +541,21 @@ private fun EmptyWorkflowEditorScreen(
     onOpenWorkflowManager: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Scaffold(
-        modifier = modifier,
-        topBar = {
-            TopAppBar(title = { Text("Workflow Editor") })
-        },
-    ) { padding ->
+    Column(modifier = modifier.fillMaxSize()) {
+        Row(
+            modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, top = 20.dp, end = 20.dp)
+                .heightIn(min = 48.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Workflow Editor", style = MaterialTheme.typography.headlineSmall)
+        }
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(padding)
-                .padding(24.dp)
-                .verticalScroll(rememberScrollState()),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                "Create a workflow or choose one from Workflow Manager.",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
             Button(onClick = onCreate) { Text("New workflow") }
             OutlinedButton(onClick = onOpenWorkflowManager) {
                 Text("Choose workflow")
@@ -430,38 +572,51 @@ private fun WorkflowDraftScreen(
     statusMessage: String?,
     session: WorkflowEditorSession,
     onDraftChange: (WorkflowDraft) -> Unit,
-    onBack: () -> Unit,
     onSave: (WorkflowBundle) -> Unit,
     onRun: (WorkflowBundle) -> Unit,
     onValidate: () -> Unit,
     onEditGeometry: (StepListPath, Int) -> Unit,
     onEditCondition: (StepListPath, Int) -> Unit,
     onAddTemplate: () -> Unit,
+    revisions: List<RevisionSummary>,
+    onOpenRevision: (Int) -> Unit,
+    onPickApplication: () -> Unit,
     reducedDensity: Boolean,
     modifier: Modifier = Modifier,
 ) {
     var selection by remember { mutableStateOf<BlockSelection?>(null) }
-    Scaffold(
-        modifier = modifier,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        buildString {
-                            append(draft.name.ifBlank { "Workflow editor" })
-                            if (session.isDirty) append(" •")
-                        },
-                    )
-                },
-                navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
-            )
+    Column(
+        modifier = modifier.fillMaxSize().pointerInput(Unit) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                selection = null
+            }
         },
-    ) { padding ->
+    ) {
+        Row(
+            modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, top = 20.dp, end = 20.dp)
+                .heightIn(min = 48.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BasicTextField(
+                value = draft.name,
+                onValueChange = { onDraftChange(draft.copy(name = it)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.headlineSmall.copy(color = MaterialTheme.colorScheme.onSurface),
+                decorationBox = { field ->
+                    if (draft.name.isBlank()) {
+                        Text("Workflow title", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    field()
+                },
+            )
+        }
         BoxWithConstraints(
-            modifier = Modifier
-                .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(padding),
+            modifier = Modifier.fillMaxSize().weight(1f),
         ) {
             val wide = maxWidth >= 840.dp
             if (wide) {
@@ -472,6 +627,7 @@ private fun WorkflowDraftScreen(
                         session = session,
                         isBusy = isBusy,
                         statusMessage = statusMessage,
+                        validationState = validation.issues.isEmpty(),
                         selection = selection,
                         showInlineInspector = false,
                         onSelectionChange = { selection = it },
@@ -482,6 +638,9 @@ private fun WorkflowDraftScreen(
                         onEditGeometry = onEditGeometry,
                         onEditCondition = onEditCondition,
                         onAddTemplate = onAddTemplate,
+                        revisions = revisions,
+                        onOpenRevision = onOpenRevision,
+                        onPickApplication = onPickApplication,
                         reducedDensity = reducedDensity,
                         modifier = Modifier.weight(0.62f),
                     )
@@ -502,6 +661,7 @@ private fun WorkflowDraftScreen(
                     session = session,
                     isBusy = isBusy,
                     statusMessage = statusMessage,
+                    validationState = validation.issues.isEmpty(),
                     selection = selection,
                     showInlineInspector = true,
                     onSelectionChange = { selection = it },
@@ -512,6 +672,9 @@ private fun WorkflowDraftScreen(
                     onEditGeometry = onEditGeometry,
                     onEditCondition = onEditCondition,
                     onAddTemplate = onAddTemplate,
+                    revisions = revisions,
+                    onOpenRevision = onOpenRevision,
+                    onPickApplication = onPickApplication,
                     reducedDensity = reducedDensity,
                     modifier = Modifier.fillMaxSize(),
                 )
@@ -522,6 +685,30 @@ private fun WorkflowDraftScreen(
 
 private data class BlockSelection(val path: StepListPath, val stepId: String)
 
+private data class StepBounds(val height: Int)
+
+private fun stepDropIndex(
+    steps: List<WorkflowStep>,
+    bounds: Map<String, StepBounds>,
+    spacingPx: Float,
+    draggedStepId: String?,
+    dragOffsetY: Float,
+): Int {
+    val key = draggedStepId ?: return -1
+    val sourceIndex = steps.indexOfFirst { it.id == draggedStepId }
+    if (sourceIndex < 0 || key !in bounds) return sourceIndex
+    var top = 0f
+    val centers = steps.associate { step ->
+        val height = bounds[step.id]?.height ?: 0
+        val center = top + height / 2f
+        top += height + spacingPx
+        step.id to center
+    }
+    val draggedCenter = centers.getValue(key) + dragOffsetY
+    return steps.count { it.id != draggedStepId && (centers[it.id] ?: Float.MAX_VALUE) < draggedCenter }
+        .coerceIn(0, steps.lastIndex)
+}
+
 @Composable
 private fun WorkflowDraftCanvas(
     draft: WorkflowDraft,
@@ -529,6 +716,7 @@ private fun WorkflowDraftCanvas(
     session: WorkflowEditorSession,
     isBusy: Boolean,
     statusMessage: String?,
+    validationState: Boolean?,
     selection: BlockSelection?,
     showInlineInspector: Boolean,
     onSelectionChange: (BlockSelection) -> Unit,
@@ -539,11 +727,15 @@ private fun WorkflowDraftCanvas(
     onEditGeometry: (StepListPath, Int) -> Unit,
     onEditCondition: (StepListPath, Int) -> Unit,
     onAddTemplate: () -> Unit,
+    revisions: List<RevisionSummary>,
+    onOpenRevision: (Int) -> Unit,
+    onPickApplication: () -> Unit,
     reducedDensity: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val scrollState = rememberScrollState()
     Column(
-        modifier = modifier.verticalScroll(rememberScrollState()).padding(
+        modifier = modifier.verticalScroll(scrollState).padding(
             horizontal = if (reducedDensity) 12.dp else 16.dp,
             vertical = if (reducedDensity) 8.dp else 12.dp,
         ),
@@ -553,25 +745,27 @@ private fun WorkflowDraftCanvas(
             draft = draft,
             session = session,
             validation = validation,
+            validationState = validationState,
             isBusy = isBusy,
+            onDraftChange = onDraftChange,
             onSave = onSave,
             onRun = onRun,
             onValidate = onValidate,
+            revisions = revisions,
+            onOpenRevision = onOpenRevision,
         )
-        OutlinedTextField(
-            value = draft.name,
-            onValueChange = { onDraftChange(draft.copy(name = it)) },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Workflow name") },
-            singleLine = true,
-        )
-        OutlinedTextField(
-            value = draft.allowedPackagesText,
-            onValueChange = { onDraftChange(draft.copy(allowedPackagesText = it)) },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Allowed Android packages") },
-            supportingText = { Text("Separate packages with commas or spaces. Use Launch app first when the workflow opens another app.") },
-            singleLine = true,
+        AllowedApplications(
+            packages = draft.allowedPackagesText,
+            onPickApplication = onPickApplication,
+            onRemoveApplication = { packageName ->
+                onDraftChange(
+                    draft.copy(
+                        allowedPackagesText = draft.allowedPackagesText.packageNames()
+                            .filterNot { it == packageName }
+                            .joinToString(", "),
+                    ),
+                )
+            },
         )
         draft.recordingJournalFileName?.let { journalFileName ->
             Text(
@@ -580,11 +774,12 @@ private fun WorkflowDraftCanvas(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        ValidationCard(validation = validation)
         TemplateAssetSection(
             assets = draft.assets,
+            assetNames = draft.assetNames,
             onAddTemplate = onAddTemplate,
             onRemoveTemplate = { assetId -> onDraftChange(draft.removeAsset(assetId)) },
+            onRenameTemplate = { assetId, name -> onDraftChange(draft.renameAsset(assetId, name)) },
         )
         HorizontalDivider()
         Text("Execution", style = MaterialTheme.typography.titleLarge)
@@ -599,6 +794,7 @@ private fun WorkflowDraftCanvas(
             onDraftChange = onDraftChange,
             onEditGeometry = onEditGeometry,
             onEditCondition = onEditCondition,
+            scrollState = scrollState,
         )
         statusMessage?.let { message -> Text(message, color = MaterialTheme.colorScheme.primary) }
     }
@@ -609,62 +805,247 @@ private fun EditorToolbar(
     draft: WorkflowDraft,
     session: WorkflowEditorSession,
     validation: DraftBuildResult,
+    validationState: Boolean?,
     isBusy: Boolean,
+    onDraftChange: (WorkflowDraft) -> Unit,
     onSave: (WorkflowBundle) -> Unit,
     onRun: (WorkflowBundle) -> Unit,
     onValidate: () -> Unit,
+    revisions: List<RevisionSummary>,
+    onOpenRevision: (Int) -> Unit,
 ) {
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        item {
-            EditorBadge(draft.viewport.recordedOrientation.name.lowercase().replaceFirstChar(Char::uppercase))
-        }
-        item {
-            EditorBadge(
-                draft.lastSavedRevision?.let { revision ->
-                    "Revision $revision" + if (session.isDirty) " • edited" else ""
-                } ?: "Unsaved workflow",
+    var validationDetailsVisible by remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Surface(
+                modifier = Modifier.height(48.dp),
+                onClick = {
+                    val viewport = draft.viewport
+                    val orientation = if (viewport.recordedOrientation == DisplayOrientation.PORTRAIT) {
+                        DisplayOrientation.LANDSCAPE
+                    } else {
+                        DisplayOrientation.PORTRAIT
+                    }
+                    onDraftChange(
+                        draft.copy(
+                            viewport = viewport.copy(
+                                recordedWidthPx = viewport.recordedHeightPx,
+                                recordedHeightPx = viewport.recordedWidthPx,
+                                recordedOrientation = orientation,
+                            ),
+                        ),
+                    )
+                },
+                enabled = !isBusy,
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer,
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(
+                        Icons.Outlined.ScreenRotation,
+                        contentDescription = "Switch workflow orientation",
+                        modifier = Modifier.size(24.dp),
+                    )
+                    Text(
+                        if (draft.viewport.recordedOrientation == DisplayOrientation.PORTRAIT) "Portrait" else "Landscape",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
+            }
+            RevisionSelector(
+                currentRevision = draft.lastSavedRevision,
+                dirty = session.isDirty,
+                revisions = revisions,
+                onOpenRevision = onOpenRevision,
+                modifier = Modifier.weight(1f).height(48.dp),
             )
         }
-        item {
-            OutlinedButton(onClick = session::undo, enabled = session.canUndo && !isBusy) {
-                Icon(Icons.AutoMirrored.Outlined.Undo, contentDescription = null)
-                Text("Undo")
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = session::undo, enabled = session.canUndo && !isBusy) {
+                Icon(Icons.AutoMirrored.Outlined.Undo, contentDescription = "Undo")
             }
-        }
-        item {
-            OutlinedButton(onClick = session::redo, enabled = session.canRedo && !isBusy) {
-                Icon(Icons.AutoMirrored.Outlined.Redo, contentDescription = null)
-                Text("Redo")
+            IconButton(onClick = session::redo, enabled = session.canRedo && !isBusy) {
+                Icon(Icons.AutoMirrored.Outlined.Redo, contentDescription = "Redo")
             }
-        }
-        item {
-            OutlinedButton(onClick = onValidate, enabled = !isBusy) {
-                Icon(Icons.Outlined.CheckCircle, contentDescription = null)
-                Text("Validate")
+            Spacer(Modifier.weight(1f))
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .combinedClickable(
+                        enabled = !isBusy,
+                        onClick = onValidate,
+                        onLongClick = {
+                            if (validation.issues.isNotEmpty()) validationDetailsVisible = true
+                        },
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Outlined.CheckCircle,
+                    contentDescription = "Validate workflow. Long press for failure details",
+                    tint = when (validationState) {
+                        true -> MaterialTheme.colorScheme.primary
+                        false -> MaterialTheme.colorScheme.error
+                        null -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
             }
-        }
-        item {
-            Button(
-                onClick = { validation.bundle?.let(onSave) },
-                enabled = !isBusy && validation.bundle != null && session.isDirty,
-            ) { Text("Save v${draft.nextRevision}") }
-        }
-        item {
-            OutlinedButton(
+            IconButton(
                 onClick = { validation.bundle?.let(onRun) },
                 enabled = !isBusy && validation.bundle != null,
-            ) { Text("Run") }
+            ) { Icon(Icons.Outlined.PlayArrow, contentDescription = "Run workflow") }
+            IconButton(
+                onClick = { validation.bundle?.let(onSave) },
+                enabled = !isBusy && validation.bundle != null && (session.isDirty || session.requiresRevisionSave),
+            ) { Icon(Icons.Outlined.Save, contentDescription = "Save revision ${draft.nextRevision}") }
+        }
+    }
+    if (validationDetailsVisible) {
+        AlertDialog(
+            onDismissRequest = { validationDetailsVisible = false },
+            title = { Text("Validation issues") },
+            text = {
+                Column(
+                    modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    validation.issues.forEach { issue ->
+                        Text("${issue.path}: ${issue.message}")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { validationDetailsVisible = false }) { Text("Done") }
+            },
+        )
+    }
+}
+
+@Composable
+private fun RevisionSelector(
+    currentRevision: Int?,
+    dirty: Boolean,
+    revisions: List<RevisionSummary>,
+    onOpenRevision: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+        ) {
+            Row(modifier = Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    currentRevision?.let { "Revision $it" + if (dirty) " •" else "" } ?: "Unsaved",
+                    modifier = Modifier.weight(1f).padding(start = 12.dp, top = 8.dp, bottom = 8.dp),
+                )
+                IconButton(
+                    onClick = { expanded = !expanded },
+                    enabled = revisions.isNotEmpty(),
+                ) {
+                    Icon(Icons.Outlined.ArrowDropDown, contentDescription = "Choose workflow revision")
+                }
+            }
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            revisions.forEach { revision ->
+                DropdownMenuItem(
+                    text = { Text("Revision ${revision.revision}") },
+                    onClick = {
+                        expanded = false
+                        onOpenRevision(revision.revision)
+                    },
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun EditorBadge(text: String) {
-    Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-    ) {
-        Text(text, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+private fun AllowedApplications(
+    packages: String,
+    onPickApplication: () -> Unit,
+    onRemoveApplication: (String) -> Unit,
+) {
+    val context = LocalContext.current
+    val packageNames = remember(packages) { packages.packageNames() }
+    var expanded by remember { mutableStateOf(true) }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Allowed apps", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+            Icon(
+                Icons.Outlined.ArrowDropDown,
+                contentDescription = if (expanded) "Collapse allowed apps" else "Expand allowed apps",
+                modifier = Modifier.rotate(if (expanded) 180f else 0f),
+            )
+        }
+        AnimatedVisibility(
+            visible = expanded,
+            enter = fadeIn(tween(120)) + expandVertically(tween(120)),
+            exit = fadeOut(tween(100)) + shrinkVertically(tween(100)),
+        ) {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(18.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (packageNames.isNotEmpty()) {
+                    items(packageNames, key = { it }) { packageName ->
+                        val applicationInfo = remember(packageName) {
+                            runCatching { context.packageManager.getApplicationInfo(packageName, 0) }.getOrNull()
+                        }
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.width(72.dp).clickable { onRemoveApplication(packageName) },
+                        ) {
+                            if (applicationInfo != null) {
+                                AndroidView(
+                                    factory = { ImageView(it).apply { scaleType = ImageView.ScaleType.FIT_CENTER } },
+                                    update = { it.setImageDrawable(context.packageManager.getApplicationIcon(applicationInfo)) },
+                                    modifier = Modifier.size(44.dp),
+                                )
+                                Text(
+                                    context.packageManager.getApplicationLabel(applicationInfo).toString(),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            } else {
+                                Icon(Icons.Outlined.Apps, contentDescription = null, modifier = Modifier.size(44.dp))
+                                Text(
+                                    packageName.substringAfterLast('.'),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
+                        }
+                    }
+                }
+                item {
+                    IconButton(onClick = onPickApplication) {
+                        Icon(Icons.Outlined.Add, contentDescription = "Add allowed app", modifier = Modifier.size(32.dp))
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -688,7 +1069,7 @@ private fun BlockInspector(
             Text("Select a block to edit its fields.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
             Text(step.displayName(), style = MaterialTheme.typography.titleMedium)
-            Text(step.summary(), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            EditableStepSummary(draft, selection.path, index, step, onDraftChange)
             StepEditorFields(
                 draft = draft,
                 path = selection.path,
@@ -705,68 +1086,93 @@ private fun BlockInspector(
 @Composable
 private fun TemplateAssetSection(
     assets: List<com.veyarc.model.bundle.BundleAsset>,
+    assetNames: Map<String, String>,
     onAddTemplate: () -> Unit,
     onRemoveTemplate: (com.veyarc.model.AssetId) -> Unit,
+    onRenameTemplate: (com.veyarc.model.AssetId, String) -> Unit,
 ) {
+    var expanded by remember { mutableStateOf(true) }
+    var renameTarget by remember { mutableStateOf<com.veyarc.model.AssetId?>(null) }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text("Image templates", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-            OutlinedButton(onClick = onAddTemplate) { Text("Add image") }
+            IconButton(onClick = onAddTemplate) {
+                Icon(Icons.Outlined.Add, contentDescription = "Add image template")
+            }
+            Icon(
+                Icons.Outlined.ArrowDropDown,
+                contentDescription = if (expanded) "Collapse image templates" else "Expand image templates",
+                modifier = Modifier.rotate(if (expanded) 180f else 0f),
+            )
         }
-        Text(
-            "Templates are encrypted with Android Keystore before they enter the workflow bundle. Remove unused templates to keep validation clean.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        if (assets.isEmpty()) {
-            Text("No templates added yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } else {
-            assets.forEach { asset ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(asset.assetId.value, style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "${asset.mimeType} · ${asset.byteLength} encrypted bytes",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    IconButton(onClick = { onRemoveTemplate(asset.assetId) }) {
-                        Icon(Icons.Outlined.Delete, contentDescription = "Remove image template")
+        AnimatedVisibility(
+            visible = expanded,
+            enter = fadeIn(tween(120)) + expandVertically(tween(120)),
+            exit = fadeOut(tween(100)) + shrinkVertically(tween(100)),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    "Templates are encrypted with Android Keystore before they enter the workflow bundle.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (assets.isEmpty()) {
+                    Text("No templates added yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    assets.forEachIndexed { index, asset ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable { renameTarget = asset.assetId },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(assetNames[asset.assetId.value] ?: "Template ${index + 1}")
+                                Text(
+                                    "${asset.mimeType} · ${asset.byteLength} encrypted bytes",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            IconButton(onClick = { onRemoveTemplate(asset.assetId) }) {
+                                Icon(Icons.Outlined.Delete, contentDescription = "Remove image template")
+                            }
+                        }
                     }
                 }
             }
         }
     }
-}
-
-@Composable
-private fun ValidationCard(validation: DraftBuildResult) {
-    val valid = validation.issues.isEmpty()
-    Card(
-        colors = CardDefaults.cardColors(
-            containerColor = if (valid) {
-                MaterialTheme.colorScheme.secondaryContainer
-            } else {
-                MaterialTheme.colorScheme.errorContainer
-            },
-        ),
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(
-                if (valid) "Workflow is valid and ready to save." else "Fix these issues before saving:",
-                style = MaterialTheme.typography.titleSmall,
-            )
-            validation.issues.forEach { issue ->
-                Text("${issue.path}: ${issue.message}", style = MaterialTheme.typography.bodySmall)
-            }
+    renameTarget?.let { assetId ->
+        var name by remember(assetId) { mutableStateOf(assetNames[assetId.value].orEmpty()) }
+        val valid = name.trim().let { candidate ->
+            candidate.isNotEmpty() && candidate.length <= 64 &&
+                assetNames.none { (id, existing) -> id != assetId.value && existing.equals(candidate, ignoreCase = true) }
         }
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            title = { Text("Rename template") },
+            text = {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    label = { Text("Template name") },
+                    supportingText = if (valid) null else ({ Text("Use a unique name with 1 to 64 characters.") }),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = valid,
+                    onClick = {
+                        onRenameTemplate(assetId, name.trim())
+                        renameTarget = null
+                    },
+                ) { Text("Rename") }
+            },
+            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("Cancel") } },
+        )
     }
 }
 
@@ -782,10 +1188,37 @@ private fun StepListEditor(
     onDraftChange: (WorkflowDraft) -> Unit,
     onEditGeometry: (StepListPath, Int) -> Unit,
     onEditCondition: (StepListPath, Int) -> Unit,
+    scrollState: androidx.compose.foundation.ScrollState,
 ) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val view = LocalView.current
+    val bounds = remember(path) { mutableStateMapOf<String, StepBounds>() }
+    var draggedStepId by remember(path) { mutableStateOf<String?>(null) }
+    var dragOffsetY by remember(path) { mutableFloatStateOf(0f) }
+    var pointerWindowY by remember(path) { mutableFloatStateOf(0f) }
+    val steps = draft.stepsAt(path)
+    val sourceIndex = steps.indexOfFirst { it.id == draggedStepId }
+    val sourceBounds = draggedStepId?.let(bounds::get)
+    val spacingPx = with(density) { 8.dp.toPx() }
+    val targetIndex = stepDropIndex(steps, bounds, spacingPx, draggedStepId, dragOffsetY)
+    val shiftDistance = (sourceBounds?.height ?: 0) + spacingPx
+
+    LaunchedEffect(draggedStepId, pointerWindowY) {
+        while (draggedStepId != null) {
+            val scrollDelta = when {
+                pointerWindowY < view.height * 0.16f -> -20f
+                pointerWindowY > view.height * 0.84f -> 20f
+                else -> break
+            }
+            withFrameNanos { }
+            val consumed = scrollState.scrollBy(scrollDelta)
+            if (consumed == 0f) break
+            dragOffsetY += consumed
+        }
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(heading, style = MaterialTheme.typography.titleMedium)
-        val steps = draft.stepsAt(path)
         if (steps.isEmpty()) {
             Text(
                 "No blocks in this branch yet.",
@@ -794,25 +1227,71 @@ private fun StepListEditor(
         }
         steps.forEachIndexed { index, step ->
             val issuePrefix = draft.modelPath(path, index)
-            StepCard(
-                draft = draft,
-                path = path,
-                index = index,
-                step = step,
-                validation = validation,
-                issues = validation.issues.filter { issue ->
-                    issue.path == issuePrefix || issue.path.startsWith("$issuePrefix/")
-                },
-                selection = selection,
-                showInlineInspector = showInlineInspector,
-                onSelectionChange = onSelectionChange,
-                onDraftChange = onDraftChange,
-                onEditGeometry = onEditGeometry,
-                onEditCondition = onEditCondition,
-            )
+            val neighborShift = when {
+                sourceIndex < targetIndex && index in (sourceIndex + 1)..targetIndex -> -shiftDistance
+                sourceIndex > targetIndex && index in targetIndex until sourceIndex -> shiftDistance
+                else -> 0f
+            }
+            val animatedShift by animateFloatAsState(neighborShift, tween(100), label = "block insertion")
+            key(step.id) {
+                StepCard(
+                    draft = draft,
+                    path = path,
+                    index = index,
+                    step = step,
+                    validation = validation,
+                    issues = validation.issues.filter { issue ->
+                        issue.path == issuePrefix || issue.path.startsWith("$issuePrefix/")
+                    },
+                    selection = selection,
+                    showInlineInspector = showInlineInspector,
+                    onSelectionChange = onSelectionChange,
+                    onDraftChange = onDraftChange,
+                    onEditGeometry = onEditGeometry,
+                    onEditCondition = onEditCondition,
+                    scrollState = scrollState,
+                    translationY = when {
+                        step.id == draggedStepId -> dragOffsetY
+                        draggedStepId != null -> animatedShift
+                        else -> 0f
+                    },
+                    dragging = step.id == draggedStepId,
+                    onMeasured = { bounds[step.id] = it },
+                    onDragStart = { initialPointerY ->
+                        onSelectionChange(BlockSelection(path, step.id))
+                        draggedStepId = step.id
+                        dragOffsetY = 0f
+                        pointerWindowY = initialPointerY
+                    },
+                    onDrag = { deltaY, currentPointerY ->
+                        dragOffsetY += deltaY
+                        pointerWindowY = currentPointerY
+                    },
+                    onDragFinished = { commit ->
+                        val from = steps.indexOfFirst { it.id == step.id }
+                        val to = stepDropIndex(steps, bounds, spacingPx, step.id, dragOffsetY)
+                        if (commit && from >= 0 && to >= 0 && from != to) {
+                            onDraftChange(draft.moveStepTo(path, from, to))
+                        }
+                        draggedStepId = null
+                        dragOffsetY = 0f
+                    },
+                    onInsertAfter = { kind ->
+                        onDraftChange(
+                            draft.insertStep(
+                                path,
+                                index + 1,
+                                kind,
+                                draft.allowedPackagesText.firstPackageOrDefault(),
+                            ),
+                        )
+                    },
+                )
+            }
         }
         AddBlockMenu(
-            defaultPackage = draft.allowedPackagesText.firstPackageOrDefault(),
+            compact = true,
+            modifier = Modifier.align(Alignment.CenterHorizontally).offset(y = (-10).dp),
             onAdd = { kind -> onDraftChange(draft.addStep(path, kind, draft.allowedPackagesText.firstPackageOrDefault())) },
         )
     }
@@ -832,21 +1311,65 @@ private fun StepCard(
     onDraftChange: (WorkflowDraft) -> Unit,
     onEditGeometry: (StepListPath, Int) -> Unit,
     onEditCondition: (StepListPath, Int) -> Unit,
+    scrollState: androidx.compose.foundation.ScrollState,
+    translationY: Float,
+    dragging: Boolean,
+    onMeasured: (StepBounds) -> Unit,
+    onDragStart: (Float) -> Unit,
+    onDrag: (Float, Float) -> Unit,
+    onDragFinished: (Boolean) -> Unit,
+    onInsertAfter: (WorkflowStepKind) -> Unit,
 ) {
+    var topInWindow by remember(step.id) { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val liftScale by animateFloatAsState(if (dragging) 1.025f else 1f, tween(100), label = "block lift")
+    val currentDragStart by rememberUpdatedState(onDragStart)
+    val currentDrag by rememberUpdatedState(onDrag)
+    val currentDragFinished by rememberUpdatedState(onDragFinished)
     val expanded = step.id !in draft.collapsedStepIds
     val category = step.blockCategory()
     val accent = category.accent()
     val selected = selection?.stepId == step.id
-    Box(modifier = Modifier.fillMaxWidth()) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .zIndex(if (dragging) 2f else 0f)
+            .graphicsLayer {
+                this.translationY = translationY
+                scaleX = liftScale
+                scaleY = liftScale
+                shadowElevation = if (dragging) with(density) { 14.dp.toPx() } else 0f
+            }
+            .onGloballyPositioned {
+                topInWindow = it.positionInWindow().y
+                onMeasured(StepBounds(it.size.height))
+            },
+    ) {
         Card(
-            modifier = Modifier.fillMaxWidth().padding(start = 30.dp).clickable { onSelectionChange(BlockSelection(path, step.id)) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 22.dp)
+                .pointerInput(step.id) {
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = { currentDragStart(topInWindow + it.y) },
+                        onDragEnd = { currentDragFinished(true) },
+                        onDragCancel = { currentDragFinished(false) },
+                        onDrag = { change, amount ->
+                            change.consume()
+                            currentDrag(amount.y, topInWindow + change.position.y)
+                        },
+                    )
+                }
+                .clickable {
+                    onSelectionChange(BlockSelection(path, step.id))
+                    onDraftChange(draft.toggleCollapsed(step.id))
+                },
             shape = category.shape(),
-            colors = CardDefaults.cardColors(containerColor = category.containerColor()),
-            border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
+            colors = CardDefaults.cardColors(containerColor = category.containerColor(selected)),
         ) {
             Column(
-                modifier = Modifier.padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -855,58 +1378,39 @@ private fun StepCard(
                 ) {
                     Icon(category.icon, contentDescription = null, tint = accent)
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(category.label.uppercase(), color = accent, style = MaterialTheme.typography.labelSmall)
-                        Text("${index + 1}. ${step.displayName()}", style = MaterialTheme.typography.titleSmall)
+                        Text("${index + 1}. ${step.displayName()}", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (issues.isNotEmpty()) Text("Needs attention", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
                     }
-                    IconButton(onClick = { onDraftChange(draft.toggleCollapsed(step.id)) }) {
-                        Icon(
-                            if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
-                            contentDescription = if (expanded) "Collapse block" else "Expand block",
-                        )
-                    }
-                }
-                Text(step.summary(), style = MaterialTheme.typography.bodyMedium)
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    item {
-                        TextButton(
-                            enabled = index > 0,
-                            onClick = { onDraftChange(draft.moveStep(path, index, -1)) },
-                        ) {
-                            Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = null)
-                            Text("Move up")
+                    if (step.hasEditableGeometry()) {
+                        IconButton(onClick = { onEditGeometry(path, index) }) {
+                            Icon(Icons.Outlined.Edit, contentDescription = "Edit touch geometry")
                         }
                     }
-                    item {
-                        TextButton(
-                            enabled = index < draft.stepsAt(path).lastIndex,
-                            onClick = { onDraftChange(draft.moveStep(path, index, 1)) },
-                        ) {
-                            Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
-                            Text("Move down")
+                    if (step.conditionOrNull() != null) {
+                        IconButton(onClick = { onEditCondition(path, index) }) {
+                            Icon(Icons.Outlined.Tune, contentDescription = "Edit condition")
                         }
                     }
-                    item {
-                        TextButton(onClick = { onDraftChange(draft.removeStep(path, index)) }) {
-                            Icon(Icons.Outlined.Delete, contentDescription = null)
-                            Text("Remove")
-                        }
+                    IconButton(onClick = { onDraftChange(draft.removeStep(path, index)) }) {
+                        Icon(Icons.Outlined.Delete, contentDescription = "Remove block")
                     }
-                }
-                issues.forEach { issue ->
-                    Text(issue.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                }
-                if (expanded && showInlineInspector) {
-                    StepEditorFields(
-                        draft = draft,
-                        path = path,
-                        index = index,
-                        step = step,
-                        onDraftChange = onDraftChange,
-                        onEditGeometry = onEditGeometry,
-                        onEditCondition = onEditCondition,
-                    )
                 }
                 if (expanded) {
+                    EditableStepSummary(draft, path, index, step, onDraftChange)
+                    issues.forEach { issue ->
+                        Text(issue.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    }
+                    if (showInlineInspector) {
+                        StepEditorFields(
+                            draft = draft,
+                            path = path,
+                            index = index,
+                            step = step,
+                            onDraftChange = onDraftChange,
+                            onEditGeometry = onEditGeometry,
+                            onEditCondition = onEditCondition,
+                        )
+                    }
                     NestedStepLists(
                         draft = draft,
                         path = path,
@@ -918,6 +1422,7 @@ private fun StepCard(
                         onDraftChange = onDraftChange,
                         onEditGeometry = onEditGeometry,
                         onEditCondition = onEditCondition,
+                        scrollState = scrollState,
                     )
                 }
             }
@@ -926,8 +1431,16 @@ private fun StepCard(
             ExecutionRail(
                 accent = accent,
                 terminal = step is Stop,
-                modifier = Modifier.align(Alignment.TopStart).width(30.dp).fillMaxHeight(),
+                modifier = Modifier.align(Alignment.TopStart).width(22.dp).fillMaxHeight(),
             )
+            if (index < draft.stepsAt(path).lastIndex && !dragging) {
+                AddBlockMenu(
+                    compact = true,
+                    subdued = true,
+                    modifier = Modifier.align(Alignment.BottomStart).offset(x = 2.dp, y = 24.dp).zIndex(3f),
+                    onAdd = onInsertAfter,
+                )
+            }
         }
     }
 }
@@ -956,6 +1469,7 @@ private fun NestedStepLists(
     onDraftChange: (WorkflowDraft) -> Unit,
     onEditGeometry: (StepListPath, Int) -> Unit,
     onEditCondition: (StepListPath, Int) -> Unit,
+    scrollState: androidx.compose.foundation.ScrollState,
 ) {
     when (step) {
         is Repeat -> BranchTray(
@@ -969,6 +1483,7 @@ private fun NestedStepLists(
             onDraftChange = onDraftChange,
             onEditGeometry = onEditGeometry,
             onEditCondition = onEditCondition,
+            scrollState = scrollState,
         )
 
         is WhileStep -> BranchTray(
@@ -982,6 +1497,7 @@ private fun NestedStepLists(
             onDraftChange = onDraftChange,
             onEditGeometry = onEditGeometry,
             onEditCondition = onEditCondition,
+            scrollState = scrollState,
         )
 
         is IfElse -> {
@@ -996,6 +1512,7 @@ private fun NestedStepLists(
                 onDraftChange = onDraftChange,
                 onEditGeometry = onEditGeometry,
                 onEditCondition = onEditCondition,
+                scrollState = scrollState,
             )
             BranchTray(
                 draft = draft,
@@ -1008,6 +1525,7 @@ private fun NestedStepLists(
                 onDraftChange = onDraftChange,
                 onEditGeometry = onEditGeometry,
                 onEditCondition = onEditCondition,
+                scrollState = scrollState,
             )
         }
 
@@ -1027,6 +1545,7 @@ private fun BranchTray(
     onDraftChange: (WorkflowDraft) -> Unit,
     onEditGeometry: (StepListPath, Int) -> Unit,
     onEditCondition: (StepListPath, Int) -> Unit,
+    scrollState: androidx.compose.foundation.ScrollState,
 ) {
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))) {
         Box(modifier = Modifier.padding(10.dp)) {
@@ -1041,6 +1560,7 @@ private fun BranchTray(
                 onDraftChange = onDraftChange,
                 onEditGeometry = onEditGeometry,
                 onEditCondition = onEditCondition,
+                scrollState = scrollState,
             )
         }
     }
@@ -1079,7 +1599,7 @@ private fun BlockCategory.accent(): Color = when (this) {
 }
 
 @Composable
-private fun BlockCategory.containerColor(): Color = accent().copy(alpha = 0.14f)
+private fun BlockCategory.containerColor(selected: Boolean): Color = accent().copy(alpha = if (selected) 0.28f else 0.14f)
 
 private fun BlockCategory.shape(): Shape = when (this) {
     BlockCategory.CONDITION, BlockCategory.BRANCH -> CutCornerShape(topStart = 18.dp, bottomStart = 18.dp)
@@ -1114,6 +1634,104 @@ private fun WorkflowStep.childrenForEditor(branch: NestedBranch): List<WorkflowS
 }
 
 @Composable
+private fun EditableStepSummary(
+    draft: WorkflowDraft,
+    path: StepListPath,
+    index: Int,
+    step: WorkflowStep,
+    onDraftChange: (WorkflowDraft) -> Unit,
+) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        when (step) {
+            is Wait -> {
+                Text("Wait", style = MaterialTheme.typography.bodyMedium)
+                InlineLongField(step.durationMs.value, 0) { value ->
+                    onDraftChange(draft.updateStep(path, index) { step.copy(durationMs = com.veyarc.model.DurationMillis(value)) })
+                }
+                Text("ms", style = MaterialTheme.typography.bodyMedium)
+            }
+
+            is WaitUntil -> {
+                Text("${step.condition.summary()} · timeout", style = MaterialTheme.typography.bodyMedium)
+                InlineLongField(step.timeoutMs.value, 0) { value ->
+                    onDraftChange(draft.updateStep(path, index) { step.copy(timeoutMs = com.veyarc.model.DurationMillis(value)) })
+                }
+                Text("ms, poll every", style = MaterialTheme.typography.bodyMedium)
+                InlineLongField(step.pollIntervalMs.value, 1) { value ->
+                    onDraftChange(draft.updateStep(path, index) { step.copy(pollIntervalMs = com.veyarc.model.DurationMillis(value)) })
+                }
+                Text("ms", style = MaterialTheme.typography.bodyMedium)
+            }
+
+            is Repeat -> {
+                InlineLongField(step.count.toLong(), 0, Int.MAX_VALUE.toLong()) { value ->
+                    onDraftChange(draft.updateStep(path, index) { step.copy(count = value.toInt()) })
+                }
+                Text("iterations, ${step.bodySteps.size} nested blocks", style = MaterialTheme.typography.bodyMedium)
+            }
+
+            is WhileStep -> {
+                Text("${step.condition.summary()} · up to", style = MaterialTheme.typography.bodyMedium)
+                InlineLongField(step.maxIterations.toLong(), 1, Int.MAX_VALUE.toLong()) { value ->
+                    onDraftChange(draft.updateStep(path, index) { step.copy(maxIterations = value.toInt()) })
+                }
+                Text("iterations, ${step.bodySteps.size} nested blocks", style = MaterialTheme.typography.bodyMedium)
+            }
+
+            is LaunchApp -> {
+                Text("${step.packageName.value} · timeout", style = MaterialTheme.typography.bodyMedium)
+                InlineLongField(step.foregroundTimeoutMs.value, 1) { value ->
+                    onDraftChange(
+                        draft.updateStep(path, index) {
+                            step.copy(foregroundTimeoutMs = com.veyarc.model.DurationMillis(value))
+                        },
+                    )
+                }
+                Text("ms", style = MaterialTheme.typography.bodyMedium)
+            }
+
+            else -> Text(step.summary(), style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+@Composable
+private fun InlineLongField(
+    value: Long,
+    minimum: Long,
+    maximum: Long = Long.MAX_VALUE,
+    onValueChange: (Long) -> Unit,
+) {
+    var text by remember(value) { mutableStateOf(value.toString()) }
+    Box(Modifier.widthIn(min = 16.dp, max = 96.dp)) {
+        Text(
+            text.ifEmpty { "0" },
+            color = Color.Transparent,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        BasicTextField(
+            value = text,
+            onValueChange = { candidate ->
+                if (candidate.all(Char::isDigit)) {
+                    text = candidate
+                    candidate.toLongOrNull()?.takeIf { it in minimum..maximum }?.let(onValueChange)
+                }
+            },
+            modifier = Modifier.matchParentSize(),
+            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                color = MaterialTheme.colorScheme.primary,
+                textDecoration = TextDecoration.Underline,
+            ),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            singleLine = true,
+        )
+    }
+}
+
+@Composable
 private fun StepEditorFields(
     draft: WorkflowDraft,
     path: StepListPath,
@@ -1124,89 +1742,18 @@ private fun StepEditorFields(
     onEditCondition: (StepListPath, Int) -> Unit,
 ) {
     when (step) {
-        is Wait -> {
-            LongEditorField(
-                label = "Duration (ms)",
-                value = step.durationMs.value,
-                onValueChange = { value ->
-                    if (value >= 0) {
-                        onDraftChange(
-                            draft.updateStep(path, index) {
-                                step.copy(durationMs = com.veyarc.model.DurationMillis(value))
-                            },
-                        )
-                    }
-                },
-            )
-        }
-
-        is Repeat -> {
-            LongEditorField(
-                label = "Repeat count",
-                value = step.count.toLong(),
-                onValueChange = { value ->
-                    if (value in 0..Int.MAX_VALUE) {
-                        onDraftChange(draft.updateStep(path, index) { step.copy(count = value.toInt()) })
-                    }
-                },
-            )
-        }
-
-        is WhileStep -> {
-            OutlinedButton(onClick = { onEditCondition(path, index) }) { Text("Edit condition") }
-            LongEditorField(
-                label = "Maximum iterations",
-                value = step.maxIterations.toLong(),
-                onValueChange = { value ->
-                    if (value in 1..Int.MAX_VALUE) {
-                        onDraftChange(draft.updateStep(path, index) { step.copy(maxIterations = value.toInt()) })
-                    }
-                },
-            )
-        }
-
-        is IfElse -> {
-            OutlinedButton(onClick = { onEditCondition(path, index) }) { Text("Edit condition") }
-        }
-
+        is Wait,
+        is Repeat,
+        is WhileStep,
+        is IfElse,
         is TapPoint,
         is TapRegion,
         is LongPress,
         is SwipePath,
-        -> {
-            OutlinedButton(onClick = { onEditGeometry(path, index) }) {
-                Text("Edit geometry")
-            }
-        }
-
         is WaitUntil,
-        -> {
-            OutlinedButton(onClick = { onEditCondition(path, index) }) { Text("Edit condition") }
-            LongEditorField(
-                label = "Timeout (ms)",
-                value = step.timeoutMs.value,
-                onValueChange = { value ->
-                    if (value >= 0) onDraftChange(draft.updateStep(path, index) { step.copy(timeoutMs = com.veyarc.model.DurationMillis(value)) })
-                },
-            )
-            LongEditorField(
-                label = "Poll interval (ms)",
-                value = step.pollIntervalMs.value,
-                onValueChange = { value ->
-                    if (value > 0) onDraftChange(draft.updateStep(path, index) { step.copy(pollIntervalMs = com.veyarc.model.DurationMillis(value)) })
-                },
-            )
-        }
-
         is LaunchApp,
         is Stop,
-        -> {
-            Text(
-                "This block has no additional editor fields yet.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        -> Unit
 
         else -> {
             Text(
@@ -1241,12 +1788,29 @@ internal fun LongEditorField(
 
 @Composable
 private fun AddBlockMenu(
-    defaultPackage: String,
     onAdd: (WorkflowStepKind) -> Unit,
+    compact: Boolean = false,
+    subdued: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    Box {
-        OutlinedButton(onClick = { expanded = true }) { Text("Add block") }
+    Box(modifier) {
+        if (compact) {
+            IconButton(onClick = { expanded = true }, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    Icons.Outlined.Add,
+                    contentDescription = "Add block here",
+                    modifier = Modifier.size(16.dp),
+                    tint = if (subdued) {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                )
+            }
+        } else {
+            OutlinedButton(onClick = { expanded = true }) { Text("Add block") }
+        }
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
@@ -1269,12 +1833,19 @@ private fun String.firstPackageOrDefault(): String = split(',', ' ', '\n', '\t')
     .firstOrNull { it.isNotEmpty() }
     ?: "com.veyarc.app"
 
+private fun String.packageNames(): List<String> = split(',', ' ', '\n', '\t')
+    .map(String::trim)
+    .filter(String::isNotEmpty)
+    .distinct()
+
 private fun WorkflowStep.conditionOrNull(): Condition? = when (this) {
     is WaitUntil -> condition
     is IfElse -> condition
     is WhileStep -> condition
     else -> null
 }
+
+private fun WorkflowStep.hasEditableGeometry(): Boolean = this is TapPoint || this is TapRegion || this is LongPress || this is SwipePath
 
 private fun viewportFor(context: Context): com.veyarc.model.ViewportSpec {
     val metrics = context.resources.displayMetrics

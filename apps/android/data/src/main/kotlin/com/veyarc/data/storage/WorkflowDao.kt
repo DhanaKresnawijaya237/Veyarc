@@ -23,17 +23,29 @@ internal interface WorkflowDao {
     @Query("UPDATE workflows SET isFavorite = :favorite WHERE workflowId = :workflowId")
     fun setWorkflowFavorite(workflowId: String, favorite: Boolean): Int
 
-    @Query("SELECT * FROM workflow_folders ORDER BY name COLLATE NOCASE, folderId")
+    @Query("SELECT * FROM workflow_folders ORDER BY sortOrder, name COLLATE NOCASE, folderId")
     fun listWorkflowFolders(): List<WorkflowFolderEntity>
+
+    @Query("SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM workflow_folders")
+    fun nextWorkflowFolderSortOrder(): Int
 
     @Query("SELECT * FROM workflow_folders WHERE folderId = :folderId")
     fun findWorkflowFolder(folderId: String): WorkflowFolderEntity?
+
+    @Query("SELECT * FROM workflow_folders WHERE colorArgb = :colorArgb")
+    fun findWorkflowFolderByColor(colorArgb: Int): WorkflowFolderEntity?
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     fun insertWorkflowFolder(folder: WorkflowFolderEntity)
 
     @Query("UPDATE workflow_folders SET name = :name, updatedAtMs = :updatedAtMs WHERE folderId = :folderId")
     fun renameWorkflowFolder(folderId: String, name: String, updatedAtMs: Long): Int
+
+    @Query("UPDATE workflow_folders SET colorArgb = :colorArgb, updatedAtMs = :updatedAtMs WHERE folderId = :folderId")
+    fun setWorkflowFolderColor(folderId: String, colorArgb: Int?, updatedAtMs: Long): Int
+
+    @Query("UPDATE workflow_folders SET sortOrder = :sortOrder, updatedAtMs = :updatedAtMs WHERE folderId = :folderId")
+    fun setWorkflowFolderSortOrder(folderId: String, sortOrder: Int, updatedAtMs: Long): Int
 
     @Query("UPDATE workflows SET folderId = NULL WHERE folderId = :folderId")
     fun clearWorkflowFolderAssignments(folderId: String): Int
@@ -65,6 +77,9 @@ internal interface WorkflowDao {
     @Query("UPDATE run_records SET folderId = :folderId WHERE runId = :runId AND status != :runningStatus")
     fun moveRunToFolder(runId: String, folderId: String?, runningStatus: String): Int
 
+    @Query("UPDATE run_records SET name = :name WHERE runId = :runId AND status != :runningStatus")
+    fun renameRun(runId: String, name: String, runningStatus: String): Int
+
     @Query("SELECT * FROM run_folders ORDER BY sortOrder, name COLLATE NOCASE, folderId")
     fun listRunFolders(): List<RunFolderEntity>
 
@@ -74,6 +89,9 @@ internal interface WorkflowDao {
     @Query("SELECT * FROM run_folders WHERE folderId = :folderId")
     fun findRunFolder(folderId: String): RunFolderEntity?
 
+    @Query("SELECT * FROM run_folders WHERE colorArgb = :colorArgb")
+    fun findRunFolderByColor(colorArgb: Int): RunFolderEntity?
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
     fun insertRunFolder(folder: RunFolderEntity)
 
@@ -82,6 +100,9 @@ internal interface WorkflowDao {
 
     @Query("UPDATE run_folders SET sortOrder = :sortOrder, updatedAtMs = :updatedAtMs WHERE folderId = :folderId")
     fun setRunFolderSortOrder(folderId: String, sortOrder: Int, updatedAtMs: Long): Int
+
+    @Query("UPDATE run_folders SET colorArgb = :colorArgb, updatedAtMs = :updatedAtMs WHERE folderId = :folderId")
+    fun setRunFolderColor(folderId: String, colorArgb: Int?, updatedAtMs: Long): Int
 
     @Query("UPDATE run_records SET folderId = NULL WHERE folderId = :folderId")
     fun clearRunFolderAssignments(folderId: String): Int

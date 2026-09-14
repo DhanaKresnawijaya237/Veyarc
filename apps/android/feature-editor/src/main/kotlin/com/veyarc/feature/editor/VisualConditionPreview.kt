@@ -355,7 +355,7 @@ private sealed interface TemplatePreviewState {
     data class Ready(val data: TemplatePreviewData) : TemplatePreviewState
 }
 
-private data class TemplatePreviewData(
+internal data class TemplatePreviewData(
     val image: ImageBitmap,
     val widthPx: Int,
     val heightPx: Int,
@@ -383,7 +383,7 @@ private data class PreviewPixelBounds(
     }
 }
 
-private fun decodeTemplatePreview(asset: BundleAsset): TemplatePreviewData? = try {
+internal fun decodeTemplatePreview(asset: BundleAsset): TemplatePreviewData? = try {
     val decoded = EncryptedTemplateAssetCodec(
         AndroidKeystoreKeySource(TEMPLATE_KEY_ALIAS),
     ).decrypt(asset.assetId, asset.bytes)

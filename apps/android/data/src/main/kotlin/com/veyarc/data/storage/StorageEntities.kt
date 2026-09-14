@@ -22,15 +22,25 @@ internal data class WorkflowEntity(
     val isFavorite: Boolean = false,
 )
 
-@Entity(tableName = "workflow_folders")
+@Entity(
+    tableName = "workflow_folders",
+    indices = [Index(value = ["colorArgb"], unique = true)],
+)
 internal data class WorkflowFolderEntity(
     @PrimaryKey val folderId: String,
     val name: String,
     val createdAtMs: Long,
     val updatedAtMs: Long,
+    @ColumnInfo(defaultValue = "NULL")
+    val colorArgb: Int? = null,
+    @ColumnInfo(defaultValue = "0")
+    val sortOrder: Int = 0,
 )
 
-@Entity(tableName = "run_folders")
+@Entity(
+    tableName = "run_folders",
+    indices = [Index(value = ["colorArgb"], unique = true)],
+)
 internal data class RunFolderEntity(
     @PrimaryKey val folderId: String,
     val name: String,
@@ -38,6 +48,8 @@ internal data class RunFolderEntity(
     val updatedAtMs: Long,
     @ColumnInfo(defaultValue = "0")
     val sortOrder: Int = 0,
+    @ColumnInfo(defaultValue = "NULL")
+    val colorArgb: Int? = null,
 )
 
 @Entity(
@@ -85,6 +97,8 @@ internal data class RunRecordEntity(
     val eventHistoryJson: String? = null,
     @ColumnInfo(defaultValue = "NULL")
     val folderId: String? = null,
+    @ColumnInfo(defaultValue = "NULL")
+    val name: String? = null,
 )
 
 internal data class RunStatusCountRow(

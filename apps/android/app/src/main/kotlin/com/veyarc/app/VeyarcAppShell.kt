@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 
 enum class VeyarcDestination(
     val label: String,
@@ -37,23 +38,28 @@ enum class VeyarcDestination(
 }
 
 @Composable
-fun VeyarcAppShell(
+internal fun VeyarcAppShell(
     selectedDestination: VeyarcDestination,
     onDestinationSelected: (VeyarcDestination) -> Unit,
+    selectionBar: ManagerSelectionBarState? = null,
     content: @Composable () -> Unit,
 ) {
     val destinationStates = rememberSaveableStateHolder()
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         if (usesNavigationRail(maxWidth.value, maxHeight.value)) {
             Row(modifier = Modifier.fillMaxSize()) {
-                NavigationRail {
-                    VeyarcDestination.entries.forEach { destination ->
-                        NavigationRailItem(
-                            selected = selectedDestination == destination,
-                            onClick = { onDestinationSelected(destination) },
-                            icon = { DestinationIcon(destination) },
-                            label = { Text(destination.label) },
-                        )
+                if (selectionBar != null) {
+                    ManagerSelectionRail(selectionBar)
+                } else {
+                    NavigationRail {
+                        VeyarcDestination.entries.forEach { destination ->
+                            NavigationRailItem(
+                                selected = selectedDestination == destination,
+                                onClick = { onDestinationSelected(destination) },
+                                icon = { DestinationIcon(destination) },
+                                label = { Text(destination.label) },
+                            )
+                        }
                     }
                 }
                 Box(modifier = Modifier.weight(1f)) {
@@ -61,16 +67,25 @@ fun VeyarcAppShell(
                 }
             }
         } else {
+            val showLabels = LocalDensity.current.fontScale < 1.5f
             Scaffold(
                 bottomBar = {
-                    NavigationBar {
-                        VeyarcDestination.entries.forEach { destination ->
-                            NavigationBarItem(
-                                selected = selectedDestination == destination,
-                                onClick = { onDestinationSelected(destination) },
-                                icon = { DestinationIcon(destination) },
-                                label = { Text(destination.label) },
-                            )
+                    if (selectionBar != null) {
+                        ManagerSelectionBar(selectionBar)
+                    } else {
+                        NavigationBar {
+                            VeyarcDestination.entries.forEach { destination ->
+                                NavigationBarItem(
+                                    selected = selectedDestination == destination,
+                                    onClick = { onDestinationSelected(destination) },
+                                    icon = { DestinationIcon(destination) },
+                                    label = if (showLabels) {
+                                        { Text(destination.label, maxLines = 1) }
+                                    } else {
+                                        null
+                                    },
+                                )
+                            }
                         }
                     }
                 },

@@ -202,6 +202,7 @@ enum class AssetKind {
 data class AssetReference(
     val assetId: AssetId,
     val kind: AssetKind,
+    val displayName: String? = null,
 )
 
 @Serializable

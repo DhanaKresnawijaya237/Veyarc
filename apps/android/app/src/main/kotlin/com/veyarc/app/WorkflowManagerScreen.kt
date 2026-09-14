@@ -1,6 +1,7 @@
 package com.veyarc.app
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,26 +11,24 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckBox
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -39,15 +38,19 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.veyarc.data.storage.FolderSummary
@@ -56,6 +59,8 @@ import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowRunActivity
 import com.veyarc.data.storage.WorkflowSummary
 import com.veyarc.model.DisplayOrientation
+import com.veyarc.model.WorkflowIds
+import com.veyarc.model.bundle.WorkflowBundle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -82,30 +87,36 @@ internal enum class WorkflowOrientationFilter(val label: String) {
 }
 
 @Composable
-fun WorkflowManagerScreen(
+internal fun WorkflowManagerScreen(
     repository: WorkflowRepository,
     refreshGeneration: Int,
-    onCreateWorkflow: (String?) -> Unit,
-    onRecordWorkflow: (String?) -> Unit,
     onEditWorkflow: (WorkflowSummary) -> Unit,
     onPlayWorkflow: (WorkflowSummary) -> Unit,
+    onSelectionBarChange: (ManagerSelectionBarState?) -> Unit = {},
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var workflows by remember { mutableStateOf<List<ManagedWorkflow>>(emptyList()) }
     var folders by remember { mutableStateOf<List<FolderSummary>>(emptyList()) }
-    var selectedView by remember { mutableStateOf(ALL_VIEW) }
-    var query by remember { mutableStateOf("") }
-    var sort by remember { mutableStateOf(WorkflowSortOption.UPDATED) }
-    var orientation by remember { mutableStateOf(WorkflowOrientationFilter.ANY) }
-    var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var folderOrder by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    var selectedView by rememberSaveable { mutableStateOf(ALL_VIEW) }
+    var query by rememberSaveable { mutableStateOf("") }
+    var searchActive by rememberSaveable { mutableStateOf(false) }
+    var sort by rememberSaveable { mutableStateOf(WorkflowSortOption.UPDATED) }
+    var orientation by rememberSaveable { mutableStateOf(WorkflowOrientationFilter.ANY) }
+    var selectionMode by rememberSaveable { mutableStateOf(false) }
+    var selectedIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var isBusy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var localRefresh by remember { mutableIntStateOf(0) }
-    var folderEditor by remember { mutableStateOf<FolderSummary?>(null) }
+    var folderManager by remember { mutableStateOf<FolderSummary?>(null) }
     var creatingFolder by remember { mutableStateOf(false) }
     var pendingFolderDelete by remember { mutableStateOf<FolderSummary?>(null) }
     var pendingWorkflowDelete by remember { mutableStateOf<List<ManagedWorkflow>>(emptyList()) }
     var moveSelection by remember { mutableStateOf(false) }
+    var copySelection by remember { mutableStateOf(false) }
+    var renameSelection by remember { mutableStateOf(false) }
+    var detailsSelection by remember { mutableStateOf(false) }
     var revisionDialog by remember { mutableStateOf<Pair<WorkflowSummary, List<RevisionSummary>>?>(null) }
     var sortMenuOpen by remember { mutableStateOf(false) }
     var orientationMenuOpen by remember { mutableStateOf(false) }
@@ -128,12 +139,14 @@ fun WorkflowManagerScreen(
                         activity = activity[summary.workflowId] ?: WorkflowRunActivity(0, null),
                     )
                 }
-                loaded to repository.listWorkflowFolders()
+                Triple(loaded, repository.listWorkflowFolders(), AppPreferences.workflowFolderOrder(context))
             }
-        }.onSuccess { (loadedWorkflows, loadedFolders) ->
+        }.onSuccess { (loadedWorkflows, loadedFolders, savedOrder) ->
             workflows = loadedWorkflows
             folders = loadedFolders
-            selectedIds = selectedIds.intersect(loadedWorkflows.mapTo(mutableSetOf()) { it.summary.workflowId })
+            val availableKeys = listOf(ALL_VIEW, FAVORITES_VIEW, UNFILED_VIEW) + loadedFolders.map(FolderSummary::folderId)
+            folderOrder = reconcileFolderOrder(savedOrder, availableKeys)
+            selectedIds = selectedIds.filter { id -> loadedWorkflows.any { it.summary.workflowId == id } }
             if (selectedView !in setOf(ALL_VIEW, FAVORITES_VIEW, UNFILED_VIEW) &&
                 loadedFolders.none { it.folderId == selectedView }
             ) {
@@ -152,7 +165,7 @@ fun WorkflowManagerScreen(
             runCatching { withContext(Dispatchers.IO) { operation() } }
                 .onSuccess {
                     error = successMessage
-                    selectedIds = emptySet()
+                    selectedIds = emptyList()
                     localRefresh += 1
                 }
                 .onFailure { failure -> error = failure.message ?: "The change could not be saved." }
@@ -163,7 +176,74 @@ fun WorkflowManagerScreen(
     val visible = remember(workflows, selectedView, query, sort, orientation) {
         filterAndSortWorkflows(workflows, selectedView, query, sort, orientation)
     }
-    val destinationFolderId = selectedView.takeIf { id -> folders.any { it.folderId == id } }
+    val folderItems = remember(folders, folderOrder) {
+        val custom = folders.associateBy(FolderSummary::folderId)
+        reconcileFolderOrder(folderOrder, listOf(ALL_VIEW, FAVORITES_VIEW, UNFILED_VIEW) + custom.keys).mapNotNull { key ->
+            when (key) {
+                ALL_VIEW -> ManagerFolderItem(key, "All")
+                FAVORITES_VIEW -> ManagerFolderItem(key, "Favorites")
+                UNFILED_VIEW -> ManagerFolderItem(key, "Unfiled")
+                else -> custom[key]?.let { ManagerFolderItem(key, it.name, it.colorArgb, it) }
+            }
+        }
+    }
+
+    fun persistFolderOrder(order: List<String>) {
+        folderOrder = order
+        val customIds = folders.mapTo(mutableSetOf(), FolderSummary::folderId)
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    AppPreferences.setWorkflowFolderOrder(context, order)
+                    repository.reorderWorkflowFolders(order.filter(customIds::contains))
+                }
+            }.onFailure { error = it.message ?: "Folder order could not be saved." }
+        }
+    }
+    fun toggleFavorite(workflow: ManagedWorkflow) {
+        val favorite = !workflow.summary.isFavorite
+        workflows = workflows.map { item ->
+            if (item.summary.workflowId == workflow.summary.workflowId) {
+                item.copy(summary = item.summary.copy(isFavorite = favorite))
+            } else {
+                item
+            }
+        }
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    repository.setWorkflowFavorite(workflow.summary.workflowId, favorite)
+                }
+            }.onFailure {
+                workflows = workflows.map { item ->
+                    if (item.summary.workflowId == workflow.summary.workflowId) workflow else item
+                }
+                error = "Favorite could not be saved."
+            }
+        }
+    }
+
+    LaunchedEffect(selectionMode, selectedIds, selectedView, isBusy) {
+        onSelectionBarChange(
+            if (!selectionMode) {
+                null
+            } else {
+                ManagerSelectionBarState(
+                    selectedCount = selectedIds.size,
+                    onCopy = { copySelection = true }.takeIf {
+                        !isBusy && selectedIds.isNotEmpty() && folders.any { it.folderId == selectedView }
+                    },
+                    onRename = { renameSelection = true }.takeIf { !isBusy && selectedIds.size == 1 },
+                    onMove = { moveSelection = true },
+                    onDelete = { pendingWorkflowDelete = workflows.filter { it.summary.workflowId in selectedIds } },
+                    onDetails = { detailsSelection = true }.takeIf { selectedIds.isNotEmpty() },
+                )
+            },
+        )
+    }
+    DisposableEffect(Unit) {
+        onDispose { onSelectionBarChange(null) }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -172,68 +252,38 @@ fun WorkflowManagerScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("WORKFLOWS", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-                Text("Workflow Manager", style = MaterialTheme.typography.headlineMedium)
-                Text(
-                    "Find, organize, edit, and run saved automations.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(onClick = { onCreateWorkflow(destinationFolderId) }) {
-                        Icon(Icons.Filled.Add, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("New")
-                    }
-                    OutlinedButton(onClick = { onRecordWorkflow(destinationFolderId) }) {
-                        Text("Record")
-                    }
-                }
-            }
-        }
-
-        item {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                item { CollectionChip("All", ALL_VIEW, selectedView) { selectedView = it } }
-                item { CollectionChip("Favorites", FAVORITES_VIEW, selectedView) { selectedView = it } }
-                item { CollectionChip("Unfiled", UNFILED_VIEW, selectedView) { selectedView = it } }
-                items(folders, key = FolderSummary::folderId) { folder ->
-                    CollectionChip(folder.name, folder.folderId, selectedView) { selectedView = it }
-                }
-                item {
-                    FilterChip(
-                        selected = false,
-                        onClick = { creatingFolder = true },
-                        label = { Text("New folder") },
-                        leadingIcon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                    )
-                }
-            }
-        }
-
-        if (destinationFolderId != null) {
-            item {
-                val folder = folders.first { it.folderId == destinationFolderId }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { folderEditor = folder }) { Text("Rename ${folder.name}") }
-                    TextButton(onClick = { pendingFolderDelete = folder }) { Text("Delete folder") }
-                }
-            }
-        }
-
-        item {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { Text("Search workflows") },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+            CompactManagerHeader(
+                title = "Workflow Manager",
+                searchActive = searchActive,
+                query = query,
+                selectionMode = selectionMode,
+                selectedCount = selectedIds.size,
+                onQueryChange = { query = it },
+                onSearchActiveChange = { searchActive = it },
+                onSelectionModeChange = { enabled ->
+                    selectionMode = enabled
+                    if (!enabled) selectedIds = emptyList()
+                },
             )
         }
 
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ReorderableFolderRow(
+                folders = folderItems,
+                selectedKey = selectedView,
+                onSelect = { selectedView = it },
+                onManage = { folderManager = it },
+                onOrderChanged = ::persistFolderOrder,
+                onCreate = { creatingFolder = true },
+            )
+        }
+
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Column(modifier = Modifier.weight(1f)) {
                     OutlinedButton(
                         onClick = { sortMenuOpen = true },
@@ -268,28 +318,15 @@ fun WorkflowManagerScreen(
                         }
                     }
                 }
-            }
-        }
-
-        if (selectedIds.isNotEmpty()) {
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth().padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Text("${selectedIds.size} selected", style = MaterialTheme.typography.titleSmall)
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            TextButton(onClick = { moveSelection = true }) { Text("Move") }
-                            TextButton(
-                                onClick = {
-                                    pendingWorkflowDelete = workflows.filter {
-                                        it.summary.workflowId in selectedIds
-                                    }
-                                },
-                            ) { Text("Delete") }
-                            TextButton(onClick = { selectedIds = emptySet() }) { Text("Clear") }
-                        }
+                if (searchActive) {
+                    IconButton(onClick = {
+                        selectionMode = !selectionMode
+                        if (!selectionMode) selectedIds = emptyList()
+                    }) {
+                        Icon(
+                            if (selectionMode) Icons.Filled.Close else Icons.Filled.CheckBox,
+                            contentDescription = if (selectionMode) "Leave selection mode" else "Select items",
+                        )
                     }
                 }
             }
@@ -305,16 +342,21 @@ fun WorkflowManagerScreen(
         items(visible, key = { it.summary.workflowId }) { workflow ->
             WorkflowManagerCard(
                 workflow = workflow,
+                selectionMode = selectionMode,
                 selected = workflow.summary.workflowId in selectedIds,
                 enabled = !isBusy,
                 onSelectedChange = { selected ->
-                    selectedIds = if (selected) selectedIds + workflow.summary.workflowId else selectedIds - workflow.summary.workflowId
-                },
-                onFavorite = {
-                    mutate(if (workflow.summary.isFavorite) "Removed from favorites." else "Added to favorites.") {
-                        repository.setWorkflowFavorite(workflow.summary.workflowId, !workflow.summary.isFavorite)
+                    selectedIds = if (selected) {
+                        (selectedIds + workflow.summary.workflowId).distinct()
+                    } else {
+                        selectedIds - workflow.summary.workflowId
                     }
                 },
+                onLongPress = {
+                    selectionMode = true
+                    selectedIds = (selectedIds + workflow.summary.workflowId).distinct()
+                },
+                onFavorite = { toggleFavorite(workflow) },
                 onEdit = { onEditWorkflow(workflow.summary) },
                 onPlay = { onPlayWorkflow(workflow.summary) },
                 onRevisions = {
@@ -335,25 +377,38 @@ fun WorkflowManagerScreen(
         }
     }
 
-    if (creatingFolder || folderEditor != null) {
+    if (creatingFolder) {
         FolderNameDialog(
-            title = if (creatingFolder) "New folder" else "Rename folder",
-            initialName = folderEditor?.name.orEmpty(),
+            title = "New folder",
+            initialName = "",
             onDismiss = {
                 creatingFolder = false
-                folderEditor = null
             },
             onConfirm = { name ->
-                val existing = folderEditor
                 creatingFolder = false
-                folderEditor = null
-                mutate(if (existing == null) "Folder created." else "Folder renamed.") {
-                    if (existing == null) {
-                        repository.createWorkflowFolder(name)
-                    } else {
-                        repository.renameWorkflowFolder(existing.folderId, name)
+                mutate("Folder created.") {
+                    repository.createWorkflowFolder(name)
+                }
+            },
+        )
+    }
+    folderManager?.let { folder ->
+        FolderManagementDialog(
+            folder = folder,
+            usedColors = folders.filterNot { it.folderId == folder.folderId }.mapNotNull { it.colorArgb }.toSet(),
+            onDismiss = { folderManager = null },
+            onSave = { name, colorArgb ->
+                folderManager = null
+                mutate("Folder updated.") {
+                    if (name.trim() != folder.name) repository.renameWorkflowFolder(folder.folderId, name)
+                    if (colorArgb != folder.colorArgb) {
+                        repository.setWorkflowFolderColor(folder.folderId, colorArgb)
                     }
                 }
+            },
+            onDelete = {
+                folderManager = null
+                pendingFolderDelete = folder
             },
         )
     }
@@ -435,19 +490,116 @@ fun WorkflowManagerScreen(
             confirmButton = { TextButton(onClick = { revisionDialog = null }) { Text("Done") } },
         )
     }
+
+    if (copySelection) {
+        AlertDialog(
+            onDismissRequest = { copySelection = false },
+            title = { Text("Copy ${selectedIds.size} workflow${if (selectedIds.size == 1) "" else "s"}") },
+            text = {
+                Column {
+                    folders.forEach { folder ->
+                        TextButton(onClick = {
+                            copySelection = false
+                            val targets = workflows.filter { it.summary.workflowId in selectedIds }
+                            mutate("Copied ${targets.size} workflow${if (targets.size == 1) "" else "s"}.") {
+                                val usedNames = repository.listWorkflows().mapTo(mutableSetOf()) { it.name }
+                                targets.forEach { target ->
+                                    val source = repository.loadRevision(
+                                        target.summary.workflowId,
+                                        target.summary.latestRevision,
+                                    )
+                                    val copyName = uniqueWorkflowCopyName(target.summary.name, usedNames)
+                                    usedNames += copyName
+                                    repository.saveRevision(
+                                        WorkflowBundle(
+                                            document = source.document.copy(
+                                                id = WorkflowIds.newUuid(),
+                                                revision = 1,
+                                                name = copyName,
+                                            ),
+                                            assets = source.assets,
+                                            producerVersion = source.producerVersion,
+                                        ),
+                                        folder.folderId,
+                                    )
+                                }
+                            }
+                        }) { Text(folder.name) }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { copySelection = false }) { Text("Cancel") } },
+        )
+    }
+
+    if (renameSelection) {
+        val target = workflows.firstOrNull { it.summary.workflowId == selectedIds.singleOrNull() }
+        if (target != null) {
+            FolderNameDialog(
+                title = "Rename workflow",
+                initialName = target.summary.name,
+                fieldLabel = "Workflow name",
+                onDismiss = { renameSelection = false },
+                onConfirm = { name ->
+                    renameSelection = false
+                    mutate("Workflow renamed.") {
+                        val source = repository.loadRevision(target.summary.workflowId, target.summary.latestRevision)
+                        repository.saveRevision(
+                            WorkflowBundle(
+                                document = source.document.copy(
+                                    revision = target.summary.latestRevision + 1,
+                                    name = name.trim(),
+                                ),
+                                assets = source.assets,
+                                producerVersion = source.producerVersion,
+                            ),
+                        )
+                    }
+                },
+            )
+        } else {
+            renameSelection = false
+        }
+    }
+
+    if (detailsSelection) {
+        val selected = workflows.filter { it.summary.workflowId in selectedIds }
+        ManagerSelectionDetailsDialog(
+            title = if (selected.size == 1) selected.single().summary.name else "${selected.size} workflows",
+            lines = if (selected.size == 1) {
+                val workflow = selected.single()
+                listOf(
+                    "Revision ${workflow.summary.latestRevision}",
+                    workflow.orientation?.name?.lowercase()?.replaceFirstChar(Char::uppercase) ?: "Orientation unavailable",
+                    "${workflow.activity.runCount} saved runs",
+                    "Updated ${DateFormat.getDateTimeInstance().format(Date(workflow.summary.updatedAtMs))}",
+                )
+            } else {
+                listOf("${selected.count { it.summary.isFavorite }} favorites", "${selected.sumOf { it.activity.runCount }} saved runs")
+            },
+            onDismiss = { detailsSelection = false },
+        )
+    }
+}
+
+internal fun uniqueWorkflowCopyName(sourceName: String, usedNames: Set<String>): String {
+    val base = "$sourceName copy"
+    if (base !in usedNames) return base
+    var suffix = 2
+    while ("$base $suffix" in usedNames) suffix += 1
+    return "$base $suffix"
 }
 
 @Composable
-private fun CollectionChip(label: String, key: String, selected: String, onSelect: (String) -> Unit) {
-    FilterChip(selected = key == selected, onClick = { onSelect(key) }, label = { Text(label) })
-}
-
-@Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun WorkflowManagerCard(
     workflow: ManagedWorkflow,
+    selectionMode: Boolean,
     selected: Boolean,
     enabled: Boolean,
     onSelectedChange: (Boolean) -> Unit,
+    onLongPress: () -> Unit,
     onFavorite: () -> Unit,
     onEdit: () -> Unit,
     onPlay: () -> Unit,
@@ -455,63 +607,65 @@ private fun WorkflowManagerCard(
     onDelete: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
-    Card(modifier = Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onEdit)) {
-        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        modifier =
+        Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                enabled = enabled,
+                onClick = { if (selectionMode) onSelectedChange(!selected) else onEdit() },
+                onLongClick = onLongPress,
+            ),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (selectionMode) {
                 Checkbox(checked = selected, onCheckedChange = onSelectedChange, enabled = enabled)
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(workflow.summary.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(
-                        "Revision ${workflow.summary.latestRevision} · ${workflow.orientation?.displayName() ?: "Unknown orientation"}",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Text(
-                        "${workflow.activity.runCount} runs · Updated ${formatTimestamp(workflow.summary.updatedAtMs)}",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-                IconButton(onClick = onFavorite, enabled = enabled) {
-                    Icon(
-                        if (workflow.summary.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                        contentDescription = if (workflow.summary.isFavorite) "Remove from favorites" else "Add to favorites",
-                    )
-                }
-                Column {
-                    IconButton(onClick = { menuOpen = true }, enabled = enabled) {
-                        Icon(Icons.Filled.MoreVert, contentDescription = "More workflow actions")
-                    }
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        DropdownMenuItem(
-                            text = { Text("Revision history") },
-                            leadingIcon = { Icon(Icons.Filled.History, contentDescription = null) },
-                            onClick = {
-                                menuOpen = false
-                                onRevisions()
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Delete") },
-                            leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
-                            onClick = {
-                                menuOpen = false
-                                onDelete()
-                            },
-                        )
-                    }
-                }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onPlay, enabled = enabled) {
-                    Icon(Icons.Filled.PlayArrow, contentDescription = null)
-                    Spacer(Modifier.width(4.dp))
-                    Text("Play")
+            Column(modifier = Modifier.weight(1f)) {
+                Text(workflow.summary.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    "Revision ${workflow.summary.latestRevision} · ${workflow.orientation?.displayName() ?: "Unknown"} · ${workflow.activity.runCount} runs",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            IconButton(onClick = onFavorite, enabled = enabled) {
+                Icon(
+                    if (workflow.summary.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                    contentDescription = if (workflow.summary.isFavorite) "Remove from favorites" else "Add to favorites",
+                    tint = if (workflow.summary.isFavorite) Color(0xFFE53935) else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(onClick = onPlay, enabled = enabled) {
+                Icon(Icons.Filled.PlayArrow, contentDescription = "Play ${workflow.summary.name}")
+            }
+            Column {
+                IconButton(onClick = { menuOpen = true }, enabled = enabled) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "More workflow actions")
                 }
-                OutlinedButton(onClick = onEdit, enabled = enabled) {
-                    Icon(Icons.Filled.Edit, contentDescription = null)
-                    Spacer(Modifier.width(4.dp))
-                    Text("Edit")
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Revision history") },
+                        leadingIcon = { Icon(Icons.Filled.History, contentDescription = null) },
+                        onClick = {
+                            menuOpen = false
+                            onRevisions()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Delete") },
+                        leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
+                        onClick = {
+                            menuOpen = false
+                            onDelete()
+                        },
+                    )
                 }
             }
         }
@@ -519,7 +673,13 @@ private fun WorkflowManagerCard(
 }
 
 @Composable
-private fun FolderNameDialog(title: String, initialName: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+private fun FolderNameDialog(
+    title: String,
+    initialName: String,
+    fieldLabel: String = "Folder name",
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
     var name by remember(initialName) { mutableStateOf(initialName) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -528,7 +688,7 @@ private fun FolderNameDialog(title: String, initialName: String, onDismiss: () -
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
-                label = { Text("Folder name") },
+                label = { Text(fieldLabel) },
                 singleLine = true,
             )
         },

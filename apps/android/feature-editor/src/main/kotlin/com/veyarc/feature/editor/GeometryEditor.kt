@@ -2,8 +2,13 @@
 
 package com.veyarc.feature.editor
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -14,15 +19,21 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -30,6 +41,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,6 +53,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -51,6 +64,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.zIndex
 import com.veyarc.model.LongPress
 import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.NormalizedRect
@@ -60,7 +74,10 @@ import com.veyarc.model.TapPoint
 import com.veyarc.model.TapRegion
 import com.veyarc.model.ViewportSpec
 import com.veyarc.model.WorkflowStep
+import com.veyarc.model.bundle.BundleAsset
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.hypot
 
 @Composable
@@ -68,46 +85,97 @@ internal fun GeometryEditorDialog(
     step: WorkflowStep,
     viewport: ViewportSpec,
     maxPathPoints: Int,
+    assets: List<BundleAsset>,
+    assetNames: Map<String, String>,
     onDismiss: () -> Unit,
     onApply: (WorkflowStep) -> Unit,
 ) {
+    var sidebarOpen by remember { mutableStateOf(false) }
+    var selectedAssetId by remember { mutableStateOf<String?>(null) }
+    var referenceImage by remember { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(selectedAssetId, assets) {
+        referenceImage = selectedAssetId
+            ?.let { id -> assets.firstOrNull { it.assetId.value == id } }
+            ?.let { asset -> withContext(Dispatchers.Default) { decodeTemplatePreview(asset)?.image } }
+    }
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         Surface(modifier = Modifier.fillMaxSize()) {
-            when (step) {
-                is TapPoint -> PointGeometryEditor(
-                    title = "Edit tap point",
-                    point = step.point,
-                    viewport = viewport,
-                    onDismiss = onDismiss,
-                    onApply = { point -> onApply(step.copy(point = point)) },
-                )
+            Box(Modifier.fillMaxSize()) {
+                when (step) {
+                    is TapPoint -> PointGeometryEditor(
+                        title = "Edit tap point",
+                        point = step.point,
+                        viewport = viewport,
+                        background = referenceImage,
+                        onToggleReference = { sidebarOpen = !sidebarOpen },
+                        onApply = { point -> onApply(step.copy(point = point)) },
+                    )
 
-                is LongPress -> LongPressGeometryEditor(
-                    step = step,
-                    viewport = viewport,
-                    onDismiss = onDismiss,
-                    onApply = onApply,
-                )
+                    is LongPress -> LongPressGeometryEditor(
+                        step = step,
+                        viewport = viewport,
+                        background = referenceImage,
+                        onToggleReference = { sidebarOpen = !sidebarOpen },
+                        onApply = onApply,
+                    )
 
-                is TapRegion -> RegionGeometryEditor(
-                    step = step,
-                    viewport = viewport,
-                    onDismiss = onDismiss,
-                    onApply = onApply,
-                )
+                    is TapRegion -> RegionGeometryEditor(
+                        step = step,
+                        viewport = viewport,
+                        background = referenceImage,
+                        onToggleReference = { sidebarOpen = !sidebarOpen },
+                        onApply = onApply,
+                    )
 
-                is SwipePath -> PathGeometryEditor(
-                    step = step,
-                    viewport = viewport,
-                    maxPathPoints = maxPathPoints,
-                    onDismiss = onDismiss,
-                    onApply = onApply,
-                )
+                    is SwipePath -> PathGeometryEditor(
+                        step = step,
+                        viewport = viewport,
+                        maxPathPoints = maxPathPoints,
+                        background = referenceImage,
+                        onToggleReference = { sidebarOpen = !sidebarOpen },
+                        onApply = onApply,
+                    )
 
-                else -> onDismiss()
+                    else -> onDismiss()
+                }
+                AnimatedVisibility(
+                    visible = sidebarOpen,
+                    modifier = Modifier.align(Alignment.CenterStart).fillMaxHeight().width(184.dp).zIndex(2f),
+                    enter = fadeIn(tween(140)) + slideInHorizontally(tween(140)) { -it },
+                    exit = fadeOut(tween(120)) + slideOutHorizontally(tween(120)) { -it },
+                ) {
+                    Surface(tonalElevation = 6.dp, shadowElevation = 8.dp) {
+                        Column(
+                            modifier = Modifier.fillMaxHeight().padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text("Background", style = MaterialTheme.typography.titleMedium)
+                            TextButton(onClick = { selectedAssetId = null }, modifier = Modifier.fillMaxWidth()) {
+                                Text("No background")
+                            }
+                            assets.forEachIndexed { index, asset ->
+                                Surface(
+                                    onClick = { selectedAssetId = asset.assetId.value },
+                                    color = if (selectedAssetId == asset.assetId.value) {
+                                        MaterialTheme.colorScheme.secondaryContainer
+                                    } else {
+                                        Color.Transparent
+                                    },
+                                    shape = MaterialTheme.shapes.small,
+                                ) {
+                                    Text(
+                                        assetNames[asset.assetId.value] ?: "Template ${index + 1}",
+                                        modifier = Modifier.fillMaxWidth().padding(10.dp),
+                                        maxLines = 2,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -118,18 +186,20 @@ private fun PointGeometryEditor(
     title: String,
     point: NormalizedCoordinate,
     viewport: ViewportSpec,
-    onDismiss: () -> Unit,
+    background: ImageBitmap?,
+    onToggleReference: () -> Unit,
     onApply: (NormalizedCoordinate) -> Unit,
 ) {
     var selectedPoint by remember(point) { mutableStateOf(point) }
     GeometryEditorLayout(
         title = title,
-        onDismiss = onDismiss,
+        onToggleReference = onToggleReference,
         onApply = { onApply(selectedPoint) },
     ) {
         Text("Tap the display preview to place the contact point.")
         GeometryPreview(
             viewport = viewport,
+            background = background,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
@@ -158,7 +228,8 @@ private fun PointGeometryEditor(
 private fun LongPressGeometryEditor(
     step: LongPress,
     viewport: ViewportSpec,
-    onDismiss: () -> Unit,
+    background: ImageBitmap?,
+    onToggleReference: () -> Unit,
     onApply: (WorkflowStep) -> Unit,
 ) {
     var selectedPoint by remember(step) { mutableStateOf(step.point) }
@@ -167,7 +238,7 @@ private fun LongPressGeometryEditor(
     val validDuration = duration != null && duration > 0
     GeometryEditorLayout(
         title = "Edit long press",
-        onDismiss = onDismiss,
+        onToggleReference = onToggleReference,
         applyEnabled = validDuration,
         onApply = {
             if (duration != null && duration > 0) {
@@ -178,6 +249,7 @@ private fun LongPressGeometryEditor(
         Text("Tap the display preview to place the press point.")
         GeometryPreview(
             viewport = viewport,
+            background = background,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
@@ -217,7 +289,8 @@ private fun LongPressGeometryEditor(
 private fun RegionGeometryEditor(
     step: TapRegion,
     viewport: ViewportSpec,
-    onDismiss: () -> Unit,
+    background: ImageBitmap?,
+    onToggleReference: () -> Unit,
     onApply: (WorkflowStep) -> Unit,
 ) {
     var region by remember(step) { mutableStateOf(step.region) }
@@ -231,13 +304,14 @@ private fun RegionGeometryEditor(
 
     GeometryEditorLayout(
         title = "Edit touch region",
-        onDismiss = onDismiss,
+        onToggleReference = onToggleReference,
         applyEnabled = validAnchor,
         onApply = { anchor?.let { onApply(step.copy(region = region, anchor = it)) } },
     ) {
         Text("Drag a corner to resize the region, or drag inside it to move it.")
         GeometryPreview(
             viewport = viewport,
+            background = background,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
@@ -319,7 +393,8 @@ private fun PathGeometryEditor(
     step: SwipePath,
     viewport: ViewportSpec,
     maxPathPoints: Int,
-    onDismiss: () -> Unit,
+    background: ImageBitmap?,
+    onToggleReference: () -> Unit,
     onApply: (WorkflowStep) -> Unit,
 ) {
     var points by remember(step) { mutableStateOf(step.points.map { it.point }) }
@@ -334,8 +409,26 @@ private fun PathGeometryEditor(
 
     GeometryEditorLayout(
         title = "Edit swipe path",
-        onDismiss = onDismiss,
+        onToggleReference = onToggleReference,
         applyEnabled = validPath,
+        headerAction = {
+            OutlinedButton(
+                enabled = validPath && !previewing,
+                onClick = {
+                    previewScope.launch {
+                        previewing = true
+                        previewProgress.snapTo(0f)
+                        previewProgress.animateTo(
+                            targetValue = 1f,
+                            animationSpec = tween(durationMillis = (duration ?: 1L).coerceIn(1L, 10_000L).toInt()),
+                        )
+                        previewing = false
+                    }
+                },
+            ) {
+                Text(if (previewing) "Previewing" else "Preview")
+            }
+        },
         onApply = {
             if (duration != null && timedPoints != null) {
                 onApply(step.copy(durationMs = com.veyarc.model.DurationMillis(duration), points = timedPoints))
@@ -345,6 +438,7 @@ private fun PathGeometryEditor(
         Text("Draw a single-pointer path on the display preview. Drawing replaces the saved path.")
         GeometryPreview(
             viewport = viewport,
+            background = background,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
@@ -374,30 +468,12 @@ private fun PathGeometryEditor(
         ) {
             drawSwipePath(points, previewPoint)
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            LongEditorField(
-                label = "Path duration (ms)",
-                value = duration ?: 0L,
-                onValueChange = { durationText = it.toString() },
-                modifier = Modifier.weight(1f),
-            )
-            OutlinedButton(
-                enabled = validPath && !previewing,
-                onClick = {
-                    previewScope.launch {
-                        previewing = true
-                        previewProgress.snapTo(0f)
-                        previewProgress.animateTo(
-                            targetValue = 1f,
-                            animationSpec = tween(durationMillis = (duration ?: 1L).coerceIn(1L, 10_000L).toInt()),
-                        )
-                        previewing = false
-                    }
-                },
-            ) {
-                Text(if (previewing) "Previewing" else "Preview")
-            }
-        }
+        LongEditorField(
+            label = "Path duration (ms)",
+            value = duration ?: 0L,
+            onValueChange = { durationText = it.toString() },
+            modifier = Modifier.fillMaxWidth(),
+        )
         Text(
             when {
                 points.size < 2 -> "Draw at least two points."
@@ -414,8 +490,9 @@ private fun PathGeometryEditor(
 @Composable
 private fun GeometryEditorLayout(
     title: String,
-    onDismiss: () -> Unit,
     applyEnabled: Boolean = true,
+    headerAction: (@Composable () -> Unit)? = null,
+    onToggleReference: (() -> Unit)? = null,
     onApply: () -> Unit,
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -426,9 +503,17 @@ private fun GeometryEditorLayout(
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+            onToggleReference?.let { toggle ->
+                IconButton(onClick = toggle) {
+                    Icon(Icons.Outlined.Image, contentDescription = "Choose background template")
+                }
+            }
+            headerAction?.invoke()
             Button(enabled = applyEnabled, onClick = onApply) { Text("Apply") }
         }
         content()
@@ -438,6 +523,7 @@ private fun GeometryEditorLayout(
 @Composable
 private fun GeometryPreview(
     viewport: ViewportSpec,
+    background: ImageBitmap?,
     modifier: Modifier,
     gestureModifier: Modifier,
     content: DrawScope.() -> Unit,
@@ -457,6 +543,13 @@ private fun GeometryPreview(
                 .then(gestureModifier),
         ) {
             drawRect(surface)
+            background?.let { image ->
+                drawImage(
+                    image = image,
+                    dstSize = IntSize(size.width.toInt(), size.height.toInt()),
+                    alpha = 0.72f,
+                )
+            }
             for (step in 1..3) {
                 val x = size.width * step / 4f
                 val y = size.height * step / 4f

@@ -1,5 +1,6 @@
 package com.veyarc.feature.editor
 
+import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.DurationMillis
 import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.PixelColorCondition
@@ -15,6 +16,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WorkflowEditorStateTest {
+    @Test
+    fun historicalRevisionAlwaysBuildsTheNextKnownRevision() {
+        val current = WorkflowDraft.newDefault().buildBundle(revision = 4).bundle!!
+        val session = WorkflowEditorSession()
+
+        session.open(current, latestKnownRevision = 9)
+
+        assertEquals(10, session.draft!!.nextRevision)
+        assertEquals(10, session.draft!!.buildBundle().bundle!!.document.revision)
+        assertTrue(session.requiresRevisionSave)
+    }
+
     @Test
     fun editorSessionTracksDirtyStateAndUndoWithoutTreatingCollapseAsContent() {
         val original = WorkflowDraft.newDefault()
@@ -40,6 +53,22 @@ class WorkflowEditorStateTest {
     }
 
     @Test
+    fun editorSessionKeepsSavedOrientationForRevisionWarnings() {
+        val original = WorkflowDraft.newDefault()
+        val session = WorkflowEditorSession()
+        session.open(original.buildBundle().bundle!!)
+
+        assertEquals(DisplayOrientation.PORTRAIT, session.savedOrientation)
+        session.update(
+            session.draft!!.copy(
+                viewport = session.draft!!.viewport.copy(recordedOrientation = DisplayOrientation.LANDSCAPE),
+            ),
+        )
+
+        assertEquals(DisplayOrientation.PORTRAIT, session.savedOrientation)
+    }
+
+    @Test
     fun newDraftBuildsAValidFirstRevision() {
         val draft = WorkflowDraft.newDefault()
 
@@ -48,6 +77,34 @@ class WorkflowEditorStateTest {
         assertTrue(result.issues.isEmpty())
         assertNotNull(result.bundle)
         assertEquals(1, result.bundle!!.document.revision)
+        assertEquals(draft.steps.map { it.id }.toSet(), draft.collapsedStepIds)
+    }
+
+    @Test
+    fun newlyAddedBlocksStartCollapsed() {
+        val draft = WorkflowDraft.newDefault().addStep(StepListPath(), WorkflowStepKind.WAIT, "com.veyarc.app")
+
+        assertTrue(draft.steps.last().id in draft.collapsedStepIds)
+    }
+
+    @Test
+    fun blockCanBeInsertedBetweenExistingBlocks() {
+        val draft = WorkflowDraft.newDefault()
+        val inserted = draft.insertStep(StepListPath(), 1, WorkflowStepKind.WAIT, "com.veyarc.app")
+
+        assertTrue(inserted.steps[1] is com.veyarc.model.Wait)
+        assertTrue(inserted.steps[1].id in inserted.collapsedStepIds)
+    }
+
+    @Test
+    fun blockCanMoveAcrossTheWholeListInOneUpdate() {
+        val draft = WorkflowDraft.newDefault()
+            .addStep(StepListPath(), WorkflowStepKind.WAIT, "com.veyarc.app")
+        val lastId = draft.steps.last().id
+
+        val moved = draft.moveStepTo(StepListPath(), draft.steps.lastIndex, 0)
+
+        assertEquals(lastId, moved.steps.first().id)
     }
 
     @Test
@@ -143,6 +200,7 @@ class WorkflowEditorStateTest {
         )
         var draft = WorkflowDraft.newDefault().addAsset(asset)
         assertEquals(listOf(asset.assetId), draft.assets.map { it.assetId })
+        assertEquals("Template 1", draft.assetNames[asset.assetId.value])
         draft = draft.removeAsset(asset.assetId)
         assertTrue(draft.assets.isEmpty())
     }

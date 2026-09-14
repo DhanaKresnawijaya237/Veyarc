@@ -71,6 +71,12 @@ enum class ValidationErrorCode {
     @SerialName("duplicateAsset")
     DUPLICATE_ASSET,
 
+    @SerialName("duplicateAssetName")
+    DUPLICATE_ASSET_NAME,
+
+    @SerialName("invalidAssetName")
+    INVALID_ASSET_NAME,
+
     @SerialName("missingAsset")
     MISSING_ASSET,
 

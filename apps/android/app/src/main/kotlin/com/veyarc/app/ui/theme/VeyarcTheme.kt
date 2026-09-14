@@ -59,6 +59,7 @@ private val BaseTypography = Typography()
 private val VeyarcTypography =
     Typography(
         headlineMedium = BaseTypography.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
+        headlineSmall = BaseTypography.headlineSmall.copy(fontWeight = FontWeight.Bold),
         titleLarge = BaseTypography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
         titleMedium = BaseTypography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
         labelLarge = BaseTypography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
