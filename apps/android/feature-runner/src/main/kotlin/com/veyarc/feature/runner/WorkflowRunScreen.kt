@@ -223,7 +223,10 @@ private fun RunContent(
         text = if (total == null) "Completed steps: ${state.completedSteps}" else "Completed steps: ${state.completedSteps} / $total",
         style = MaterialTheme.typography.titleMedium,
     )
-    if (state.phase == WorkflowRunPhase.RUNNING || state.phase == WorkflowRunPhase.PAUSED || state.phase == WorkflowRunPhase.STARTING) {
+    state.preparationDurationMs?.let { duration ->
+        Text("Preparation: $duration ms", style = MaterialTheme.typography.bodySmall)
+    }
+    if (state.phase == WorkflowRunPhase.RUNNING || state.phase == WorkflowRunPhase.PAUSED || state.phase == WorkflowRunPhase.PREPARING) {
         Text("The Veyarc edge-latch control center provides replay controls when enabled. The persistent notification remains an independent Pause, Resume, and Stop fallback.")
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -232,7 +235,7 @@ private fun RunContent(
             WorkflowRunPhase.PAUSED -> Button(onClick = onResume) { Text("Resume") }
             else -> Unit
         }
-        if (state.phase == WorkflowRunPhase.RUNNING || state.phase == WorkflowRunPhase.PAUSED || state.phase == WorkflowRunPhase.STARTING) {
+        if (state.phase == WorkflowRunPhase.RUNNING || state.phase == WorkflowRunPhase.PAUSED || state.phase == WorkflowRunPhase.PREPARING) {
             OutlinedButton(onClick = onStop) { Text("Stop") }
         }
         if (state.phase == WorkflowRunPhase.COMPLETED ||
@@ -256,7 +259,7 @@ private fun RunContent(
 
 private fun phaseTitle(phase: WorkflowRunPhase): String = when (phase) {
     WorkflowRunPhase.REVIEW -> "Review workflow"
-    WorkflowRunPhase.STARTING -> "Starting run"
+    WorkflowRunPhase.PREPARING -> "Preparing workflow"
     WorkflowRunPhase.RUNNING -> "Workflow running"
     WorkflowRunPhase.PAUSED -> "Workflow paused"
     WorkflowRunPhase.COMPLETED -> "Run completed"

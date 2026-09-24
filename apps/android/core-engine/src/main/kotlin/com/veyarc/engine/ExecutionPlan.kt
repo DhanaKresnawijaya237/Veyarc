@@ -1,10 +1,17 @@
 package com.veyarc.engine
 
+import com.veyarc.model.AndCondition
+import com.veyarc.model.AssetId
 import com.veyarc.model.AssetReference
 import com.veyarc.model.Condition
 import com.veyarc.model.DurationMillis
+import com.veyarc.model.ImageAbsentCondition
+import com.veyarc.model.ImageMatchMode
+import com.veyarc.model.ImagePresentCondition
 import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.NormalizedRect
+import com.veyarc.model.NotCondition
+import com.veyarc.model.OrCondition
 import com.veyarc.model.PackageName
 import com.veyarc.model.RegionAnchor
 import com.veyarc.model.RunLimits
@@ -89,6 +96,70 @@ data class ExecutionPlan(
     val steps: List<ExecutionStep>,
     val analysis: ControlFlowAnalysis,
 )
+
+enum class ImageAssetUse {
+    FULL_SCREEN,
+    CROPPED_TARGET,
+}
+
+/** Returns only the image assets that execution can reach, including nested conditions. */
+fun ExecutionPlan.referencedImageAssets(): Map<AssetId, Set<ImageAssetUse>> {
+    val referenced = linkedMapOf<AssetId, MutableSet<ImageAssetUse>>()
+
+    fun collect(condition: Condition) {
+        when (condition) {
+            is ImagePresentCondition ->
+                referenced
+                    .getOrPut(condition.assetId) { linkedSetOf() }
+                    .add(
+                        if (condition.matchMode == ImageMatchMode.SCREEN_STATE) {
+                            ImageAssetUse.FULL_SCREEN
+                        } else {
+                            ImageAssetUse.CROPPED_TARGET
+                        },
+                    )
+
+            is ImageAbsentCondition ->
+                referenced
+                    .getOrPut(condition.assetId) { linkedSetOf() }
+                    .add(ImageAssetUse.CROPPED_TARGET)
+
+            is AndCondition -> condition.conditions.forEach(::collect)
+
+            is OrCondition -> condition.conditions.forEach(::collect)
+
+            is NotCondition -> collect(condition.condition)
+
+            else -> Unit
+        }
+    }
+
+    fun collect(steps: List<ExecutionStep>) {
+        steps.forEach { step ->
+            when (step) {
+                is ExecutionStep.WaitUntil -> collect(step.condition)
+
+                is ExecutionStep.IfElse -> {
+                    collect(step.condition)
+                    collect(step.thenSteps)
+                    collect(step.elseSteps)
+                }
+
+                is ExecutionStep.Repeat -> collect(step.bodySteps)
+
+                is ExecutionStep.While -> {
+                    collect(step.condition)
+                    collect(step.bodySteps)
+                }
+
+                else -> Unit
+            }
+        }
+    }
+
+    collect(steps)
+    return immutableMap(referenced.mapValues { (_, uses) -> immutableSet(uses) })
+}
 
 /** Typed steps consumed by the deterministic runner. */
 sealed interface ExecutionStep {

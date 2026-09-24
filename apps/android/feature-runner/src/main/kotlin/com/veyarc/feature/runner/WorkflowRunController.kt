@@ -1,7 +1,9 @@
 package com.veyarc.feature.runner
 
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import android.util.Log
 import com.veyarc.automation.android.AccessibilityEmergencyOverlay
 import com.veyarc.automation.android.AccessibilityGestureDispatcher
@@ -24,6 +26,7 @@ import com.veyarc.engine.RunFailureCode
 import com.veyarc.engine.RunOutcome
 import com.veyarc.engine.WorkflowCompilationResult
 import com.veyarc.engine.WorkflowCompiler
+import com.veyarc.engine.referencedImageAssets
 import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.WorkflowDocument
 import com.veyarc.model.bundle.BundleAsset
@@ -45,7 +48,7 @@ import java.io.Closeable
 
 enum class WorkflowRunPhase {
     REVIEW,
-    STARTING,
+    PREPARING,
     RUNNING,
     PAUSED,
     COMPLETED,
@@ -82,6 +85,7 @@ data class WorkflowRunUiState(
     val review: WorkflowRunReview,
     val runId: String? = null,
     val completedSteps: Int = 0,
+    val preparationDurationMs: Long? = null,
     val message: String? = null,
     val failureMessage: String? = null,
     val eventHistory: List<RedactedRunEvent> = emptyList(),
@@ -93,7 +97,7 @@ class WorkflowRunController(
     context: Context,
     private val repository: WorkflowRepository,
     private val document: WorkflowDocument,
-    private val assets: List<BundleAsset> = emptyList(),
+    private val assets: List<BundleAsset>? = null,
 ) {
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -231,10 +235,11 @@ class WorkflowRunController(
         control = executionControl
         _state.update {
             it.copy(
-                phase = WorkflowRunPhase.STARTING,
+                phase = WorkflowRunPhase.PREPARING,
                 runId = null,
                 completedSteps = 0,
-                message = "Starting workflow…",
+                preparationDurationMs = null,
+                message = "Preparing workflow…",
                 failureMessage = null,
                 eventHistory = emptyList(),
             )
@@ -270,7 +275,11 @@ class WorkflowRunController(
         AccessibilityGestureDispatcher.cancelActiveGesture()
         stopOwnedMediaProjection()
         _state.update { state ->
-            if (state.phase == WorkflowRunPhase.RUNNING || state.phase == WorkflowRunPhase.PAUSED) {
+            if (
+                state.phase == WorkflowRunPhase.PREPARING ||
+                state.phase == WorkflowRunPhase.RUNNING ||
+                state.phase == WorkflowRunPhase.PAUSED
+            ) {
                 state.copy(message = "Stopping…")
             } else {
                 state
@@ -301,6 +310,56 @@ class WorkflowRunController(
         var terminalStatus = StoredRunStatus.FAILED
         var terminalReason: String? = null
         try {
+            val preparationStartedAtMs = SystemClock.elapsedRealtime()
+            val capabilities = AndroidAutomationCapabilities.snapshot(appContext)
+            val compilation = WorkflowCompiler.compile(document, capabilities.engineCapabilities)
+            val plan = compilation.plan ?: error(
+                compilation.errors.joinToString(separator = "; ") { "${it.path}: ${it.message}" },
+            )
+            val requirements = plan.referencedImageAssets()
+            if (requiresMediaProjectionConsent()) {
+                check(MediaProjectionCaptureRuntime.awaitActive(MEDIA_PROJECTION_START_TIMEOUT_MILLIS)) {
+                    "MediaProjection capture did not become ready before the workflow started"
+                }
+            }
+            if (requirements.isNotEmpty()) {
+                val memoryBudget = runTemplateMemoryBudgetBytes()
+                templateSource = withContext(Dispatchers.IO) {
+                    val transientAssets = assets
+                    if (transientAssets == null) {
+                        BundleImageTemplateSource.prepareStored(
+                            repository.prepareRunAssets(
+                                document.id,
+                                document.revision,
+                                requirements.keys,
+                                memoryBudget,
+                            ),
+                            requirements,
+                        )
+                    } else {
+                        BundleImageTemplateSource.prepareBundle(
+                            assets = transientAssets,
+                            requirements = requirements,
+                            viewportWidthPx = document.viewport.recordedWidthPx,
+                            viewportHeightPx = document.viewport.recordedHeightPx,
+                            maxDecodedBytes = memoryBudget,
+                        )
+                    }
+                }
+            }
+            val preparationDurationMs = SystemClock.elapsedRealtime() - preparationStartedAtMs
+            if (executionControl.isCancellationRequested()) throw CancellationException("Run cancelled during preparation")
+            val preparationEvent = RedactedRunEvent(
+                SystemClock.elapsedRealtime(),
+                "Preparation completed in $preparationDurationMs ms",
+            )
+            _state.update {
+                it.copy(
+                    review = it.review.copy(capabilities = capabilities, compilation = compilation),
+                    preparationDurationMs = preparationDurationMs,
+                    eventHistory = listOf(preparationEvent),
+                )
+            }
             runId = withContext(Dispatchers.IO) {
                 repository.beginRun(document.id, document.revision)
             }
@@ -308,16 +367,10 @@ class WorkflowRunController(
             AccessibilityEmergencyOverlay.show(::stop)
             notifications.showRunning(document.name, 0, _state.value.review.plan?.analysis?.worstCaseStepCount)
 
-            if (requiresMediaProjectionConsent()) {
-                check(MediaProjectionCaptureRuntime.awaitActive(MEDIA_PROJECTION_START_TIMEOUT_MILLIS)) {
-                    "MediaProjection capture did not become ready before the workflow started"
-                }
-                templateSource = BundleImageTemplateSource(assets)
-            }
-
             val execution = withContext(Dispatchers.Default) {
                 executor.execute(
                     document = document,
+                    preparedCompilation = compilation,
                     templateSource = templateSource,
                     cancellation = executionControl,
                     pause = executionControl,
@@ -425,7 +478,7 @@ class WorkflowRunController(
         mediaProjectionOwned = false
         control?.cancel()
         _state.update { state ->
-            if (state.phase == WorkflowRunPhase.STARTING ||
+            if (state.phase == WorkflowRunPhase.PREPARING ||
                 state.phase == WorkflowRunPhase.RUNNING ||
                 state.phase == WorkflowRunPhase.PAUSED
             ) {
@@ -444,6 +497,11 @@ class WorkflowRunController(
 
     private fun updateTerminal(phase: WorkflowRunPhase, message: String?) {
         _state.update { it.copy(phase = phase, message = message, failureMessage = if (phase == WorkflowRunPhase.FAILED) message else null) }
+    }
+
+    private fun runTemplateMemoryBudgetBytes(): Long {
+        val memoryClassMiB = appContext.getSystemService(ActivityManager::class.java).memoryClass
+        return maxOf(1L, memoryClassMiB.toLong() / RUN_TEMPLATE_MEMORY_DIVISOR) * BYTES_PER_MIB
     }
 
     private fun onEvent(event: RunEvent) {
@@ -522,6 +580,8 @@ class WorkflowRunController(
     private companion object {
         const val TAG = "Veyarc.WorkflowRun"
         const val MAX_EVENT_HISTORY = 50
+        const val RUN_TEMPLATE_MEMORY_DIVISOR = 8L
+        const val BYTES_PER_MIB = 1024L * 1024L
         const val MEDIA_PROJECTION_START_TIMEOUT_MILLIS = 5_000L
     }
 }

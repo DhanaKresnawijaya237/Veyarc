@@ -69,13 +69,14 @@ class AndroidWorkflowExecutor private constructor(
 
     fun execute(
         document: WorkflowDocument,
+        preparedCompilation: WorkflowCompilationResult? = null,
         cancellation: CancellationSignal = CancellationSignals.NONE,
         pause: PauseSignal = PauseSignals.NONE,
         eventSink: (RunEvent) -> Unit = {},
         templateSource: ImageTemplateSource? = null,
     ): AndroidWorkflowExecution {
         val capabilities = dependencies.capabilitiesProvider.invoke()
-        val compilation = WorkflowCompiler.compile(document, capabilities.engineCapabilities)
+        val compilation = preparedCompilation ?: WorkflowCompiler.compile(document, capabilities.engineCapabilities)
         val plan = compilation.plan
             ?: return AndroidWorkflowExecution(
                 capabilities = capabilities,

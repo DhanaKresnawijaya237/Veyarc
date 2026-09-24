@@ -26,6 +26,7 @@ import com.veyarc.automation.android.ReplayFloatingController
 import com.veyarc.automation.android.ReplayWorkflowCatalog
 import com.veyarc.data.storage.StoredRunRecord
 import com.veyarc.data.storage.WorkflowRepository
+import com.veyarc.data.storage.WorkflowRevisionDocument
 import com.veyarc.data.storage.WorkflowSummary
 import com.veyarc.feature.editor.WorkflowEditorScreen
 import com.veyarc.feature.editor.WorkflowEditorSession
@@ -52,6 +53,7 @@ class MainActivity : ComponentActivity() {
     private var fullScreenDestination by mutableStateOf<FullScreenDestination?>(null)
     private var workflowToRun by mutableStateOf<WorkflowBundle?>(null)
     private var workflowToEdit by mutableStateOf<WorkflowBundle?>(null)
+    private var storedWorkflowToEdit by mutableStateOf<Pair<String, Int>?>(null)
     private var recordedJournalFileName by mutableStateOf<String?>(null)
     private var newWorkflowRequestId by mutableIntStateOf(0)
     private var newWorkflowFolderId by mutableStateOf<String?>(null)
@@ -145,6 +147,7 @@ class MainActivity : ComponentActivity() {
                             },
                             onEditWorkflow = { bundle, journalFileName ->
                                 workflowToEdit = bundle
+                                storedWorkflowToEdit = null
                                 recordedJournalFileName = journalFileName
                                 recordingFolderId = null
                                 selectedDestination = VeyarcDestination.EDITOR
@@ -196,14 +199,17 @@ class MainActivity : ComponentActivity() {
                                         VeyarcDestination.EDITOR -> WorkflowEditorScreen(
                                             repository = workflowRepository,
                                             session = editorSession.state,
-                                            onRunWorkflow = ::openRunScreen,
+                                            onRunWorkflow = ::openStoredRunScreen,
                                             onOpenWorkflowManager = {
                                                 selectedDestination = VeyarcDestination.WORKFLOWS
                                             },
                                             initialBundle = workflowToEdit,
+                                            initialStoredWorkflowId = storedWorkflowToEdit?.first,
+                                            initialStoredRevision = storedWorkflowToEdit?.second,
                                             initialRecordingJournalFileName = recordedJournalFileName,
                                             onInitialBundleConsumed = {
                                                 workflowToEdit = null
+                                                storedWorkflowToEdit = null
                                                 recordedJournalFileName = null
                                             },
                                             newWorkflowRequestId = newWorkflowRequestId,
@@ -283,41 +289,36 @@ class MainActivity : ComponentActivity() {
         if (autoStart) startControllerReplayWhenReady()
     }
 
+    private fun openStoredRunScreen(revision: WorkflowRevisionDocument, autoStart: Boolean = false) {
+        val metadataOnlyBundle = WorkflowBundle(revision.document, emptyList(), revision.producerVersion)
+        runSession.openStored(metadataOnlyBundle)
+        workflowToRun = metadataOnlyBundle
+        if (autoStart) startControllerReplayWhenReady()
+    }
+
     private fun playWorkflow(workflow: WorkflowSummary) {
         catalogScope.launch {
-            val bundle = runCatching {
+            val revision = runCatching {
                 withContext(Dispatchers.IO) {
-                    workflowRepository.loadRevision(workflow.workflowId, workflow.latestRevision)
+                    workflowRepository.loadRevisionDocument(workflow.workflowId, workflow.latestRevision)
                 }
             }.getOrNull() ?: return@launch
-            openRunScreen(bundle, autoStart = true)
+            openStoredRunScreen(revision, autoStart = true)
         }
     }
 
     private fun editWorkflow(workflow: WorkflowSummary) {
-        catalogScope.launch {
-            val bundle = runCatching {
-                withContext(Dispatchers.IO) {
-                    workflowRepository.loadRevision(workflow.workflowId, workflow.latestRevision)
-                }
-            }.getOrNull() ?: return@launch
-            workflowToEdit = bundle
-            recordedJournalFileName = null
-            selectedDestination = VeyarcDestination.EDITOR
-        }
+        workflowToEdit = null
+        storedWorkflowToEdit = workflow.workflowId to workflow.latestRevision
+        recordedJournalFileName = null
+        selectedDestination = VeyarcDestination.EDITOR
     }
 
     private fun editRunWorkflowRevision(run: StoredRunRecord) {
-        catalogScope.launch {
-            val bundle = runCatching {
-                withContext(Dispatchers.IO) {
-                    workflowRepository.loadRevision(run.workflowId, run.revision)
-                }
-            }.getOrNull() ?: return@launch
-            workflowToEdit = bundle
-            recordedJournalFileName = null
-            selectedDestination = VeyarcDestination.EDITOR
-        }
+        workflowToEdit = null
+        storedWorkflowToEdit = run.workflowId to run.revision
+        recordedJournalFileName = null
+        selectedDestination = VeyarcDestination.EDITOR
     }
 
     /** Starts a controller-requested replay only after recovery and the normal safety checks pass. */
@@ -343,7 +344,7 @@ class MainActivity : ComponentActivity() {
         catalogScope.launch {
             val workflows = runCatching {
                 withContext(Dispatchers.IO) {
-                    workflowRepository.listWorkflows().map { summary ->
+                    workflowRepository.listWorkflowSummaries().map { summary ->
                         ReplayControllerWorkflow(
                             workflowId = summary.workflowId,
                             revision = summary.latestRevision,
@@ -376,12 +377,12 @@ class MainActivity : ComponentActivity() {
             return
         }
         catalogScope.launch {
-            val bundle = runCatching {
+            val revisionDocument = runCatching {
                 withContext(Dispatchers.IO) {
-                    workflowRepository.loadRevision(workflowId, revision)
+                    workflowRepository.loadRevisionDocument(workflowId, revision)
                 }
             }.getOrNull() ?: return@launch
-            openRunScreen(bundle, autoStart = autoStart)
+            openStoredRunScreen(revisionDocument, autoStart = autoStart)
         }
     }
 
@@ -420,6 +421,8 @@ class MainRunSession(application: Application) : AndroidViewModel(application) {
         sessionScope.launch {
             try {
                 repository.recoverInterruptedRuns()
+                runCatching { repository.reconcileStorage() }
+                    .onFailure { Log.w(TAG, "Workflow asset maintenance did not complete", it) }
                 _recoveryState.value = RunRecoveryState.READY
             } catch (_: Exception) {
                 Log.e(TAG, "Could not recover unfinished workflow runs")
@@ -431,6 +434,12 @@ class MainRunSession(application: Application) : AndroidViewModel(application) {
     fun open(bundle: WorkflowBundle) {
         controller?.close("a different workflow was opened")
         controller = WorkflowRunController(getApplication(), repository, bundle.document, bundle.assets)
+        this.bundle = bundle
+    }
+
+    fun openStored(bundle: WorkflowBundle) {
+        controller?.close("a different workflow was opened")
+        controller = WorkflowRunController(getApplication(), repository, bundle.document)
         this.bundle = bundle
     }
 

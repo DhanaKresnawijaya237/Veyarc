@@ -4,6 +4,7 @@ import com.veyarc.automation.android.RgbaTemplate
 import com.veyarc.data.storage.DecodedTemplate
 import com.veyarc.data.storage.EncryptedTemplateAssetCodec
 import com.veyarc.data.storage.SecretKeySource
+import com.veyarc.engine.ImageAssetUse
 import com.veyarc.model.AssetId
 import com.veyarc.model.AssetKind
 import com.veyarc.model.bundle.BundleAsset
@@ -22,8 +23,12 @@ class BundleImageTemplateSourceTest {
     @Test
     fun decryptsAndCachesTemplateForOneRun() {
         val encrypted = encryptTemplate()
-        val source = BundleImageTemplateSource(
+        val source = BundleImageTemplateSource.prepareBundle(
             assets = listOf(asset(encrypted)),
+            requirements = mapOf(ASSET_ID to setOf(ImageAssetUse.CROPPED_TARGET)),
+            viewportWidthPx = 1080,
+            viewportHeightPx = 2392,
+            maxDecodedBytes = 1024 * 1024,
             codec = EncryptedTemplateAssetCodec(keySource),
         )
 
@@ -41,8 +46,12 @@ class BundleImageTemplateSourceTest {
 
     @Test
     fun returnsNullForAnUnreferencedAsset() {
-        val source = BundleImageTemplateSource(
+        val source = BundleImageTemplateSource.prepareBundle(
             assets = listOf(asset(encryptTemplate())),
+            requirements = mapOf(ASSET_ID to setOf(ImageAssetUse.CROPPED_TARGET)),
+            viewportWidthPx = 1080,
+            viewportHeightPx = 2392,
+            maxDecodedBytes = 1024 * 1024,
             codec = EncryptedTemplateAssetCodec(keySource),
         )
 
@@ -51,19 +60,47 @@ class BundleImageTemplateSourceTest {
     }
 
     @Test
-    fun reportsMalformedEncryptedPayloadAsAPlatformFailure() {
-        val source = BundleImageTemplateSource(
-            assets = listOf(asset(byteArrayOf(1, 2, 3))),
-            codec = EncryptedTemplateAssetCodec(keySource),
+    fun lookupPerformsNoKeyAccessAfterPreparation() {
+        var keyReads = 0
+        val countedKeySource = SecretKeySource {
+            keyReads++
+            SecretKeySpec(ByteArray(32) { index -> (index + 1).toByte() }, "AES")
+        }
+        val codec = EncryptedTemplateAssetCodec(countedKeySource)
+        val encrypted = codec.encrypt(
+            ASSET_ID,
+            DecodedTemplate(widthPx = 2, heightPx = 1, rgbaBytes = RGBA),
         )
+        val source = BundleImageTemplateSource.prepareBundle(
+            assets = listOf(asset(encrypted)),
+            requirements = mapOf(ASSET_ID to setOf(ImageAssetUse.CROPPED_TARGET)),
+            viewportWidthPx = 1080,
+            viewportHeightPx = 2392,
+            maxDecodedBytes = 1024 * 1024,
+            codec = codec,
+        )
+        val readsAfterPreparation = keyReads
 
+        repeat(3) { assertNotNull(source.templateFor(ASSET_ID)) }
+
+        assertEquals(readsAfterPreparation, keyReads)
+        source.close()
+    }
+
+    @Test
+    fun reportsMalformedEncryptedPayloadAsAPlatformFailure() {
         var failed = false
         try {
-            source.templateFor(ASSET_ID)
+            BundleImageTemplateSource.prepareBundle(
+                assets = listOf(asset(byteArrayOf(1, 2, 3))),
+                requirements = mapOf(ASSET_ID to setOf(ImageAssetUse.CROPPED_TARGET)),
+                viewportWidthPx = 1080,
+                viewportHeightPx = 2392,
+                maxDecodedBytes = 1024 * 1024,
+                codec = EncryptedTemplateAssetCodec(keySource),
+            )
         } catch (error: IllegalStateException) {
-            failed = error.message == "Could not decrypt an image template"
-        } finally {
-            source.close()
+            failed = error.message == "Could not prepare workflow image templates"
         }
         assertTrue(failed)
     }

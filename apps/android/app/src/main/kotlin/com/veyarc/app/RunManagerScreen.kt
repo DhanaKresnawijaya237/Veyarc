@@ -99,6 +99,7 @@ internal fun RunManagerScreen(
     var folderOrder by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var selectedView by rememberSaveable { mutableStateOf(RUNS_ALL_VIEW) }
     var selectedRunId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedRunDetails by remember { mutableStateOf<StoredRunRecord?>(null) }
     var selectionMode by rememberSaveable { mutableStateOf(false) }
     var selectedIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var query by rememberSaveable { mutableStateOf("") }
@@ -129,14 +130,15 @@ internal fun RunManagerScreen(
         message = null
         runCatching {
             withContext(Dispatchers.IO) {
-                val loadedWorkflows = repository.listWorkflows()
+                val loadedWorkflows = repository.listWorkflowSummaries()
                 val names = loadedWorkflows.associate { it.workflowId to it.name }
+                val revisionKeys = repository.listRevisionKeys()
                 Triple(
-                    repository.listRunHistory(limit = 1_000).map { run ->
+                    repository.listRunSummaries(limit = 1_000).map { run ->
                         ManagedRun(
                             record = run,
                             workflowName = names[run.workflowId] ?: "Deleted workflow",
-                            revisionAvailable = repository.hasRevision(run.workflowId, run.revision),
+                            revisionAvailable = (run.workflowId to run.revision) in revisionKeys,
                         )
                     },
                     loadedWorkflows,
@@ -158,6 +160,14 @@ internal fun RunManagerScreen(
             if (workflowFilter != null && loadedWorkflows.none { it.workflowId == workflowFilter }) workflowFilter = null
         }.onFailure { message = "Runs could not be loaded." }
         isBusy = false
+    }
+
+    LaunchedEffect(repository, selectedRunId) {
+        selectedRunDetails = selectedRunId?.let { runId ->
+            runCatching { withContext(Dispatchers.IO) { repository.loadRunDetails(runId) } }
+                .onFailure { message = "Run details could not be loaded." }
+                .getOrNull()
+        }
     }
 
     fun mutate(success: String, operation: suspend () -> Unit) {
@@ -195,11 +205,14 @@ internal fun RunManagerScreen(
         onDispose { onSelectionBarChange(null) }
     }
 
-    runs.firstOrNull { it.record.runId == selectedRunId }?.let { managedRun ->
-        val run = managedRun.record
+    selectedRunDetails?.let { run ->
+        val managedRun = runs.firstOrNull { it.record.runId == run.runId } ?: return@let
         StoredRunDetailScreen(
             record = run,
-            onBack = { selectedRunId = null },
+            onBack = {
+                selectedRunId = null
+                selectedRunDetails = null
+            },
             onOpenWorkflowRevision = managedRun.takeIf(ManagedRun::revisionAvailable)?.let {
                 { onOpenWorkflowRevision(run) }
             },

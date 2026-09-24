@@ -364,12 +364,6 @@ object WorkflowCompiler {
                 "Worst-case execution requires ${analysis.worstCaseStepCount} steps, exceeding maxTotalSteps ${document.runLimits.maxTotalSteps}",
             )
         }
-        if (analysis.arithmeticOverflow || analysis.worstCaseRuntimeMs > document.runLimits.maxRuntimeMs) {
-            errors += limitError(
-                "/runLimits/maxRuntimeMs",
-                "Worst-case runtime requires ${analysis.worstCaseRuntimeMs} ms, exceeding maxRuntimeMs ${document.runLimits.maxRuntimeMs}",
-            )
-        }
         if (analysis.maxNestingDepth > document.runLimits.maxNestingDepth) {
             errors += limitError(
                 "/runLimits/maxNestingDepth",

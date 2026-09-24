@@ -73,16 +73,12 @@ fun HomeDashboardScreen(
         error = null
         runCatching {
             withContext(Dispatchers.IO) {
-                val storedWorkflows = repository.listWorkflows()
+                val storedWorkflows = repository.listWorkflowSummaries()
                 Triple(
                     repository.loadRunDashboard(),
                     storedWorkflows,
-                    storedWorkflows.firstOrNull { workflow ->
-                        runCatching {
-                            repository.loadRevision(workflow.workflowId, workflow.latestRevision)
-                                .producerVersion == RECORDER_PRODUCER_VERSION
-                        }.getOrDefault(false)
-                    },
+                    storedWorkflows.firstOrNull { it.producerVersion == RECORDER_PRODUCER_VERSION }
+                        ?: storedWorkflows.firstOrNull(),
                 )
             }
         }.onSuccess { (loadedDashboard, loadedWorkflows, loadedRecording) ->

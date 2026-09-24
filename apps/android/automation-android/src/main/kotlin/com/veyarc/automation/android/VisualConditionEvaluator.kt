@@ -32,6 +32,8 @@ class RgbaTemplate private constructor(
     val heightPx: Int,
     private val rgbaBytes: ByteArray,
 ) {
+    internal val prefilterData = TemplatePrefilterData.create(widthPx, heightPx, rgbaBytes)
+
     init {
         require(widthPx > 0) { "Template width must be positive" }
         require(heightPx > 0) { "Template height must be positive" }
@@ -49,6 +51,7 @@ class RgbaTemplate private constructor(
     /** Clears the decoded template after the run releases its condition assets. */
     fun clear() {
         rgbaBytes.fill(0)
+        prefilterData.cellSums.fill(0)
     }
 
     internal fun <T> withRgbaBytes(block: (ByteArray) -> T): T = block(rgbaBytes)
@@ -59,6 +62,39 @@ class RgbaTemplate private constructor(
 
         /** Creates a template from tightly packed RGBA bytes and takes ownership of a copy. */
         fun fromRgba(widthPx: Int, heightPx: Int, rgbaBytes: ByteArray): RgbaTemplate = RgbaTemplate(widthPx, heightPx, rgbaBytes.copyOf())
+
+        /** Takes ownership of a caller-released pixel buffer. The caller must not reuse it. */
+        fun fromOwnedRgba(widthPx: Int, heightPx: Int, rgbaBytes: ByteArray): RgbaTemplate = RgbaTemplate(widthPx, heightPx, rgbaBytes)
+    }
+}
+
+internal data class TemplatePrefilterData(
+    val xBandCount: Int,
+    val yBandCount: Int,
+    val cellSums: IntArray,
+) {
+    companion object {
+        fun create(widthPx: Int, heightPx: Int, bytes: ByteArray): TemplatePrefilterData {
+            val xBandCount = minOf(PREFILTER_BANDS, widthPx)
+            val yBandCount = minOf(PREFILTER_BANDS, heightPx)
+            val xStarts = partitionStarts(widthPx, xBandCount)
+            val xEnds = partitionEnds(widthPx, xBandCount)
+            val yStarts = partitionStarts(heightPx, yBandCount)
+            val yEnds = partitionEnds(heightPx, yBandCount)
+            val sums = IntArray(xBandCount * yBandCount * CHANNEL_COUNT)
+            repeat(heightPx) { y ->
+                val yBand = bandFor(y, yStarts, yEnds)
+                repeat(widthPx) { x ->
+                    val xBand = bandFor(x, xStarts, xEnds)
+                    val cellOffset = (yBand * xBandCount + xBand) * CHANNEL_COUNT
+                    val pixelOffset = rgbaOffset(x, y, widthPx)
+                    repeat(CHANNEL_COUNT) { channel ->
+                        sums[cellOffset + channel] += channelValue(bytes, pixelOffset + channel)
+                    }
+                }
+            }
+            return TemplatePrefilterData(xBandCount, yBandCount, sums)
+        }
     }
 }
 
@@ -265,7 +301,6 @@ class VisualConditionEvaluator(
             frameWidth = frame.widthPx,
             frameBytes = frameBytes,
             template = template,
-            templateBytes = templateBytes,
             bounds = bounds,
             initialOriginX = preferredOriginX,
             initialOriginY = preferredOriginY,
@@ -287,7 +322,6 @@ class VisualConditionEvaluator(
             frameWidth = frame.widthPx,
             frameBytes = frameBytes,
             template = template,
-            templateBytes = templateBytes,
             bounds = bounds,
         )
 
@@ -325,18 +359,17 @@ class VisualConditionEvaluator(
         private val frameWidth: Int,
         private val frameBytes: ByteArray,
         template: RgbaTemplate,
-        templateBytes: ByteArray,
         private val bounds: PixelBounds,
         initialOriginX: Int = bounds.left,
         initialOriginY: Int = bounds.top,
     ) {
-        private val xBandCount = minOf(PREFILTER_BANDS, template.widthPx)
-        private val yBandCount = minOf(PREFILTER_BANDS, template.heightPx)
+        private val xBandCount = template.prefilterData.xBandCount
+        private val yBandCount = template.prefilterData.yBandCount
         private val xStarts = partitionStarts(template.widthPx, xBandCount)
         private val xEnds = partitionEnds(template.widthPx, xBandCount)
         private val yStarts = partitionStarts(template.heightPx, yBandCount)
         private val yEnds = partitionEnds(template.heightPx, yBandCount)
-        private val templateCellSums = IntArray(xBandCount * yBandCount * CHANNEL_COUNT)
+        private val templateCellSums = template.prefilterData.cellSums
         private val columnSums = IntArray(yBandCount * frameWidth * CHANNEL_COUNT)
         private val windowSums = IntArray(yBandCount * xBandCount * CHANNEL_COUNT)
         private var originY = initialOriginY
@@ -345,7 +378,6 @@ class VisualConditionEvaluator(
         init {
             require(originX in bounds.left..bounds.rightExclusive - template.widthPx)
             require(originY in bounds.top..bounds.bottomExclusive - template.heightPx)
-            sumTemplateCells(template, templateBytes)
             initializeColumns()
             rebuildWindowSums()
         }
@@ -429,22 +461,6 @@ class VisualConditionEvaluator(
                         val columnOffset = columnOffset(yBand, originX + x)
                         for (channel in 0 until CHANNEL_COUNT) {
                             windowSums[windowOffset + channel] += columnSums[columnOffset + channel]
-                        }
-                    }
-                }
-            }
-        }
-
-        private fun sumTemplateCells(template: RgbaTemplate, bytes: ByteArray) {
-            template.withRgbaBytes {
-                for (y in 0 until template.heightPx) {
-                    val yBand = bandFor(y, yStarts, yEnds)
-                    for (x in 0 until template.widthPx) {
-                        val xBand = bandFor(x, xStarts, xEnds)
-                        val cellOffset = cellOffset(yBand, xBand)
-                        val templateOffset = rgbaOffset(x, y, template.widthPx)
-                        for (channel in 0 until CHANNEL_COUNT) {
-                            templateCellSums[cellOffset + channel] += channelValue(bytes, templateOffset + channel)
                         }
                     }
                 }
@@ -536,24 +552,8 @@ class VisualConditionEvaluator(
         /** Limits worst-case CPU work for a single image-condition observation. */
         const val DEFAULT_MAX_COMPARISONS = 12_000_000L
         const val DEFAULT_MAX_SEARCH_ORIGINS = 1_000_000L
-        private const val CHANNEL_COUNT = 4
-        private const val PREFILTER_BANDS = 16
         private const val MAX_CHANNEL_ERROR = 255L * 4L
         private const val BYTES_PER_PIXEL = 4
-
-        private fun partitionStarts(size: Int, bands: Int): IntArray = IntArray(bands) { band ->
-            band * size / bands
-        }
-
-        private fun partitionEnds(size: Int, bands: Int): IntArray = IntArray(bands) { band ->
-            (band + 1) * size / bands
-        }
-
-        private fun bandFor(value: Int, starts: IntArray, ends: IntArray): Int = starts.indices.first { band ->
-            value in starts[band] until ends[band]
-        }
-
-        private fun channelValue(bytes: ByteArray, offset: Int): Int = bytes[offset].toInt() and 0xFF
 
         private fun mapPoint(point: NormalizedCoordinate, widthPx: Int, heightPx: Int): Pair<Int, Int> = (point.x * (widthPx - 1)).roundToInt().coerceIn(0, widthPx - 1) to
             (point.y * (heightPx - 1)).roundToInt().coerceIn(0, heightPx - 1)
@@ -581,10 +581,27 @@ class VisualConditionEvaluator(
                     (second[secondOffset + component].toInt() and 0xFF),
             ).toLong()
         }
-
-        private fun rgbaOffset(x: Int, y: Int, width: Int): Int = (y * width + x) * BYTES_PER_PIXEL
     }
 }
+
+private const val CHANNEL_COUNT = 4
+private const val PREFILTER_BANDS = 16
+
+private fun partitionStarts(size: Int, bands: Int): IntArray = IntArray(bands) { band ->
+    band * size / bands
+}
+
+private fun partitionEnds(size: Int, bands: Int): IntArray = IntArray(bands) { band ->
+    (band + 1) * size / bands
+}
+
+private fun bandFor(value: Int, starts: IntArray, ends: IntArray): Int = starts.indices.first { band ->
+    value in starts[band] until ends[band]
+}
+
+private fun channelValue(bytes: ByteArray, offset: Int): Int = bytes[offset].toInt() and 0xFF
+
+private fun rgbaOffset(x: Int, y: Int, width: Int): Int = (y * width + x) * 4
 
 class VisualConditionEvaluationException(
     message: String,

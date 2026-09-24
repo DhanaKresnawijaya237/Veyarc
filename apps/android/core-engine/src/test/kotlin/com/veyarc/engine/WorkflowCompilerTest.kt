@@ -1,8 +1,15 @@
 package com.veyarc.engine
 
+import com.veyarc.model.AndCondition
+import com.veyarc.model.AssetId
+import com.veyarc.model.AssetKind
 import com.veyarc.model.AssetReference
 import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.DurationMillis
+import com.veyarc.model.IfElse
+import com.veyarc.model.ImageAbsentCondition
+import com.veyarc.model.ImageMatchMode
+import com.veyarc.model.ImagePresentCondition
 import com.veyarc.model.LaunchApp
 import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.NormalizedRect
@@ -14,6 +21,7 @@ import com.veyarc.model.TapRegion
 import com.veyarc.model.ValidationErrorCode
 import com.veyarc.model.ViewportSpec
 import com.veyarc.model.Wait
+import com.veyarc.model.WaitUntil
 import com.veyarc.model.WorkflowDocument
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -99,7 +107,7 @@ class WorkflowCompilerTest {
     }
 
     @Test
-    fun rejectsWorstCaseRuntimeBudgetBeforeCreatingPlan() {
+    fun allowsConservativeRuntimeEstimateAboveRuntimeLimit() {
         val result = WorkflowCompiler.compile(
             document(
                 limits = limits(maxRuntimeMs = 100),
@@ -107,9 +115,8 @@ class WorkflowCompilerTest {
             ),
         )
 
-        assertFalse(result.isSuccess)
-        assertTrue(result.errors.any { it.code == CompilationErrorCode.LIMIT_EXCEEDED })
-        assertTrue(result.errors.any { it.message.contains("maxRuntimeMs") })
+        assertTrue(result.isSuccess)
+        assertEquals(500L, result.plan?.analysis?.worstCaseRuntimeMs)
     }
 
     @Test
@@ -135,8 +142,62 @@ class WorkflowCompilerTest {
         )
     }
 
+    @Test
+    fun discoversOnlyReferencedImagesAcrossNestedCompositeConditions() {
+        val crop = AssetId("crop")
+        val screen = AssetId("screen")
+        val unused = AssetId("unused")
+        val document = document(
+            assets = listOf(
+                AssetReference(crop, AssetKind.IMAGE_TEMPLATE, "Crop"),
+                AssetReference(screen, AssetKind.IMAGE_TEMPLATE, "Screen"),
+                AssetReference(unused, AssetKind.IMAGE_TEMPLATE, "Unused"),
+            ),
+            steps = listOf(
+                IfElse(
+                    id = STEP_1,
+                    condition = AndCondition(
+                        listOf(
+                            ImagePresentCondition(
+                                crop,
+                                NormalizedRect(0.0, 0.0, 1.0, 1.0),
+                                0.9,
+                            ),
+                            ImageAbsentCondition(
+                                crop,
+                                NormalizedRect(0.0, 0.0, 1.0, 1.0),
+                                0.9,
+                            ),
+                        ),
+                    ),
+                    thenSteps = listOf(
+                        WaitUntil(
+                            STEP_2,
+                            ImagePresentCondition(
+                                screen,
+                                NormalizedRect(0.0, 0.0, 1.0, 1.0),
+                                0.9,
+                                ImageMatchMode.SCREEN_STATE,
+                            ),
+                            DurationMillis(100),
+                            DurationMillis(10),
+                        ),
+                    ),
+                    elseSteps = emptyList(),
+                ),
+            ),
+        )
+
+        val referenced = WorkflowCompiler.compileOrThrow(document).referencedImageAssets()
+
+        assertEquals(setOf(crop, screen), referenced.keys)
+        assertEquals(setOf(ImageAssetUse.CROPPED_TARGET), referenced[crop])
+        assertEquals(setOf(ImageAssetUse.FULL_SCREEN), referenced[screen])
+    }
+
     private fun document(
         limits: RunLimits = limits(),
+        assets: List<AssetReference> = emptyList(),
         steps: List<com.veyarc.model.WorkflowStep>,
     ): WorkflowDocument = WorkflowDocument(
         schemaVersion = WorkflowDocument.CURRENT_SCHEMA_VERSION,
@@ -152,7 +213,7 @@ class WorkflowCompilerTest {
         ),
         runLimits = limits,
         variables = emptyMap(),
-        assets = emptyList<AssetReference>(),
+        assets = assets,
         steps = steps,
     )
 

@@ -112,10 +112,10 @@ fun SettingsScreen(
     fun refreshStorage() {
         scope.launch {
             val snapshot = withContext(Dispatchers.IO) {
-                val storedWorkflows = repository.listWorkflows()
+                val storedWorkflows = repository.listWorkflowSummaries()
                 StorageSnapshot(
                     workflows = storedWorkflows,
-                    runCount = repository.loadRunDashboard(recentLimit = 1).totalRuns,
+                    runCount = repository.countRuns(),
                     workflowFolderCount = repository.listWorkflowFolders().size,
                     runFolderCount = repository.listRunFolders().size,
                 )
@@ -151,7 +151,7 @@ fun SettingsScreen(
         scope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
-                    val bytes = VeyarcBundle.export(repository.loadRevision(workflow.workflowId, workflow.latestRevision))
+                    val bytes = repository.exportRevision(workflow.workflowId, workflow.latestRevision)
                     requireNotNull(context.contentResolver.openOutputStream(uri)) { "Could not open the destination" }
                         .use { it.write(bytes) }
                 }

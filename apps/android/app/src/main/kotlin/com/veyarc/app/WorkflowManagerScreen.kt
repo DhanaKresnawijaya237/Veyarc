@@ -60,7 +60,6 @@ import com.veyarc.data.storage.WorkflowRunActivity
 import com.veyarc.data.storage.WorkflowSummary
 import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.WorkflowIds
-import com.veyarc.model.bundle.WorkflowBundle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -127,15 +126,12 @@ internal fun WorkflowManagerScreen(
         error = null
         runCatching {
             withContext(Dispatchers.IO) {
-                val summaries = repository.listWorkflows()
+                val summaries = repository.listWorkflowSummaries()
                 val activity = repository.listWorkflowRunActivity()
                 val loaded = summaries.map { summary ->
                     ManagedWorkflow(
                         summary = summary,
-                        orientation = runCatching {
-                            repository.loadRevision(summary.workflowId, summary.latestRevision)
-                                .document.viewport.recordedOrientation
-                        }.getOrNull(),
+                        orientation = summary.recordedOrientation,
                         activity = activity[summary.workflowId] ?: WorkflowRunActivity(0, null),
                     )
                 }
@@ -502,25 +498,23 @@ internal fun WorkflowManagerScreen(
                             copySelection = false
                             val targets = workflows.filter { it.summary.workflowId in selectedIds }
                             mutate("Copied ${targets.size} workflow${if (targets.size == 1) "" else "s"}.") {
-                                val usedNames = repository.listWorkflows().mapTo(mutableSetOf()) { it.name }
+                                val usedNames = repository.listWorkflowSummaries().mapTo(mutableSetOf()) { it.name }
                                 targets.forEach { target ->
-                                    val source = repository.loadRevision(
+                                    val source = repository.loadRevisionDocument(
                                         target.summary.workflowId,
                                         target.summary.latestRevision,
                                     )
                                     val copyName = uniqueWorkflowCopyName(target.summary.name, usedNames)
                                     usedNames += copyName
-                                    repository.saveRevision(
-                                        WorkflowBundle(
-                                            document = source.document.copy(
-                                                id = WorkflowIds.newUuid(),
-                                                revision = 1,
-                                                name = copyName,
-                                            ),
-                                            assets = source.assets,
-                                            producerVersion = source.producerVersion,
+                                    repository.saveRevisionFromExistingAssets(
+                                        sourceWorkflowId = target.summary.workflowId,
+                                        sourceRevision = target.summary.latestRevision,
+                                        document = source.document.copy(
+                                            id = WorkflowIds.newUuid(),
+                                            revision = 1,
+                                            name = copyName,
                                         ),
-                                        folder.folderId,
+                                        destinationFolderId = folder.folderId,
                                     )
                                 }
                             }
@@ -544,15 +538,13 @@ internal fun WorkflowManagerScreen(
                 onConfirm = { name ->
                     renameSelection = false
                     mutate("Workflow renamed.") {
-                        val source = repository.loadRevision(target.summary.workflowId, target.summary.latestRevision)
-                        repository.saveRevision(
-                            WorkflowBundle(
-                                document = source.document.copy(
-                                    revision = target.summary.latestRevision + 1,
-                                    name = name.trim(),
-                                ),
-                                assets = source.assets,
-                                producerVersion = source.producerVersion,
+                        val source = repository.loadRevisionDocument(target.summary.workflowId, target.summary.latestRevision)
+                        repository.saveRevisionFromExistingAssets(
+                            sourceWorkflowId = target.summary.workflowId,
+                            sourceRevision = target.summary.latestRevision,
+                            document = source.document.copy(
+                                revision = target.summary.latestRevision + 1,
+                                name = name.trim(),
                             ),
                         )
                     }
