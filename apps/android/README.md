@@ -2,11 +2,11 @@
 
 Run commands from this directory with JDK 17 and the Android SDK configured.
 
-User-facing beta documentation:
+User-facing documentation:
 
 - [`docs/android-beta-guide.md`](../../docs/android-beta-guide.md): setup, permissions, emergency controls, privacy, and current limits
 - [`docs/android-device-compatibility.md`](../../docs/android-device-compatibility.md): verified devices and Android-version support
-- [`docs/android-beta-v0.1.0-release-notes.md`](../../docs/android-beta-v0.1.0-release-notes.md): technical-beta release notes
+- [`docs/android-v1.0.0-release-notes.md`](../../docs/android-v1.0.0-release-notes.md): v1 release notes
 
 ## Local verification
 

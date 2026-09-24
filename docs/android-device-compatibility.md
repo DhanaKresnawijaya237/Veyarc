@@ -1,8 +1,8 @@
 # Android device compatibility
 
-Status date: 2026-09-06
+Status date: 2026-09-25
 
-This document records what the technical beta has actually verified. An unlisted device may work, but it is not a supported claim.
+This document records what Veyarc has actually verified. An unlisted device may work, but it is not a supported claim.
 
 ## Verified configurations
 
@@ -17,13 +17,13 @@ The emulator result does not prove Shizuku or OEM input-device behavior. The viv
 
 | Android version | Playback | Exact recording | Visual conditions |
 | --- | --- | --- | --- |
-| Android 7.0 to 7.1, API 24 to 25 | Short taps up to 100 ms only | Unsupported beta target | Available when Android supplies MediaProjection, but not part of current device acceptance |
-| Android 8.0 to 12, API 26 to 32 | Taps, long presses, and swipe paths | Unsupported beta target | Available when Android supplies MediaProjection, but not part of current device acceptance |
+| Android 7.0 to 7.1, API 24 to 25 | Short taps up to 100 ms only | Unsupported recording target | Available when Android supplies MediaProjection, but not part of current device acceptance |
+| Android 8.0 to 12, API 26 to 32 | Taps, long presses, and swipe paths | Unsupported recording target | Available when Android supplies MediaProjection, but not part of current device acceptance |
 | Android 13 and newer, API 33+ | Taps, long presses, and swipe paths | Device dependent; requires Shizuku access to a direct touchscreen event node | Supported with fresh consent for each run |
 
-The APK has `minSdk 24`. The recording support policy begins at API 33 because foreground-service, notification, OEM input, and lifecycle behavior below that level have not passed the beta acceptance matrix.
+The APK has `minSdk 24`. The recording support policy begins at API 33 because foreground-service, notification, OEM input, and lifecycle behavior below that level have not passed the acceptance matrix.
 
-The API 24 and 25 restriction has automated policy coverage, but an API 24 emulator acceptance run is still pending because that system image is not installed in the current test environment.
+The API 24 and 25 restriction has automated policy coverage. The full API 24 emulator instrumentation suite passed; this does not verify physical recording on an API 24 device.
 
 ## Device-dependent recording gate
 
@@ -61,4 +61,4 @@ Use the [physical-device acceptance fixture](../apps/android/acceptance/README.m
 
 An early Android 13 accessibility experiment requested touch exploration and motion-event reporting to capture touches. On the vivo V50 it changed normal one-finger input and could leave the screen effectively unresponsive. That path is disabled and is not the recorder.
 
-Strict display freeze was also removed. A normal APK cannot safely block human input while allowing its own injected input through the same Android window route. The beta keeps replay touch pass-through and relies on visible stop controls.
+Strict display freeze was also removed. A normal APK cannot safely block human input while allowing its own injected input through the same Android window route. Replay remains touch pass-through and relies on visible stop controls.

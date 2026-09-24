@@ -1,12 +1,12 @@
-# Android technical beta guide
+# Android setup and safety guide
 
-Status date: 2026-09-06
+Status date: 2026-09-25
 
-Veyarc `0.1.0` is a sideloaded technical beta. Playback installs on Android 7.0 and newer. Exact touch recording is supported only on tested Android 13 or newer devices where Shizuku can read the direct touchscreen input device. The current verified physical target is the vivo V50 running Android 16 and OriginOS 6.
+Veyarc `1.0.0` is a sideloaded release with limited verified device support. Playback installs on Android 7.0 and newer. Exact touch recording is supported only on tested Android 13 or newer devices where Shizuku can read the direct touchscreen input device. The verified physical target is the vivo V50 running Android 16 and OriginOS 6.
 
 ## Install and update
 
-Install a signed APK from a trusted build. Future updates must use the same signing key. Android will reject an APK signed with a different key unless you uninstall the existing app first, which removes Veyarc's local data.
+Install a signed APK from a trusted build. Future updates must use the same signing key. Android will reject an APK signed with a different key unless you uninstall the existing app first, which removes Veyarc's local data. Export workflows you need to keep before uninstalling. A debug build and a release build usually use different keys and cannot update each other in place.
 
 Android or Play Protect may warn about a sideloaded build because it did not come from Google Play. Do not bypass a warning unless you trust the APK source and have verified its SHA-256 hash and signing certificate.
 
@@ -66,7 +66,7 @@ Captured frames stay in memory only while the run evaluates its conditions. Imag
 
 ## Local data and privacy
 
-- The app manifest does not request internet access. This beta has no account, cloud sync, analytics, or assistant backend.
+- The app manifest does not request internet access. Veyarc has no account, cloud sync, analytics, or assistant backend.
 - Workflow bodies, image-template assets, and recording journals are encrypted with keys held by Android Keystore.
 - Workflow names, revision metadata, and redacted run history are stored in the app-private local database. Run history does not store captured screen pixels or variable values.
 - Android cloud backup and device-to-device transfer are disabled for all Veyarc app data.

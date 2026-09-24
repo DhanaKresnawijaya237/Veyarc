@@ -2,6 +2,8 @@
 
 Release status: candidate, not tagged
 
+Historical candidate notes. Version 0.1.0 was not published; see the [v1.0.0 release notes](android-v1.0.0-release-notes.md) for the current release.
+
 ## Included
 
 - Local, versioned workflow library and nested block editor.
