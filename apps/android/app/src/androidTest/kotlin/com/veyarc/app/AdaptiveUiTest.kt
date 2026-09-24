@@ -54,9 +54,9 @@ class AppShellAccessibilityTest {
                     VeyarcAppShell(
                         selectedDestination = selected,
                         onDestinationSelected = { selected = it },
-                    ) {
+                    ) { destination ->
                         Box(modifier = Modifier.fillMaxSize()) {
-                            Text("Selected ${selected.label}")
+                            Text("Selected ${destination.label}")
                         }
                     }
                 }
@@ -78,9 +78,9 @@ class AppShellAccessibilityTest {
                 VeyarcAppShell(
                     selectedDestination = selected,
                     onDestinationSelected = { selected = it },
-                ) {
+                ) { destination ->
                     Column {
-                        Text("Selected ${selected.label}")
+                        Text("Selected ${destination.label}")
                         androidx.compose.material3.Button(onClick = { darkTheme = !darkTheme }) {
                             Text("Toggle theme")
                         }

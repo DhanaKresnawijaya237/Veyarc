@@ -23,8 +23,6 @@ import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -249,19 +247,17 @@ private fun ConditionKindPicker(
             OutlinedButton(onClick = { expanded = true }) {
                 Text(condition.kind().label)
             }
-            DropdownMenu(
-                expanded = expanded,
-                onDismissRequest = { expanded = false },
-            ) {
-                EditableConditionKind.entries.forEach { kind ->
-                    DropdownMenuItem(
-                        text = { Text(kind.label) },
-                        onClick = {
-                            expanded = false
-                            onChange(kind.defaultCondition(defaultPackage))
-                        },
-                    )
-                }
+            if (expanded) {
+                VeyarcChoicePicker(
+                    title = "Condition type",
+                    options = EditableConditionKind.entries.map { VeyarcChoice(it.name, it.label) },
+                    selectedId = condition.kind().name,
+                    onDismiss = { expanded = false },
+                    onSelect = { choice ->
+                        expanded = false
+                        onChange(EditableConditionKind.entries.first { it.name == choice.id }.defaultCondition(defaultPackage))
+                    },
+                )
             }
         }
     }

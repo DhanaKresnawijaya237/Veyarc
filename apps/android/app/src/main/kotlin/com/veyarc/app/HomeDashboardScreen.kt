@@ -4,6 +4,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
@@ -75,7 +77,7 @@ fun HomeDashboardScreen(
             withContext(Dispatchers.IO) {
                 val storedWorkflows = repository.listWorkflowSummaries()
                 Triple(
-                    repository.loadRunDashboard(),
+                    repository.loadRunDashboard(recentLimit = 100),
                     storedWorkflows,
                     storedWorkflows.firstOrNull { it.producerVersion == RECORDER_PRODUCER_VERSION }
                         ?: storedWorkflows.firstOrNull(),
@@ -198,6 +200,7 @@ private fun RunOutcomeChart(
         label = "Run details tooltip",
     )
     var chartWidthPx by remember { mutableIntStateOf(0) }
+    val chartScroll = rememberScrollState()
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("Recent run duration", style = MaterialTheme.typography.titleMedium)
@@ -207,94 +210,99 @@ private fun RunOutcomeChart(
                 val completedColor = MaterialTheme.colorScheme.primary
                 val failedColor = MaterialTheme.colorScheme.error
                 val otherColor = MaterialTheme.colorScheme.secondary
-                val plottedRuns = runs.take(12).reversed()
+                val plottedRuns = runs.reversed()
                 val description = plottedRuns.joinToString { "${it.status.name.lowercase()} ${runDuration(it)} ms" }
-                BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(150.dp)) {
-                    Canvas(
-                        modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .height(120.dp)
-                            .align(Alignment.BottomCenter)
-                            .onSizeChanged { chartWidthPx = it.width }
-                            .pointerInput(plottedRuns, chartWidthPx) {
-                                detectTapGestures(
-                                    onTap = {
-                                        tooltipVisible = false
-                                        selectedIndex = null
-                                    },
-                                    onPress = {
-                                        tryAwaitRelease()
-                                        tooltipVisible = false
-                                        kotlinx.coroutines.delay(100)
-                                        selectedIndex = null
-                                    },
-                                    onLongPress = { point ->
-                                        if (chartWidthPx > 0) {
-                                            selectedIndex =
-                                                ((point.x / chartWidthPx) * plottedRuns.size)
-                                                    .toInt()
-                                                    .coerceIn(plottedRuns.indices)
-                                            tooltipVisible = true
-                                        }
-                                    },
-                                )
-                            }
-                            .semantics {
-                                contentDescription = "Recent run duration chart: $description. Long press a bar for details."
-                            },
-                    ) {
-                        val maximum = plottedRuns.maxOf { runDuration(it).coerceAtLeast(1L) }.toFloat()
-                        val slotWidth = size.width / plottedRuns.size
-                        val barWidth = (slotWidth * 0.58f).coerceAtMost(28.dp.toPx())
-                        plottedRuns.forEachIndexed { index, run ->
-                            val ratio = runDuration(run).coerceAtLeast(1L) / maximum
-                            val height = (size.height * ratio).coerceAtLeast(8.dp.toPx())
-                            val color = when (run.status) {
-                                StoredRunStatus.COMPLETED -> completedColor
-                                StoredRunStatus.FAILED, StoredRunStatus.INTERRUPTED -> failedColor
-                                else -> otherColor
-                            }
-                            drawRoundRect(
-                                color = color,
-                                topLeft = androidx.compose.ui.geometry.Offset(
-                                    x = index * slotWidth + (slotWidth - barWidth) / 2f,
-                                    y = size.height - height,
-                                ),
-                                size = androidx.compose.ui.geometry.Size(barWidth, height),
-                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()),
-                            )
-                        }
-                    }
-                    selectedIndex?.let { index ->
-                        val run = plottedRuns[index]
-                        val slotWidth = maxWidth / plottedRuns.size
-                        androidx.compose.material3.Surface(
-                            modifier = Modifier
-                                .graphicsLayer(alpha = tooltipAlpha)
-                                .padding(
-                                    start = (slotWidth * index)
-                                        .coerceIn(0.dp, (maxWidth - 190.dp).coerceAtLeast(0.dp)),
-                                )
-                                .width(190.dp),
-                            shape = MaterialTheme.shapes.small,
-                            tonalElevation = 6.dp,
-                            shadowElevation = 4.dp,
+                LaunchedEffect(chartScroll.maxValue, plottedRuns.size) {
+                    chartScroll.scrollTo(chartScroll.maxValue)
+                }
+                BoxWithConstraints(modifier = Modifier.fillMaxWidth().horizontalScroll(chartScroll)) {
+                    BoxWithConstraints(modifier = Modifier.width(42.dp * plottedRuns.size).height(150.dp)) {
+                        Canvas(
+                            modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .height(120.dp)
+                                .align(Alignment.BottomCenter)
+                                .onSizeChanged { chartWidthPx = it.width }
+                                .pointerInput(plottedRuns, chartWidthPx) {
+                                    detectTapGestures(
+                                        onTap = {
+                                            tooltipVisible = false
+                                            selectedIndex = null
+                                        },
+                                        onPress = {
+                                            tryAwaitRelease()
+                                            tooltipVisible = false
+                                            kotlinx.coroutines.delay(100)
+                                            selectedIndex = null
+                                        },
+                                        onLongPress = { point ->
+                                            if (chartWidthPx > 0) {
+                                                selectedIndex =
+                                                    ((point.x / chartWidthPx) * plottedRuns.size)
+                                                        .toInt()
+                                                        .coerceIn(plottedRuns.indices)
+                                                tooltipVisible = true
+                                            }
+                                        },
+                                    )
+                                }
+                                .semantics {
+                                    contentDescription = "Recent run duration chart: $description. Long press a bar for details."
+                                },
                         ) {
-                            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(
-                                    workflowNames[run.workflowId] ?: "Deleted workflow",
-                                    style = MaterialTheme.typography.labelLarge,
+                            val maximum = plottedRuns.maxOf { runDuration(it).coerceAtLeast(1L) }.toFloat()
+                            val slotWidth = size.width / plottedRuns.size
+                            val barWidth = (slotWidth * 0.58f).coerceAtMost(28.dp.toPx())
+                            plottedRuns.forEachIndexed { index, run ->
+                                val ratio = runDuration(run).coerceAtLeast(1L) / maximum
+                                val height = (size.height * ratio).coerceAtLeast(8.dp.toPx())
+                                val color = when (run.status) {
+                                    StoredRunStatus.COMPLETED -> completedColor
+                                    StoredRunStatus.FAILED, StoredRunStatus.INTERRUPTED -> failedColor
+                                    else -> otherColor
+                                }
+                                drawRoundRect(
+                                    color = color,
+                                    topLeft = androidx.compose.ui.geometry.Offset(
+                                        x = index * slotWidth + (slotWidth - barWidth) / 2f,
+                                        y = size.height - height,
+                                    ),
+                                    size = androidx.compose.ui.geometry.Size(barWidth, height),
+                                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()),
                                 )
-                                Text(
-                                    "${run.status.displayName()} · ${formatDuration(runDuration(run))}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
-                                Text(
-                                    formatRunTime(run.startedAtMs),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
+                            }
+                        }
+                        selectedIndex?.let { index ->
+                            val run = plottedRuns[index]
+                            val slotWidth = maxWidth / plottedRuns.size
+                            androidx.compose.material3.Surface(
+                                modifier = Modifier
+                                    .graphicsLayer(alpha = tooltipAlpha)
+                                    .padding(
+                                        start = (slotWidth * index)
+                                            .coerceIn(0.dp, (maxWidth - 190.dp).coerceAtLeast(0.dp)),
+                                    )
+                                    .width(190.dp),
+                                shape = MaterialTheme.shapes.small,
+                                tonalElevation = 6.dp,
+                                shadowElevation = 4.dp,
+                            ) {
+                                Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(
+                                        workflowNames[run.workflowId] ?: "Deleted workflow",
+                                        style = MaterialTheme.typography.labelLarge,
+                                    )
+                                    Text(
+                                        "${run.status.displayName()} · ${formatDuration(runDuration(run))}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    Text(
+                                        formatRunTime(run.startedAtMs),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
                             }
                         }
                     }

@@ -1,5 +1,11 @@
 package com.veyarc.app
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -24,8 +30,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -57,6 +61,8 @@ import com.veyarc.data.storage.StoredRunStatus
 import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowSummary
 import com.veyarc.feature.editor.StoredRunDetailScreen
+import com.veyarc.feature.editor.VeyarcChoice
+import com.veyarc.feature.editor.VeyarcChoicePicker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -311,17 +317,17 @@ internal fun RunManagerScreen(
                 FilterMenuButton(
                     modifier = Modifier.weight(1f),
                     text = "Sort: ${sort.label}",
+                    title = "Sort runs",
+                    options = RunSortOption.entries.map { VeyarcChoice(it.name, it.label) },
+                    selectedId = sort.name,
                     expanded = sortMenuOpen,
                     onOpen = { sortMenuOpen = true },
                     onDismiss = { sortMenuOpen = false },
-                ) {
-                    RunSortOption.entries.forEach { option ->
-                        DropdownMenuItem(text = { Text(option.label) }, onClick = {
-                            sort = option
-                            sortMenuOpen = false
-                        })
-                    }
-                }
+                    onSelect = { choice ->
+                        sort = RunSortOption.entries.first { it.name == choice.id }
+                        sortMenuOpen = false
+                    },
+                )
                 OutlinedButton(
                     onClick = { filtersOpen = true },
                     modifier = Modifier.weight(1f),
@@ -336,7 +342,11 @@ internal fun RunManagerScreen(
                     Icon(Icons.Filled.FilterList, contentDescription = null)
                     Text("Filter")
                 }
-                if (searchActive) {
+                AnimatedVisibility(
+                    visible = searchActive,
+                    enter = fadeIn(tween(180)) + expandHorizontally(tween(180)),
+                    exit = fadeOut(tween(180)) + shrinkHorizontally(tween(180)),
+                ) {
                     androidx.compose.material3.IconButton(onClick = {
                         selectionMode = !selectionMode
                         if (!selectionMode) selectedIds = emptyList()
@@ -407,51 +417,43 @@ internal fun RunManagerScreen(
                 Text("Filter runs", style = MaterialTheme.typography.titleLarge)
                 FilterMenuButton(
                     text = "Status: ${statusFilter?.label() ?: "Any"}",
+                    title = "Run status",
+                    options = listOf(VeyarcChoice("any", "Any status")) + StoredRunStatus.entries.map { VeyarcChoice(it.name, it.label()) },
+                    selectedId = statusFilter?.name ?: "any",
                     expanded = statusMenuOpen,
                     onOpen = { statusMenuOpen = true },
                     onDismiss = { statusMenuOpen = false },
-                ) {
-                    DropdownMenuItem(text = { Text("Any status") }, onClick = {
-                        statusFilter = null
+                    onSelect = { choice ->
+                        statusFilter = StoredRunStatus.entries.firstOrNull { it.name == choice.id }
                         statusMenuOpen = false
-                    })
-                    StoredRunStatus.entries.forEach { status ->
-                        DropdownMenuItem(text = { Text(status.label()) }, onClick = {
-                            statusFilter = status
-                            statusMenuOpen = false
-                        })
-                    }
-                }
+                    },
+                )
                 FilterMenuButton(
                     text = "Workflow: ${workflows.firstOrNull { it.workflowId == workflowFilter }?.name ?: "Any"}",
+                    title = "Workflow",
+                    options = listOf(VeyarcChoice("any", "Any workflow")) + workflows.map { VeyarcChoice(it.workflowId, it.name) },
+                    selectedId = workflowFilter ?: "any",
                     expanded = workflowMenuOpen,
                     onOpen = { workflowMenuOpen = true },
                     onDismiss = { workflowMenuOpen = false },
-                ) {
-                    DropdownMenuItem(text = { Text("Any workflow") }, onClick = {
-                        workflowFilter = null
+                    onSelect = { choice ->
+                        workflowFilter = choice.id.takeUnless { it == "any" }
                         workflowMenuOpen = false
-                    })
-                    workflows.forEach { workflow ->
-                        DropdownMenuItem(text = { Text(workflow.name) }, onClick = {
-                            workflowFilter = workflow.workflowId
-                            workflowMenuOpen = false
-                        })
-                    }
-                }
+                    },
+                )
                 FilterMenuButton(
                     text = "Date: ${dateFilter.label}",
+                    title = "Run date",
+                    options = RunDateFilter.entries.map { VeyarcChoice(it.name, it.label) },
+                    selectedId = dateFilter.name,
                     expanded = dateMenuOpen,
                     onOpen = { dateMenuOpen = true },
                     onDismiss = { dateMenuOpen = false },
-                ) {
-                    RunDateFilter.entries.forEach { option ->
-                        DropdownMenuItem(text = { Text(option.label) }, onClick = {
-                            dateFilter = option
-                            dateMenuOpen = false
-                        })
-                    }
-                }
+                    onSelect = { choice ->
+                        dateFilter = RunDateFilter.entries.first { it.name == choice.id }
+                        dateMenuOpen = false
+                    },
+                )
                 OutlinedTextField(
                     value = revisionFilter,
                     onValueChange = { revisionFilter = it.filter(Char::isDigit) },
@@ -616,16 +618,19 @@ internal fun RunManagerScreen(
 private fun FilterMenuButton(
     modifier: Modifier = Modifier,
     text: String,
+    title: String,
+    options: List<VeyarcChoice>,
+    selectedId: String?,
     expanded: Boolean,
     onOpen: () -> Unit,
     onDismiss: () -> Unit,
-    content: @Composable () -> Unit,
+    onSelect: (VeyarcChoice) -> Unit,
 ) {
     Column(modifier = modifier) {
         OutlinedButton(onClick = onOpen, modifier = Modifier.fillMaxWidth()) {
             Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = onDismiss, content = { content() })
+        if (expanded) VeyarcChoicePicker(title, options, selectedId, onDismiss, onSelect)
     }
 }
 

@@ -34,8 +34,6 @@ import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -573,19 +571,17 @@ private fun RegionGeometryEditor(
             OutlinedButton(onClick = { anchorMenuExpanded = true }) {
                 Text("Anchor: ${anchorPreset.label}")
             }
-            DropdownMenu(
-                expanded = anchorMenuExpanded,
-                onDismissRequest = { anchorMenuExpanded = false },
-            ) {
-                AnchorPreset.entries.forEach { preset ->
-                    DropdownMenuItem(
-                        text = { Text(preset.label) },
-                        onClick = {
-                            anchorPreset = preset
-                            anchorMenuExpanded = false
-                        },
-                    )
-                }
+            if (anchorMenuExpanded) {
+                VeyarcChoicePicker(
+                    title = "Tap anchor",
+                    options = AnchorPreset.entries.map { VeyarcChoice(it.name, it.label) },
+                    selectedId = anchorPreset.name,
+                    onDismiss = { anchorMenuExpanded = false },
+                    onSelect = { choice ->
+                        anchorPreset = AnchorPreset.entries.first { it.name == choice.id }
+                        anchorMenuExpanded = false
+                    },
+                )
             }
         }
         if (anchorPreset == AnchorPreset.CUSTOM) {

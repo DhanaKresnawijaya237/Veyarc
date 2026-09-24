@@ -1,5 +1,11 @@
 package com.veyarc.app
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -27,8 +33,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -60,6 +64,8 @@ import com.veyarc.data.storage.RevisionSummary
 import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowRunActivity
 import com.veyarc.data.storage.WorkflowSummary
+import com.veyarc.feature.editor.VeyarcChoice
+import com.veyarc.feature.editor.VeyarcChoicePicker
 import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.WorkflowIds
 import kotlinx.coroutines.Dispatchers
@@ -297,37 +303,49 @@ internal fun WorkflowManagerScreen(
                     OutlinedButton(
                         onClick = { sortMenuOpen = true },
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Sort: ${sort.shortLabel}") }
-                    DropdownMenu(expanded = sortMenuOpen, onDismissRequest = { sortMenuOpen = false }) {
-                        WorkflowSortOption.entries.forEach { option ->
-                            DropdownMenuItem(
-                                text = { Text(option.label) },
-                                onClick = {
-                                    sort = option
-                                    sortMenuOpen = false
-                                },
-                            )
-                        }
+                    ) { Text("Sort: ${sort.shortLabel}", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    if (sortMenuOpen) {
+                        VeyarcChoicePicker(
+                            title = "Sort workflows",
+                            options = WorkflowSortOption.entries.map { VeyarcChoice(it.name, it.label) },
+                            selectedId = sort.name,
+                            onDismiss = { sortMenuOpen = false },
+                            onSelect = { choice ->
+                                sort = WorkflowSortOption.entries.first { it.name == choice.id }
+                                sortMenuOpen = false
+                            },
+                        )
                     }
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     OutlinedButton(
                         onClick = { orientationMenuOpen = true },
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Screen: ${orientation.shortLabel}") }
-                    DropdownMenu(expanded = orientationMenuOpen, onDismissRequest = { orientationMenuOpen = false }) {
-                        WorkflowOrientationFilter.entries.forEach { option ->
-                            DropdownMenuItem(
-                                text = { Text(option.label) },
-                                onClick = {
-                                    orientation = option
-                                    orientationMenuOpen = false
-                                },
-                            )
-                        }
+                    ) {
+                        Text(
+                            if (searchActive) orientation.shortLabel else "Screen: ${orientation.shortLabel}",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    if (orientationMenuOpen) {
+                        VeyarcChoicePicker(
+                            title = "Screen orientation",
+                            options = WorkflowOrientationFilter.entries.map { VeyarcChoice(it.name, it.label) },
+                            selectedId = orientation.name,
+                            onDismiss = { orientationMenuOpen = false },
+                            onSelect = { choice ->
+                                orientation = WorkflowOrientationFilter.entries.first { it.name == choice.id }
+                                orientationMenuOpen = false
+                            },
+                        )
                     }
                 }
-                if (searchActive) {
+                AnimatedVisibility(
+                    visible = searchActive,
+                    enter = fadeIn(tween(180)) + expandHorizontally(tween(180)),
+                    exit = fadeOut(tween(180)) + shrinkHorizontally(tween(180)),
+                ) {
                     IconButton(onClick = {
                         selectionMode = !selectionMode
                         if (!selectionMode) selectedIds = emptyList()
@@ -654,21 +672,14 @@ private fun WorkflowManagerCard(
                 IconButton(onClick = { menuOpen = true }, enabled = enabled) {
                     Icon(Icons.Filled.MoreVert, contentDescription = "More workflow actions")
                 }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Revision history") },
-                        leadingIcon = { Icon(Icons.Filled.History, contentDescription = null) },
-                        onClick = {
+                if (menuOpen) {
+                    VeyarcChoicePicker(
+                        title = workflow.summary.name,
+                        options = listOf(VeyarcChoice("history", "Revision history"), VeyarcChoice("delete", "Delete", destructive = true)),
+                        onDismiss = { menuOpen = false },
+                        onSelect = { choice ->
                             menuOpen = false
-                            onRevisions()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Delete") },
-                        leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
-                        onClick = {
-                            menuOpen = false
-                            onDelete()
+                            if (choice.id == "history") onRevisions() else onDelete()
                         },
                     )
                 }

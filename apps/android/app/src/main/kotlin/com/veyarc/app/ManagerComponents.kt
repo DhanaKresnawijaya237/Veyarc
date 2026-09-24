@@ -2,13 +2,12 @@ package com.veyarc.app
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
@@ -23,15 +22,20 @@ import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DriveFileMove
@@ -53,7 +57,6 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -70,17 +73,24 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.veyarc.data.storage.FolderSummary
@@ -97,37 +107,39 @@ internal fun CompactManagerHeader(
     onSelectionModeChange: (Boolean) -> Unit,
 ) {
     val transitionDurationMs = 180
-    if (searchActive) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = onQueryChange,
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("Search") },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                trailingIcon = if (query.isNotEmpty()) {
-                    {
-                        IconButton(onClick = { onQueryChange("") }) {
-                            Icon(Icons.Filled.Clear, contentDescription = "Clear search")
-                        }
-                    }
-                } else {
-                    null
-                },
-                singleLine = true,
-            )
-            TextButton(onClick = {
-                onQueryChange("")
-                onSearchActiveChange(false)
-            }) { Text("Cancel") }
+    val searchFocusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    var keyboardWasVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(searchActive) {
+        if (searchActive) {
+            searchFocusRequester.requestFocus()
+            keyboardController?.show()
+        } else {
+            keyboardWasVisible = false
         }
-    } else {
+    }
+    LaunchedEffect(imeVisible, searchActive) {
+        if (searchActive && imeVisible) keyboardWasVisible = true
+        if (searchActive && keyboardWasVisible && !imeVisible) {
+            keyboardWasVisible = false
+            if (query.isEmpty()) onSearchActiveChange(false)
+        }
+    }
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(56.dp)) {
+        val searchWidth by animateDpAsState(
+            targetValue = if (searchActive) maxWidth else 48.dp,
+            animationSpec = tween(transitionDurationMs),
+            label = "Manager search width",
+        )
+        val searchEnd by animateDpAsState(
+            targetValue = if (searchActive) 0.dp else 48.dp,
+            animationSpec = tween(transitionDurationMs),
+            label = "Manager search position",
+        )
+        val headingAlpha by animateFloatAsState(if (searchActive) 0f else 1f, label = "Manager title")
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().align(Alignment.Center),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val heading = if (selectionMode) {
@@ -137,7 +149,7 @@ internal fun CompactManagerHeader(
             }
             AnimatedContent(
                 targetState = heading,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).graphicsLayer { alpha = headingAlpha },
                 transitionSpec = {
                     (
                         fadeIn(tween(transitionDurationMs)) +
@@ -150,22 +162,65 @@ internal fun CompactManagerHeader(
                 },
                 label = "manager heading",
             ) { current ->
-                Text(current, style = MaterialTheme.typography.headlineSmall)
+                Text(current, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            AnimatedVisibility(
-                visible = !selectionMode,
-                enter = fadeIn(tween(transitionDurationMs)) + expandHorizontally(tween(transitionDurationMs)),
-                exit = fadeOut(tween(transitionDurationMs)) + shrinkHorizontally(tween(transitionDurationMs)),
+            IconButton(
+                onClick = { onSelectionModeChange(!selectionMode) },
+                enabled = !searchActive,
+                modifier = Modifier.graphicsLayer { alpha = headingAlpha },
             ) {
-                IconButton(onClick = { onSearchActiveChange(true) }) {
-                    Icon(Icons.Filled.Search, contentDescription = "Search")
-                }
-            }
-            IconButton(onClick = { onSelectionModeChange(!selectionMode) }) {
                 Icon(
                     if (selectionMode) Icons.Filled.Close else Icons.Filled.CheckBox,
                     contentDescription = if (selectionMode) "Leave selection mode" else "Select items",
                 )
+            }
+        }
+        if (!selectionMode || searchActive) {
+            Surface(
+                modifier = Modifier.align(Alignment.CenterEnd).padding(end = searchEnd).width(searchWidth).height(48.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = if (searchActive) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = {
+                        if (searchActive) {
+                            onQueryChange("")
+                            keyboardController?.hide()
+                        }
+                        onSearchActiveChange(!searchActive)
+                    }) {
+                        Icon(Icons.Filled.Search, contentDescription = "Search")
+                    }
+                    AnimatedVisibility(
+                        visible = searchActive,
+                        enter = fadeIn(tween(90, delayMillis = 90)),
+                        exit = fadeOut(tween(90)),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        BasicTextField(
+                            value = query,
+                            onValueChange = onQueryChange,
+                            modifier = Modifier.fillMaxWidth().focusRequester(searchFocusRequester)
+                                .semantics { contentDescription = "Search $title" },
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                            decorationBox = { innerTextField ->
+                                Box {
+                                    if (query.isEmpty()) Text("Search", maxLines = 1)
+                                    innerTextField()
+                                }
+                            },
+                        )
+                    }
+                    AnimatedVisibility(visible = searchActive, enter = fadeIn(tween(120)), exit = fadeOut(tween(90))) {
+                        IconButton(onClick = {
+                            onQueryChange("")
+                            onSearchActiveChange(false)
+                            keyboardController?.hide()
+                        }) { Icon(Icons.Filled.Close, contentDescription = "Close search") }
+                    }
+                }
             }
         }
     }
@@ -468,7 +523,9 @@ private fun ManagerFolderChip(
                     }
                     if (dragging) {
                         currentDragFinished(completed)
-                    } else if (completed) {
+                    } else {
+                        // The sibling click detector may consume the final UP after the long press.
+                        // Reaching here already proves a stationary long hold completed.
                         currentManage?.invoke()
                     }
                 }

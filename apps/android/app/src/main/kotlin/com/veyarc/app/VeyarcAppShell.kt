@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -42,9 +43,17 @@ internal fun VeyarcAppShell(
     selectedDestination: VeyarcDestination,
     onDestinationSelected: (VeyarcDestination) -> Unit,
     selectionBar: ManagerSelectionBarState? = null,
-    content: @Composable () -> Unit,
+    content: @Composable (VeyarcDestination) -> Unit,
 ) {
     val destinationStates = rememberSaveableStateHolder()
+
+    @Composable
+    fun DestinationContent() {
+        destinationStates.SaveableStateProvider(selectedDestination.name) {
+            content(selectedDestination)
+        }
+    }
+
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         if (usesNavigationRail(maxWidth.value, maxHeight.value)) {
             Row(modifier = Modifier.fillMaxSize()) {
@@ -52,6 +61,7 @@ internal fun VeyarcAppShell(
                     ManagerSelectionRail(selectionBar)
                 } else {
                     NavigationRail {
+                        Spacer(Modifier.weight(1f))
                         VeyarcDestination.entries.forEach { destination ->
                             NavigationRailItem(
                                 selected = selectedDestination == destination,
@@ -59,11 +69,12 @@ internal fun VeyarcAppShell(
                                 icon = { DestinationIcon(destination) },
                                 label = { Text(destination.label) },
                             )
+                            Spacer(Modifier.weight(1f))
                         }
                     }
                 }
                 Box(modifier = Modifier.weight(1f)) {
-                    destinationStates.SaveableStateProvider(selectedDestination.name) { content() }
+                    DestinationContent()
                 }
             }
         } else {
@@ -96,7 +107,7 @@ internal fun VeyarcAppShell(
                         .fillMaxSize()
                         .padding(padding),
                 ) {
-                    destinationStates.SaveableStateProvider(selectedDestination.name) { content() }
+                    DestinationContent()
                 }
             }
         }
@@ -114,4 +125,4 @@ private fun DestinationIcon(destination: VeyarcDestination) {
 internal fun usesNavigationRail(
     widthDp: Float,
     heightDp: Float,
-): Boolean = widthDp >= 840f && heightDp >= 480f
+): Boolean = widthDp > heightDp || (widthDp >= 840f && heightDp >= 480f)

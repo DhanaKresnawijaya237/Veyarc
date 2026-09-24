@@ -9,22 +9,23 @@ import org.junit.Test
 
 class VeyarcAppShellTest {
     @Test
-    fun navigationRailIsReservedForLargeWindows() {
+    fun navigationRailIsUsedForLandscapeAndLargeWindows() {
         assertFalse(usesNavigationRail(widthDp = 360f, heightDp = 800f))
-        assertFalse(usesNavigationRail(widthDp = 800f, heightDp = 360f))
-        assertFalse(usesNavigationRail(widthDp = 840f, heightDp = 479f))
-        assertFalse(usesNavigationRail(widthDp = 839f, heightDp = 600f))
+        assertTrue(usesNavigationRail(widthDp = 800f, heightDp = 360f))
+        assertTrue(usesNavigationRail(widthDp = 840f, heightDp = 479f))
+        assertTrue(usesNavigationRail(widthDp = 839f, heightDp = 600f))
+        assertFalse(usesNavigationRail(widthDp = 600f, heightDp = 839f))
         assertTrue(usesNavigationRail(widthDp = 840f, heightDp = 600f))
         assertTrue(usesNavigationRail(widthDp = 1280f, heightDp = 800f))
     }
 
     @Test
-    fun controllerRequestIsNotReplayedDuringStateRestoration() {
+    fun freshControllerRequestIsHandledAfterActivityRestoration() {
         val action = ReplayFloatingController.ACTION_OPEN_WORKFLOW
 
-        assertTrue(shouldHandleControllerRequest(restoringState = false, action = action))
-        assertFalse(shouldHandleControllerRequest(restoringState = true, action = action))
-        assertFalse(shouldHandleControllerRequest(restoringState = false, action = null))
+        assertTrue(shouldHandleControllerRequest(action))
+        // Handled intents have their action cleared, so rotation cannot replay them.
+        assertFalse(shouldHandleControllerRequest(null))
     }
 
     @Test
