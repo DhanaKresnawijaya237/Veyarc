@@ -345,8 +345,8 @@ fun SettingsScreen(
                 StatusRow("Android", "${Build.VERSION.RELEASE} • API ${Build.VERSION.SDK_INT}")
                 StatusRow("Device", "${Build.MANUFACTURER} ${Build.MODEL}")
                 Button(onClick = onOpenDiagnostics) { Text("Open diagnostics") }
-                OutlinedButton(onClick = { openGuide = "Android beta guide" to "android-beta-guide.md" }) {
-                    Text("Android beta guide")
+                OutlinedButton(onClick = { openGuide = "Android guide" to "android-beta-guide.md" }) {
+                    Text("Android guide")
                 }
                 OutlinedButton(onClick = { openGuide = "Device compatibility notes" to "android-device-compatibility.md" }) {
                     Text("Device compatibility notes")
