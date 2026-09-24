@@ -29,6 +29,8 @@ enum class EngineCapability {
     LONG_PRESS,
     SWIPE_PATH,
     WAIT,
+    STAGE_BOUNDARY,
+    JUMP,
     WAIT_UNTIL,
     IF_ELSE,
     REPEAT,
@@ -192,6 +194,16 @@ sealed interface ExecutionStep {
     data class Wait(
         override val id: String,
         val durationMs: DurationMillis,
+    ) : ExecutionStep
+
+    data class StageBoundary(
+        override val id: String,
+    ) : ExecutionStep
+
+    data class Jump(
+        override val id: String,
+        val targetStepId: String,
+        val maxVisits: Int,
     ) : ExecutionStep
 
     data class WaitUntil(

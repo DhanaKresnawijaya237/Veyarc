@@ -350,6 +350,18 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["type", "id"],
+          "properties": { "type": { "const": "stageBoundary" }, "id": { "$ref": "#/$defs/uuid" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "id", "targetStepId", "maxVisits"],
+          "properties": { "type": { "const": "jump" }, "id": { "$ref": "#/$defs/uuid" }, "targetStepId": { "$ref": "#/$defs/uuid" }, "maxVisits": { "type": "integer", "exclusiveMinimum": 0 } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["type", "id", "condition", "timeoutMs", "pollIntervalMs"],
           "properties": { "type": { "const": "waitUntil" }, "id": { "$ref": "#/$defs/uuid" }, "condition": { "$ref": "#/$defs/condition" }, "timeoutMs": { "$ref": "#/$defs/durationMs" }, "pollIntervalMs": { "type": "integer", "exclusiveMinimum": 0 } }
         },

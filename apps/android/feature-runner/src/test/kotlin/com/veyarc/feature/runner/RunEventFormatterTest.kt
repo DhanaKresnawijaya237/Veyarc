@@ -2,6 +2,8 @@ package com.veyarc.feature.runner
 
 import com.veyarc.engine.RunEvent
 import com.veyarc.model.AssetId
+import com.veyarc.model.AssetKind
+import com.veyarc.model.AssetReference
 import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.DurationMillis
 import com.veyarc.model.ImageMatchMode
@@ -63,6 +65,20 @@ class RunEventFormatterTest {
                     threshold = 0.9,
                 ),
             ),
+        )
+    }
+
+    @Test
+    fun usesTheTemplateDisplayNameWhenAvailable() {
+        val namedFormatter = RunEventFormatter(
+            document().copy(
+                assets = listOf(AssetReference(AssetId(ASSET_ID), AssetKind.IMAGE_TEMPLATE, "Login screen")),
+            ),
+        )
+
+        assertEquals(
+            "Wait for Screen matches Login screen started",
+            namedFormatter.format(RunEvent.StepStarted(10L, WAIT_ID)),
         )
     }
 

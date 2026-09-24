@@ -10,12 +10,14 @@ import com.veyarc.model.IfElse
 import com.veyarc.model.ImageAbsentCondition
 import com.veyarc.model.ImageMatchMode
 import com.veyarc.model.ImagePresentCondition
+import com.veyarc.model.Jump
 import com.veyarc.model.LaunchApp
 import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.NormalizedRect
 import com.veyarc.model.PackageName
 import com.veyarc.model.Repeat
 import com.veyarc.model.RunLimits
+import com.veyarc.model.StageBoundary
 import com.veyarc.model.TapPoint
 import com.veyarc.model.TapRegion
 import com.veyarc.model.ValidationErrorCode
@@ -64,6 +66,23 @@ class WorkflowCompilerTest {
             rejected = true
         }
         assertTrue(rejected)
+    }
+
+    @Test
+    fun calculatesBoundedJumpCostExactly() {
+        val plan = WorkflowCompiler.compileOrThrow(
+            document(
+                steps = listOf(
+                    StageBoundary(STEP_1),
+                    Wait(STEP_2, DurationMillis(10)),
+                    Jump(STEP_3, STEP_1, maxVisits = 3),
+                ),
+            ),
+        )
+
+        assertEquals(6L, plan.analysis.worstCaseStepCount)
+        assertEquals(30L, plan.analysis.worstCaseRuntimeMs)
+        assertEquals(3, plan.analysis.maxLoopBound)
     }
 
     @Test

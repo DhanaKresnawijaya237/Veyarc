@@ -97,6 +97,30 @@ data class Wait(
 }
 
 @Serializable
+@SerialName("stageBoundary")
+data class StageBoundary(
+    override val id: String,
+) : WorkflowStep {
+    init {
+        ContractChecks.requireStableId(id, "Step id")
+    }
+}
+
+@Serializable
+@SerialName("jump")
+data class Jump(
+    override val id: String,
+    val targetStepId: String,
+    val maxVisits: Int,
+) : WorkflowStep {
+    init {
+        ContractChecks.requireStableId(id, "Step id")
+        ContractChecks.requireStableId(targetStepId, "Jump target id")
+        require(maxVisits > 0) { "Jump visit count must be positive" }
+    }
+}
+
+@Serializable
 @SerialName("waitUntil")
 data class WaitUntil(
     override val id: String,

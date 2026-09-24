@@ -94,12 +94,32 @@ class WorkflowRunner {
     }
 
     private fun executeSteps(steps: List<ExecutionStep>, state: RunState): StepExecution {
-        steps.forEach { step ->
+        var index = 0
+        while (index in steps.indices) {
+            val step = steps[index]
             state.currentStepId = step.id
             state.currentPath = "/steps/${step.id}"
             ensureBoundary(state)
+            if (step is ExecutionStep.StageBoundary) {
+                index++
+                continue
+            }
             val execution = executeStep(step, state)
             if (execution.halt != null) return execution
+
+            if (step is ExecutionStep.Jump) {
+                val visits = state.jumpVisits.getOrDefault(step.id, 0) + 1
+                state.jumpVisits[step.id] = visits
+                if (visits < step.maxVisits) {
+                    val targetIndex = steps.indexOfFirst { it.id == step.targetStepId }
+                    if (targetIndex < 0 || targetIndex == index) {
+                        throw IllegalStateException("Jump target is not available in this stage")
+                    }
+                    index = targetIndex
+                    continue
+                }
+            }
+            index++
         }
         return StepExecution(StepOutcome.COMPLETED)
     }
@@ -179,6 +199,10 @@ class WorkflowRunner {
             state.clock.sleep(step.durationMs.value)
             StepExecution(StepOutcome.COMPLETED)
         }
+
+        is ExecutionStep.StageBoundary -> StepExecution(StepOutcome.COMPLETED)
+
+        is ExecutionStep.Jump -> StepExecution(StepOutcome.COMPLETED)
 
         is ExecutionStep.WaitUntil -> {
             awaitCondition(
@@ -617,6 +641,7 @@ class WorkflowRunner {
         val events = mutableListOf<RunEvent>()
         val stepOutcomes = collectStepIds(plan.steps).associateWith { StepOutcome.NOT_EXECUTED }.toMutableMap()
         val variables = LinkedHashMap(plan.variables.mapValues { it.value.initialValue })
+        val jumpVisits = mutableMapOf<String, Int>()
         var currentStepId: String? = null
         var currentPath: String = "/"
         var startupHandoffPending: Boolean = startupPackage != null && plan.steps.firstOrNull() is ExecutionStep.LaunchApp
@@ -655,7 +680,7 @@ class WorkflowRunner {
 
         fun collectStepIds(steps: List<ExecutionStep>): List<String> = buildList {
             steps.forEach { step ->
-                add(step.id)
+                if (step !is ExecutionStep.StageBoundary) add(step.id)
                 when (step) {
                     is ExecutionStep.IfElse -> {
                         addAll(collectStepIds(step.thenSteps))

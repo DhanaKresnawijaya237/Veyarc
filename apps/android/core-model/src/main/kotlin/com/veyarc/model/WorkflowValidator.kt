@@ -159,6 +159,7 @@ object WorkflowValidator {
                 "Workflow nesting depth exceeds maxNestingDepth",
             )
         }
+        val siblingStepIds = steps.mapTo(linkedSetOf()) { it.id }
         steps.forEachIndexed { index, step ->
             val stepPath = "$path/$index"
             when (step) {
@@ -218,6 +219,23 @@ object WorkflowValidator {
                     }
                 }
 
+                is Jump -> {
+                    if (step.targetStepId == step.id || step.targetStepId !in siblingStepIds) {
+                        errors += error(
+                            ValidationErrorCode.UNKNOWN_STEP_REFERENCE,
+                            "$stepPath/targetStepId",
+                            "Jump target must be another block or boundary in this stage",
+                        )
+                    }
+                    if (step.maxVisits > document.runLimits.maxLoopIterations) {
+                        errors += error(
+                            ValidationErrorCode.LIMIT_EXCEEDED,
+                            "$stepPath/maxVisits",
+                            "Jump count exceeds maxLoopIterations",
+                        )
+                    }
+                }
+
                 is LongPress -> validateDuration(step.durationMs.value, "$stepPath/durationMs", document, errors)
 
                 is SwipePath -> {
@@ -245,7 +263,7 @@ object WorkflowValidator {
 
                 is SetVariable -> validateSetVariable(step, stepPath, document, errors)
 
-                is Stop, is TapPoint, is TapRegion -> Unit
+                is StageBoundary, is Stop, is TapPoint, is TapRegion -> Unit
             }
 
             seenStepIds += step.id

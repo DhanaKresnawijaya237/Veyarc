@@ -21,6 +21,36 @@ class WorkflowContractTest {
     }
 
     @Test
+    fun stageBoundariesAndBoundedJumpsRoundTrip() {
+        val document = validDocument().copy(
+            steps = listOf(
+                StageBoundary(STEP_1),
+                Wait(STEP_2, DurationMillis(10)),
+                Jump(STEP_3, STEP_1, maxVisits = 5),
+            ),
+        )
+
+        val decoded = WorkflowJson.decode(WorkflowJson.encode(document))
+
+        assertEquals(document.steps, decoded.steps)
+        assertTrue(WorkflowValidator.validate(decoded).isEmpty())
+    }
+
+    @Test
+    fun jumpTargetsMustBeDirectSiblings() {
+        val document = validDocument().copy(
+            steps = listOf(
+                Repeat(STEP_1, count = 2, bodySteps = listOf(Wait(STEP_2, DurationMillis(10)))),
+                Jump(STEP_3, STEP_2, maxVisits = 2),
+            ),
+        )
+
+        val errors = WorkflowValidator.validate(document)
+
+        assertTrue(errors.any { it.code == ValidationErrorCode.UNKNOWN_STEP_REFERENCE })
+    }
+
+    @Test
     fun imageMatchModeRoundTripsAndOlderDocumentsUseRegionSearch() {
         val originalJson = WorkflowJson.encode(validDocument())
         assertTrue(originalJson.contains("\"matchMode\":\"appearsWithinRegion\""))

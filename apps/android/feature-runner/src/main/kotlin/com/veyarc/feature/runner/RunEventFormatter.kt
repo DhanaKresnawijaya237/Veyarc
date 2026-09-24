@@ -8,6 +8,7 @@ import com.veyarc.model.IfElse
 import com.veyarc.model.ImageAbsentCondition
 import com.veyarc.model.ImageMatchMode
 import com.veyarc.model.ImagePresentCondition
+import com.veyarc.model.Jump
 import com.veyarc.model.LaunchApp
 import com.veyarc.model.LongPress
 import com.veyarc.model.NormalizedCoordinate
@@ -17,6 +18,7 @@ import com.veyarc.model.OrientationCondition
 import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.Repeat
 import com.veyarc.model.SetVariable
+import com.veyarc.model.StageBoundary
 import com.veyarc.model.StepResultCondition
 import com.veyarc.model.Stop
 import com.veyarc.model.SwipePath
@@ -36,6 +38,7 @@ import kotlin.math.roundToInt
 internal class RunEventFormatter(private val document: WorkflowDocument) {
     private val stepsById = mutableMapOf<String, WorkflowStep>()
     private val conditionsByPath = mutableMapOf<String, Condition>()
+    private val assetNames = document.assets.associate { it.assetId.value to (it.displayName ?: "Selected image") }
 
     init {
         indexSteps(document.steps)
@@ -81,6 +84,10 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
 
         is Wait -> "Wait ${step.durationMs.value} ms"
 
+        is StageBoundary -> "Stage boundary"
+
+        is Jump -> "Continue from ${stepName(step.targetStepId)} up to ${step.maxVisits} times"
+
         is WaitUntil -> "Wait for ${conditionName(step.condition)}"
 
         is IfElse -> "If ${conditionName(step.condition)}"
@@ -104,6 +111,8 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
         is LongPress -> "Long press"
         is SwipePath -> "Swipe"
         is Wait -> "Wait"
+        is StageBoundary -> "Stage boundary"
+        is Jump -> "Go to"
         is WaitUntil -> "Wait for condition"
         is IfElse -> "If branch"
         is Repeat -> "Repeat"
@@ -118,11 +127,11 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
         is PixelColorCondition -> "Pixel color at ${formatPoint(condition.point)}"
 
         is ImagePresentCondition -> when (condition.matchMode) {
-            ImageMatchMode.SCREEN_STATE -> "Screen state"
-            ImageMatchMode.APPEARS_WITHIN_REGION -> "Image present in search region"
+            ImageMatchMode.SCREEN_STATE -> assetNames[condition.assetId.value]?.let { "Screen matches $it" } ?: "Screen state"
+            ImageMatchMode.APPEARS_WITHIN_REGION -> "${assetNames[condition.assetId.value] ?: "Selected image"} appears"
         }
 
-        is ImageAbsentCondition -> "Image absent from search region"
+        is ImageAbsentCondition -> "${assetNames[condition.assetId.value] ?: "Selected image"} is absent"
 
         is ForegroundPackageCondition -> "Foreground package ${condition.packageName.value}"
 

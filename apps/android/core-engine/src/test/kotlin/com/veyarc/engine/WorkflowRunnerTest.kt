@@ -4,6 +4,7 @@ import com.veyarc.model.ComparisonOperator
 import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.DurationMillis
 import com.veyarc.model.IfElse
+import com.veyarc.model.Jump
 import com.veyarc.model.LaunchApp
 import com.veyarc.model.LiteralOperand
 import com.veyarc.model.NormalizedCoordinate
@@ -13,6 +14,7 @@ import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.Repeat
 import com.veyarc.model.RunLimits
 import com.veyarc.model.SetVariable
+import com.veyarc.model.StageBoundary
 import com.veyarc.model.StepOutcome
 import com.veyarc.model.Stop
 import com.veyarc.model.StopReason
@@ -27,6 +29,7 @@ import com.veyarc.model.WaitUntil
 import com.veyarc.model.WhileStep
 import com.veyarc.model.WorkflowDocument
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -58,6 +61,26 @@ class WorkflowRunnerTest {
         assertEquals(StepOutcome.COMPLETED, result.stepOutcomes[STEP_1])
         assertEquals(StepOutcome.COMPLETED, result.stepOutcomes[STEP_2])
         assertEquals(StepOutcome.COMPLETED, result.stepOutcomes[STEP_3])
+    }
+
+    @Test
+    fun jumpsToABoundaryForTheConfiguredNumberOfPasses() {
+        val plan = plan(
+            steps = listOf(
+                StageBoundary(STEP_1),
+                TapPoint(STEP_2, NormalizedCoordinate(0.1, 0.2)),
+                Jump(STEP_3, STEP_1, maxVisits = 3),
+            ),
+        )
+        val driver = FakeDriver()
+
+        val result = WorkflowRunner().run(plan, driver, FakeClock())
+
+        assertTrue(result.isSuccess)
+        assertEquals(List(3) { "tap:10.0,40.0" }, driver.actions)
+        assertEquals(StepOutcome.COMPLETED, result.stepOutcomes[STEP_2])
+        assertEquals(StepOutcome.COMPLETED, result.stepOutcomes[STEP_3])
+        assertFalse(result.stepOutcomes.containsKey(STEP_1))
     }
 
     @Test

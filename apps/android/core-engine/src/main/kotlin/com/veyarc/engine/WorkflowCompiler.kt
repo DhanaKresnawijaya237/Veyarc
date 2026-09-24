@@ -6,6 +6,7 @@ import com.veyarc.model.ForegroundPackageCondition
 import com.veyarc.model.IfElse
 import com.veyarc.model.ImageAbsentCondition
 import com.veyarc.model.ImagePresentCondition
+import com.veyarc.model.Jump
 import com.veyarc.model.LaunchApp
 import com.veyarc.model.LongPress
 import com.veyarc.model.NotCondition
@@ -13,6 +14,7 @@ import com.veyarc.model.OrientationCondition
 import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.Repeat
 import com.veyarc.model.SetVariable
+import com.veyarc.model.StageBoundary
 import com.veyarc.model.StepResultCondition
 import com.veyarc.model.Stop
 import com.veyarc.model.TapPoint
@@ -86,6 +88,10 @@ object WorkflowCompiler {
                 )
 
                 is Wait -> ExecutionStep.Wait(step.id, step.durationMs)
+
+                is StageBoundary -> ExecutionStep.StageBoundary(step.id)
+
+                is Jump -> ExecutionStep.Jump(step.id, step.targetStepId, step.maxVisits)
 
                 is WaitUntil -> ExecutionStep.WaitUntil(
                     step.id,
@@ -197,6 +203,8 @@ object WorkflowCompiler {
         is LongPress -> EngineCapability.LONG_PRESS
         is com.veyarc.model.SwipePath -> EngineCapability.SWIPE_PATH
         is Wait -> EngineCapability.WAIT
+        is StageBoundary -> EngineCapability.STAGE_BOUNDARY
+        is Jump -> EngineCapability.JUMP
         is WaitUntil -> EngineCapability.WAIT_UNTIL
         is IfElse -> EngineCapability.IF_ELSE
         is Repeat -> EngineCapability.REPEAT
@@ -237,13 +245,32 @@ object WorkflowCompiler {
         var totalRuntime = Cost(0L, false)
         var maxDepth = depth
         var maxLoopBound = 0
+        val indices = steps.mapIndexed { index, step -> step.id to index }.toMap()
+        val jumpVisits = mutableMapOf<String, Int>()
+        var index = 0
+        var analyzedSteps = 0
 
-        steps.forEach { step ->
+        while (index in steps.indices) {
+            if (++analyzedSteps > MAX_CONTROL_FLOW_ANALYSIS_STEPS) {
+                return ControlFlowAnalysis(Long.MAX_VALUE, Long.MAX_VALUE, maxDepth, maxLoopBound, true)
+            }
+            val step = steps[index]
             val cost = analyzeStep(step, depth)
             totalSteps = add(totalSteps, cost.steps)
             totalRuntime = add(totalRuntime, cost.runtime)
             maxDepth = maxOf(maxDepth, cost.maxDepth)
             maxLoopBound = maxOf(maxLoopBound, cost.maxLoopBound)
+
+            if (step is Jump) {
+                val visits = jumpVisits.getOrDefault(step.id, 0) + 1
+                jumpVisits[step.id] = visits
+                val target = indices[step.targetStepId]
+                if (visits < step.maxVisits && target != null && target != index) {
+                    index = target
+                    continue
+                }
+            }
+            index++
         }
 
         return ControlFlowAnalysis(
@@ -265,12 +292,13 @@ object WorkflowCompiler {
             else -> 0L
         }
         val own = StepCost(
-            steps = Cost(1L, false),
+            steps = Cost(if (step is StageBoundary) 0L else 1L, false),
             runtime = Cost(ownRuntime, false),
             maxDepth = depth,
             maxLoopBound = when (step) {
                 is Repeat -> step.count
                 is WhileStep -> step.maxIterations
+                is Jump -> step.maxVisits
                 else -> 0
             },
         )
@@ -352,6 +380,8 @@ object WorkflowCompiler {
         if (value > Long.MAX_VALUE / multiplier) return Cost(Long.MAX_VALUE, true)
         return Cost(value * multiplier, inheritedOverflow)
     }
+
+    private const val MAX_CONTROL_FLOW_ANALYSIS_STEPS = 1_000_000
 
     private fun validateAnalysis(
         document: WorkflowDocument,
