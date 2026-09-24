@@ -218,7 +218,6 @@ class MainActivity : ComponentActivity() {
                                                 newWorkflowRequestId = 0
                                                 newWorkflowFolderId = null
                                             },
-                                            reducedDensity = uiPreferences.reducedDensity,
                                         )
 
                                         VeyarcDestination.RUNS -> RunManagerScreen(
@@ -235,12 +234,6 @@ class MainActivity : ComponentActivity() {
                                             onThemePreferenceChange = { preference ->
                                                 catalogScope.launch {
                                                     AppPreferences.setTheme(this@MainActivity, preference)
-                                                }
-                                            },
-                                            reducedDensity = uiPreferences.reducedDensity,
-                                            onReducedDensityChange = { reduced ->
-                                                catalogScope.launch {
-                                                    AppPreferences.setReducedDensity(this@MainActivity, reduced)
                                                 }
                                             },
                                             onOpenDiagnostics = {

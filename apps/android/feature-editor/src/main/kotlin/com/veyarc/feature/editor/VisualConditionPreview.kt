@@ -1,6 +1,8 @@
 package com.veyarc.feature.editor
 
+import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.util.LruCache
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -38,9 +40,12 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import com.veyarc.data.storage.AndroidKeystoreKeySource
+import com.veyarc.data.storage.DecodedTemplate
 import com.veyarc.data.storage.EncryptedTemplateAssetCodec
+import com.veyarc.model.AssetId
 import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.NormalizedRect
 import com.veyarc.model.bundle.BundleAsset
@@ -54,7 +59,7 @@ import kotlin.math.roundToInt
 import android.graphics.Color as AndroidColor
 
 private const val TEMPLATE_KEY_ALIAS = "veyarc.template-assets.v1"
-private const val PREVIEW_MAX_DIMENSION = 320
+private const val PREVIEW_MAX_DIMENSION = 1_200
 private const val DEVICE_PREVIEW_HEIGHT_DP = 360
 
 @Composable
@@ -63,6 +68,7 @@ internal fun ImageConditionPreview(
     displayWidthPx: Int,
     displayHeightPx: Int,
     asset: BundleAsset?,
+    backgroundAsset: BundleAsset? = null,
     screenStateMode: Boolean = false,
     onRegionChange: ((NormalizedRect) -> Unit)?,
 ) {
@@ -78,6 +84,20 @@ internal fun ImageConditionPreview(
                 ?: TemplatePreviewState.Unavailable
         } ?: TemplatePreviewState.Unavailable
     }
+    val backgroundPreview by produceState<TemplatePreviewData?>(null, backgroundAsset?.assetId) {
+        value = backgroundAsset?.let { selected ->
+            withContext(Dispatchers.Default) { decodeTemplatePreview(selected) }
+        }
+    }
+    val configuration = LocalConfiguration.current
+    val portrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+    val previewHeight = if (portrait && safeDisplayWidth > safeDisplayHeight) {
+        max(180f, configuration.screenWidthDp * safeDisplayHeight.toFloat() / safeDisplayWidth + 28f)
+    } else if (portrait) {
+        460f
+    } else {
+        DEVICE_PREVIEW_HEIGHT_DP.toFloat()
+    }
     val searchBounds = PreviewPixelBounds.from(region, safeDisplayWidth, safeDisplayHeight)
 
     Card(
@@ -86,11 +106,7 @@ internal fun ImageConditionPreview(
         Column(modifier = Modifier.padding(12.dp)) {
             Text("Current-device comparison", style = MaterialTheme.typography.titleSmall)
             Text(
-                if (screenStateMode) {
-                    "Veyarc compares this image once against the complete current screen. The image must have the same pixel dimensions and orientation as the screen."
-                } else {
-                    "The device outline uses the current screen dimensions. Drag the purple area or its corners to choose where Veyarc searches. The image is drawn at the same pixel scale used by the matcher."
-                },
+                if (screenStateMode) "Compare with the whole screen." else "Drag the area or its corners to choose where Veyarc searches.",
                 modifier = Modifier.padding(top = 4.dp),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -100,11 +116,12 @@ internal fun ImageConditionPreview(
                 displayWidthPx = safeDisplayWidth,
                 displayHeightPx = safeDisplayHeight,
                 template = (preview as? TemplatePreviewState.Ready)?.data,
+                backgroundTemplate = backgroundPreview,
                 onRegionChange = onRegionChange,
                 screenStateMode = screenStateMode,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(DEVICE_PREVIEW_HEIGHT_DP.dp)
+                    .height(previewHeight.dp)
                     .padding(top = 10.dp),
             )
             Text(
@@ -138,6 +155,7 @@ private fun DeviceComparisonPreview(
     displayWidthPx: Int,
     displayHeightPx: Int,
     template: TemplatePreviewData?,
+    backgroundTemplate: TemplatePreviewData?,
     onRegionChange: ((NormalizedRect) -> Unit)?,
     screenStateMode: Boolean,
     modifier: Modifier = Modifier,
@@ -160,6 +178,14 @@ private fun DeviceComparisonPreview(
                 .background(MaterialTheme.colorScheme.surface)
                 .border(2.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp)),
         ) {
+            backgroundTemplate?.let { data ->
+                Image(
+                    bitmap = data.image,
+                    contentDescription = "Selected screen background",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.FillBounds,
+                )
+            }
             template?.let { data ->
                 val templateWidth = screenWidth * data.widthPx.toFloat() / displayWidthPx
                 val templateHeight = screenHeight * data.heightPx.toFloat() / displayHeightPx
@@ -301,13 +327,13 @@ private fun TemplateScaleDetails(
             if (screenStateMode) {
                 if (data.widthPx == displayWidthPx && data.heightPx == displayHeightPx) {
                     Text(
-                        "Ready for one fixed-position coarse check followed by full-resolution verification.",
+                        "Ready",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary,
                     )
                 } else {
                     Text(
-                        "This image does not match the current screen dimensions. Add an uncropped $displayWidthPx × $displayHeightPx screenshot for screen-state matching.",
+                        "Use a $displayWidthPx × $displayHeightPx full-screen image.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )
@@ -320,23 +346,11 @@ private fun TemplateScaleDetails(
                         color = MaterialTheme.colorScheme.error,
                     )
 
-                    else -> Text(
-                        "Possible positions at this scale: $originCount. The centered placement above only shows size; Veyarc checks each valid position inside the purple area.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    else -> Unit
                 }
                 if (data.widthPx.toLong() * data.heightPx > 1_000_000L || heightPercent > 70.0) {
                     Text(
-                        "This template is too large for a reliable search. Remove it and add a small, stable crop instead.",
-                        modifier = Modifier.padding(top = 4.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-                if (region.width >= 0.9 && data.widthPx * 2 <= displayWidthPx + 2) {
-                    Text(
-                        "If this image came from a full-screen screenshot, remove it and add it again. Older builds reduced large images and lost their screen scale.",
+                        "Use a smaller crop for faster matching.",
                         modifier = Modifier.padding(top = 4.dp),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
@@ -383,53 +397,76 @@ private data class PreviewPixelBounds(
     }
 }
 
-internal fun decodeTemplatePreview(asset: BundleAsset): TemplatePreviewData? = try {
+internal fun decodeTemplatePreview(
+    asset: BundleAsset,
+    maxDimension: Int = PREVIEW_MAX_DIMENSION,
+): TemplatePreviewData? = try {
+    require(maxDimension > 0)
+    cachedTemplatePreview(asset.assetId, maxDimension)?.let { return it }
     val decoded = EncryptedTemplateAssetCodec(
         AndroidKeystoreKeySource(TEMPLATE_KEY_ALIAS),
     ).decrypt(asset.assetId, asset.bytes)
     try {
-        val rgbaBytes = decoded.copyRgbaBytes()
-        try {
-            val scale = min(
-                1f,
-                min(
-                    PREVIEW_MAX_DIMENSION.toFloat() / decoded.widthPx,
-                    PREVIEW_MAX_DIMENSION.toFloat() / decoded.heightPx,
-                ),
-            )
-            val previewWidth = max(1, (decoded.widthPx * scale).roundToInt())
-            val previewHeight = max(1, (decoded.heightPx * scale).roundToInt())
-            val createdBitmap = Bitmap.createBitmap(previewWidth, previewHeight, Bitmap.Config.ARGB_8888)
-            val pixels = IntArray(previewWidth * previewHeight)
-            try {
-                for (y in 0 until previewHeight) {
-                    val sourceY = min(decoded.heightPx - 1, y * decoded.heightPx / previewHeight)
-                    for (x in 0 until previewWidth) {
-                        val sourceX = min(decoded.widthPx - 1, x * decoded.widthPx / previewWidth)
-                        val sourceOffset = (sourceY * decoded.widthPx + sourceX) * 4
-                        pixels[y * previewWidth + x] = AndroidColor.argb(
-                            rgbaBytes[sourceOffset + 3].toInt() and 0xFF,
-                            rgbaBytes[sourceOffset].toInt() and 0xFF,
-                            rgbaBytes[sourceOffset + 1].toInt() and 0xFF,
-                            rgbaBytes[sourceOffset + 2].toInt() and 0xFF,
-                        )
-                    }
-                }
-                createdBitmap.setPixels(pixels, 0, previewWidth, 0, 0, previewWidth, previewHeight)
-            } finally {
-                pixels.fill(0)
-            }
-            TemplatePreviewData(
-                image = createdBitmap.asImageBitmap(),
-                widthPx = decoded.widthPx,
-                heightPx = decoded.heightPx,
-            )
-        } finally {
-            rgbaBytes.fill(0)
-        }
+        decodeTemplatePreview(asset.assetId, decoded, maxDimension)
     } finally {
         decoded.clear()
     }
 } catch (_: Exception) {
     null
+}
+
+internal fun cachedTemplatePreview(assetId: AssetId, maxDimension: Int): TemplatePreviewData? = templatePreviewCache.get("${assetId.value}:$maxDimension")
+
+internal fun clearTemplatePreviewCache() = templatePreviewCache.evictAll()
+
+internal fun decodeTemplatePreview(
+    assetId: AssetId,
+    decoded: DecodedTemplate,
+    maxDimension: Int,
+): TemplatePreviewData? = try {
+    require(maxDimension > 0)
+    val cacheKey = "${assetId.value}:$maxDimension"
+    templatePreviewCache.get(cacheKey)?.let { return it }
+    val rgbaBytes = decoded.copyRgbaBytes()
+    try {
+        val scale = min(
+            1f,
+            min(maxDimension.toFloat() / decoded.widthPx, maxDimension.toFloat() / decoded.heightPx),
+        )
+        val previewWidth = max(1, (decoded.widthPx * scale).roundToInt())
+        val previewHeight = max(1, (decoded.heightPx * scale).roundToInt())
+        val createdBitmap = Bitmap.createBitmap(previewWidth, previewHeight, Bitmap.Config.ARGB_8888)
+        val pixels = IntArray(previewWidth * previewHeight)
+        try {
+            for (y in 0 until previewHeight) {
+                val sourceY = min(decoded.heightPx - 1, y * decoded.heightPx / previewHeight)
+                for (x in 0 until previewWidth) {
+                    val sourceX = min(decoded.widthPx - 1, x * decoded.widthPx / previewWidth)
+                    val sourceOffset = (sourceY * decoded.widthPx + sourceX) * 4
+                    pixels[y * previewWidth + x] = AndroidColor.argb(
+                        rgbaBytes[sourceOffset + 3].toInt() and 0xFF,
+                        rgbaBytes[sourceOffset].toInt() and 0xFF,
+                        rgbaBytes[sourceOffset + 1].toInt() and 0xFF,
+                        rgbaBytes[sourceOffset + 2].toInt() and 0xFF,
+                    )
+                }
+            }
+            createdBitmap.setPixels(pixels, 0, previewWidth, 0, 0, previewWidth, previewHeight)
+        } finally {
+            pixels.fill(0)
+        }
+        TemplatePreviewData(
+            image = createdBitmap.asImageBitmap(),
+            widthPx = decoded.widthPx,
+            heightPx = decoded.heightPx,
+        ).also { templatePreviewCache.put(cacheKey, it) }
+    } finally {
+        rgbaBytes.fill(0)
+    }
+} catch (_: Exception) {
+    null
+}
+
+private val templatePreviewCache = object : LruCache<String, TemplatePreviewData>(16 * 1024 * 1024) {
+    override fun sizeOf(key: String, value: TemplatePreviewData): Int = value.image.width * value.image.height * 4
 }

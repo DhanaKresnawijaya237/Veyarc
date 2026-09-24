@@ -71,8 +71,6 @@ fun SettingsScreen(
     refreshGeneration: Int,
     themePreference: ThemePreference,
     onThemePreferenceChange: (ThemePreference) -> Unit,
-    reducedDensity: Boolean,
-    onReducedDensityChange: (Boolean) -> Unit,
     onOpenDiagnostics: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -261,12 +259,6 @@ fun SettingsScreen(
                             Text(option.name.lowercase().replaceFirstChar(Char::uppercase))
                         }
                     }
-                }
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Compact workflow editor", style = MaterialTheme.typography.titleMedium)
-                    }
-                    Switch(checked = reducedDensity, onCheckedChange = onReducedDensityChange)
                 }
             }
         }

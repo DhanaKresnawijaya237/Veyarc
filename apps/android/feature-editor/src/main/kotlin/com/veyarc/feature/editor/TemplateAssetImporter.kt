@@ -4,6 +4,7 @@ import android.content.ContentResolver
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.BitmapRegionDecoder
+import android.graphics.Matrix
 import android.graphics.Rect
 import android.net.Uri
 import androidx.compose.ui.graphics.ImageBitmap
@@ -24,7 +25,7 @@ import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
 
-private const val CROP_PREVIEW_MAX_PIXELS = 1_000_000L
+private const val CROP_PREVIEW_MAX_PIXELS = DecodedTemplate.MAX_TEMPLATE_PIXELS
 private const val MAX_SOURCE_IMAGE_BYTES = 64L * 1024L * 1024L
 
 private const val TEMPLATE_MIME_TYPE = "image/x-veyarc-rgba"
@@ -71,9 +72,11 @@ internal fun importTemplateAsset(
     contentResolver: ContentResolver,
     uri: Uri,
     crop: NormalizedRect,
+    rotationQuarterTurns: Int = 0,
 ): BundleAsset {
     val (sourceWidth, sourceHeight) = readImageBounds(contentResolver, uri)
-    val cropBounds = crop.toPixelBounds(sourceWidth, sourceHeight)
+    val turns = rotationQuarterTurns.mod(4)
+    val cropBounds = crop.inSourceOrientation(turns).toPixelBounds(sourceWidth, sourceHeight)
     val cropPixelCount = cropBounds.width().toLong() * cropBounds.height()
     if (cropPixelCount > DecodedTemplate.MAX_TEMPLATE_PIXELS) {
         throw TemplateAssetImportException(
@@ -82,7 +85,75 @@ internal fun importTemplateAsset(
     }
 
     val bitmap = decodeRegion(contentResolver, uri, cropBounds)
-    return encryptTemplateBitmap(bitmap)
+    val rotated = try {
+        bitmap.rotateClockwise(turns)
+    } catch (error: Exception) {
+        bitmap.recycle()
+        throw error
+    }
+    if (rotated !== bitmap) bitmap.recycle()
+    return encryptTemplateBitmap(rotated)
+}
+
+/** Rotates an existing encrypted crop while preserving its asset id and references. */
+internal fun rotateTemplateAssetClockwise(asset: BundleAsset): BundleAsset {
+    require(asset.kind == AssetKind.IMAGE_TEMPLATE && asset.encrypted) { "Only encrypted image templates can be rotated" }
+    val codec = EncryptedTemplateAssetCodec(AndroidKeystoreKeySource(TEMPLATE_ASSET_KEY_ALIAS))
+    val decoded = codec.decrypt(asset.assetId, asset.bytes)
+    return try {
+        val sourceBytes = decoded.copyRgbaBytes()
+        val rotatedBytes = try {
+            rotateRgbaClockwise(sourceBytes, decoded.widthPx, decoded.heightPx)
+        } finally {
+            sourceBytes.fill(0)
+        }
+        val rotated = DecodedTemplate(decoded.heightPx, decoded.widthPx, rotatedBytes)
+        try {
+            BundleAsset(
+                assetId = asset.assetId,
+                kind = asset.kind,
+                mimeType = asset.mimeType,
+                bytes = codec.encrypt(asset.assetId, rotated),
+                encrypted = true,
+                widthPx = rotated.widthPx,
+                heightPx = rotated.heightPx,
+            )
+        } finally {
+            rotated.clear()
+            rotatedBytes.fill(0)
+        }
+    } finally {
+        decoded.clear()
+    }
+}
+
+internal fun rotateRgbaClockwise(bytes: ByteArray, widthPx: Int, heightPx: Int): ByteArray {
+    require(widthPx > 0 && heightPx > 0 && bytes.size.toLong() == widthPx.toLong() * heightPx * 4L)
+    val rotated = ByteArray(bytes.size)
+    for (y in 0 until heightPx) {
+        for (x in 0 until widthPx) {
+            val source = (y * widthPx + x) * 4
+            val targetX = heightPx - 1 - y
+            val targetY = x
+            val target = (targetY * heightPx + targetX) * 4
+            bytes.copyInto(rotated, target, source, source + 4)
+        }
+    }
+    return rotated
+}
+
+internal fun NormalizedRect.rotatedClockwise(): NormalizedRect = NormalizedRect(
+    x = 1.0 - y - height,
+    y = x,
+    width = height,
+    height = width,
+)
+
+internal fun NormalizedRect.inSourceOrientation(rotationQuarterTurns: Int): NormalizedRect = when (rotationQuarterTurns.mod(4)) {
+    0 -> this
+    1 -> NormalizedRect(y, 1.0 - x - width, height, width)
+    2 -> NormalizedRect(1.0 - x - width, 1.0 - y - height, width, height)
+    else -> NormalizedRect(1.0 - y - height, x, height, width)
 }
 
 private fun readImageBounds(contentResolver: ContentResolver, uri: Uri): Pair<Int, Int> {
@@ -146,6 +217,20 @@ private fun decodeRegion(contentResolver: ContentResolver, uri: Uri, bounds: Rec
     }
 }
 
+private fun Bitmap.rotateClockwise(quarterTurns: Int): Bitmap {
+    val turns = quarterTurns.mod(4)
+    if (turns == 0) return this
+    return Bitmap.createBitmap(
+        this,
+        0,
+        0,
+        width,
+        height,
+        Matrix().apply { postRotate(turns * 90f) },
+        true,
+    )
+}
+
 private fun openBoundedImageStream(contentResolver: ContentResolver, uri: Uri): InputStream {
     val input = contentResolver.openInputStream(uri)
         ?: throw TemplateAssetImportException("The selected file could not be opened")
@@ -205,6 +290,8 @@ private fun encryptTemplateBitmap(bitmap: Bitmap): BundleAsset = try {
         mimeType = TEMPLATE_MIME_TYPE,
         bytes = encrypted,
         encrypted = true,
+        widthPx = bitmap.width,
+        heightPx = bitmap.height,
     )
 } finally {
     bitmap.recycle()

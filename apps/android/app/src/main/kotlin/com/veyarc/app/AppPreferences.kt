@@ -1,7 +1,6 @@
 package com.veyarc.app
 
 import android.content.Context
-import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -20,14 +19,12 @@ enum class ThemePreference {
 
 data class AppUiPreferences(
     val theme: ThemePreference = ThemePreference.SYSTEM,
-    val reducedDensity: Boolean = false,
 )
 
 private val Context.uiPreferencesStore by preferencesDataStore(name = "veyarc_ui")
 
 object AppPreferences {
     private val themeKey = stringPreferencesKey("theme")
-    private val reducedDensityKey = booleanPreferencesKey("reduced_density")
     private val workflowFolderOrderKey = stringPreferencesKey("workflow_folder_order")
     private val runFolderOrderKey = stringPreferencesKey("run_folder_order")
 
@@ -38,16 +35,11 @@ object AppPreferences {
                 theme = preferences[themeKey]
                     ?.let { saved -> ThemePreference.entries.firstOrNull { it.name == saved } }
                     ?: ThemePreference.SYSTEM,
-                reducedDensity = preferences[reducedDensityKey] ?: false,
             )
         }
 
     suspend fun setTheme(context: Context, theme: ThemePreference) {
         context.applicationContext.uiPreferencesStore.edit { it[themeKey] = theme.name }
-    }
-
-    suspend fun setReducedDensity(context: Context, reduced: Boolean) {
-        context.applicationContext.uiPreferencesStore.edit { it[reducedDensityKey] = reduced }
     }
 
     suspend fun workflowFolderOrder(context: Context): List<String> = folderOrder(context, workflowFolderOrderKey)

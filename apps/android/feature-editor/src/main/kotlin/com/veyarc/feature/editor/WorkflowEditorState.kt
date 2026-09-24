@@ -3,6 +3,9 @@ package com.veyarc.feature.editor
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.veyarc.data.storage.RevisionSummary
+import com.veyarc.data.storage.WorkflowAssetDescriptor
+import com.veyarc.data.storage.WorkflowRevisionEditorData
 import com.veyarc.model.AndCondition
 import com.veyarc.model.AssetReference
 import com.veyarc.model.Condition
@@ -13,6 +16,7 @@ import com.veyarc.model.IfElse
 import com.veyarc.model.ImageAbsentCondition
 import com.veyarc.model.ImageMatchMode
 import com.veyarc.model.ImagePresentCondition
+import com.veyarc.model.Jump
 import com.veyarc.model.LaunchApp
 import com.veyarc.model.LongPress
 import com.veyarc.model.NormalizedCoordinate
@@ -24,12 +28,14 @@ import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.RegionAnchor
 import com.veyarc.model.Repeat
 import com.veyarc.model.RunLimits
+import com.veyarc.model.StageBoundary
 import com.veyarc.model.Stop
 import com.veyarc.model.StopReason
 import com.veyarc.model.SwipePath
 import com.veyarc.model.TapPoint
 import com.veyarc.model.TapRegion
 import com.veyarc.model.TimedPoint
+import com.veyarc.model.ValidationErrorCode
 import com.veyarc.model.ViewportSpec
 import com.veyarc.model.Wait
 import com.veyarc.model.WaitUntil
@@ -47,6 +53,8 @@ enum class WorkflowStepKind {
     LONG_PRESS,
     SWIPE_PATH,
     WAIT,
+    STAGE_BOUNDARY,
+    JUMP,
     WAIT_UNTIL,
     IF_ELSE,
     REPEAT,
@@ -73,6 +81,10 @@ data class StepListPath(
     fun child(parentId: String, branch: NestedBranch): StepListPath = copy(segments = segments + StepListSegment(parentId, branch))
 }
 
+internal data class GeometryTarget(val path: StepListPath, val index: Int)
+
+internal data class ConditionTarget(val path: StepListPath, val index: Int)
+
 data class DraftIssue(
     val path: String,
     val message: String,
@@ -81,6 +93,7 @@ data class DraftIssue(
 data class DraftBuildResult(
     val bundle: WorkflowBundle?,
     val issues: List<DraftIssue>,
+    val document: WorkflowDocument? = bundle?.document,
 )
 
 class WorkflowEditorSession {
@@ -88,9 +101,17 @@ class WorkflowEditorSession {
         private set
     var destinationFolderId by mutableStateOf<String?>(null)
         private set
+    internal var geometryTarget by mutableStateOf<GeometryTarget?>(null)
+    internal var conditionTarget by mutableStateOf<ConditionTarget?>(null)
+    internal var pendingTemplateCrop by mutableStateOf<TemplateCropDraft?>(null)
     private var savedDraft by mutableStateOf<WorkflowDraft?>(null)
     private var undoStack by mutableStateOf<List<WorkflowDraft>>(emptyList())
     private var redoStack by mutableStateOf<List<WorkflowDraft>>(emptyList())
+    private var validatedDraft: WorkflowDraft? = null
+    private var validatedResult: DraftBuildResult? = null
+    private var revisionWorkflowId: String? = null
+    var revisionSummaries by mutableStateOf<List<RevisionSummary>>(emptyList())
+        private set
 
     val isDirty: Boolean
         get() = draft?.persistedContent() != savedDraft?.persistedContent()
@@ -107,9 +128,11 @@ class WorkflowEditorSession {
         } == true
 
     fun create(viewport: ViewportSpec, folderId: String? = null) {
+        dismissEditors()
         draft = WorkflowDraft.newDefault(viewport)
         destinationFolderId = folderId
         savedDraft = null
+        prepareRevisionCache(draft!!.workflowId)
         clearHistory()
     }
 
@@ -118,17 +141,33 @@ class WorkflowEditorSession {
         recordingJournalFileName: String? = null,
         latestKnownRevision: Int = bundle.document.revision,
     ) {
+        dismissEditors()
         val opened = WorkflowDraft.fromBundle(bundle, recordingJournalFileName, latestKnownRevision)
         draft = opened
         destinationFolderId = null
         savedDraft = opened
+        prepareRevisionCache(opened.workflowId)
+        clearHistory()
+    }
+
+    fun open(
+        revision: WorkflowRevisionEditorData,
+        recordingJournalFileName: String? = null,
+        latestKnownRevision: Int = revision.revision.document.revision,
+    ) {
+        dismissEditors()
+        val opened = WorkflowDraft.fromRevision(revision, recordingJournalFileName, latestKnownRevision)
+        draft = opened
+        destinationFolderId = null
+        savedDraft = opened
+        prepareRevisionCache(opened.workflowId)
         clearHistory()
     }
 
     fun update(updated: WorkflowDraft) {
         val current = draft ?: return
         if (current.persistedContent() != updated.persistedContent()) {
-            undoStack = undoStack + current
+            undoStack = (undoStack + current).takeLast(MAX_HISTORY_ENTRIES)
             redoStack = emptyList()
         }
         draft = updated
@@ -138,7 +177,7 @@ class WorkflowEditorSession {
         val current = draft ?: return
         val previous = undoStack.lastOrNull() ?: return
         undoStack = undoStack.dropLast(1)
-        redoStack = redoStack + current
+        redoStack = (redoStack + current).takeLast(MAX_HISTORY_ENTRIES)
         draft = previous
     }
 
@@ -146,7 +185,7 @@ class WorkflowEditorSession {
         val current = draft ?: return
         val next = redoStack.lastOrNull() ?: return
         redoStack = redoStack.dropLast(1)
-        undoStack = undoStack + current
+        undoStack = (undoStack + current).takeLast(MAX_HISTORY_ENTRIES)
         draft = next
     }
 
@@ -161,12 +200,54 @@ class WorkflowEditorSession {
         draft = null
         destinationFolderId = null
         savedDraft = null
+        validatedDraft = null
+        validatedResult = null
+        revisionWorkflowId = null
+        revisionSummaries = emptyList()
+        dismissEditors()
         clearHistory()
+    }
+
+    fun validationFor(draft: WorkflowDraft): DraftBuildResult {
+        if (validatedDraft === draft) return requireNotNull(validatedResult)
+        return draft.buildBundle().also { result ->
+            validatedDraft = draft
+            validatedResult = result
+        }
+    }
+
+    fun cachedRevisionSummaries(
+        workflowId: String,
+        savedRevision: Int?,
+    ): List<RevisionSummary>? = revisionSummaries.takeIf {
+        revisionWorkflowId == workflowId && (savedRevision == null || it.any { summary -> summary.revision == savedRevision })
+    }
+
+    fun cacheRevisionSummaries(workflowId: String, summaries: List<RevisionSummary>) {
+        revisionWorkflowId = workflowId
+        revisionSummaries = summaries
+    }
+
+    private fun dismissEditors() {
+        geometryTarget = null
+        conditionTarget = null
+        pendingTemplateCrop = null
     }
 
     private fun clearHistory() {
         undoStack = emptyList()
         redoStack = emptyList()
+    }
+
+    private fun prepareRevisionCache(workflowId: String) {
+        if (revisionWorkflowId != workflowId) {
+            revisionWorkflowId = workflowId
+            revisionSummaries = emptyList()
+        }
+    }
+
+    private companion object {
+        const val MAX_HISTORY_ENTRIES = 100
     }
 }
 
@@ -181,6 +262,7 @@ data class WorkflowDraft(
     val runLimits: RunLimits,
     val variables: Map<String, com.veyarc.model.VariableDeclaration>,
     val assets: List<BundleAsset>,
+    val assetDescriptors: List<WorkflowAssetDescriptor> = assets.map { it.toDescriptor() },
     val producerVersion: String,
     val steps: List<WorkflowStep>,
     val assetNames: Map<String, String> = emptyMap(),
@@ -226,8 +308,8 @@ data class WorkflowDraft(
                 viewport = viewport,
                 runLimits = runLimits,
                 variables = variables,
-                assets = assets.map { asset ->
-                    AssetReference(asset.assetId, asset.kind, assetNames[asset.assetId.value])
+                assets = assetDescriptors.map { asset ->
+                    AssetReference(asset.assetId, asset.kind, assetNames[asset.assetId.value] ?: asset.displayName)
                 },
                 steps = steps,
             )
@@ -238,19 +320,27 @@ data class WorkflowDraft(
             )
         }
 
+        val activeAssetIds = assetDescriptors.mapTo(mutableSetOf()) { it.assetId.value }
+        val missingAssetIds = referencedAssetIds() - activeAssetIds
         val validationIssues = WorkflowValidator.validate(document).map { error ->
-            DraftIssue(error.path, error.message)
+            if (error.code == ValidationErrorCode.MISSING_ASSET) {
+                val missingId = missingAssetIds.firstOrNull { it in error.message }
+                val displayName = missingId?.let(assetNames::get) ?: "Deleted image"
+                DraftIssue(error.path, "$displayName is still used")
+            } else {
+                DraftIssue(error.path, error.message)
+            }
         }
         if (validationIssues.isNotEmpty()) return DraftBuildResult(null, validationIssues)
 
-        return DraftBuildResult(
-            WorkflowBundle(
-                document = document,
-                assets = assets,
-                producerVersion = producerVersion,
-            ),
-            emptyList(),
-        )
+        val loaded = assets.associateBy { it.assetId }
+        val completeAssets = assetDescriptors.mapNotNull { loaded[it.assetId] }
+        val bundle = if (completeAssets.size == assetDescriptors.size) {
+            WorkflowBundle(document, completeAssets, producerVersion)
+        } else {
+            null
+        }
+        return DraftBuildResult(bundle, emptyList(), document)
     }
 
     fun toggleCollapsed(stepId: String): WorkflowDraft = copy(
@@ -266,7 +356,9 @@ data class WorkflowDraft(
     fun addStep(path: StepListPath, kind: WorkflowStepKind, defaultPackage: String): WorkflowDraft = insertStep(path, stepsAt(path).size, kind, defaultPackage)
 
     fun insertStep(path: StepListPath, index: Int, kind: WorkflowStepKind, defaultPackage: String): WorkflowDraft {
-        val step = newStep(kind, defaultPackage)
+        val current = stepsAt(path)
+        val jumpTargetId = current.getOrNull((index - 1).coerceAtLeast(0))?.id
+        val step = newStep(kind, defaultPackage, jumpTargetId)
         return updateList(path) { current ->
             current.toMutableList().apply { add(index.coerceIn(0, size), step) }
         }
@@ -285,6 +377,23 @@ data class WorkflowDraft(
 
     fun moveStepTo(path: StepListPath, index: Int, destination: Int): WorkflowDraft = updateList(path) { current ->
         moveStepInList(current, index, destination)
+    }
+
+    fun moveStepTo(
+        sourcePath: StepListPath,
+        sourceIndex: Int,
+        destinationPath: StepListPath,
+        destinationIndex: Int,
+    ): WorkflowDraft {
+        val step = stepsAt(sourcePath).getOrNull(sourceIndex) ?: return this
+        if (destinationPath.segments.any { it.parentId == step.id }) return this
+        if (sourcePath == destinationPath) return moveStepTo(sourcePath, sourceIndex, destinationIndex)
+        val withoutSource = updateList(sourcePath) { current ->
+            current.toMutableList().apply { removeAt(sourceIndex) }
+        }
+        return withoutSource.updateList(destinationPath) { current ->
+            current.toMutableList().apply { add(destinationIndex.coerceIn(0, size), step) }
+        }
     }
 
     private fun moveStepInList(current: List<WorkflowStep>, index: Int, destination: Int): List<WorkflowStep> {
@@ -313,25 +422,42 @@ data class WorkflowDraft(
         }
     }
 
-    fun addAsset(asset: BundleAsset): WorkflowDraft {
-        val usedNames = assetNames.values.mapTo(mutableSetOf()) { it.lowercase() }
+    fun activeAssetNames(): Set<String> = assetDescriptors.mapNotNullTo(mutableSetOf()) {
+        assetNames[it.assetId.value]
+    }
+
+    fun referencedAssetIds(): Set<String> = buildSet { steps.forEach { addStepAssetReferences(it) } }
+
+    fun addAsset(asset: BundleAsset, defaultNamePrefix: String = "Template"): WorkflowDraft {
+        val usedNames = activeAssetNames().mapTo(mutableSetOf()) { it.lowercase() }
         var index = 1
-        while ("template $index" in usedNames) index += 1
+        while ("$defaultNamePrefix $index".lowercase() in usedNames) index += 1
         return copy(
             assets = (assets.filterNot { it.assetId == asset.assetId } + asset).sortedBy { it.assetId.value },
-            assetNames = assetNames + (asset.assetId.value to "Template $index"),
+            assetDescriptors = (
+                assetDescriptors.filterNot { it.assetId == asset.assetId } + asset.toDescriptor()
+                ).sortedBy { it.assetId.value },
+            assetNames = assetNames + (asset.assetId.value to "$defaultNamePrefix $index"),
         )
     }
 
+    fun replaceAsset(asset: BundleAsset): WorkflowDraft = copy(
+        assets = (assets.filterNot { it.assetId == asset.assetId } + asset).sortedBy { it.assetId.value },
+        assetDescriptors = assetDescriptors.map { existing ->
+            if (existing.assetId == asset.assetId) asset.toDescriptor(existing.displayName) else existing
+        },
+    )
+
     fun removeAsset(assetId: com.veyarc.model.AssetId): WorkflowDraft = copy(
         assets = assets.filterNot { it.assetId == assetId },
-        assetNames = assetNames - assetId.value,
+        assetDescriptors = assetDescriptors.filterNot { it.assetId == assetId },
     )
 
     fun renameAsset(assetId: com.veyarc.model.AssetId, name: String): WorkflowDraft {
         val normalized = name.trim()
         require(normalized.isNotEmpty() && normalized.length <= 64) { "Template name must be 1 to 64 characters" }
-        require(assetNames.none { (id, existing) -> id != assetId.value && existing.equals(normalized, ignoreCase = true) }) {
+        val activeIds = assetDescriptors.mapTo(mutableSetOf()) { it.assetId.value }
+        require(assetNames.none { (id, existing) -> id in activeIds && id != assetId.value && existing.equals(normalized, ignoreCase = true) }) {
             "Template names must be unique"
         }
         return copy(assetNames = assetNames + (assetId.value to normalized))
@@ -378,6 +504,7 @@ data class WorkflowDraft(
                 runLimits = defaultRunLimits(),
                 variables = emptyMap(),
                 assets = emptyList(),
+                assetDescriptors = emptyList(),
                 producerVersion = "android-editor",
                 steps = defaultSteps,
                 assetNames = emptyMap(),
@@ -399,12 +526,40 @@ data class WorkflowDraft(
             runLimits = bundle.document.runLimits,
             variables = bundle.document.variables,
             assets = bundle.assets,
+            assetDescriptors = bundle.assets.map { asset ->
+                asset.toDescriptor(bundle.document.assets.firstOrNull { it.assetId == asset.assetId }?.displayName)
+            },
             producerVersion = bundle.producerVersion,
             steps = bundle.document.steps,
             assetNames = defaultAssetNames(bundle.document.assets),
             collapsedStepIds = bundle.document.steps.allStepIds(),
             recordingJournalFileName = recordingJournalFileName,
         )
+
+        fun fromRevision(
+            revision: WorkflowRevisionEditorData,
+            recordingJournalFileName: String? = null,
+            latestKnownRevision: Int = revision.revision.document.revision,
+        ): WorkflowDraft {
+            val document = revision.revision.document
+            return WorkflowDraft(
+                workflowId = document.id,
+                lastSavedRevision = document.revision,
+                latestKnownRevision = latestKnownRevision,
+                name = document.name,
+                allowedPackagesText = document.allowedPackages.joinToString(", ") { it.value },
+                viewport = document.viewport,
+                runLimits = document.runLimits,
+                variables = document.variables,
+                assets = emptyList(),
+                assetDescriptors = revision.assets,
+                producerVersion = revision.revision.producerVersion,
+                steps = document.steps,
+                assetNames = defaultAssetNames(document.assets),
+                collapsedStepIds = document.steps.allStepIds(),
+                recordingJournalFileName = recordingJournalFileName,
+            )
+        }
 
         private fun defaultViewport() = ViewportSpec(
             recordedWidthPx = 1080,
@@ -462,6 +617,15 @@ private fun WorkflowDraft.persistedContent(): WorkflowDraft = copy(
     recordingJournalFileName = null,
 )
 
+private fun BundleAsset.toDescriptor(displayName: String? = null) = WorkflowAssetDescriptor(
+    assetId = assetId,
+    kind = kind,
+    displayName = displayName,
+    mimeType = mimeType,
+    widthPx = widthPx,
+    heightPx = heightPx,
+)
+
 private fun WorkflowStep.childrenFor(branch: NestedBranch): List<WorkflowStep>? = when (branch) {
     NestedBranch.REPEAT_BODY -> (this as? Repeat)?.bodySteps
     NestedBranch.WHILE_BODY -> (this as? WhileStep)?.bodySteps
@@ -479,7 +643,7 @@ private inline fun WorkflowStep.replaceChildren(
     NestedBranch.IF_ELSE -> (this as? IfElse)?.copy(elseSteps = transform(elseSteps)) ?: this
 }
 
-fun newStep(kind: WorkflowStepKind, defaultPackage: String): WorkflowStep {
+fun newStep(kind: WorkflowStepKind, defaultPackage: String, jumpTargetId: String? = null): WorkflowStep {
     val id = WorkflowIds.newUuid()
     val packageName = runCatching { PackageName(defaultPackage) }.getOrElse { PackageName("com.veyarc.app") }
     val condition: Condition = ForegroundPackageCondition(packageName)
@@ -500,6 +664,14 @@ fun newStep(kind: WorkflowStepKind, defaultPackage: String): WorkflowStep {
         )
 
         WorkflowStepKind.WAIT -> Wait(id, DurationMillis(500))
+
+        WorkflowStepKind.STAGE_BOUNDARY -> StageBoundary(id)
+
+        WorkflowStepKind.JUMP -> Jump(
+            id = id,
+            targetStepId = requireNotNull(jumpTargetId) { "A jump needs another block or boundary in its stage" },
+            maxVisits = 5,
+        )
 
         WorkflowStepKind.WAIT_UNTIL -> WaitUntil(id, condition, DurationMillis(5_000), DurationMillis(250))
 
@@ -529,12 +701,46 @@ fun newStep(kind: WorkflowStepKind, defaultPackage: String): WorkflowStep {
     }
 }
 
+private fun MutableSet<String>.addStepAssetReferences(step: WorkflowStep) {
+    when (step) {
+        is WaitUntil -> addConditionAssetReferences(step.condition)
+
+        is IfElse -> {
+            addConditionAssetReferences(step.condition)
+            step.thenSteps.forEach(::addStepAssetReferences)
+            step.elseSteps.forEach(::addStepAssetReferences)
+        }
+
+        is Repeat -> step.bodySteps.forEach(::addStepAssetReferences)
+
+        is WhileStep -> {
+            addConditionAssetReferences(step.condition)
+            step.bodySteps.forEach(::addStepAssetReferences)
+        }
+
+        else -> Unit
+    }
+}
+
+private fun MutableSet<String>.addConditionAssetReferences(condition: Condition) {
+    when (condition) {
+        is ImagePresentCondition -> add(condition.assetId.value)
+        is ImageAbsentCondition -> add(condition.assetId.value)
+        is AndCondition -> condition.conditions.forEach(::addConditionAssetReferences)
+        is OrCondition -> condition.conditions.forEach(::addConditionAssetReferences)
+        is NotCondition -> addConditionAssetReferences(condition.condition)
+        else -> Unit
+    }
+}
+
 fun WorkflowStepKind.displayName(): String = when (this) {
     WorkflowStepKind.TAP_POINT -> "Tap point"
     WorkflowStepKind.TAP_REGION -> "Tap region"
     WorkflowStepKind.LONG_PRESS -> "Long press"
     WorkflowStepKind.SWIPE_PATH -> "Swipe path"
     WorkflowStepKind.WAIT -> "Wait"
+    WorkflowStepKind.STAGE_BOUNDARY -> "Stage boundary"
+    WorkflowStepKind.JUMP -> "Go to"
     WorkflowStepKind.WAIT_UNTIL -> "Wait until"
     WorkflowStepKind.IF_ELSE -> "If / else"
     WorkflowStepKind.REPEAT -> "Repeat"
@@ -549,6 +755,8 @@ fun WorkflowStep.displayName(): String = when (this) {
     is LongPress -> "Long press"
     is SwipePath -> "Swipe path"
     is Wait -> "Wait"
+    is StageBoundary -> "Stage boundary"
+    is Jump -> "Go to"
     is WaitUntil -> "Wait until"
     is IfElse -> "If / else"
     is Repeat -> "Repeat"
@@ -558,42 +766,44 @@ fun WorkflowStep.displayName(): String = when (this) {
     else -> "Step"
 }
 
-fun WorkflowStep.summary(): String = when (this) {
-    is TapPoint -> "At ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}% of the display"
-    is TapRegion -> "${(region.width * 100).toInt()}% × ${(region.height * 100).toInt()}% region"
-    is LongPress -> "${durationMs.value} ms at ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}%"
-    is SwipePath -> "${points.size} points over ${durationMs.value} ms"
+fun WorkflowStep.summary(assetNames: Map<String, String> = emptyMap()): String = when (this) {
+    is TapPoint -> "Tap at ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}% of the screen"
+    is TapRegion -> "Tap inside a ${(region.width * 100).toInt()}% × ${(region.height * 100).toInt()}% area"
+    is LongPress -> "Hold for ${durationMs.value} ms at ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}%"
+    is SwipePath -> "Swipe through ${points.size} points in ${durationMs.value} ms"
     is Wait -> "Wait ${durationMs.value} ms"
-    is WaitUntil -> "${condition.summary()} · timeout ${timeoutMs.value} ms, poll every ${pollIntervalMs.value} ms"
-    is IfElse -> "${condition.summary()} · ${thenSteps.size} then / ${elseSteps.size} else blocks"
-    is Repeat -> "$count iterations, ${bodySteps.size} nested blocks"
-    is WhileStep -> "${condition.summary()} · up to $maxIterations iterations, ${bodySteps.size} nested blocks"
-    is LaunchApp -> "${packageName.value} (timeout ${foregroundTimeoutMs.value} ms)"
+    is StageBoundary -> "Separate this stage from the next"
+    is Jump -> "Continue from the selected point until this section has run $maxVisits times"
+    is WaitUntil -> "Wait until ${condition.summary(assetNames)} · timeout ${timeoutMs.value} ms, check every ${pollIntervalMs.value} ms"
+    is IfElse -> "If ${condition.summary(assetNames)} · ${thenSteps.size} then / ${elseSteps.size} else blocks"
+    is Repeat -> "Run ${bodySteps.size} nested blocks $count times"
+    is WhileStep -> "While ${condition.summary(assetNames)} · up to $maxIterations times"
+    is LaunchApp -> "Open ${packageName.value} and wait up to ${foregroundTimeoutMs.value} ms"
     is Stop -> message ?: reason.name.lowercase().replace('_', ' ')
     else -> "Configured workflow step"
 }
 
-fun Condition.summary(): String = when (this) {
-    is PixelColorCondition -> "Pixel ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}%"
+fun Condition.summary(assetNames: Map<String, String> = emptyMap()): String = when (this) {
+    is PixelColorCondition -> "the pixel at ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}% has the selected color"
 
     is ImagePresentCondition -> when (matchMode) {
-        ImageMatchMode.APPEARS_WITHIN_REGION -> "Image ${assetId.value} appears in region"
-        ImageMatchMode.SCREEN_STATE -> "Screen state matches ${assetId.value}"
+        ImageMatchMode.APPEARS_WITHIN_REGION -> "${assetNames[assetId.value] ?: "the selected image"} appears"
+        ImageMatchMode.SCREEN_STATE -> "the screen matches ${assetNames[assetId.value] ?: "the selected image"}"
     }
 
-    is ImageAbsentCondition -> "Image ${assetId.value} absent"
+    is ImageAbsentCondition -> "${assetNames[assetId.value] ?: "the selected image"} is absent"
 
-    is ForegroundPackageCondition -> "Foreground ${packageName.value}"
+    is ForegroundPackageCondition -> "${packageName.value} is open"
 
-    is com.veyarc.model.OrientationCondition -> "Orientation ${orientation.name.lowercase()}"
+    is com.veyarc.model.OrientationCondition -> "the screen is ${orientation.name.lowercase()}"
 
     is com.veyarc.model.VariableComparisonCondition -> "Variable comparison"
 
     is com.veyarc.model.StepResultCondition -> "Step result ${stepId.take(8)}…"
 
-    is AndCondition -> "All of ${conditions.size} conditions"
+    is AndCondition -> "all ${conditions.size} conditions are true"
 
-    is OrCondition -> "Any of ${conditions.size} conditions"
+    is OrCondition -> "any of ${conditions.size} conditions is true"
 
-    is NotCondition -> "Not (${condition.summary()})"
+    is NotCondition -> "not (${condition.summary(assetNames)})"
 }

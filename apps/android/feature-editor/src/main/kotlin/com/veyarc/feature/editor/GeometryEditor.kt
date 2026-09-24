@@ -2,14 +2,12 @@
 
 package com.veyarc.feature.editor
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
@@ -17,35 +15,45 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,18 +61,22 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.zIndex
+import com.veyarc.data.storage.WorkflowAssetDescriptor
+import com.veyarc.model.AssetId
+import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.LongPress
 import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.NormalizedRect
@@ -85,95 +97,193 @@ internal fun GeometryEditorDialog(
     step: WorkflowStep,
     viewport: ViewportSpec,
     maxPathPoints: Int,
-    assets: List<BundleAsset>,
+    assets: List<WorkflowAssetDescriptor>,
     assetNames: Map<String, String>,
+    loadAsset: suspend (AssetId) -> BundleAsset?,
+    loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
     onDismiss: () -> Unit,
     onApply: (WorkflowStep) -> Unit,
 ) {
-    var sidebarOpen by remember { mutableStateOf(false) }
-    var selectedAssetId by remember { mutableStateOf<String?>(null) }
+    var pickerOpen by rememberSaveable { mutableStateOf(false) }
+    var selectedAssetId by rememberSaveable { mutableStateOf<String?>(null) }
     var referenceImage by remember { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(selectedAssetId, assets) {
+    val configuration = LocalConfiguration.current
+    val compactLandscape = configuration.screenWidthDp < configuration.screenHeightDp &&
+        viewport.recordedOrientation == DisplayOrientation.LANDSCAPE
+    LaunchedEffect(selectedAssetId) {
         referenceImage = selectedAssetId
-            ?.let { id -> assets.firstOrNull { it.assetId.value == id } }
-            ?.let { asset -> withContext(Dispatchers.Default) { decodeTemplatePreview(asset)?.image } }
-    }
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-        Surface(modifier = Modifier.fillMaxSize()) {
-            Box(Modifier.fillMaxSize()) {
-                when (step) {
-                    is TapPoint -> PointGeometryEditor(
-                        title = "Edit tap point",
-                        point = step.point,
-                        viewport = viewport,
-                        background = referenceImage,
-                        onToggleReference = { sidebarOpen = !sidebarOpen },
-                        onApply = { point -> onApply(step.copy(point = point)) },
-                    )
-
-                    is LongPress -> LongPressGeometryEditor(
-                        step = step,
-                        viewport = viewport,
-                        background = referenceImage,
-                        onToggleReference = { sidebarOpen = !sidebarOpen },
-                        onApply = onApply,
-                    )
-
-                    is TapRegion -> RegionGeometryEditor(
-                        step = step,
-                        viewport = viewport,
-                        background = referenceImage,
-                        onToggleReference = { sidebarOpen = !sidebarOpen },
-                        onApply = onApply,
-                    )
-
-                    is SwipePath -> PathGeometryEditor(
-                        step = step,
-                        viewport = viewport,
-                        maxPathPoints = maxPathPoints,
-                        background = referenceImage,
-                        onToggleReference = { sidebarOpen = !sidebarOpen },
-                        onApply = onApply,
-                    )
-
-                    else -> onDismiss()
+            ?.let(::AssetId)
+            ?.let { assetId ->
+                withContext(Dispatchers.Default) {
+                    loadAsset(assetId)?.let { asset ->
+                        decodeTemplatePreview(asset, maxOf(viewport.recordedWidthPx, viewport.recordedHeightPx))?.image
+                    }
                 }
-                AnimatedVisibility(
-                    visible = sidebarOpen,
-                    modifier = Modifier.align(Alignment.CenterStart).fillMaxHeight().width(184.dp).zIndex(2f),
-                    enter = fadeIn(tween(140)) + slideInHorizontally(tween(140)) { -it },
-                    exit = fadeOut(tween(120)) + slideOutHorizontally(tween(120)) { -it },
+            }
+    }
+    EditorSheetDialog(
+        compact = compactLandscape,
+        onDismiss = onDismiss,
+        compactMaxHeightFraction = 0.86f,
+        largeHeightFraction = 1f,
+        contentScrollable = false,
+    ) {
+        Box(if (compactLandscape) Modifier.fillMaxWidth() else Modifier.fillMaxSize()) {
+            when (step) {
+                is TapPoint -> PointGeometryEditor(
+                    title = "Edit tap point",
+                    point = step.point,
+                    viewport = viewport,
+                    compact = compactLandscape,
+                    background = referenceImage,
+                    onToggleReference = { pickerOpen = !pickerOpen },
+                    onApply = { point -> onApply(step.copy(point = point)) },
+                )
+
+                is LongPress -> LongPressGeometryEditor(
+                    step = step,
+                    viewport = viewport,
+                    compact = compactLandscape,
+                    background = referenceImage,
+                    onToggleReference = { pickerOpen = !pickerOpen },
+                    onApply = onApply,
+                )
+
+                is TapRegion -> RegionGeometryEditor(
+                    step = step,
+                    viewport = viewport,
+                    compact = compactLandscape,
+                    background = referenceImage,
+                    onToggleReference = { pickerOpen = !pickerOpen },
+                    onApply = onApply,
+                )
+
+                is SwipePath -> PathGeometryEditor(
+                    step = step,
+                    viewport = viewport,
+                    maxPathPoints = maxPathPoints,
+                    compact = compactLandscape,
+                    background = referenceImage,
+                    onToggleReference = { pickerOpen = !pickerOpen },
+                    onApply = onApply,
+                )
+
+                else -> onDismiss()
+            }
+            TemplatePickerSheet(
+                visible = pickerOpen,
+                title = "Background",
+                assets = assets,
+                assetNames = assetNames,
+                displayWidthPx = viewport.recordedWidthPx,
+                displayHeightPx = viewport.recordedHeightPx,
+                fullScreenOnly = true,
+                selectedAssetId = selectedAssetId,
+                allowNone = true,
+                onDismiss = { pickerOpen = false },
+                onSelect = { assetId ->
+                    selectedAssetId = assetId?.value
+                    pickerOpen = false
+                },
+                loadPreview = loadPreview,
+            )
+        }
+    }
+}
+
+@Composable
+internal fun TemplatePickerSheet(
+    visible: Boolean,
+    title: String,
+    assets: List<WorkflowAssetDescriptor>,
+    assetNames: Map<String, String>,
+    displayWidthPx: Int,
+    displayHeightPx: Int,
+    fullScreenOnly: Boolean,
+    selectedAssetId: String?,
+    allowNone: Boolean,
+    onDismiss: () -> Unit,
+    onSelect: (AssetId?) -> Unit,
+    loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
+) {
+    if (!visible) return
+    val options = assets.filter { asset ->
+        val widthPx = asset.widthPx
+        val heightPx = asset.heightPx
+        widthPx == null || heightPx == null || templateCanAppearInPicker(
+            widthPx = widthPx,
+            heightPx = heightPx,
+            displayWidthPx = displayWidthPx,
+            displayHeightPx = displayHeightPx,
+            fullScreenOnly = fullScreenOnly,
+        )
+    }
+    val gridState = rememberLazyGridState()
+    val sheetGesturesEnabled = rememberEditorSheetGesturesEnabled(gridState)
+    val configuration = LocalConfiguration.current
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        sheetGesturesEnabled = sheetGesturesEnabled,
+        dragHandle = { CompactEditorSheetDragHandle() },
+        shape = RoundedCornerShape(24.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+        tonalElevation = 6.dp,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .height((configuration.screenHeightDp * 0.76f).dp),
+        ) {
+            Text(
+                title,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
+                style = MaterialTheme.typography.titleLarge,
+            )
+            if (allowNone) {
+                Surface(
+                    onClick = { onSelect(null) },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+                    color = if (selectedAssetId == null) {
+                        MaterialTheme.colorScheme.secondaryContainer
+                    } else {
+                        Color.Transparent
+                    },
+                    shape = MaterialTheme.shapes.medium,
                 ) {
-                    Surface(tonalElevation = 6.dp, shadowElevation = 8.dp) {
-                        Column(
-                            modifier = Modifier.fillMaxHeight().padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Text("Background", style = MaterialTheme.typography.titleMedium)
-                            TextButton(onClick = { selectedAssetId = null }, modifier = Modifier.fillMaxWidth()) {
-                                Text("No background")
-                            }
-                            assets.forEachIndexed { index, asset ->
-                                Surface(
-                                    onClick = { selectedAssetId = asset.assetId.value },
-                                    color = if (selectedAssetId == asset.assetId.value) {
-                                        MaterialTheme.colorScheme.secondaryContainer
-                                    } else {
-                                        Color.Transparent
-                                    },
-                                    shape = MaterialTheme.shapes.small,
-                                ) {
-                                    Text(
-                                        assetNames[asset.assetId.value] ?: "Template ${index + 1}",
-                                        modifier = Modifier.fillMaxWidth().padding(10.dp),
-                                        maxLines = 2,
-                                    )
-                                }
-                            }
-                        }
+                    Text(
+                        "None",
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+            if (options.isEmpty()) {
+                Text(
+                    if (fullScreenOnly) "No full-screen images." else "No cropped images.",
+                    modifier = Modifier.padding(16.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                LazyVerticalGrid(
+                    state = gridState,
+                    overscrollEffect = null,
+                    columns = GridCells.Fixed(2),
+                    contentPadding = PaddingValues(start = 12.dp, top = 14.dp, end = 12.dp, bottom = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    items(options, key = { it.assetId.value }) { asset ->
+                        TemplatePickerItem(
+                            asset = asset,
+                            name = assetNames[asset.assetId.value] ?: "Image",
+                            displayWidthPx = displayWidthPx,
+                            displayHeightPx = displayHeightPx,
+                            fullScreenOnly = fullScreenOnly,
+                            selected = selectedAssetId == asset.assetId.value,
+                            onSelect = { onSelect(asset.assetId) },
+                            loadPreview = loadPreview,
+                        )
                     }
                 }
             }
@@ -182,10 +292,126 @@ internal fun GeometryEditorDialog(
 }
 
 @Composable
+private fun TemplatePickerItem(
+    asset: WorkflowAssetDescriptor,
+    name: String,
+    displayWidthPx: Int,
+    displayHeightPx: Int,
+    fullScreenOnly: Boolean,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
+) {
+    val previewState by produceState<TemplatePickerPreviewState>(TemplatePickerPreviewState.Loading, asset.assetId) {
+        value = withContext(Dispatchers.Default) {
+            loadPreview(asset.assetId, 720)?.let(TemplatePickerPreviewState::Ready)
+                ?: TemplatePickerPreviewState.Unavailable
+        }
+    }
+    val preview = (previewState as? TemplatePickerPreviewState.Ready)?.preview
+    val correctSize = templateFitsPicker(
+        descriptorWidthPx = asset.widthPx,
+        descriptorHeightPx = asset.heightPx,
+        previewWidthPx = preview?.widthPx,
+        previewHeightPx = preview?.heightPx,
+        displayWidthPx = displayWidthPx,
+        displayHeightPx = displayHeightPx,
+        fullScreenOnly = fullScreenOnly,
+    )
+    Surface(
+        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = correctSize == true, onClick = onSelect)
+                    .aspectRatio(
+                        if (fullScreenOnly) {
+                            displayWidthPx.toFloat() / displayHeightPx
+                        } else {
+                            preview?.let { it.widthPx.toFloat() / it.heightPx } ?: 1f
+                        },
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                when (val state = previewState) {
+                    TemplatePickerPreviewState.Loading -> CircularProgressIndicator(Modifier.size(28.dp))
+
+                    TemplatePickerPreviewState.Unavailable -> Text("Unreadable", style = MaterialTheme.typography.bodySmall)
+
+                    is TemplatePickerPreviewState.Ready -> Image(
+                        bitmap = state.preview.image,
+                        contentDescription = name,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.FillBounds,
+                    )
+                }
+            }
+            Text(
+                name,
+                modifier = Modifier.fillMaxWidth().padding(6.dp),
+                maxLines = 1,
+                textAlign = TextAlign.Center,
+            )
+        }
+    }
+}
+
+internal fun templateFitsPicker(
+    widthPx: Int,
+    heightPx: Int,
+    displayWidthPx: Int,
+    displayHeightPx: Int,
+    fullScreenOnly: Boolean,
+): Boolean {
+    val currentOrientation = widthPx == displayWidthPx && heightPx == displayHeightPx
+    if (fullScreenOnly) return currentOrientation
+    val otherOrientation = widthPx == displayHeightPx && heightPx == displayWidthPx
+    return widthPx <= displayWidthPx && heightPx <= displayHeightPx && !currentOrientation && !otherOrientation
+}
+
+internal fun templateFitsPicker(
+    descriptorWidthPx: Int?,
+    descriptorHeightPx: Int?,
+    previewWidthPx: Int?,
+    previewHeightPx: Int?,
+    displayWidthPx: Int,
+    displayHeightPx: Int,
+    fullScreenOnly: Boolean,
+): Boolean? {
+    val widthPx = descriptorWidthPx ?: previewWidthPx ?: return null
+    val heightPx = descriptorHeightPx ?: previewHeightPx ?: return null
+    return templateFitsPicker(widthPx, heightPx, displayWidthPx, displayHeightPx, fullScreenOnly)
+}
+
+internal fun templateCanAppearInPicker(
+    widthPx: Int,
+    heightPx: Int,
+    displayWidthPx: Int,
+    displayHeightPx: Int,
+    fullScreenOnly: Boolean,
+): Boolean {
+    if (fullScreenOnly) {
+        return templateFitsPicker(widthPx, heightPx, displayWidthPx, displayHeightPx, fullScreenOnly = true)
+    }
+    return !(widthPx == displayWidthPx && heightPx == displayHeightPx) &&
+        !(widthPx == displayHeightPx && heightPx == displayWidthPx)
+}
+
+private sealed interface TemplatePickerPreviewState {
+    data object Loading : TemplatePickerPreviewState
+    data object Unavailable : TemplatePickerPreviewState
+    data class Ready(val preview: TemplatePreviewData) : TemplatePickerPreviewState
+}
+
+@Composable
 private fun PointGeometryEditor(
     title: String,
     point: NormalizedCoordinate,
     viewport: ViewportSpec,
+    compact: Boolean,
     background: ImageBitmap?,
     onToggleReference: () -> Unit,
     onApply: (NormalizedCoordinate) -> Unit,
@@ -193,6 +419,7 @@ private fun PointGeometryEditor(
     var selectedPoint by remember(point) { mutableStateOf(point) }
     GeometryEditorLayout(
         title = title,
+        compact = compact,
         onToggleReference = onToggleReference,
         onApply = { onApply(selectedPoint) },
     ) {
@@ -200,9 +427,7 @@ private fun PointGeometryEditor(
         GeometryPreview(
             viewport = viewport,
             background = background,
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
+            modifier = geometryPreviewModifier(viewport, compact),
             gestureModifier = Modifier.pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -228,6 +453,7 @@ private fun PointGeometryEditor(
 private fun LongPressGeometryEditor(
     step: LongPress,
     viewport: ViewportSpec,
+    compact: Boolean,
     background: ImageBitmap?,
     onToggleReference: () -> Unit,
     onApply: (WorkflowStep) -> Unit,
@@ -238,6 +464,7 @@ private fun LongPressGeometryEditor(
     val validDuration = duration != null && duration > 0
     GeometryEditorLayout(
         title = "Edit long press",
+        compact = compact,
         onToggleReference = onToggleReference,
         applyEnabled = validDuration,
         onApply = {
@@ -250,9 +477,7 @@ private fun LongPressGeometryEditor(
         GeometryPreview(
             viewport = viewport,
             background = background,
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
+            modifier = geometryPreviewModifier(viewport, compact),
             gestureModifier = Modifier.pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -289,6 +514,7 @@ private fun LongPressGeometryEditor(
 private fun RegionGeometryEditor(
     step: TapRegion,
     viewport: ViewportSpec,
+    compact: Boolean,
     background: ImageBitmap?,
     onToggleReference: () -> Unit,
     onApply: (WorkflowStep) -> Unit,
@@ -304,6 +530,7 @@ private fun RegionGeometryEditor(
 
     GeometryEditorLayout(
         title = "Edit touch region",
+        compact = compact,
         onToggleReference = onToggleReference,
         applyEnabled = validAnchor,
         onApply = { anchor?.let { onApply(step.copy(region = region, anchor = it)) } },
@@ -312,9 +539,7 @@ private fun RegionGeometryEditor(
         GeometryPreview(
             viewport = viewport,
             background = background,
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
+            modifier = geometryPreviewModifier(viewport, compact),
             gestureModifier = Modifier.pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -393,6 +618,7 @@ private fun PathGeometryEditor(
     step: SwipePath,
     viewport: ViewportSpec,
     maxPathPoints: Int,
+    compact: Boolean,
     background: ImageBitmap?,
     onToggleReference: () -> Unit,
     onApply: (WorkflowStep) -> Unit,
@@ -409,10 +635,11 @@ private fun PathGeometryEditor(
 
     GeometryEditorLayout(
         title = "Edit swipe path",
+        compact = compact,
         onToggleReference = onToggleReference,
         applyEnabled = validPath,
         headerAction = {
-            OutlinedButton(
+            IconButton(
                 enabled = validPath && !previewing,
                 onClick = {
                     previewScope.launch {
@@ -426,7 +653,10 @@ private fun PathGeometryEditor(
                     }
                 },
             ) {
-                Text(if (previewing) "Previewing" else "Preview")
+                Icon(
+                    Icons.Outlined.PlayArrow,
+                    contentDescription = if (previewing) "Previewing swipe path" else "Preview swipe path",
+                )
             }
         },
         onApply = {
@@ -439,9 +669,7 @@ private fun PathGeometryEditor(
         GeometryPreview(
             viewport = viewport,
             background = background,
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
+            modifier = geometryPreviewModifier(viewport, compact),
             gestureModifier = Modifier.pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -490,17 +718,25 @@ private fun PathGeometryEditor(
 @Composable
 private fun GeometryEditorLayout(
     title: String,
+    compact: Boolean,
     applyEnabled: Boolean = true,
     headerAction: (@Composable () -> Unit)? = null,
     onToggleReference: (() -> Unit)? = null,
     onApply: () -> Unit,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val layoutModifier = if (compact) {
+        Modifier.fillMaxWidth()
+    } else {
+        Modifier.fillMaxSize()
+    }
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(12.dp),
+        modifier = layoutModifier.padding(
+            top = if (compact) 12.dp else 8.dp,
+            start = 12.dp,
+            end = 12.dp,
+            bottom = 12.dp,
+        ),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Row(
@@ -518,6 +754,12 @@ private fun GeometryEditorLayout(
         }
         content()
     }
+}
+
+private fun ColumnScope.geometryPreviewModifier(viewport: ViewportSpec, compact: Boolean): Modifier = if (compact) {
+    Modifier.fillMaxWidth().aspectRatio(viewport.recordedWidthPx.toFloat() / viewport.recordedHeightPx)
+} else {
+    Modifier.fillMaxWidth().weight(1f)
 }
 
 @Composable
@@ -548,6 +790,7 @@ private fun GeometryPreview(
                     image = image,
                     dstSize = IntSize(size.width.toInt(), size.height.toInt()),
                     alpha = 0.72f,
+                    filterQuality = FilterQuality.High,
                 )
             }
             for (step in 1..3) {

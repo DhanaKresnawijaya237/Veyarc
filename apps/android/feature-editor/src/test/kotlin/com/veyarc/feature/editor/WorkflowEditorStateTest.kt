@@ -1,21 +1,42 @@
 package com.veyarc.feature.editor
 
+import com.veyarc.data.storage.WorkflowAssetDescriptor
+import com.veyarc.data.storage.WorkflowRevisionDocument
+import com.veyarc.data.storage.WorkflowRevisionEditorData
 import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.DurationMillis
+import com.veyarc.model.Jump
 import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.Repeat
+import com.veyarc.model.StageBoundary
 import com.veyarc.model.SwipePath
 import com.veyarc.model.TapPoint
 import com.veyarc.model.WaitUntil
+import com.veyarc.model.WorkflowIds
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WorkflowEditorStateTest {
+    @Test
+    fun editorSessionReusesValidationUntilTheDraftChanges() {
+        val session = WorkflowEditorSession()
+        session.create(WorkflowDraft.newDefault().viewport)
+        val draft = session.draft!!
+
+        val first = session.validationFor(draft)
+
+        assertSame(first, session.validationFor(draft))
+        session.update(draft.copy(name = "Changed"))
+        assertNotSame(first, session.validationFor(session.draft!!))
+    }
+
     @Test
     fun historicalRevisionAlwaysBuildsTheNextKnownRevision() {
         val current = WorkflowDraft.newDefault().buildBundle(revision = 4).bundle!!
@@ -49,6 +70,20 @@ class WorkflowEditorStateTest {
 
         session.markSaved(session.draft!!)
         assertFalse(session.isDirty)
+        assertFalse(session.canUndo)
+    }
+
+    @Test
+    fun editorSessionBoundsUndoHistory() {
+        val session = WorkflowEditorSession()
+        session.open(WorkflowDraft.newDefault().buildBundle().bundle!!)
+        repeat(101) { index ->
+            session.update(session.draft!!.copy(name = "Changed ${index + 1}"))
+        }
+
+        repeat(101) { session.undo() }
+
+        assertEquals("Changed 1", session.draft!!.name)
         assertFalse(session.canUndo)
     }
 
@@ -88,12 +123,41 @@ class WorkflowEditorStateTest {
     }
 
     @Test
+    fun stageBoundariesDoNotCountTowardExecutionNumbers() {
+        val first = TapPoint(WorkflowIds.newUuid(), NormalizedCoordinate(0.1, 0.1))
+        val boundary = StageBoundary(WorkflowIds.newUuid())
+        val second = TapPoint(WorkflowIds.newUuid(), NormalizedCoordinate(0.2, 0.2))
+        val steps = listOf(first, boundary, second)
+
+        assertEquals(1, executionNumberAt(steps, 0))
+        assertEquals(2, executionNumberAt(steps, 2))
+    }
+
+    @Test
+    fun dragDeleteTargetUsesTheRightEdgeOfTheBlock() {
+        assertFalse(isOverDeleteTarget(pointerX = 251f, widthPx = 300, targetWidthPx = 48f))
+        assertTrue(isOverDeleteTarget(pointerX = 252f, widthPx = 300, targetWidthPx = 48f))
+    }
+
+    @Test
     fun blockCanBeInsertedBetweenExistingBlocks() {
         val draft = WorkflowDraft.newDefault()
         val inserted = draft.insertStep(StepListPath(), 1, WorkflowStepKind.WAIT, "com.veyarc.app")
 
         assertTrue(inserted.steps[1] is com.veyarc.model.Wait)
         assertTrue(inserted.steps[1].id in inserted.collapsedStepIds)
+    }
+
+    @Test
+    fun jumpDefaultsToThePreviousBlockOrBoundary() {
+        val root = StepListPath()
+        val withBoundary = WorkflowDraft.newDefault()
+            .addStep(root, WorkflowStepKind.STAGE_BOUNDARY, "com.veyarc.app")
+        val boundary = withBoundary.steps.last() as StageBoundary
+
+        val withJump = withBoundary.addStep(root, WorkflowStepKind.JUMP, "com.veyarc.app")
+
+        assertEquals(boundary.id, (withJump.steps.last() as Jump).targetStepId)
     }
 
     @Test
@@ -105,6 +169,42 @@ class WorkflowEditorStateTest {
         val moved = draft.moveStepTo(StepListPath(), draft.steps.lastIndex, 0)
 
         assertEquals(lastId, moved.steps.first().id)
+    }
+
+    @Test
+    fun blockCanMoveIntoAVisibleNestedPipeline() {
+        val repeat = Repeat(WorkflowIds.newUuid(), 2, emptyList())
+        val tap = TapPoint(WorkflowIds.newUuid(), NormalizedCoordinate(0.2, 0.3))
+        val draft = WorkflowDraft.newDefault().copy(steps = listOf(tap, repeat))
+        val body = StepListPath().child(repeat.id, NestedBranch.REPEAT_BODY)
+
+        val moved = draft.moveStepTo(StepListPath(), 0, body, 0)
+
+        assertEquals(listOf(repeat.id), moved.steps.map { it.id })
+        assertEquals(listOf(tap.id), moved.stepsAt(body).map { it.id })
+    }
+
+    @Test
+    fun blockCanMoveBackOutOfANestedPipeline() {
+        val tap = TapPoint(WorkflowIds.newUuid(), NormalizedCoordinate(0.2, 0.3))
+        val repeat = Repeat(WorkflowIds.newUuid(), 2, listOf(tap))
+        val draft = WorkflowDraft.newDefault().copy(steps = listOf(repeat))
+        val root = StepListPath()
+        val body = root.child(repeat.id, NestedBranch.REPEAT_BODY)
+
+        val moved = draft.moveStepTo(body, 0, root, 1)
+
+        assertTrue(moved.stepsAt(body).isEmpty())
+        assertEquals(listOf(repeat.id, tap.id), moved.steps.map { it.id })
+    }
+
+    @Test
+    fun parentCannotMoveIntoItsOwnNestedPipeline() {
+        val repeat = Repeat(WorkflowIds.newUuid(), 2, emptyList())
+        val draft = WorkflowDraft.newDefault().copy(steps = listOf(repeat))
+        val body = StepListPath().child(repeat.id, NestedBranch.REPEAT_BODY)
+
+        assertEquals(draft, draft.moveStepTo(StepListPath(), 0, body, 0))
     }
 
     @Test
@@ -201,7 +301,72 @@ class WorkflowEditorStateTest {
         var draft = WorkflowDraft.newDefault().addAsset(asset)
         assertEquals(listOf(asset.assetId), draft.assets.map { it.assetId })
         assertEquals("Template 1", draft.assetNames[asset.assetId.value])
+        val crop = com.veyarc.model.bundle.BundleAsset(
+            assetId = com.veyarc.model.AssetId("crop-test"),
+            kind = asset.kind,
+            mimeType = asset.mimeType,
+            bytes = asset.bytes,
+            encrypted = asset.encrypted,
+        )
+        draft = draft.addAsset(crop, "Crop")
+        assertEquals("Crop 1", draft.assetNames[crop.assetId.value])
         draft = draft.removeAsset(asset.assetId)
+        assertEquals(listOf(crop.assetId), draft.assets.map { it.assetId })
+    }
+
+    @Test
+    fun removedReferencedAssetKeepsItsUserFacingNameForValidation() {
+        val assetId = com.veyarc.model.AssetId("template-internal-id")
+        val asset = com.veyarc.model.bundle.BundleAsset(
+            assetId = assetId,
+            kind = com.veyarc.model.AssetKind.IMAGE_TEMPLATE,
+            mimeType = "image/png",
+            bytes = byteArrayOf(1),
+            encrypted = true,
+        )
+        val condition = com.veyarc.model.ImagePresentCondition(
+            assetId = assetId,
+            region = com.veyarc.model.NormalizedRect(0.0, 0.0, 1.0, 1.0),
+            matchThreshold = 0.9,
+        )
+        val draft = WorkflowDraft.newDefault()
+            .addAsset(asset)
+            .renameAsset(assetId, "Full screen 3")
+            .copy(
+                steps = listOf(
+                    WaitUntil(WorkflowIds.newUuid(), condition, DurationMillis(5_000), DurationMillis(250)),
+                ),
+            )
+            .removeAsset(assetId)
+
+        assertEquals("Full screen 3 is still used", draft.buildBundle().issues.single().message)
+    }
+
+    @Test
+    fun storedRevisionCanValidateBeforeItsAssetPayloadIsLoaded() {
+        val asset = com.veyarc.model.bundle.BundleAsset(
+            assetId = com.veyarc.model.AssetId("lazy-template"),
+            kind = com.veyarc.model.AssetKind.IMAGE_TEMPLATE,
+            mimeType = "image/png",
+            bytes = byteArrayOf(1),
+            encrypted = true,
+            widthPx = 1,
+            heightPx = 1,
+        )
+        val bundle = WorkflowDraft.newDefault().addAsset(asset).buildBundle().bundle!!
+        val revision = WorkflowRevisionEditorData(
+            WorkflowRevisionDocument(bundle.document, bundle.producerVersion),
+            listOf(
+                WorkflowAssetDescriptor(asset.assetId, asset.kind, "Template 1", asset.mimeType, 1, 1),
+            ),
+        )
+
+        val draft = WorkflowDraft.fromRevision(revision)
+        val result = draft.buildBundle()
+
         assertTrue(draft.assets.isEmpty())
+        assertNotNull(result.document)
+        assertNull(result.bundle)
+        assertTrue(result.issues.isEmpty())
     }
 }

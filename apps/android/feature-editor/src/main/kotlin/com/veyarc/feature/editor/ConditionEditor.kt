@@ -8,14 +8,18 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AddPhotoAlternate
+import androidx.compose.material.icons.outlined.CenterFocusStrong
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -27,21 +31,25 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import com.veyarc.data.storage.WorkflowAssetDescriptor
 import com.veyarc.model.AndCondition
 import com.veyarc.model.AssetId
 import com.veyarc.model.Condition
@@ -57,36 +65,43 @@ import com.veyarc.model.OrCondition
 import com.veyarc.model.OrientationCondition
 import com.veyarc.model.PackageName
 import com.veyarc.model.PixelColorCondition
+import com.veyarc.model.StepResultCondition
+import com.veyarc.model.VariableComparisonCondition
 import com.veyarc.model.bundle.BundleAsset
 import kotlin.math.roundToInt
 
 private const val MAX_COMPOSED_CONDITIONS = 8
 private const val MISSING_TEMPLATE_ASSET_ID = "template-missing"
 
+internal fun Condition.usesCompactEditorSheet(): Boolean = this is ForegroundPackageCondition ||
+    this is OrientationCondition ||
+    this is StepResultCondition ||
+    this is VariableComparisonCondition
+
 @Composable
 internal fun ConditionEditorDialog(
     initialCondition: Condition,
-    assets: List<BundleAsset>,
+    assets: List<WorkflowAssetDescriptor>,
+    assetNames: Map<String, String>,
     defaultPackage: String,
     onAddTemplate: () -> Unit,
+    loadAsset: suspend (AssetId) -> BundleAsset?,
+    loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
     previewWidthPx: Int,
     previewHeightPx: Int,
     onDismiss: () -> Unit,
-    onApply: (Condition, Set<AssetId>) -> Unit,
+    onApply: (Condition) -> Unit,
 ) {
     var condition by remember(initialCondition) { mutableStateOf(initialCondition) }
-    var removedTemplateIds by remember(initialCondition) { mutableStateOf(emptySet<AssetId>()) }
-    val visibleAssets = assets.filterNot { it.assetId in removedTemplateIds }
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+    val compact = condition.usesCompactEditorSheet()
+    EditorSheetDialog(
+        compact = compact,
+        onDismiss = onDismiss,
+        compactMaxHeightFraction = 0.72f,
     ) {
-        Surface {
+        Column(modifier = Modifier.fillMaxWidth()) {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
+                modifier = Modifier.padding(start = 16.dp, top = if (compact) 20.dp else 0.dp, end = 16.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -95,7 +110,7 @@ internal fun ConditionEditorDialog(
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.titleLarge,
                     )
-                    Button(onClick = { onApply(condition, removedTemplateIds) }) { Text("Apply") }
+                    Button(onClick = { onApply(condition) }) { Text("Apply") }
                 }
                 Text(
                     "Conditions are checked only at their step's polling interval. Screen checks use temporary frames; no video is saved.",
@@ -104,14 +119,14 @@ internal fun ConditionEditorDialog(
                 )
                 ConditionNodeEditor(
                     condition = condition,
-                    assets = visibleAssets,
+                    assets = assets,
+                    assetNames = assetNames,
                     defaultPackage = defaultPackage,
                     onAddTemplate = onAddTemplate,
+                    loadAsset = loadAsset,
+                    loadPreview = loadPreview,
                     previewWidthPx = previewWidthPx,
                     previewHeightPx = previewHeightPx,
-                    onRemoveTemplate = { assetId ->
-                        removedTemplateIds = removedTemplateIds + assetId
-                    },
                     onChange = { condition = it },
                 )
             }
@@ -122,19 +137,20 @@ internal fun ConditionEditorDialog(
 @Composable
 private fun ConditionNodeEditor(
     condition: Condition,
-    assets: List<BundleAsset>,
+    assets: List<WorkflowAssetDescriptor>,
+    assetNames: Map<String, String>,
     defaultPackage: String,
     onAddTemplate: () -> Unit,
+    loadAsset: suspend (AssetId) -> BundleAsset?,
+    loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
     previewWidthPx: Int,
     previewHeightPx: Int,
-    onRemoveTemplate: (AssetId) -> Unit,
     onChange: (Condition) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         ConditionKindPicker(
             condition = condition,
             defaultPackage = defaultPackage,
-            assets = assets,
             onChange = onChange,
         )
         when (condition) {
@@ -143,8 +159,10 @@ private fun ConditionNodeEditor(
             is ImagePresentCondition -> ImageConditionFields(
                 condition = condition,
                 assets = assets,
+                assetNames = assetNames,
                 onAddTemplate = onAddTemplate,
-                onRemoveTemplate = onRemoveTemplate,
+                loadAsset = loadAsset,
+                loadPreview = loadPreview,
                 previewWidthPx = previewWidthPx,
                 previewHeightPx = previewHeightPx,
                 onChange = { onChange(it) },
@@ -153,8 +171,10 @@ private fun ConditionNodeEditor(
             is ImageAbsentCondition -> ImageConditionFields(
                 condition = condition,
                 assets = assets,
+                assetNames = assetNames,
                 onAddTemplate = onAddTemplate,
-                onRemoveTemplate = onRemoveTemplate,
+                loadAsset = loadAsset,
+                loadPreview = loadPreview,
                 previewWidthPx = previewWidthPx,
                 previewHeightPx = previewHeightPx,
                 onChange = { onChange(it) },
@@ -168,9 +188,11 @@ private fun ConditionNodeEditor(
                 label = "Every condition must be true",
                 conditions = condition.conditions,
                 assets = assets,
+                assetNames = assetNames,
                 defaultPackage = defaultPackage,
                 onAddTemplate = onAddTemplate,
-                onRemoveTemplate = onRemoveTemplate,
+                loadAsset = loadAsset,
+                loadPreview = loadPreview,
                 previewWidthPx = previewWidthPx,
                 previewHeightPx = previewHeightPx,
                 onChange = { children -> onChange(condition.copy(conditions = children)) },
@@ -180,9 +202,11 @@ private fun ConditionNodeEditor(
                 label = "At least one condition must be true",
                 conditions = condition.conditions,
                 assets = assets,
+                assetNames = assetNames,
                 defaultPackage = defaultPackage,
                 onAddTemplate = onAddTemplate,
-                onRemoveTemplate = onRemoveTemplate,
+                loadAsset = loadAsset,
+                loadPreview = loadPreview,
                 previewWidthPx = previewWidthPx,
                 previewHeightPx = previewHeightPx,
                 onChange = { children -> onChange(condition.copy(conditions = children)) },
@@ -193,9 +217,11 @@ private fun ConditionNodeEditor(
                 ConditionNodeEditor(
                     condition = condition.condition,
                     assets = assets,
+                    assetNames = assetNames,
                     defaultPackage = defaultPackage,
                     onAddTemplate = onAddTemplate,
-                    onRemoveTemplate = onRemoveTemplate,
+                    loadAsset = loadAsset,
+                    loadPreview = loadPreview,
                     previewWidthPx = previewWidthPx,
                     previewHeightPx = previewHeightPx,
                     onChange = { onChange(condition.copy(condition = it)) },
@@ -214,7 +240,6 @@ private fun ConditionNodeEditor(
 private fun ConditionKindPicker(
     condition: Condition,
     defaultPackage: String,
-    assets: List<BundleAsset>,
     onChange: (Condition) -> Unit,
 ) {
     var expanded by remember(condition::class) { mutableStateOf(false) }
@@ -233,7 +258,7 @@ private fun ConditionKindPicker(
                         text = { Text(kind.label) },
                         onClick = {
                             expanded = false
-                            onChange(kind.defaultCondition(defaultPackage, assets))
+                            onChange(kind.defaultCondition(defaultPackage))
                         },
                     )
                 }
@@ -277,9 +302,9 @@ private fun PixelConditionFields(
             )
         }
     }
-    RgbSlider("Red", condition.red) { red -> onChange(condition.withRgb(red = red)) }
-    RgbSlider("Green", condition.green) { green -> onChange(condition.withRgb(green = green)) }
-    RgbSlider("Blue", condition.blue) { blue -> onChange(condition.withRgb(blue = blue)) }
+    RgbSlider("Red", condition.red, Color(0xFFE53935)) { red -> onChange(condition.withRgb(red = red)) }
+    RgbSlider("Green", condition.green, Color(0xFF43A047)) { green -> onChange(condition.withRgb(green = green)) }
+    RgbSlider("Blue", condition.blue, Color(0xFF1E88E5)) { blue -> onChange(condition.withRgb(blue = blue)) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         ConditionNumberField("X", xText, { next ->
             xText = next
@@ -314,6 +339,7 @@ private fun PixelConditionFields(
 private fun RgbSlider(
     label: String,
     value: Int,
+    color: Color,
     onValueChange: (Int) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -321,21 +347,39 @@ private fun RgbSlider(
             Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
             Text(value.toString(), style = MaterialTheme.typography.bodyMedium)
         }
-        Slider(
-            value = value.toFloat(),
-            onValueChange = { onValueChange(it.roundToInt().coerceIn(0, 255)) },
-            valueRange = 0f..255f,
-            steps = 254,
-        )
+        Box(modifier = Modifier.fillMaxWidth().height(36.dp), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(Brush.horizontalGradient(listOf(Color.Black, color))),
+            )
+            Slider(
+                value = value.toFloat(),
+                onValueChange = { onValueChange(it.roundToInt().coerceIn(0, 255)) },
+                valueRange = 0f..255f,
+                steps = 254,
+                colors = SliderDefaults.colors(
+                    thumbColor = color,
+                    activeTrackColor = Color.Transparent,
+                    inactiveTrackColor = Color.Transparent,
+                    activeTickColor = Color.Transparent,
+                    inactiveTickColor = Color.Transparent,
+                ),
+            )
+        }
     }
 }
 
 @Composable
 private fun ImageConditionFields(
     condition: Condition,
-    assets: List<BundleAsset>,
+    assets: List<WorkflowAssetDescriptor>,
+    assetNames: Map<String, String>,
     onAddTemplate: () -> Unit,
-    onRemoveTemplate: (AssetId) -> Unit,
+    loadAsset: suspend (AssetId) -> BundleAsset?,
+    loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
     previewWidthPx: Int,
     previewHeightPx: Int,
     onChange: (Condition) -> Unit,
@@ -345,11 +389,15 @@ private fun ImageConditionFields(
         is ImageAbsentCondition -> condition.assetId
         else -> error("Image editor received a non-image condition")
     }
-    val selectedAsset = assets.firstOrNull { it.assetId == assetId }
-    val selectedAssetIndex = assets.indexOfFirst { it.assetId == assetId }
+    val selectedAsset by produceState<BundleAsset?>(null, assetId) {
+        value = loadAsset(assetId)
+    }
     val isScreenState = condition is ImagePresentCondition && condition.matchMode == ImageMatchMode.SCREEN_STATE
-    var removeConfirmationVisible by remember(assetId) { mutableStateOf(false) }
-    var assetMenuExpanded by remember(condition) { mutableStateOf(false) }
+    var pickerMode by rememberSaveable { mutableStateOf<ImagePickerMode?>(null) }
+    var backgroundAssetId by rememberSaveable { mutableStateOf<String?>(null) }
+    val backgroundAsset by produceState<BundleAsset?>(null, backgroundAssetId) {
+        value = backgroundAssetId?.let(::AssetId)?.let { loadAsset(it) }
+    }
     val update: (AssetId, NormalizedRect, Double) -> Unit = { selectedAsset, region, threshold ->
         onChange(
             when (condition) {
@@ -358,19 +406,12 @@ private fun ImageConditionFields(
             },
         )
     }
-    Text(
-        if (isScreenState) {
-            "Compare one screenshot against the entire current screen at a fixed position. Veyarc checks a coarse representation first, then verifies the full-resolution pixels."
-        } else {
-            "Set where to look. X and Y are the top-left position; W and H are the search-area size. All values are normalized to the recorded display."
-        },
-        style = MaterialTheme.typography.bodySmall,
-    )
     ImageConditionPreview(
         region = if (isScreenState) FULL_SCREEN_REGION else condition.region(),
         displayWidthPx = previewWidthPx,
         displayHeightPx = previewHeightPx,
         asset = selectedAsset,
+        backgroundAsset = if (isScreenState) null else backgroundAsset,
         screenStateMode = isScreenState,
         onRegionChange = if (isScreenState) {
             null
@@ -380,46 +421,29 @@ private fun ImageConditionFields(
             }
         },
     )
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        OutlinedButton(onClick = { assetMenuExpanded = true }, enabled = assets.isNotEmpty()) {
-            Text("Change image")
-        }
-        DropdownMenu(
-            expanded = assetMenuExpanded,
-            onDismissRequest = { assetMenuExpanded = false },
-        ) {
-            assets.forEachIndexed { index, asset ->
-                DropdownMenuItem(
-                    text = {
-                        Column {
-                            Text("Image ${index + 1}")
-                            Text(asset.assetId.value, style = MaterialTheme.typography.labelSmall)
-                        }
-                    },
-                    onClick = {
-                        assetMenuExpanded = false
-                        val region = condition.region()
-                        update(asset.assetId, region, condition.threshold())
-                    },
-                )
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        if (isScreenState) {
+            IconButton(onClick = { pickerMode = ImagePickerMode.SCREEN }) {
+                Icon(Icons.Outlined.Image, contentDescription = "Choose screen background")
+            }
+        } else {
+            IconButton(onClick = { pickerMode = ImagePickerMode.BACKGROUND }) {
+                Icon(Icons.Outlined.Image, contentDescription = "Change background")
+            }
+            IconButton(onClick = { pickerMode = ImagePickerMode.TARGET }) {
+                Icon(Icons.Outlined.CenterFocusStrong, contentDescription = "Choose target image")
             }
         }
-        OutlinedButton(onClick = onAddTemplate) { Text("Add cropped template") }
+        Spacer(Modifier.weight(1f))
+        IconButton(onClick = onAddTemplate) {
+            Icon(Icons.Outlined.AddPhotoAlternate, contentDescription = "Add image")
+        }
     }
     Text(
-        selectedAsset?.let { "Selected image ${selectedAssetIndex + 1}" } ?: "No image selected",
+        selectedAsset?.let { assetNames[it.assetId.value] ?: "Target image" } ?: "No image selected",
         style = MaterialTheme.typography.bodySmall,
         color = if (selectedAsset == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    if (selectedAsset != null) {
-        OutlinedButton(
-            onClick = { removeConfirmationVisible = true },
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Icon(Icons.Outlined.Delete, contentDescription = null)
-            Text("Remove selected image template")
-        }
-    }
     if (!isScreenState) {
         RegionConditionFields(
             region = condition.region(),
@@ -431,35 +455,40 @@ private fun ImageConditionFields(
         thresholdText = next
         next.toDoubleOrNull()?.takeIf { it in 0.0..1.0 }?.let { update(assetId, condition.region(), it) }
     })
-    if (removeConfirmationVisible) {
-        AlertDialog(
-            onDismissRequest = { removeConfirmationVisible = false },
-            title = { Text("Remove image template?") },
-            text = {
-                Text(
-                    "This removes the selected encrypted template from the workflow. " +
-                        "Other conditions that use it will need a replacement.",
-                )
+    pickerMode?.let { mode ->
+        TemplatePickerSheet(
+            visible = true,
+            title = if (mode == ImagePickerMode.TARGET) "Target image" else "Background",
+            assets = assets,
+            assetNames = assetNames,
+            displayWidthPx = previewWidthPx,
+            displayHeightPx = previewHeightPx,
+            fullScreenOnly = mode != ImagePickerMode.TARGET,
+            selectedAssetId = when (mode) {
+                ImagePickerMode.BACKGROUND -> backgroundAssetId
+
+                ImagePickerMode.SCREEN,
+                ImagePickerMode.TARGET,
+                -> assetId.value.takeUnless { it == MISSING_TEMPLATE_ASSET_ID }
             },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        removeConfirmationVisible = false
-                        update(
-                            AssetId(MISSING_TEMPLATE_ASSET_ID),
-                            condition.region(),
-                            condition.threshold(),
-                        )
-                        onRemoveTemplate(assetId)
-                    },
-                ) { Text("Remove") }
+            allowNone = true,
+            onDismiss = { pickerMode = null },
+            onSelect = { selected ->
+                when (mode) {
+                    ImagePickerMode.BACKGROUND -> backgroundAssetId = selected?.value
+
+                    ImagePickerMode.SCREEN,
+                    ImagePickerMode.TARGET,
+                    -> update(selected ?: AssetId(MISSING_TEMPLATE_ASSET_ID), condition.region(), condition.threshold())
+                }
+                pickerMode = null
             },
-            dismissButton = {
-                TextButton(onClick = { removeConfirmationVisible = false }) { Text("Cancel") }
-            },
+            loadPreview = loadPreview,
         )
     }
 }
+
+private enum class ImagePickerMode { BACKGROUND, SCREEN, TARGET }
 
 @Composable
 private fun RegionConditionFields(
@@ -536,10 +565,12 @@ private fun OrientationConditionFields(
 private fun ComposedConditionFields(
     label: String,
     conditions: List<Condition>,
-    assets: List<BundleAsset>,
+    assets: List<WorkflowAssetDescriptor>,
+    assetNames: Map<String, String>,
     defaultPackage: String,
     onAddTemplate: () -> Unit,
-    onRemoveTemplate: (AssetId) -> Unit,
+    loadAsset: suspend (AssetId) -> BundleAsset?,
+    loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
     previewWidthPx: Int,
     previewHeightPx: Int,
     onChange: (List<Condition>) -> Unit,
@@ -561,9 +592,11 @@ private fun ComposedConditionFields(
                 ConditionNodeEditor(
                     condition = child,
                     assets = assets,
+                    assetNames = assetNames,
                     defaultPackage = defaultPackage,
                     onAddTemplate = onAddTemplate,
-                    onRemoveTemplate = onRemoveTemplate,
+                    loadAsset = loadAsset,
+                    loadPreview = loadPreview,
                     previewWidthPx = previewWidthPx,
                     previewHeightPx = previewHeightPx,
                     onChange = { updated ->
@@ -575,7 +608,7 @@ private fun ComposedConditionFields(
     }
     OutlinedButton(
         enabled = conditions.size < MAX_COMPOSED_CONDITIONS,
-        onClick = { onChange(conditions + defaultCondition(defaultPackage, assets)) },
+        onClick = { onChange(conditions + defaultCondition(defaultPackage)) },
     ) {
         Text("Add nested condition")
     }
@@ -610,24 +643,24 @@ internal enum class EditableConditionKind(val label: String) {
     NOT("Not condition"),
     ;
 
-    fun defaultCondition(defaultPackage: String, assets: List<BundleAsset>): Condition = when (this) {
+    fun defaultCondition(defaultPackage: String): Condition = when (this) {
         PIXEL -> PixelColorCondition(NormalizedCoordinate(0.5, 0.5), 0xFFFFFFFFL, 16)
 
         SCREEN_STATE -> ImagePresentCondition(
-            assetId = assets.firstOrNull()?.assetId ?: AssetId(MISSING_TEMPLATE_ASSET_ID),
+            assetId = AssetId(MISSING_TEMPLATE_ASSET_ID),
             region = FULL_SCREEN_REGION,
             matchThreshold = 0.98,
             matchMode = ImageMatchMode.SCREEN_STATE,
         )
 
         IMAGE_PRESENT -> ImagePresentCondition(
-            assetId = assets.firstOrNull()?.assetId ?: AssetId(MISSING_TEMPLATE_ASSET_ID),
+            assetId = AssetId(MISSING_TEMPLATE_ASSET_ID),
             region = NormalizedRect(0.25, 0.25, 0.5, 0.5),
             matchThreshold = 0.9,
         )
 
         IMAGE_ABSENT -> ImageAbsentCondition(
-            assetId = assets.firstOrNull()?.assetId ?: AssetId(MISSING_TEMPLATE_ASSET_ID),
+            assetId = AssetId(MISSING_TEMPLATE_ASSET_ID),
             region = NormalizedRect(0.25, 0.25, 0.5, 0.5),
             matchThreshold = 0.9,
         )
@@ -638,19 +671,19 @@ internal enum class EditableConditionKind(val label: String) {
 
         AND -> AndCondition(
             listOf(
-                PIXEL.defaultCondition(defaultPackage, assets),
+                PIXEL.defaultCondition(defaultPackage),
                 ForegroundPackageCondition(defaultPackage.toPackageName()),
             ),
         )
 
         OR -> OrCondition(
             listOf(
-                PIXEL.defaultCondition(defaultPackage, assets),
+                PIXEL.defaultCondition(defaultPackage),
                 ForegroundPackageCondition(defaultPackage.toPackageName()),
             ),
         )
 
-        NOT -> NotCondition(PIXEL.defaultCondition(defaultPackage, assets))
+        NOT -> NotCondition(PIXEL.defaultCondition(defaultPackage))
     }
 }
 
@@ -677,7 +710,7 @@ private fun Condition.kind(): EditableConditionKind = when (this) {
     else -> EditableConditionKind.FOREGROUND
 }
 
-private fun defaultCondition(defaultPackage: String, assets: List<BundleAsset>): Condition = EditableConditionKind.PIXEL.defaultCondition(defaultPackage, assets)
+private fun defaultCondition(defaultPackage: String): Condition = EditableConditionKind.PIXEL.defaultCondition(defaultPackage)
 
 private fun String.toPackageName(): PackageName = runCatching { PackageName(trim()) }
     .getOrElse { PackageName("com.veyarc.app") }
