@@ -53,6 +53,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.veyarc.automation.android.ReplayControllerWorkflow
+import com.veyarc.automation.android.ReplayWorkflowCatalog
 import com.veyarc.data.storage.FolderSummary
 import com.veyarc.data.storage.RevisionSummary
 import com.veyarc.data.storage.WorkflowRepository
@@ -210,6 +212,17 @@ internal fun WorkflowManagerScreen(
                 withContext(Dispatchers.IO) {
                     repository.setWorkflowFavorite(workflow.summary.workflowId, favorite)
                 }
+                ReplayWorkflowCatalog.markFavorite(
+                    context,
+                    ReplayControllerWorkflow(
+                        workflowId = workflow.summary.workflowId,
+                        revision = workflow.summary.latestRevision,
+                        name = workflow.summary.name,
+                        updatedAtMs = workflow.summary.updatedAtMs,
+                        isFavorite = favorite,
+                    ),
+                    favorite,
+                )
             }.onFailure {
                 workflows = workflows.map { item ->
                     if (item.summary.workflowId == workflow.summary.workflowId) workflow else item

@@ -53,6 +53,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.veyarc.automation.android.AccessibilityGestureDispatcher
+import com.veyarc.automation.android.EdgeLatchPlayTarget
 import com.veyarc.automation.android.MediaProjectionCaptureRuntime
 import com.veyarc.automation.android.ReplayFloatingController
 import com.veyarc.automation.android.ShizukuTouchProbe
@@ -82,6 +83,7 @@ fun SettingsScreen(
     var accessibilityConnected by remember { mutableStateOf(false) }
     var notificationsEnabled by remember { mutableStateOf(true) }
     var latchEnabled by remember { mutableStateOf(ReplayFloatingController.isEnabled(context)) }
+    var latchPlayTarget by remember { mutableStateOf(ReplayFloatingController.playTarget(context)) }
     var workflows by remember { mutableStateOf(emptyList<WorkflowSummary>()) }
     var runCount by remember { mutableStateOf(0L) }
     var workflowFolderCount by remember { mutableStateOf(0) }
@@ -276,6 +278,25 @@ fun SettingsScreen(
                     )
                 },
             ) {
+                Text("Play button", style = MaterialTheme.typography.titleMedium)
+                EdgeLatchPlayTarget.entries.forEach { option ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            latchPlayTarget = option
+                            ReplayFloatingController.setPlayTarget(context, option)
+                        },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = latchPlayTarget == option,
+                            onClick = {
+                                latchPlayTarget = option
+                                ReplayFloatingController.setPlayTarget(context, option)
+                            },
+                        )
+                        Text(option.label)
+                    }
+                }
                 OutlinedButton(onClick = { ReplayFloatingController.resetPosition(context) }) { Text("Reset latch position") }
                 Text(
                     "The latch uses only its visible area. Notifications and the Quick Settings tile remain emergency controls.",

@@ -21,6 +21,8 @@ class AndroidAutomationCapabilitiesTest {
         assertTrue(snapshot.supports(EngineCapability.LONG_PRESS))
         assertTrue(snapshot.supports(EngineCapability.SWIPE_PATH))
         assertTrue(snapshot.supports(EngineCapability.FOREGROUND_PACKAGE_CONDITION))
+        assertTrue(snapshot.supports(EngineCapability.STAGE_BOUNDARY))
+        assertTrue(snapshot.supports(EngineCapability.JUMP))
     }
 
     @Test

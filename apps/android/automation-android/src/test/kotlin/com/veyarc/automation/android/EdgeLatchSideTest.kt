@@ -61,4 +61,32 @@ class EdgeLatchSideTest {
         assertEquals(listOf(0f, 0f, 4f, 4f, 4f, 4f, 0f, 0f).map(Float::toDouble), edgeLatchCornerRadii(EdgeLatchSide.LEFT, 4f).map { it.toDouble() })
         assertEquals(listOf(4f, 4f, 0f, 0f, 0f, 0f, 4f, 4f).map(Float::toDouble), edgeLatchCornerRadii(EdgeLatchSide.RIGHT, 4f).map { it.toDouble() })
     }
+
+    @Test
+    fun connectedDrawerParksOutsideTheCorrectEdge() {
+        assertEquals(-196f, edgeDrawerTranslationPx(EdgeLatchSide.LEFT, 184, 20, 8))
+        assertEquals(196f, edgeDrawerTranslationPx(EdgeLatchSide.RIGHT, 184, 20, 8))
+    }
+
+    @Test
+    fun playTargetKeepsTheRevisionBelongingToItsSelectedWorkflow() {
+        val lastSaved = ReplayControllerWorkflow("saved", 8, "Saved", updatedAtMs = 30)
+        val older = ReplayControllerWorkflow("older", 11, "Older", updatedAtMs = 10)
+        val lastPlayed = ReplayControllerWorkflow("played", 3, "Played")
+        val lastFavorited = ReplayControllerWorkflow("favorite", 6, "Favorite", isFavorite = true)
+        val workflows = listOf(older, lastSaved)
+
+        assertEquals(
+            lastPlayed,
+            selectReplayWorkflow(EdgeLatchPlayTarget.MOST_RECENTLY_PLAYED, workflows, lastPlayed, lastFavorited),
+        )
+        assertEquals(
+            lastSaved,
+            selectReplayWorkflow(EdgeLatchPlayTarget.LAST_SAVED, workflows, lastPlayed, lastFavorited),
+        )
+        assertEquals(
+            lastFavorited,
+            selectReplayWorkflow(EdgeLatchPlayTarget.LATEST_FAVORITED, workflows, lastPlayed, lastFavorited),
+        )
+    }
 }

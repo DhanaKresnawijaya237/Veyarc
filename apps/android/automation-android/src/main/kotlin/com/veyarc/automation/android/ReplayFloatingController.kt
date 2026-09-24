@@ -1,13 +1,15 @@
 package com.veyarc.automation.android
 
 import android.accessibilityservice.AccessibilityService
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.PorterDuff
@@ -42,7 +44,26 @@ data class ReplayControllerWorkflow(
     val workflowId: String,
     val revision: Int,
     val name: String,
+    val updatedAtMs: Long = 0L,
+    val isFavorite: Boolean = false,
 )
+
+enum class EdgeLatchPlayTarget(val label: String) {
+    MOST_RECENTLY_PLAYED("Most recently played"),
+    LAST_SAVED("Last saved"),
+    LATEST_FAVORITED("Latest favorited"),
+}
+
+internal fun selectReplayWorkflow(
+    target: EdgeLatchPlayTarget,
+    workflows: List<ReplayControllerWorkflow>,
+    mostRecentlyPlayed: ReplayControllerWorkflow?,
+    mostRecentlyFavorited: ReplayControllerWorkflow?,
+): ReplayControllerWorkflow? = when (target) {
+    EdgeLatchPlayTarget.MOST_RECENTLY_PLAYED -> mostRecentlyPlayed
+    EdgeLatchPlayTarget.LAST_SAVED -> workflows.maxByOrNull(ReplayControllerWorkflow::updatedAtMs)
+    EdgeLatchPlayTarget.LATEST_FAVORITED -> mostRecentlyFavorited
+}
 
 /** The usable latch edges. Top and bottom are excluded because system gestures obstruct them. */
 enum class EdgeLatchSide {
@@ -75,6 +96,17 @@ internal fun edgeLatchCornerRadii(side: EdgeLatchSide, radiusPx: Float): FloatAr
     EdgeLatchSide.LEFT -> floatArrayOf(0f, 0f, radiusPx, radiusPx, radiusPx, radiusPx, 0f, 0f)
 
     EdgeLatchSide.RIGHT -> floatArrayOf(radiusPx, radiusPx, 0f, 0f, 0f, 0f, radiusPx, radiusPx)
+}
+
+/** Translation that parks the connected drawer and handle at the selected screen edge. */
+internal fun edgeDrawerTranslationPx(
+    side: EdgeLatchSide,
+    panelWidthPx: Int,
+    handleWidthPx: Int,
+    visibleHandleWidthPx: Int,
+): Float {
+    val distance = (panelWidthPx + handleWidthPx - visibleHandleWidthPx).coerceAtLeast(0).toFloat()
+    return if (side == EdgeLatchSide.LEFT) -distance else distance
 }
 
 /**
@@ -119,66 +151,143 @@ enum class ControlCenterRecordingState {
 /** In-process cache populated by the app while its encrypted workflow repository is available. */
 object ReplayWorkflowCatalog {
     private val entries = AtomicReference<List<ReplayControllerWorkflow>>(emptyList())
+    private val mostRecentlyPlayed = AtomicReference<ReplayControllerWorkflow?>(null)
+    private val mostRecentlyFavorited = AtomicReference<ReplayControllerWorkflow?>(null)
 
     private const val PREFS_NAME = "replay_controller"
     private const val PREF_WORKFLOW_CATALOG = "workflow_catalog"
+    private const val PREF_MOST_RECENTLY_PLAYED = "most_recently_played"
+    private const val PREF_MOST_RECENTLY_FAVORITED = "most_recently_favorited"
     private const val FIELD_ID = "id"
     private const val FIELD_REVISION = "revision"
     private const val FIELD_NAME = "name"
+    private const val FIELD_UPDATED_AT = "updatedAt"
+    private const val FIELD_FAVORITE = "favorite"
 
     /** Updates the replay list and persists only workflow metadata, never workflow bodies. */
-    fun replace(context: Context, workflows: List<ReplayControllerWorkflow>) {
+    fun replace(
+        context: Context,
+        workflows: List<ReplayControllerWorkflow>,
+        lastPlayed: ReplayControllerWorkflow? = mostRecentlyPlayed.get(),
+    ) {
         val bounded = workflows.take(MAX_ENTRIES)
         entries.set(bounded)
+        mostRecentlyPlayed.set(lastPlayed)
+        val latestFavorite = mostRecentlyFavorited.get()
+            ?.let { current -> bounded.firstOrNull { it.workflowId == current.workflowId && it.isFavorite } }
+            ?: bounded.filter(ReplayControllerWorkflow::isFavorite).maxByOrNull(ReplayControllerWorkflow::updatedAtMs)
+        mostRecentlyFavorited.set(latestFavorite)
         val json = JSONArray()
         bounded.forEach { workflow ->
-            json.put(
-                JSONObject()
-                    .put(FIELD_ID, workflow.workflowId)
-                    .put(FIELD_REVISION, workflow.revision)
-                    .put(FIELD_NAME, workflow.name),
-            )
+            json.put(workflow.toJson())
         }
         context.applicationContext
             .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putString(PREF_WORKFLOW_CATALOG, json.toString())
+            .putString(PREF_MOST_RECENTLY_PLAYED, lastPlayed?.toJson()?.toString())
+            .putString(PREF_MOST_RECENTLY_FAVORITED, latestFavorite?.toJson()?.toString())
             .apply()
     }
 
     /** Restores the replay list after the accessibility service process is recreated. */
     fun load(context: Context) {
-        val raw = context.applicationContext
-            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getString(PREF_WORKFLOW_CATALOG, null)
-        if (raw == null) {
-            entries.set(emptyList())
-            return
-        }
-        val restored = runCatching {
-            val json = JSONArray(raw)
-            buildList {
-                for (index in 0 until json.length()) {
-                    val item = json.optJSONObject(index) ?: continue
-                    val workflowId = item.optString(FIELD_ID).takeIf { it.isNotBlank() } ?: continue
-                    val revision = item.optInt(FIELD_REVISION, -1).takeIf { it > 0 } ?: continue
-                    val name = item.optString(FIELD_NAME).ifBlank { "Workflow $revision" }
-                    add(ReplayControllerWorkflow(workflowId, revision, name))
-                }
-            }.take(MAX_ENTRIES)
-        }.getOrDefault(emptyList())
+        val preferences = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val restored = preferences.getString(PREF_WORKFLOW_CATALOG, null)?.let { raw ->
+            runCatching {
+                val json = JSONArray(raw)
+                buildList {
+                    for (index in 0 until json.length()) {
+                        val item = json.optJSONObject(index) ?: continue
+                        val workflowId = item.optString(FIELD_ID).takeIf { it.isNotBlank() } ?: continue
+                        val revision = item.optInt(FIELD_REVISION, -1).takeIf { it > 0 } ?: continue
+                        val name = item.optString(FIELD_NAME).ifBlank { "Workflow $revision" }
+                        add(
+                            ReplayControllerWorkflow(
+                                workflowId = workflowId,
+                                revision = revision,
+                                name = name,
+                                updatedAtMs = item.optLong(FIELD_UPDATED_AT, 0L),
+                                isFavorite = item.optBoolean(FIELD_FAVORITE, false),
+                            ),
+                        )
+                    }
+                }.take(MAX_ENTRIES)
+            }.getOrDefault(emptyList())
+        }.orEmpty()
         entries.set(restored)
+        mostRecentlyPlayed.set(
+            preferences.getString(PREF_MOST_RECENTLY_PLAYED, null)
+                ?.let { rawPlayed -> runCatching { JSONObject(rawPlayed).toWorkflow() }.getOrNull() },
+        )
+        mostRecentlyFavorited.set(
+            preferences.getString(PREF_MOST_RECENTLY_FAVORITED, null)
+                ?.let { rawFavorite -> runCatching { JSONObject(rawFavorite).toWorkflow() }.getOrNull() }
+                ?.let { current -> restored.firstOrNull { it.workflowId == current.workflowId && it.isFavorite } }
+                ?: restored.filter(ReplayControllerWorkflow::isFavorite).maxByOrNull(ReplayControllerWorkflow::updatedAtMs),
+        )
     }
 
     fun snapshot(): List<ReplayControllerWorkflow> = entries.get()
 
+    fun selected(target: EdgeLatchPlayTarget): ReplayControllerWorkflow? = selectReplayWorkflow(
+        target = target,
+        workflows = entries.get(),
+        mostRecentlyPlayed = mostRecentlyPlayed.get(),
+        mostRecentlyFavorited = mostRecentlyFavorited.get(),
+    )
+
+    fun markPlayed(context: Context, workflow: ReplayControllerWorkflow) {
+        mostRecentlyPlayed.set(workflow)
+        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(PREF_MOST_RECENTLY_PLAYED, workflow.toJson().toString())
+            .apply()
+    }
+
+    fun markFavorite(context: Context, workflow: ReplayControllerWorkflow, favorite: Boolean) {
+        val updated = workflow.copy(isFavorite = favorite)
+        if (favorite) {
+            mostRecentlyFavorited.set(updated)
+        } else if (mostRecentlyFavorited.get()?.workflowId == workflow.workflowId) {
+            mostRecentlyFavorited.set(null)
+        }
+        replace(
+            context,
+            buildList {
+                add(updated)
+                entries.get().filterNot { it.workflowId == workflow.workflowId }.forEach(::add)
+            },
+        )
+    }
+
     /** Adds a newly persisted workflow without exposing its encrypted body to the controller. */
     fun addOrReplace(context: Context, workflow: ReplayControllerWorkflow) {
+        val saved = workflow.copy(updatedAtMs = System.currentTimeMillis())
         val next = buildList {
-            add(workflow)
+            add(saved)
             entries.get().filterNot { it.workflowId == workflow.workflowId }.forEach(::add)
         }
         replace(context, next)
+    }
+
+    private fun ReplayControllerWorkflow.toJson(): JSONObject = JSONObject()
+        .put(FIELD_ID, workflowId)
+        .put(FIELD_REVISION, revision)
+        .put(FIELD_NAME, name)
+        .put(FIELD_UPDATED_AT, updatedAtMs)
+        .put(FIELD_FAVORITE, isFavorite)
+
+    private fun JSONObject.toWorkflow(): ReplayControllerWorkflow? {
+        val workflowId = optString(FIELD_ID).takeIf(String::isNotBlank) ?: return null
+        val revision = optInt(FIELD_REVISION, -1).takeIf { it > 0 } ?: return null
+        return ReplayControllerWorkflow(
+            workflowId = workflowId,
+            revision = revision,
+            name = optString(FIELD_NAME).ifBlank { "Workflow $revision" },
+            updatedAtMs = optLong(FIELD_UPDATED_AT, 0L),
+            isFavorite = optBoolean(FIELD_FAVORITE, false),
+        )
     }
 
     private const val MAX_ENTRIES = 20
@@ -207,10 +316,12 @@ object ReplayFloatingController {
     private const val PREF_ENABLED = "enabled"
     private const val PREF_EDGE = "edge"
     private const val PREF_EDGE_OFFSET = "edge_offset"
+    private const val PREF_PLAY_TARGET = "play_target"
     private const val PREF_LEGACY_ANCHOR_X = "anchor_x"
     private const val PREF_LEGACY_ANCHOR_Y = "anchor_y"
     private const val LATCH_THICKNESS_DP = 20
-    private const val LATCH_LENGTH_DP = 56
+    private const val LATCH_VISIBLE_DP = 8
+    private const val LATCH_LENGTH_DP = 60
     private const val ICON_SIZE_DP = 44
     private const val PANEL_PADDING_DP = 8
     private const val PANEL_GAP_DP = 5
@@ -253,6 +364,20 @@ object ReplayFloatingController {
     fun isEnabled(context: Context): Boolean = context.applicationContext
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         .getBoolean(PREF_ENABLED, false)
+
+    fun playTarget(context: Context): EdgeLatchPlayTarget {
+        val saved = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(PREF_PLAY_TARGET, null)
+        return EdgeLatchPlayTarget.entries.firstOrNull { it.name == saved } ?: EdgeLatchPlayTarget.LAST_SAVED
+    }
+
+    fun setPlayTarget(context: Context, target: EdgeLatchPlayTarget) {
+        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(PREF_PLAY_TARGET, target.name)
+            .apply()
+        runOnMain { if (!replayActive && !replayPaused) showCurrentInternal() }
+    }
 
     /**
      * Observes controller preference changes made outside the host activity, such as the close
@@ -446,55 +571,51 @@ object ReplayFloatingController {
         val displayHeight = displayMetrics?.heightPixels ?: activeService.resources.displayMetrics.heightPixels
         val root = ControllerRoot(activeService)
         val latchWidth = dp(activeService, LATCH_THICKNESS_DP)
-        val latchHeight = dp(activeService, LATCH_LENGTH_DP)
 
-        var panelWidth = 0
-        var panelHeight = 0
-        var panel: LinearLayout? = null
-        if (expanded && !replayActive) {
-            panel = buildPanel(activeService)
-            panel.measure(
-                View.MeasureSpec.makeMeasureSpec(
-                    (displayWidth - dp(activeService, SCREEN_MARGIN_DP) * 2).coerceAtLeast(1),
-                    View.MeasureSpec.AT_MOST,
-                ),
-                View.MeasureSpec.makeMeasureSpec(
-                    (displayHeight - dp(activeService, SCREEN_MARGIN_DP) * 2).coerceAtLeast(1),
-                    View.MeasureSpec.AT_MOST,
-                ),
-            )
-            panelWidth = panel.measuredWidth
-                .coerceAtLeast(dp(activeService, PANEL_WIDTH_DP))
-                .coerceAtMost((displayWidth - dp(activeService, SCREEN_MARGIN_DP) * 2).coerceAtLeast(1))
-            panelHeight = panel.measuredHeight.coerceAtLeast(1)
-        }
+        val panel = buildPanel(activeService)
+        panel.measure(
+            View.MeasureSpec.makeMeasureSpec(
+                (displayWidth - dp(activeService, SCREEN_MARGIN_DP) * 2).coerceAtLeast(1),
+                View.MeasureSpec.AT_MOST,
+            ),
+            View.MeasureSpec.makeMeasureSpec(
+                (displayHeight - dp(activeService, SCREEN_MARGIN_DP) * 2).coerceAtLeast(1),
+                View.MeasureSpec.AT_MOST,
+            ),
+        )
+        val panelWidth = panel.measuredWidth
+            .coerceAtLeast(dp(activeService, PANEL_WIDTH_DP))
+            .coerceAtMost((displayWidth - dp(activeService, SCREEN_MARGIN_DP) * 2).coerceAtLeast(1))
+        val panelHeight = panel.measuredHeight.coerceAtLeast(1)
+        val latchHeight = panelHeight
+        val panelVisible = expanded && !replayActive
 
         val placement = when (edge) {
             EdgeLatchSide.LEFT -> Placement(
-                panelLeft = if (panel == null) 0 else latchWidth,
+                panelLeft = 0,
                 panelTop = 0,
-                handleLeft = 0,
+                handleLeft = if (panelVisible) panelWidth else 0,
                 handleTop = 0,
             )
 
             EdgeLatchSide.RIGHT -> Placement(
-                panelLeft = 0,
+                panelLeft = latchWidth,
                 panelTop = 0,
-                handleLeft = panelWidth,
+                handleLeft = 0,
                 handleTop = 0,
             )
         }
 
-        panel?.let {
-            root.panel = it
-            root.addView(
-                it,
-                FrameLayout.LayoutParams(panelWidth, panelHeight).apply {
-                    leftMargin = placement.panelLeft
-                    topMargin = placement.panelTop
-                },
-            )
-        }
+        root.panel = panel
+        root.panelWidthPx = panelWidth
+        root.addView(
+            panel,
+            FrameLayout.LayoutParams(panelWidth, panelHeight).apply {
+                leftMargin = placement.panelLeft
+                topMargin = placement.panelTop
+            },
+        )
+        panel.visibility = if (panelVisible) View.VISIBLE else View.GONE
         val handle = LatchButton(activeService, edge, latchAccentColor(activeService)).apply {
             setImageDrawable(null)
             contentDescription = when {
@@ -521,10 +642,10 @@ object ReplayFloatingController {
         root.handleTopPx = placement.handleTop
         root.handleWidthPx = latchWidth
         root.handleHeightPx = latchHeight
+        root.handle = handle
         handle.setOnClickListener {
             if (!replayActive) {
-                expanded = !expanded
-                showCurrentInternal()
+                setExpandedInternal(root, !expanded)
             }
         }
         handle.setOnTouchListener { view, event -> handleTouch(root, view, event) }
@@ -533,6 +654,114 @@ object ReplayFloatingController {
             View.MeasureSpec.makeMeasureSpec(displayHeight, View.MeasureSpec.AT_MOST),
         )
         return root
+    }
+
+    private fun setExpandedInternal(root: ControllerRoot, shouldExpand: Boolean) {
+        val activeService = service ?: return
+        if (overlayView !== root || replayActive || expanded == shouldExpand || root.animating) return
+        val panel = root.panel ?: return
+        val handle = root.handle ?: return
+        root.animating = true
+        val translation = edgeDrawerTranslationPx(
+            side = edge,
+            panelWidthPx = root.panelWidthPx,
+            handleWidthPx = root.handleWidthPx,
+            visibleHandleWidthPx = dp(activeService, LATCH_VISIBLE_DP),
+        )
+        if (shouldExpand) {
+            expanded = true
+            panel.visibility = View.VISIBLE
+            if (!updateRootLayout(root, drawerVisible = true)) {
+                expanded = false
+                panel.visibility = View.GONE
+                root.animating = false
+                return
+            }
+            root.translationX = translation
+            root.animate().translationX(0f).setDuration(180L).withEndAction {
+                root.animating = false
+            }.start()
+        } else {
+            if (!animateRootClosed(root, panel, translation.roundToInt())) {
+                expanded = false
+                panel.visibility = View.GONE
+                root.animating = false
+                showCurrentInternal()
+            }
+        }
+    }
+
+    private fun animateRootClosed(root: ControllerRoot, panel: View, distancePx: Int): Boolean {
+        val manager = windowManager ?: return false
+        val params = layoutParams ?: return false
+        val metrics = realDisplayMetrics(service ?: return false) ?: return false
+        val startX = params.x
+        val animator = ValueAnimator.ofInt(startX, startX + distancePx).apply {
+            duration = 160L
+            addUpdateListener { animation ->
+                if (overlayView !== root) return@addUpdateListener
+                params.x = animation.animatedValue as Int
+                runCatching {
+                    manager.updateViewLayout(root, params)
+                    updateSurfaceGeometry(metrics, root)
+                }
+            }
+            addListener(object : AnimatorListenerAdapter() {
+                private var cancelled = false
+
+                override fun onAnimationCancel(animation: Animator) {
+                    cancelled = true
+                }
+
+                override fun onAnimationEnd(animation: Animator) {
+                    root.positionAnimator = null
+                    if (!cancelled && overlayView === root) {
+                        expanded = false
+                        panel.visibility = View.GONE
+                        if (!updateRootLayout(root, drawerVisible = false)) showCurrentInternal()
+                    }
+                    root.animating = false
+                }
+            })
+        }
+        root.positionAnimator = animator
+        animator.start()
+        return true
+    }
+
+    private fun updateRootLayout(root: ControllerRoot, drawerVisible: Boolean): Boolean {
+        val activeService = service ?: return false
+        val manager = windowManager ?: return false
+        val params = layoutParams ?: return false
+        val metrics = realDisplayMetrics(activeService) ?: return false
+        val handle = root.handle ?: return false
+        val panel = root.panel ?: return false
+        val panelParams = panel.layoutParams as FrameLayout.LayoutParams
+        val handleParams = handle.layoutParams as FrameLayout.LayoutParams
+        panelParams.leftMargin = if (edge == EdgeLatchSide.RIGHT) root.handleWidthPx else 0
+        handleParams.leftMargin = if (edge == EdgeLatchSide.LEFT && drawerVisible) root.panelWidthPx else 0
+        panel.layoutParams = panelParams
+        handle.layoutParams = handleParams
+        root.handleLeftPx = handleParams.leftMargin
+        root.measure(
+            View.MeasureSpec.makeMeasureSpec(metrics.widthPixels, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(metrics.heightPixels, View.MeasureSpec.AT_MOST),
+        )
+        params.x = when (edge) {
+            EdgeLatchSide.LEFT -> if (drawerVisible) 0 else -(root.handleWidthPx - dp(activeService, LATCH_VISIBLE_DP))
+
+            EdgeLatchSide.RIGHT -> if (drawerVisible) {
+                metrics.widthPixels - root.measuredWidth
+            } else {
+                metrics.widthPixels - dp(activeService, LATCH_VISIBLE_DP)
+            }
+        }
+        params.y = params.y.coerceIn(0, (metrics.heightPixels - root.measuredHeight).coerceAtLeast(0))
+        return runCatching {
+            manager.updateViewLayout(root, params)
+            updateSurfaceGeometry(metrics, root)
+            true
+        }.getOrDefault(false)
     }
 
     private fun handleTouch(root: ControllerRoot, handle: View, event: MotionEvent): Boolean {
@@ -546,7 +775,6 @@ object ReplayFloatingController {
         }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                handle.animate().scaleX(1.08f).scaleY(0.94f).setDuration(90L).start()
                 dragState = DragState(
                     startRawX = event.rawX,
                     startRawY = event.rawY,
@@ -568,7 +796,6 @@ object ReplayFloatingController {
             MotionEvent.ACTION_UP,
             MotionEvent.ACTION_CANCEL,
             -> {
-                handle.animate().scaleX(1f).scaleY(1f).setDuration(140L).start()
                 val state = dragState
                 dragState = null
                 if (state?.dragging == true) {
@@ -644,11 +871,11 @@ object ReplayFloatingController {
         measuredHeight: Int,
     ): Pair<Int, Int> {
         val x = when (side) {
-            EdgeLatchSide.LEFT -> -root.handleWidthPx / 2
+            EdgeLatchSide.LEFT -> -(root.handleWidthPx - dp(root.context, LATCH_VISIBLE_DP))
 
             EdgeLatchSide.RIGHT ->
                 metrics.widthPixels -
-                    (root.handleLeftPx + root.handleWidthPx / 2)
+                    (root.handleLeftPx + dp(root.context, LATCH_VISIBLE_DP))
         }
         val usableAxis = (metrics.heightPixels - root.handleHeightPx).coerceAtLeast(0)
         val y = (offset * usableAxis).roundToInt()
@@ -768,19 +995,20 @@ object ReplayFloatingController {
                     }
                 }
                 ReplayWorkflowCatalog.load(activeService)
-                val latestWorkflow = ReplayWorkflowCatalog.snapshot().firstOrNull()
+                val playTarget = playTarget(activeService)
+                val selectedWorkflow = ReplayWorkflowCatalog.selected(playTarget)
                 actions += ControlAction(
                     android.R.drawable.ic_media_play,
-                    "Replay latest saved workflow",
+                    "Replay ${playTarget.label.lowercase()}",
                 ) {
-                    if (latestWorkflow == null) {
+                    if (selectedWorkflow == null) {
                         Toast.makeText(
                             activeService,
-                            "No saved workflow to replay",
+                            "No ${playTarget.label.lowercase()} workflow to replay",
                             Toast.LENGTH_SHORT,
                         ).show()
                     } else {
-                        openWorkflow(activeService, latestWorkflow, autoStart = true)
+                        openWorkflow(activeService, selectedWorkflow, autoStart = true)
                     }
                 }
                 actions += ControlAction(android.R.drawable.ic_menu_manage, "Open Veyarc workflow library") {
@@ -803,9 +1031,11 @@ object ReplayFloatingController {
         onClick: () -> Unit,
     ): ImageButton = ImageButton(context).apply {
         setImageResource(icon)
-        setColorFilter(Color.WHITE, PorterDuff.Mode.SRC_IN)
+        val dark = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+            Configuration.UI_MODE_NIGHT_YES
+        setColorFilter(if (dark) 0xFFF5EEF8.toInt() else 0xFF2D2631.toInt(), PorterDuff.Mode.SRC_IN)
         contentDescription = description
-        background = iconBackground()
+        background = iconBackground(context)
         scaleType = android.widget.ImageView.ScaleType.CENTER
         setPadding(dp(context, 10), dp(context, 10), dp(context, 10), dp(context, 10))
         setOnClickListener { onClick() }
@@ -826,30 +1056,48 @@ object ReplayFloatingController {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
         }
-        // The root is allowed to extend only by half the latch thickness beyond the selected
-        // edge. The panel therefore stays fully on-screen and touches the visible latch edge
+        // Most of the latch stays outside the display so it does not cover app controls. The
+        // panel stays fully on-screen and touches the visible latch edge
         // with no interior placement or gap. Along-edge placement is persisted as a normalized
         // start coordinate and clamped only when the expanded panel would exceed the display.
         params.x = when (edge) {
-            EdgeLatchSide.LEFT -> -view.handleWidthPx / 2
+            EdgeLatchSide.LEFT -> if (expanded) {
+                0
+            } else {
+                -(view.handleWidthPx - dp(activeService, LATCH_VISIBLE_DP))
+            }
 
-            EdgeLatchSide.RIGHT ->
-                displayMetrics.widthPixels -
-                    (view.handleLeftPx + view.handleWidthPx / 2)
+            EdgeLatchSide.RIGHT -> if (expanded) {
+                displayMetrics.widthPixels - measuredWidth
+            } else {
+                displayMetrics.widthPixels - dp(activeService, LATCH_VISIBLE_DP)
+            }
         }
         val usableAxis = (displayMetrics.heightPixels - view.handleHeightPx).coerceAtLeast(0)
         val desired = (edgeOffset * usableAxis).roundToInt()
         params.y = desired.coerceIn(0, (displayMetrics.heightPixels - measuredHeight).coerceAtLeast(0))
+        val openingTranslation = if (expanded) {
+            edgeDrawerTranslationPx(
+                side = edge,
+                panelWidthPx = view.panelWidthPx,
+                handleWidthPx = view.handleWidthPx,
+                visibleHandleWidthPx = dp(activeService, LATCH_VISIBLE_DP),
+            )
+        } else {
+            0f
+        }
+        view.translationX = openingTranslation
         return runCatching {
             manager.addView(view, params)
             windowManager = manager
             overlayView = view
             layoutParams = params
             updateSurfaceGeometry(displayMetrics, view, measuredWidth, measuredHeight)
-            view.panel?.let { panel ->
-                panel.alpha = 0f
-                panel.translationX = dp(activeService, if (edge == EdgeLatchSide.LEFT) -8 else 8).toFloat()
-                panel.animate().alpha(1f).translationX(0f).setDuration(160L).start()
+            if (expanded) {
+                view.animating = true
+                view.animate().translationX(0f).setDuration(180L).withEndAction {
+                    view.animating = false
+                }.start()
             }
             true
         }.getOrElse {
@@ -865,6 +1113,8 @@ object ReplayFloatingController {
             layoutParams = null
             return true
         }
+        (view as? ControllerRoot)?.positionAnimator?.cancel()
+        view.animate().cancel()
         val manager = windowManager
         if (manager == null) {
             if (view.parent != null) return false
@@ -997,22 +1247,11 @@ object ReplayFloatingController {
     private fun handleBackground(context: Context): Drawable {
         val dark = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
             Configuration.UI_MODE_NIGHT_YES
-        val content = GradientDrawable().apply {
+        return GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             setColor(if (dark) 0xF23A323F.toInt() else 0xF2F3EDF7.toInt())
             cornerRadii = edgeLatchCornerRadii(edge, dp(context, 16).toFloat())
-            setStroke(dp(context, 1), if (dark) 0xFF675B6E.toInt() else 0xFFD6C9DD.toInt())
         }
-        val mask = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            setColor(Color.WHITE)
-            cornerRadii = edgeLatchCornerRadii(edge, dp(context, 16).toFloat())
-        }
-        return RippleDrawable(
-            ColorStateList.valueOf(if (dark) 0x33FFFFFF else 0x22000000),
-            content,
-            mask,
-        )
     }
 
     private fun latchAccentColor(context: Context): Int {
@@ -1026,17 +1265,27 @@ object ReplayFloatingController {
         }
     }
 
-    private fun iconBackground(): GradientDrawable = GradientDrawable().apply {
-        shape = GradientDrawable.RECTANGLE
-        cornerRadius = 12f
-        setColor(0xFF5D3C82.toInt())
-        setStroke(1, 0xFFBFA5D4.toInt())
+    private fun iconBackground(context: Context): Drawable {
+        val dark = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+            Configuration.UI_MODE_NIGHT_YES
+        val content = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(context, 12).toFloat()
+            setColor(if (dark) 0xFF443A49.toInt() else 0xFFE8DFEB.toInt())
+        }
+        return RippleDrawable(
+            ColorStateList.valueOf(if (dark) 0x33FFFFFF else 0x22000000),
+            content,
+            null,
+        )
     }
 
     private fun panelBackground(context: Context): GradientDrawable = GradientDrawable().apply {
-        setColor(0xEE29222F.toInt())
-        cornerRadius = dp(context, 18).toFloat()
-        setStroke(1, 0xFF6D6178.toInt())
+        val dark = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+            Configuration.UI_MODE_NIGHT_YES
+        setColor(if (dark) 0xF23A323F.toInt() else 0xF2F3EDF7.toInt())
+        val attachedSide = if (edge == EdgeLatchSide.LEFT) EdgeLatchSide.RIGHT else EdgeLatchSide.LEFT
+        cornerRadii = edgeLatchCornerRadii(attachedSide, dp(context, 18).toFloat())
     }
 
     private fun dp(context: Context?, value: Int): Int {
@@ -1111,7 +1360,11 @@ object ReplayFloatingController {
     )
 
     private class ControllerRoot(context: Context) : FrameLayout(context) {
+        var animating: Boolean = false
+        var positionAnimator: ValueAnimator? = null
         var panel: View? = null
+        var handle: View? = null
+        var panelWidthPx: Int = 0
         var handleLeftPx: Int = 0
         var handleTopPx: Int = 0
         var handleWidthPx: Int = 0

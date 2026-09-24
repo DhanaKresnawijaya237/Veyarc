@@ -13,6 +13,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -158,16 +159,19 @@ class MainActivity : ComponentActivity() {
 
                         null ->
                             if (bundle != null) {
-                                WorkflowRunScreen(
-                                    bundle = bundle,
-                                    controller = requireNotNull(runSession.controller) {
-                                        "A workflow run screen requires an active run controller"
-                                    },
-                                    canStart = recoveryState == RunRecoveryState.READY,
-                                    startBlockMessage = recoveryState.message,
-                                    onStart = runSession::startRun,
-                                    onBack = ::leaveRunScreen,
-                                )
+                                val controller = requireNotNull(runSession.controller) {
+                                    "A workflow run screen requires an active run controller"
+                                }
+                                key(controller) {
+                                    WorkflowRunScreen(
+                                        bundle = bundle,
+                                        controller = controller,
+                                        canStart = recoveryState == RunRecoveryState.READY,
+                                        startBlockMessage = recoveryState.message,
+                                        onStart = ::startRunAndRemember,
+                                        onBack = ::leaveRunScreen,
+                                    )
+                                }
                             } else {
                                 VeyarcAppShell(
                                     selectedDestination = selectedDestination,
@@ -176,8 +180,8 @@ class MainActivity : ComponentActivity() {
                                         selectedDestination = it
                                     },
                                     selectionBar = managerSelectionBar,
-                                ) {
-                                    when (selectedDestination) {
+                                ) { destination ->
+                                    when (destination) {
                                         VeyarcDestination.HOME -> HomeDashboardScreen(
                                             repository = workflowRepository,
                                             refreshGeneration = resumeGeneration,
@@ -247,7 +251,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        if (shouldHandleControllerRequest(savedInstanceState != null, intent?.action)) {
+        if (shouldHandleControllerRequest(intent?.action)) {
             handleControllerIntent(intent)
         }
     }
@@ -324,8 +328,17 @@ class MainActivity : ComponentActivity() {
             val state = controller.state.value
             // A service-owned emergency notification is mandatory. If it is unavailable, leave
             // the normal review screen visible rather than starting an unprotected replay.
-            if (state.review.isRunnable && state.notificationReady) runSession.startRun()
+            if (state.review.isRunnable && state.notificationReady) startRunAndRemember()
         }
+    }
+
+    private fun startRunAndRemember() {
+        val document = workflowToRun?.document ?: return
+        ReplayWorkflowCatalog.markPlayed(
+            applicationContext,
+            ReplayControllerWorkflow(document.id, document.revision, document.name),
+        )
+        runSession.startRun()
     }
 
     private fun leaveRunScreen() {
@@ -335,18 +348,30 @@ class MainActivity : ComponentActivity() {
 
     private fun refreshReplayWorkflowCatalog() {
         catalogScope.launch {
-            val workflows = runCatching {
+            val catalog = runCatching {
                 withContext(Dispatchers.IO) {
-                    workflowRepository.listWorkflowSummaries().map { summary ->
+                    val summaries = workflowRepository.listWorkflowSummaries()
+                    val workflows = summaries.map { summary ->
                         ReplayControllerWorkflow(
                             workflowId = summary.workflowId,
                             revision = summary.latestRevision,
                             name = summary.name,
+                            updatedAtMs = summary.updatedAtMs,
+                            isFavorite = summary.isFavorite,
                         )
                     }
+                    val names = summaries.associateBy(WorkflowSummary::workflowId)
+                    val lastPlayed = workflowRepository.listRunSummaries(limit = 1).firstOrNull()?.let { run ->
+                        ReplayControllerWorkflow(
+                            workflowId = run.workflowId,
+                            revision = run.revision,
+                            name = names[run.workflowId]?.name ?: run.name ?: "Workflow",
+                        )
+                    }
+                    workflows to lastPlayed
                 }
-            }.getOrElse { emptyList() }
-            ReplayWorkflowCatalog.replace(applicationContext, workflows)
+            }.getOrElse { emptyList<ReplayControllerWorkflow>() to null }
+            ReplayWorkflowCatalog.replace(applicationContext, catalog.first, catalog.second)
         }
     }
 
@@ -386,7 +411,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-internal fun shouldHandleControllerRequest(restoringState: Boolean, action: String?): Boolean = !restoringState && action == ReplayFloatingController.ACTION_OPEN_WORKFLOW
+internal fun shouldHandleControllerRequest(action: String?): Boolean = action == ReplayFloatingController.ACTION_OPEN_WORKFLOW
 
 private enum class FullScreenDestination {
     ACCESSIBILITY,
