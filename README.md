@@ -29,7 +29,7 @@ Workflow revisions, image templates, and recording journals are encrypted locall
 
 Recording and replay use one pointer. Multitouch, pressure, and finger contact area are not reproduced. Portrait and landscape are separate workflow variants; rotating during a run stops it. Split-screen and freeform windows are unsupported. **Replay does not freeze the screen**: human touches can interfere, so leave the target app untouched while it runs. Notifications provide an independent stop control.
 
-Other devices may work, but they are not yet verified. See [device compatibility](docs/android-device-compatibility.md) for the evidence, [the Android guide](docs/android-beta-guide.md) for setup and recovery, and [v1.0.0 release notes](docs/android-v1.0.0-release-notes.md) for this release.
+Other devices may work, but they are not yet verified. See [device compatibility](docs/android-device-compatibility.md) for the evidence, [the Android guide](docs/android-beta-guide.md) for setup and recovery, and [v1.0.0 release notes](docs/android-v1.0.0-release-notes.md) for the v1 version.
 
 ## Repository and build
 

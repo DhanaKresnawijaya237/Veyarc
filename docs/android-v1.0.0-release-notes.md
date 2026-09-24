@@ -1,6 +1,6 @@
 # Veyarc Android 1.0.0
 
-Veyarc's first sideloaded release combines single-pointer recording, an editable workflow, and local run history. Device support remains limited; check [compatibility](android-device-compatibility.md) before relying on recording or replay.
+Version 1.0.0 combines single-pointer recording, an editable workflow, and local run history. Device support remains limited; check [compatibility](android-device-compatibility.md) before relying on recording or replay.
 
 ## Included
 
