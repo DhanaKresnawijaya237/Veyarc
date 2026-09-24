@@ -388,12 +388,6 @@ object WorkflowCompiler {
         analysis: ControlFlowAnalysis,
         errors: MutableList<CompilationError>,
     ) {
-        if (analysis.arithmeticOverflow || analysis.worstCaseStepCount > document.runLimits.maxTotalSteps) {
-            errors += limitError(
-                "/steps",
-                "Worst-case execution requires ${analysis.worstCaseStepCount} steps, exceeding maxTotalSteps ${document.runLimits.maxTotalSteps}",
-            )
-        }
         if (analysis.maxNestingDepth > document.runLimits.maxNestingDepth) {
             errors += limitError(
                 "/runLimits/maxNestingDepth",

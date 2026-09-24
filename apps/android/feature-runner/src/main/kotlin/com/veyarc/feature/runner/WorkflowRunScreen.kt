@@ -157,7 +157,6 @@ private fun ReviewContent(
             Text("Pre-run review", style = MaterialTheme.typography.titleLarge)
             Text("Revision ${state.revision}")
             Text("Allowed packages: ${state.review.plan?.allowedPackages?.joinToString { it.value } ?: "none"}")
-            Text("Maximum runtime: ${plan?.runLimits?.maxRuntimeMs ?: "—"} ms")
             Text("Worst-case steps: ${plan?.analysis?.worstCaseStepCount ?: "—"}")
             Text("Required orientation: ${plan?.viewport?.recordedOrientation?.name?.lowercase() ?: "unknown"}")
             Text("Current orientation: ${state.review.currentOrientation?.name?.lowercase() ?: "unknown"}")

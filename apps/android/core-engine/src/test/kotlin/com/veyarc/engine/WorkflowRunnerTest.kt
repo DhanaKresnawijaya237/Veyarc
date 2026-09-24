@@ -64,6 +64,20 @@ class WorkflowRunnerTest {
     }
 
     @Test
+    fun ignoresLegacyRunAndStepDurationLimits() {
+        val clock = FakeClock()
+
+        val result = WorkflowRunner().run(
+            plan(steps = listOf(Wait(STEP_1, DurationMillis(15_000)))),
+            FakeDriver(),
+            clock,
+        )
+
+        assertTrue(result.isSuccess)
+        assertEquals(15_000L, clock.nowMs())
+    }
+
+    @Test
     fun jumpsToABoundaryForTheConfiguredNumberOfPasses() {
         val plan = plan(
             steps = listOf(

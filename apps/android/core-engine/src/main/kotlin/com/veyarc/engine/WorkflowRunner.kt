@@ -130,10 +130,8 @@ class WorkflowRunner {
         ensureBoundary(state)
         state.emit(RunEvent.StepStarted(state.nowMs(), step.id))
         var finished = false
-        val startedAtMs = state.nowMs()
         return try {
             val execution = executeStepBody(step, state)
-            if (isAtomicStep(step)) checkStepDuration(step.id, startedAtMs, state)
             state.stepOutcomes[step.id] = execution.outcome
             state.emit(RunEvent.StepFinished(state.nowMs(), step.id, execution.outcome))
             finished = true
@@ -424,19 +422,6 @@ class WorkflowRunner {
                 stopReason = null,
             )
         }
-        if (now - state.startedAtMs > state.plan.runLimits.maxRuntimeMs) {
-            throw RunAbort(
-                outcome = RunOutcome.TIMED_OUT,
-                stepOutcome = StepOutcome.TIMED_OUT,
-                failure = RunFailure(
-                    code = RunFailureCode.RUNTIME_LIMIT_EXCEEDED,
-                    stepId = state.currentStepId,
-                    path = state.currentPath,
-                    message = "Workflow exceeded maxRuntimeMs",
-                ),
-                stopReason = null,
-            )
-        }
         currentViewportOrAbort(state)
         ensureForeground(state)
     }
@@ -557,28 +542,6 @@ class WorkflowRunner {
         ),
         stopReason = null,
     )
-
-    private fun checkStepDuration(stepId: String, startedAtMs: Long, state: RunState) {
-        val now = state.nowMs()
-        if (now < startedAtMs || now - startedAtMs > state.plan.runLimits.maxStepDurationMs) {
-            throw RunAbort(
-                outcome = RunOutcome.TIMED_OUT,
-                stepOutcome = StepOutcome.TIMED_OUT,
-                failure = RunFailure(
-                    code = RunFailureCode.STEP_TIMEOUT,
-                    stepId = stepId,
-                    path = state.currentPath,
-                    message = "Step exceeded maxStepDurationMs",
-                ),
-                stopReason = null,
-            )
-        }
-    }
-
-    private fun isAtomicStep(step: ExecutionStep): Boolean = when (step) {
-        is ExecutionStep.IfElse, is ExecutionStep.Repeat, is ExecutionStep.While -> false
-        else -> true
-    }
 
     private fun ensureForeground(state: RunState) {
         val current = state.driver.currentForegroundPackage()

@@ -174,8 +174,6 @@ object WorkflowValidator {
                         referencedAssets = referencedAssets,
                         errors = errors,
                     )
-                    validateDuration(step.timeoutMs.value, "$stepPath/timeoutMs", document, errors)
-                    validateDuration(step.pollIntervalMs.value, "$stepPath/pollIntervalMs", document, errors)
                 }
 
                 is IfElse -> validateCondition(
@@ -236,10 +234,7 @@ object WorkflowValidator {
                     }
                 }
 
-                is LongPress -> validateDuration(step.durationMs.value, "$stepPath/durationMs", document, errors)
-
                 is SwipePath -> {
-                    validateDuration(step.durationMs.value, "$stepPath/durationMs", document, errors)
                     if (step.points.size > document.runLimits.maxPathPoints) {
                         errors += error(
                             ValidationErrorCode.LIMIT_EXCEEDED,
@@ -249,21 +244,13 @@ object WorkflowValidator {
                     }
                 }
 
-                is Wait -> validateDuration(step.durationMs.value, "$stepPath/durationMs", document, errors)
-
                 is LaunchApp -> {
-                    validateDuration(
-                        step.foregroundTimeoutMs.value,
-                        "$stepPath/foregroundTimeoutMs",
-                        document,
-                        errors,
-                    )
                     validatePackage(step.packageName, "$stepPath/packageName", document, errors)
                 }
 
                 is SetVariable -> validateSetVariable(step, stepPath, document, errors)
 
-                is StageBoundary, is Stop, is TapPoint, is TapRegion -> Unit
+                is LongPress, is Wait, is StageBoundary, is Stop, is TapPoint, is TapRegion -> Unit
             }
 
             seenStepIds += step.id
@@ -523,21 +510,6 @@ object WorkflowValidator {
                 ValidationErrorCode.PACKAGE_NOT_ALLOWED,
                 path,
                 "Package must appear in allowedPackages",
-            )
-        }
-    }
-
-    private fun validateDuration(
-        durationMs: Long,
-        path: String,
-        document: WorkflowDocument,
-        errors: MutableList<ValidationError>,
-    ) {
-        if (durationMs > document.runLimits.maxStepDurationMs) {
-            errors += error(
-                ValidationErrorCode.LIMIT_EXCEEDED,
-                path,
-                "Duration exceeds maxStepDurationMs",
             )
         }
     }

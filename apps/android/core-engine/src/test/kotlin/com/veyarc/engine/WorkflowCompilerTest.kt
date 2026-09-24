@@ -103,7 +103,7 @@ class WorkflowCompilerTest {
     }
 
     @Test
-    fun rejectsWorstCaseStepBudgetBeforeCreatingPlan() {
+    fun allowsWorstCaseStepEstimateAboveDeclaredTotalStepLimit() {
         val result = WorkflowCompiler.compile(
             document(
                 limits = limits(maxTotalSteps = 5),
@@ -120,9 +120,8 @@ class WorkflowCompilerTest {
             ),
         )
 
-        assertFalse(result.isSuccess)
-        assertTrue(result.errors.any { it.code == CompilationErrorCode.LIMIT_EXCEEDED })
-        assertTrue(result.errors.any { it.message.contains("maxTotalSteps") })
+        assertTrue(result.isSuccess)
+        assertEquals(7L, result.plan?.analysis?.worstCaseStepCount)
     }
 
     @Test
