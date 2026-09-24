@@ -10,6 +10,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -296,13 +297,14 @@ internal fun WorkflowManagerScreen(
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     OutlinedButton(
                         onClick = { sortMenuOpen = true },
                         modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
                     ) { Text("Sort: ${sort.shortLabel}", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                     if (sortMenuOpen) {
                         VeyarcChoicePicker(
@@ -321,9 +323,10 @@ internal fun WorkflowManagerScreen(
                     OutlinedButton(
                         onClick = { orientationMenuOpen = true },
                         modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
                     ) {
                         Text(
-                            if (searchActive) orientation.shortLabel else "Screen: ${orientation.shortLabel}",
+                            "Screen: ${orientation.shortLabel}",
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )

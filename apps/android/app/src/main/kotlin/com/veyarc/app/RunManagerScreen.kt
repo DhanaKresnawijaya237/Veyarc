@@ -10,6 +10,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -312,7 +313,7 @@ internal fun RunManagerScreen(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 FilterMenuButton(
                     modifier = Modifier.weight(1f),
@@ -331,6 +332,7 @@ internal fun RunManagerScreen(
                 OutlinedButton(
                     onClick = { filtersOpen = true },
                     modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
                     colors = ButtonDefaults.outlinedButtonColors(
                         containerColor = if (hasActiveRunFilters(statusFilter, workflowFilter, dateFilter, revisionFilter)) {
                             MaterialTheme.colorScheme.secondaryContainer
@@ -627,7 +629,11 @@ private fun FilterMenuButton(
     onSelect: (VeyarcChoice) -> Unit,
 ) {
     Column(modifier = modifier) {
-        OutlinedButton(onClick = onOpen, modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(
+            onClick = onOpen,
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
+        ) {
             Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (expanded) VeyarcChoicePicker(title, options, selectedId, onDismiss, onSelect)
