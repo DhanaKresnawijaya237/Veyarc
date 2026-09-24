@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -52,6 +53,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.veyarc.automation.android.AccessibilityGestureDispatcher
 import com.veyarc.automation.android.EdgeLatchPlayTarget
 import com.veyarc.automation.android.MediaProjectionCaptureRuntime
@@ -95,6 +98,7 @@ fun SettingsScreen(
     var expandedSection by rememberSaveable { mutableStateOf<String?>(null) }
     var confirmShizukuDownload by remember { mutableStateOf(false) }
     var chooseShizukuSource by remember { mutableStateOf(false) }
+    var openGuide by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     fun refreshCapabilities() {
         accessibilityEnabled = AccessibilityGestureDispatcher.isEnabled(context)
@@ -341,10 +345,10 @@ fun SettingsScreen(
                 StatusRow("Android", "${Build.VERSION.RELEASE} • API ${Build.VERSION.SDK_INT}")
                 StatusRow("Device", "${Build.MANUFACTURER} ${Build.MODEL}")
                 Button(onClick = onOpenDiagnostics) { Text("Open diagnostics") }
-                OutlinedButton(onClick = { openUrl(context, "https://github.com/DhanaKresnawijaya237/Veyarc/blob/main/docs/android-beta-guide.md") }) {
+                OutlinedButton(onClick = { openGuide = "Android beta guide" to "android-beta-guide.md" }) {
                     Text("Android beta guide")
                 }
-                OutlinedButton(onClick = { openUrl(context, "https://github.com/DhanaKresnawijaya237/Veyarc/blob/main/docs/android-device-compatibility.md") }) {
+                OutlinedButton(onClick = { openGuide = "Device compatibility notes" to "android-device-compatibility.md" }) {
                     Text("Device compatibility notes")
                 }
             }
@@ -429,6 +433,31 @@ fun SettingsScreen(
             confirmButton = {},
             dismissButton = { TextButton(onClick = { chooseShizukuSource = false }) { Text("Cancel") } },
         )
+    }
+    openGuide?.let { (title, assetName) ->
+        val guide = remember(assetName) {
+            runCatching { context.assets.open(assetName).bufferedReader().use { it.readText() } }
+                .getOrElse { "This guide could not be loaded: ${it.message ?: it.javaClass.simpleName}" }
+        }
+        Dialog(onDismissRequest = { openGuide = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Card(Modifier.fillMaxWidth(0.94f).fillMaxHeight(0.9f)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                        TextButton(onClick = { openGuide = null }) { Text("Close") }
+                    }
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(guide.lines().filter(String::isNotBlank)) { line ->
+                            when {
+                                line.startsWith("# ") -> Unit
+                                line.startsWith("## ") -> Text(line.removePrefix("## "), style = MaterialTheme.typography.titleMedium)
+                                else -> Text(line, style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

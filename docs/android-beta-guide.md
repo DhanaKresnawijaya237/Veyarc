@@ -16,7 +16,7 @@ Android or Play Protect may warn about a sideloaded build because it did not com
 2. Open Android Accessibility settings and enable **Veyarc gesture control**. Android requires this for workflow gesture playback and active-app safety checks.
 3. Install and start Shizuku, then grant Veyarc access when Shizuku asks. Exact recording and raw-trace replay need this shell-identity helper.
 4. Optional: add **Veyarc recording** to Quick Settings. The tile starts or stops a global recording without opening Veyarc.
-5. Optional: enable the edge-latch control center in Veyarc. It stays on the left or right edge and provides recording and latest-workflow controls.
+5. Optional: enable the edge-latch control center in Veyarc. It stays on the left or right edge and provides recording and workflow-play controls.
 
 A Shizuku service started through wireless debugging needs to be started again after a phone reboot. On Android 11 and newer, pairing is normally one-time and startup does not require a computer. Follow the [official Shizuku setup guide](https://shizuku.rikka.app/guide/setup/) because OEM behavior differs.
 
@@ -42,7 +42,7 @@ Control-surface touches are excluded. Recording stops safely on lock screen, phy
 
 ## Replay safely
 
-Review the workflow and its allowed packages before starting. Keep the emergency notification reachable. The edge latch can start the latest saved workflow; opening it during an active replay stops that replay before showing controls.
+Review the workflow and its allowed packages before starting. Keep the emergency notification reachable. The edge latch can start the workflow selected in its settings; opening it during an active replay stops that replay before showing controls.
 
 Veyarc does not freeze the whole display. The earlier full-screen interception experiment was removed because it could block normal device input. Human touches can therefore conflict with replay, so avoid touching the target app while a workflow runs.
 
@@ -54,7 +54,7 @@ Portrait and landscape are separate workflow variants. Start replay in the same 
 - Raw replay notification: **Pause/Resume replay** and **Stop replay**.
 - Workflow notification: **Pause/Resume** and **Stop**.
 - Quick Settings tile: start or stop recording.
-- Edge latch: recording controls and the latest saved workflow. Touching it during replay stops replay before opening the panel.
+- Edge latch: recording controls and the configured workflow-play action. Touching it during replay stops replay before opening the panel.
 
 If touch or navigation behaves abnormally, lock the phone first. Do not keep testing. Restart the phone if ordinary input does not return, then disable Veyarc Accessibility or uninstall Veyarc before another test. Shizuku and Veyarc do not need to remain enabled for normal phone operation.
 
@@ -74,7 +74,7 @@ Captured frames stay in memory only while the run evaluates its conditions. Imag
 
 ## Import and export
 
-This beta does not expose external workflow import or export controls. The `.veyarc` bundle encoder and bounded validator are used internally for stored revisions. The only user-facing import is selecting an image for a visual-condition template. Do not treat internal files copied from app storage as portable backups.
+Settings offers workflow import and export controls. Exported `.veyarc` bundles contain a validated workflow revision and can be imported through Settings. Image templates can also be selected separately for visual conditions. Do not treat internal files copied from app storage as portable backups.
 
 ## Current limits
 

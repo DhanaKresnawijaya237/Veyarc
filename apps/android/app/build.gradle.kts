@@ -140,6 +140,8 @@ android {
         compose = true
     }
 
+    sourceSets.getByName("main").assets.directories.add("../../../docs")
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
