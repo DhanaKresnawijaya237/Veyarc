@@ -1,8 +1,12 @@
 package com.veyarc.data.storage
 
 import com.veyarc.model.AssetId
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.zip.DeflaterOutputStream
+import java.util.zip.InflaterInputStream
 
 const val TEMPLATE_ASSET_KEY_ALIAS = "veyarc.template-assets.v1"
 
@@ -18,7 +22,7 @@ class DecodedTemplate(
     val heightPx: Int,
     rgbaBytes: ByteArray,
 ) {
-    private val rgbaBytes: ByteArray = rgbaBytes.copyOf()
+    private var rgbaBytes: ByteArray = rgbaBytes.copyOf()
 
     init {
         require(widthPx > 0) { "Template width must be positive" }
@@ -33,6 +37,12 @@ class DecodedTemplate(
     }
 
     fun copyRgbaBytes(): ByteArray = rgbaBytes.copyOf()
+
+    /** Transfers the pixel buffer to another short-lived owner without making another full-size copy. */
+    fun takeRgbaBytes(): ByteArray {
+        check(rgbaBytes.isNotEmpty()) { "Template pixels have already been transferred" }
+        return rgbaBytes.also { rgbaBytes = ByteArray(0) }
+    }
 
     /** Clears the in-memory template after encryption or evaluation is complete. */
     fun clear() {
@@ -88,9 +98,40 @@ class EncryptedTemplateAssetCodec(
         }
     }
 
-    /** Authenticates and validates a stored asset without retaining its decoded pixels. */
-    fun verify(assetId: AssetId, encrypted: ByteArray) {
-        decrypt(assetId, encrypted).clear()
+    /** Encodes the canonical compressed payload for the independently encrypted shared blob store. */
+    internal fun encodePayload(template: DecodedTemplate): ByteArray = encode(template)
+
+    /** Decodes a canonical payload after the shared blob store has authenticated and decrypted it. */
+    internal fun decodePayload(payload: ByteArray): DecodedTemplate {
+        require(payload.size.toLong() <= maxPlaintextBytes()) { "Template plaintext exceeds its safety limit" }
+        return decode(payload)
+    }
+
+    /** Authenticates an asset, reports its dimensions, and upgrades legacy raw payloads. */
+    internal fun verify(assetId: AssetId, encrypted: ByteArray): VerifiedTemplateAsset {
+        require(encrypted.size.toLong() <= maxEncryptedBytes) {
+            "Encrypted template exceeds its safety limit"
+        }
+        val plaintext = codec.decrypt(encrypted, associatedData(assetId))
+        return try {
+            val header = readHeader(plaintext)
+            if (header.version == FORMAT_VERSION) {
+                VerifiedTemplateAsset(header.widthPx, header.heightPx, null)
+            } else {
+                val decoded = decode(plaintext)
+                try {
+                    VerifiedTemplateAsset(
+                        widthPx = decoded.widthPx,
+                        heightPx = decoded.heightPx,
+                        upgradedBytes = encrypt(assetId, decoded),
+                    )
+                } finally {
+                    decoded.clear()
+                }
+            }
+        } finally {
+            plaintext.fill(0)
+        }
     }
 
     private val codec = AesGcmFileCodec(keySource)
@@ -98,14 +139,18 @@ class EncryptedTemplateAssetCodec(
     private fun encode(template: DecodedTemplate): ByteArray {
         val bytes = template.copyRgbaBytes()
         return try {
-            val total = HEADER_BYTES.toLong() + bytes.size
+            val compressed = ByteArrayOutputStream().use { output ->
+                DeflaterOutputStream(output).use { it.write(bytes) }
+                output.toByteArray()
+            }
+            val total = HEADER_BYTES.toLong() + compressed.size
             require(total <= maxPlaintextBytes()) { "Template plaintext exceeds its safety limit" }
             ByteBuffer.allocate(total.toInt()).order(ByteOrder.BIG_ENDIAN).apply {
                 put(MAGIC)
                 put(FORMAT_VERSION)
                 putInt(template.widthPx)
                 putInt(template.heightPx)
-                put(bytes)
+                put(compressed)
             }.array()
         } finally {
             bytes.fill(0)
@@ -113,31 +158,78 @@ class EncryptedTemplateAssetCodec(
     }
 
     private fun decode(plaintext: ByteArray): DecodedTemplate {
-        require(plaintext.size >= HEADER_BYTES) { "Template payload is truncated" }
-        val buffer = ByteBuffer.wrap(plaintext).order(ByteOrder.BIG_ENDIAN)
-        val magic = ByteArray(MAGIC.size)
-        buffer.get(magic)
-        require(magic.contentEquals(MAGIC)) { "Template payload has an unknown format" }
-        require(buffer.get() == FORMAT_VERSION) { "Template payload version is unsupported" }
-        val width = buffer.int
-        val height = buffer.int
-        val templateBytes = ByteArray(buffer.remaining()).also(buffer::get)
+        val header = readHeader(plaintext)
+        val buffer = ByteBuffer.wrap(plaintext).order(ByteOrder.BIG_ENDIAN).apply { position(HEADER_BYTES) }
+        val storedBytes = ByteArray(buffer.remaining()).also(buffer::get)
+        val templateBytes = if (header.version == LEGACY_FORMAT_VERSION) {
+            storedBytes
+        } else {
+            try {
+                inflateExactly(
+                    compressed = storedBytes,
+                    expectedBytes = Math.multiplyExact(Math.multiplyExact(header.widthPx, header.heightPx), 4),
+                )
+            } finally {
+                storedBytes.fill(0)
+            }
+        }
         return try {
-            DecodedTemplate(width, height, templateBytes)
+            DecodedTemplate(header.widthPx, header.heightPx, templateBytes)
         } finally {
             templateBytes.fill(0)
         }
     }
 
+    private fun readHeader(plaintext: ByteArray): TemplateHeader {
+        require(plaintext.size > HEADER_BYTES) { "Template payload is truncated" }
+        val buffer = ByteBuffer.wrap(plaintext).order(ByteOrder.BIG_ENDIAN)
+        val magic = ByteArray(MAGIC.size)
+        buffer.get(magic)
+        require(magic.contentEquals(MAGIC)) { "Template payload has an unknown format" }
+        val version = buffer.get()
+        require(version == LEGACY_FORMAT_VERSION || version == FORMAT_VERSION) {
+            "Template payload version is unsupported"
+        }
+        val width = buffer.int
+        val height = buffer.int
+        require(width > 0 && height > 0 && width.toLong() * height <= DecodedTemplate.MAX_TEMPLATE_PIXELS) {
+            "Template dimensions are invalid"
+        }
+        return TemplateHeader(version, width, height)
+    }
+
     private fun maxPlaintextBytes(): Long = maxEncryptedBytes - ENCRYPTION_OVERHEAD_BYTES
+
+    private fun inflateExactly(compressed: ByteArray, expectedBytes: Int): ByteArray {
+        val output = ByteArray(expectedBytes)
+        InflaterInputStream(ByteArrayInputStream(compressed)).use { input ->
+            var offset = 0
+            while (offset < output.size) {
+                val count = input.read(output, offset, output.size - offset)
+                require(count > 0) { "Template payload is truncated" }
+                offset += count
+            }
+            require(input.read() == -1) { "Template payload expands beyond its declared dimensions" }
+        }
+        return output
+    }
 
     private fun associatedData(assetId: AssetId): ByteArray = "template:${assetId.value}".encodeToByteArray()
 
     private companion object {
         val MAGIC = byteArrayOf('V'.code.toByte(), 'Y'.code.toByte(), 'T'.code.toByte(), '1'.code.toByte())
-        const val FORMAT_VERSION: Byte = 1
+        const val LEGACY_FORMAT_VERSION: Byte = 1
+        const val FORMAT_VERSION: Byte = 2
         const val HEADER_BYTES = 4 + 1 + 4 + 4
         const val ENCRYPTION_OVERHEAD_BYTES = 4 + 2 + 16 + 16
-        const val DEFAULT_MAX_ENCRYPTED_BYTES = 12L * 1024L * 1024L
+        const val DEFAULT_MAX_ENCRYPTED_BYTES = 16L * 1024L * 1024L
     }
 }
+
+private data class TemplateHeader(val version: Byte, val widthPx: Int, val heightPx: Int)
+
+internal data class VerifiedTemplateAsset(
+    val widthPx: Int,
+    val heightPx: Int,
+    val upgradedBytes: ByteArray?,
+)

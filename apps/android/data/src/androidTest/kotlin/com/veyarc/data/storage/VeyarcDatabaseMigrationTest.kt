@@ -242,6 +242,147 @@ class VeyarcDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migrationSevenToEightAddsOptionalWorkflowProducer() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-${System.nanoTime()}.db"
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(databaseName)
+                .callback(
+                    object : SupportSQLiteOpenHelper.Callback(7) {
+                        override fun onCreate(db: SupportSQLiteDatabase) {
+                            db.execSQL(
+                                "CREATE TABLE workflows (workflowId TEXT NOT NULL PRIMARY KEY, " +
+                                    "name TEXT NOT NULL, latestRevision INTEGER NOT NULL, " +
+                                    "createdAtMs INTEGER NOT NULL, updatedAtMs INTEGER NOT NULL, " +
+                                    "folderId TEXT DEFAULT NULL, isFavorite INTEGER NOT NULL DEFAULT 0)",
+                            )
+                            db.execSQL(
+                                "INSERT INTO workflows (workflowId, name, latestRevision, createdAtMs, updatedAtMs) " +
+                                    "VALUES ('workflow', 'Workflow', 1, 10, 20)",
+                            )
+                        }
+
+                        override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+                    },
+                )
+                .build(),
+        )
+        try {
+            val db = helper.writableDatabase
+            VeyarcDatabase.MIGRATION_7_8.migrate(db)
+            db.query("SELECT producerVersion FROM workflows").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertTrue(cursor.isNull(0))
+            }
+        } finally {
+            helper.close()
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun migrationEightToNineAddsOptionalWorkflowOrientation() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-${System.nanoTime()}.db"
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(databaseName)
+                .callback(
+                    object : SupportSQLiteOpenHelper.Callback(8) {
+                        override fun onCreate(db: SupportSQLiteDatabase) {
+                            db.execSQL(
+                                "CREATE TABLE workflows (workflowId TEXT NOT NULL PRIMARY KEY, " +
+                                    "name TEXT NOT NULL, latestRevision INTEGER NOT NULL, " +
+                                    "createdAtMs INTEGER NOT NULL, updatedAtMs INTEGER NOT NULL, " +
+                                    "folderId TEXT DEFAULT NULL, isFavorite INTEGER NOT NULL DEFAULT 0, " +
+                                    "producerVersion TEXT DEFAULT NULL)",
+                            )
+                            db.execSQL(
+                                "INSERT INTO workflows (workflowId, name, latestRevision, createdAtMs, updatedAtMs) " +
+                                    "VALUES ('workflow', 'Workflow', 1, 10, 20)",
+                            )
+                        }
+
+                        override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+                    },
+                )
+                .build(),
+        )
+        try {
+            val db = helper.writableDatabase
+            VeyarcDatabase.MIGRATION_8_9.migrate(db)
+            db.query("SELECT recordedOrientation FROM workflows").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertTrue(cursor.isNull(0))
+            }
+        } finally {
+            helper.close()
+            context.deleteDatabase(databaseName)
+        }
+    }
+
+    @Test
+    fun migrationNineToTenAddsSharedAssetStorageWithoutChangingLegacyRevisions() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-${System.nanoTime()}.db"
+        val helper = FrameworkSQLiteOpenHelperFactory().create(
+            SupportSQLiteOpenHelper.Configuration.builder(context)
+                .name(databaseName)
+                .callback(
+                    object : SupportSQLiteOpenHelper.Callback(9) {
+                        override fun onCreate(db: SupportSQLiteDatabase) {
+                            db.execSQL(
+                                "CREATE TABLE workflow_revisions (" +
+                                    "workflowId TEXT NOT NULL, revision INTEGER NOT NULL, " +
+                                    "schemaVersion INTEGER NOT NULL, encryptedFileName TEXT NOT NULL, " +
+                                    "encryptedByteLength INTEGER NOT NULL, createdAtMs INTEGER NOT NULL, " +
+                                    "PRIMARY KEY(workflowId, revision))",
+                            )
+                            db.execSQL(
+                                "INSERT INTO workflow_revisions VALUES " +
+                                    "('workflow', 1, 1, 'legacy.wfenc', 100, 10)",
+                            )
+                        }
+
+                        override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+                    },
+                )
+                .build(),
+        )
+        try {
+            val db = helper.writableDatabase
+            db.setForeignKeyConstraintsEnabled(true)
+            VeyarcDatabase.MIGRATION_9_10.migrate(db)
+
+            db.query("SELECT storageFormat FROM workflow_revisions").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(RevisionStorageFormat.LEGACY_BUNDLE.name, cursor.getString(0))
+            }
+            assertTableExists(db, "asset_blobs")
+            assertTableExists(db, "asset_previews")
+            assertTableExists(db, "revision_assets")
+            db.execSQL(
+                "INSERT INTO asset_blobs VALUES " +
+                    "('blob', 'blob.wfenc', 100, 1, 1, 'application/vnd.veyarc.template', 1, 20)",
+            )
+            db.execSQL(
+                "INSERT INTO revision_assets VALUES " +
+                    "('workflow', 1, 'asset', 'blob', NULL, 'CROPPED_TARGET', " +
+                    "'IMAGE_TEMPLATE', 'image/png', 1, 1)",
+            )
+            db.execSQL("DELETE FROM workflow_revisions WHERE workflowId = 'workflow' AND revision = 1")
+            db.query("SELECT COUNT(*) FROM revision_assets").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(0, cursor.getInt(0))
+            }
+        } finally {
+            helper.close()
+            context.deleteDatabase(databaseName)
+        }
+    }
+
     private fun assertTableExists(db: SupportSQLiteDatabase, tableName: String) {
         db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", arrayOf(tableName))
             .use { cursor -> assertTrue(cursor.moveToFirst()) }

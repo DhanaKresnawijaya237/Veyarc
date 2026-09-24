@@ -46,6 +46,36 @@ class AndroidKeystoreKeySource(
     }
 }
 
+/** Gets or creates the HMAC key used only for private, device-local content identities. */
+class AndroidKeystoreHmacKeySource(
+    private val alias: String = DEFAULT_ALIAS,
+) : SecretKeySource {
+    @Synchronized
+    override fun get(): SecretKey {
+        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+        val existing = keyStore.getEntry(alias, null) as? KeyStore.SecretKeyEntry
+        if (existing != null) return existing.secretKey
+
+        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_HMAC_SHA256, ANDROID_KEYSTORE)
+        generator.init(
+            KeyGenParameterSpec.Builder(
+                alias,
+                KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
+            )
+                .setKeySize(KEY_SIZE_BITS)
+                .setDigests(KeyProperties.DIGEST_SHA256)
+                .build(),
+        )
+        return generator.generateKey()
+    }
+
+    private companion object {
+        const val ANDROID_KEYSTORE = "AndroidKeyStore"
+        const val DEFAULT_ALIAS = "veyarc.asset-identity.v1"
+        const val KEY_SIZE_BITS = 256
+    }
+}
+
 class StorageCryptoException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /** AES-GCM payload codec with a small versioned header and optional associated data. */
@@ -160,6 +190,35 @@ class EncryptedFileStore(
         if (file.exists()) check(file.delete()) { "Could not remove encrypted workflow file" }
     }
 
+    @Synchronized
+    fun exists(fileName: String): Boolean = resolveFile(fileName).isFile
+
+    @Synchronized
+    internal fun listCommittedFileNames(limit: Int): List<String> {
+        require(limit > 0) { "File listing limit must be positive" }
+        return directory.listFiles()
+            .orEmpty()
+            .asSequence()
+            .filter(File::isFile)
+            .map(File::getName)
+            .filter(FILE_NAME_PATTERN::matches)
+            .sorted()
+            .take(limit)
+            .toList()
+    }
+
+    @Synchronized
+    internal fun deleteStaleTemporaryFiles(limit: Int): Int {
+        require(limit > 0) { "Temporary-file cleanup limit must be positive" }
+        return directory.listFiles()
+            .orEmpty()
+            .asSequence()
+            .filter { it.isFile && TEMP_FILE_NAME_PATTERN.matches(it.name) }
+            .sortedBy(File::getName)
+            .take(limit)
+            .count { it.delete() }
+    }
+
     private fun resolveFile(fileName: String): File {
         require(FILE_NAME_PATTERN.matches(fileName)) { "Invalid encrypted workflow file name" }
         val directoryPath = directory.absoluteFile.normalize()
@@ -174,6 +233,7 @@ class EncryptedFileStore(
 
     private companion object {
         val FILE_NAME_PATTERN = Regex("[A-Za-z0-9_-]+\\.wfenc")
+        val TEMP_FILE_NAME_PATTERN = Regex("\\.[A-Za-z0-9_-]+\\.wfenc\\.[A-Za-z0-9_-]+\\.tmp")
         const val DEFAULT_MAX_ENCRYPTED_BYTES = 34L * 1024L * 1024L
     }
 }

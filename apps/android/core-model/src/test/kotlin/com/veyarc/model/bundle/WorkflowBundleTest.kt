@@ -35,8 +35,25 @@ class WorkflowBundleTest {
         assertEquals(bundle.document, imported.document)
         assertEquals(bundle.producerVersion, imported.producerVersion)
         assertEquals(bundle.assets.single().assetId, imported.assets.single().assetId)
+        assertEquals(bundle.assets.single().widthPx, imported.assets.single().widthPx)
+        assertEquals(bundle.assets.single().heightPx, imported.assets.single().heightPx)
         assertArrayEquals(bundle.assets.single().bytes, imported.assets.single().bytes)
         assertEquals(WorkflowJson.encode(bundle.document), WorkflowJson.encode(imported.document))
+    }
+
+    @Test
+    fun inspectionAndSingleAssetImportPreserveMetadataAndPayload() {
+        val bundle = sampleBundle()
+        val bytes = VeyarcBundle.export(bundle)
+
+        val inspection = VeyarcBundle.inspect(bytes)
+        val asset = VeyarcBundle.importAsset(bytes, bundle.assets.single().assetId)
+
+        assertEquals(bundle.document, inspection.document)
+        assertEquals(bundle.producerVersion, inspection.producerVersion)
+        assertEquals(bundle.assets.single().assetId, inspection.assets.single().assetId)
+        assertEquals(bundle.assets.single().widthPx, inspection.assets.single().widthPx)
+        assertArrayEquals(bundle.assets.single().bytes, asset.bytes)
     }
 
     @Test
@@ -198,6 +215,8 @@ class WorkflowBundleTest {
             mimeType = "image/png",
             bytes = byteArrayOf(1, 2, 3, 4),
             encrypted = true,
+            widthPx = 1,
+            heightPx = 1,
         )
         val document = WorkflowDocument(
             schemaVersion = WorkflowDocument.CURRENT_SCHEMA_VERSION,

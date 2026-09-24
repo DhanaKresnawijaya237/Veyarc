@@ -5,6 +5,8 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import javax.crypto.spec.SecretKeySpec
 
 class EncryptedTemplateAssetCodecTest {
@@ -42,7 +44,7 @@ class EncryptedTemplateAssetCodecTest {
     @Test
     fun rejectsOversizedTemplatesBeforeEncryption() {
         val codec = EncryptedTemplateAssetCodec(::keySource, maxEncryptedBytes = 64)
-        val tooLarge = DecodedTemplate(4, 4, ByteArray(4 * 4 * 4))
+        val tooLarge = DecodedTemplate(4, 4, ByteArray(4 * 4 * 4) { (it * 73).toByte() })
 
         assertRejected { codec.encrypt(assetId, tooLarge) }
     }
@@ -55,6 +57,53 @@ class EncryptedTemplateAssetCodecTest {
 
         codec.verify(assetId, encrypted)
         assertRejected { codec.verify(assetId, tampered) }
+    }
+
+    @Test
+    fun compressedPayloadIsSmallerAndVerificationReportsDimensions() {
+        val codec = EncryptedTemplateAssetCodec(::keySource)
+        val raw = ByteArray(400 * 400 * 4) { if (it % 4 == 3) 255.toByte() else 32 }
+
+        val encrypted = codec.encrypt(assetId, DecodedTemplate(400, 400, raw))
+        val verified = codec.verify(assetId, encrypted)
+
+        assertTrue(encrypted.size < raw.size / 4)
+        assertEquals(400, verified.widthPx)
+        assertEquals(400, verified.heightPx)
+        assertEquals(null, verified.upgradedBytes)
+    }
+
+    @Test
+    fun verificationUpgradesLegacyRawPayload() {
+        val pixels = byteArrayOf(1, 2, 3, 4)
+        val legacyPlaintext = ByteBuffer.allocate(13 + pixels.size).order(ByteOrder.BIG_ENDIAN).apply {
+            put(byteArrayOf('V'.code.toByte(), 'Y'.code.toByte(), 'T'.code.toByte(), '1'.code.toByte()))
+            put(1.toByte())
+            putInt(1)
+            putInt(1)
+            put(pixels)
+        }.array()
+        val legacyEncrypted = AesGcmFileCodec(::keySource).encrypt(
+            legacyPlaintext,
+            "template:${assetId.value}".encodeToByteArray(),
+        )
+        val codec = EncryptedTemplateAssetCodec(::keySource)
+
+        val upgraded = codec.verify(assetId, legacyEncrypted).upgradedBytes
+
+        assertTrue(upgraded != null)
+        assertArrayEquals(pixels, codec.decrypt(assetId, upgraded!!).copyRgbaBytes())
+    }
+
+    @Test
+    fun decodedPixelsCanBeTransferredWithoutLeavingASecondOwnedBuffer() {
+        val template = DecodedTemplate(1, 1, byteArrayOf(1, 2, 3, 4))
+
+        val transferred = template.takeRgbaBytes()
+
+        assertArrayEquals(byteArrayOf(1, 2, 3, 4), transferred)
+        assertArrayEquals(ByteArray(0), template.copyRgbaBytes())
+        assertRejected { template.takeRgbaBytes() }
     }
 
     private fun keySource() = key

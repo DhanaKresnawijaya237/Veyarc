@@ -20,6 +20,10 @@ internal data class WorkflowEntity(
     val folderId: String? = null,
     @ColumnInfo(defaultValue = "0")
     val isFavorite: Boolean = false,
+    @ColumnInfo(defaultValue = "NULL")
+    val producerVersion: String? = null,
+    @ColumnInfo(defaultValue = "NULL")
+    val recordedOrientation: String? = null,
 )
 
 @Entity(
@@ -72,6 +76,80 @@ internal data class WorkflowRevisionEntity(
     val encryptedFileName: String,
     val encryptedByteLength: Long,
     val createdAtMs: Long,
+    @ColumnInfo(defaultValue = "'LEGACY_BUNDLE'")
+    val storageFormat: String = RevisionStorageFormat.LEGACY_BUNDLE.name,
+)
+
+internal enum class RevisionStorageFormat {
+    LEGACY_BUNDLE,
+    ASSET_MANIFEST,
+}
+
+@Entity(
+    tableName = "asset_blobs",
+    indices = [Index(value = ["encryptedFileName"], unique = true)],
+)
+internal data class AssetBlobEntity(
+    @PrimaryKey val blobKey: String,
+    val encryptedFileName: String,
+    val encryptedByteLength: Long,
+    val widthPx: Int,
+    val heightPx: Int,
+    val mimeType: String,
+    val formatVersion: Int,
+    val createdAtMs: Long,
+)
+
+@Entity(
+    tableName = "asset_previews",
+    foreignKeys = [
+        ForeignKey(
+            entity = AssetBlobEntity::class,
+            parentColumns = ["blobKey"],
+            childColumns = ["blobKey"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index(value = ["encryptedFileName"], unique = true)],
+)
+internal data class AssetPreviewEntity(
+    @PrimaryKey val blobKey: String,
+    val encryptedFileName: String,
+    val encryptedByteLength: Long,
+    val widthPx: Int,
+    val heightPx: Int,
+    val formatVersion: Int,
+)
+
+@Entity(
+    tableName = "revision_assets",
+    primaryKeys = ["workflowId", "revision", "assetId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = WorkflowRevisionEntity::class,
+            parentColumns = ["workflowId", "revision"],
+            childColumns = ["workflowId", "revision"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+        ForeignKey(
+            entity = AssetBlobEntity::class,
+            parentColumns = ["blobKey"],
+            childColumns = ["blobKey"],
+        ),
+    ],
+    indices = [Index(value = ["blobKey"])],
+)
+internal data class RevisionAssetEntity(
+    val workflowId: String,
+    val revision: Int,
+    val assetId: String,
+    val blobKey: String,
+    val displayName: String?,
+    val role: String,
+    val kind: String,
+    val mimeType: String,
+    val widthPx: Int,
+    val heightPx: Int,
 )
 
 @Entity(

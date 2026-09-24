@@ -23,6 +23,9 @@ internal interface WorkflowDao {
     @Query("UPDATE workflows SET isFavorite = :favorite WHERE workflowId = :workflowId")
     fun setWorkflowFavorite(workflowId: String, favorite: Boolean): Int
 
+    @Query("UPDATE workflows SET recordedOrientation = :orientation WHERE workflowId = :workflowId")
+    fun setWorkflowOrientation(workflowId: String, orientation: String): Int
+
     @Query("SELECT * FROM workflow_folders ORDER BY sortOrder, name COLLATE NOCASE, folderId")
     fun listWorkflowFolders(): List<WorkflowFolderEntity>
 
@@ -65,8 +68,28 @@ internal interface WorkflowDao {
     )
     fun findRevision(workflowId: String, revision: Int): WorkflowRevisionEntity?
 
+    @Query("SELECT * FROM workflow_revisions WHERE encryptedFileName = :fileName LIMIT 1")
+    fun findRevisionByFileName(fileName: String): WorkflowRevisionEntity?
+
+    @Query("SELECT workflowId, revision FROM workflow_revisions")
+    fun listRevisionKeys(): List<WorkflowRevisionKeyRow>
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
     fun insertRevision(revision: WorkflowRevisionEntity)
+
+    @Query(
+        "UPDATE workflow_revisions SET encryptedFileName = :encryptedFileName, " +
+            "encryptedByteLength = :encryptedByteLength, storageFormat = :storageFormat " +
+            "WHERE workflowId = :workflowId AND revision = :revision AND storageFormat = :expectedStorageFormat",
+    )
+    fun replaceRevisionStorage(
+        workflowId: String,
+        revision: Int,
+        encryptedFileName: String,
+        encryptedByteLength: Long,
+        storageFormat: String,
+        expectedStorageFormat: String,
+    ): Int
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     fun insertRunRecord(record: RunRecordEntity)
@@ -147,6 +170,9 @@ internal interface WorkflowDao {
     @Query("SELECT status, COUNT(*) AS count FROM run_records GROUP BY status")
     fun countRunsByStatus(): List<RunStatusCountRow>
 
+    @Query("SELECT COUNT(*) FROM run_records")
+    fun countAllRuns(): Long
+
     @Query(
         "SELECT AVG(finishedAtMs - startedAtMs) FROM run_records " +
             "WHERE finishedAtMs IS NOT NULL AND finishedAtMs >= startedAtMs",
@@ -183,3 +209,8 @@ internal interface WorkflowDao {
     @Query("DELETE FROM run_records WHERE status != :runningStatus")
     fun deleteTerminalRuns(runningStatus: String): Int
 }
+
+internal data class WorkflowRevisionKeyRow(
+    val workflowId: String,
+    val revision: Int,
+)

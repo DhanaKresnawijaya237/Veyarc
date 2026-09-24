@@ -39,6 +39,8 @@ data class BundleManifestAsset(
     val byteLength: Long,
     val mimeType: String,
     val encrypted: Boolean,
+    val widthPx: Int? = null,
+    val heightPx: Int? = null,
 )
 
 /** An already-encrypted payload. Encryption and key management are outside this portable module. */
@@ -48,6 +50,8 @@ class BundleAsset(
     val mimeType: String,
     bytes: ByteArray,
     val encrypted: Boolean,
+    val widthPx: Int? = null,
+    val heightPx: Int? = null,
 ) {
     private val payload = bytes.copyOf()
 
@@ -58,11 +62,15 @@ class BundleAsset(
     val byteLength: Int
         get() = payload.size
 
+    internal fun payloadView(): ByteArray = payload
+
     init {
         require(mimeType.startsWith("image/")) { "Workflow condition assets must use an image MIME type" }
         require(mimeType.length <= 128) { "Asset MIME type must be at most 128 characters" }
         require(payload.isNotEmpty()) { "Asset payload must not be empty" }
         require(encrypted) { "Workflow condition assets must be encrypted before bundling" }
+        require((widthPx == null) == (heightPx == null)) { "Asset dimensions must be both present or both absent" }
+        require(widthPx == null || (widthPx > 0 && heightPx!! > 0)) { "Asset dimensions must be positive" }
     }
 }
 
@@ -79,13 +87,13 @@ data class WorkflowBundle(
 }
 
 data class BundleLimits(
-    val maxBundleBytes: Long = 32L * 1024L * 1024L,
-    val maxEntries: Int = 64,
+    val maxBundleBytes: Long = 128L * 1024L * 1024L,
+    val maxEntries: Int = 4_096,
     val maxEntryNameLength: Int = 256,
     val maxWorkflowJsonBytes: Long = 2L * 1024L * 1024L,
     val maxManifestBytes: Long = 512L * 1024L,
-    val maxAssetBytes: Long = 12L * 1024L * 1024L,
-    val maxTotalAssetBytes: Long = 24L * 1024L * 1024L,
+    val maxAssetBytes: Long = 16L * 1024L * 1024L,
+    val maxTotalAssetBytes: Long = 96L * 1024L * 1024L,
     val maxJsonNestingDepth: Int = 128,
     val maxDocumentNestingDepth: Int = 32,
     val maxWorkflowSteps: Int = 10_000,
@@ -132,6 +140,12 @@ object BundleMigrations {
     }
 }
 
+data class BundleInspection(
+    val document: WorkflowDocument,
+    val producerVersion: String,
+    val assets: List<BundleManifestAsset>,
+)
+
 object VeyarcBundle {
     fun export(bundle: WorkflowBundle, limits: BundleLimits = BundleLimits()): ByteArray {
         val validationErrors = WorkflowValidator.validate(bundle.document)
@@ -146,7 +160,7 @@ object VeyarcBundle {
         val workflowBytes = WorkflowJson.encode(bundle.document).toByteArray(StandardCharsets.UTF_8)
         checkSize(WORKFLOW_ENTRY, workflowBytes.size.toLong(), limits.maxWorkflowJsonBytes)
         val sortedAssets = bundle.assets.sortedBy { it.assetId.value }
-        val assetPayloads = sortedAssets.associateWith(BundleAsset::bytes)
+        val assetPayloads = sortedAssets.associateWith(BundleAsset::payloadView)
         val manifest = createManifest(bundle, assetPayloads)
         val manifestBytes = WorkflowJson.encodeCanonical(BundleManifest.serializer(), manifest)
             .toByteArray(StandardCharsets.UTF_8)
@@ -175,9 +189,60 @@ object VeyarcBundle {
 
     fun import(bytes: ByteArray, limits: BundleLimits = BundleLimits()): WorkflowBundle {
         checkSize("bundle", bytes.size.toLong(), limits.maxBundleBytes)
-        val entries = readEntries(bytes, limits)
-        val workflowBytes = entries[WORKFLOW_ENTRY] ?: throw BundleFormatException("Bundle is missing workflow.json")
-        val manifestBytes = entries[MANIFEST_ENTRY] ?: throw BundleFormatException("Bundle is missing manifest.json")
+        val archive = readEntries(bytes, limits) { true }
+        val inspection = inspectArchive(archive, limits)
+        val assets = decodeAssets(archive.payloads, inspection.assets, inspection.document, limits)
+        return try {
+            WorkflowBundle(inspection.document, assets, inspection.producerVersion)
+        } catch (error: IllegalArgumentException) {
+            throw BundleFormatException("Bundle metadata is invalid", error)
+        }
+    }
+
+    /** Reads document and asset metadata without retaining any asset payloads. */
+    fun inspect(bytes: ByteArray, limits: BundleLimits = BundleLimits()): BundleInspection {
+        checkSize("bundle", bytes.size.toLong(), limits.maxBundleBytes)
+        return inspectArchive(
+            readEntries(bytes, limits) { name -> name == WORKFLOW_ENTRY || name == MANIFEST_ENTRY },
+            limits,
+        )
+    }
+
+    /** Reads and authenticates one asset without retaining unrelated asset payloads. */
+    fun importAsset(
+        bytes: ByteArray,
+        assetId: AssetId,
+        limits: BundleLimits = BundleLimits(),
+    ): BundleAsset {
+        checkSize("bundle", bytes.size.toLong(), limits.maxBundleBytes)
+        val requestedEntry = assetEntryName(assetId)
+        val archive = readEntries(bytes, limits) { name ->
+            name == WORKFLOW_ENTRY || name == MANIFEST_ENTRY || name == requestedEntry
+        }
+        val inspection = inspectArchive(archive, limits)
+        val metadata = inspection.assets.singleOrNull { it.assetId == assetId }
+            ?: throw BundleFormatException("Bundle does not declare asset ${assetId.value}")
+        val payload = archive.payloads[metadata.entryName]
+            ?: throw BundleFormatException("Bundle is missing ${metadata.entryName}")
+        if (!metadata.sha256.equals(sha256(payload), ignoreCase = true)) {
+            throw BundleFormatException("Asset hash does not match manifest")
+        }
+        return BundleAsset(
+            assetId = metadata.assetId,
+            kind = metadata.kind,
+            mimeType = metadata.mimeType,
+            bytes = payload,
+            encrypted = metadata.encrypted,
+            widthPx = metadata.widthPx,
+            heightPx = metadata.heightPx,
+        )
+    }
+
+    private fun inspectArchive(archive: BundleArchive, limits: BundleLimits): BundleInspection {
+        val workflowBytes = archive.payloads[WORKFLOW_ENTRY]
+            ?: throw BundleFormatException("Bundle is missing workflow.json")
+        val manifestBytes = archive.payloads[MANIFEST_ENTRY]
+            ?: throw BundleFormatException("Bundle is missing manifest.json")
         val manifestJson = BundleImportSafety.decodeUtf8(MANIFEST_ENTRY, manifestBytes)
         BundleImportSafety.checkJsonNesting(MANIFEST_ENTRY, manifestJson, limits.maxJsonNestingDepth)
         val manifest = decodeManifest(manifestJson)
@@ -200,20 +265,16 @@ object VeyarcBundle {
             )
         }
         validateManifestIdentity(manifest, document)
-        val assets = decodeAssets(entries, manifest, document, limits)
+        validateAssetMetadata(manifest.assets, document, archive.entrySizes, limits)
         val expectedEntries = buildSet {
             add(WORKFLOW_ENTRY)
             add(MANIFEST_ENTRY)
             manifest.assets.forEach { add(it.entryName) }
         }
-        if (entries.keys != expectedEntries) {
+        if (archive.entrySizes.keys != expectedEntries) {
             throw BundleFormatException("Bundle contains undeclared or missing entries")
         }
-        return try {
-            WorkflowBundle(document, assets, manifest.producerVersion)
-        } catch (error: IllegalArgumentException) {
-            throw BundleFormatException("Bundle metadata is invalid", error)
-        }
+        return BundleInspection(document, manifest.producerVersion, manifest.assets.sortedBy { it.assetId.value })
     }
 
     private fun createManifest(
@@ -237,6 +298,8 @@ object VeyarcBundle {
                     byteLength = payload.size.toLong(),
                     mimeType = asset.mimeType,
                     encrypted = asset.encrypted,
+                    widthPx = asset.widthPx,
+                    heightPx = asset.heightPx,
                 )
             },
     )
@@ -249,38 +312,15 @@ object VeyarcBundle {
 
     private fun decodeAssets(
         entries: Map<String, ByteArray>,
-        manifest: BundleManifest,
+        metadataAssets: List<BundleManifestAsset>,
         document: WorkflowDocument,
         limits: BundleLimits,
     ): List<BundleAsset> {
-        if (manifest.assets.size + 2 > limits.maxEntries) {
-            throw BundleFormatException("Manifest declares too many assets")
-        }
         val references = document.assets.associateBy { it.assetId.value }
         val seenIds = mutableSetOf<String>()
         var totalBytes = 0L
-        val assets = manifest.assets.sortedBy { it.assetId.value }.map { metadata ->
-            if (!seenIds.add(metadata.assetId.value)) {
-                throw BundleFormatException("Manifest declares duplicate asset ${metadata.assetId.value}")
-            }
-            val reference = references[metadata.assetId.value]
-                ?: throw BundleFormatException("Manifest asset is not referenced by workflow.json")
-            if (reference.kind != metadata.kind) {
-                throw BundleFormatException("Manifest asset kind does not match workflow.json")
-            }
-            if (metadata.kind != AssetKind.IMAGE_TEMPLATE || !metadata.encrypted) {
-                throw BundleFormatException("Condition assets must be encrypted image templates")
-            }
-            if (!metadata.mimeType.startsWith("image/") || metadata.mimeType.length > 128) {
-                throw BundleFormatException("Manifest asset MIME type is invalid")
-            }
-            if (metadata.sha256.length != 64 || metadata.sha256.any { !it.isDigit() && it.lowercaseChar() !in 'a'..'f' }) {
-                throw BundleFormatException("Manifest asset hash is invalid")
-            }
-            val expectedEntry = assetEntryName(metadata.assetId)
-            if (metadata.entryName != expectedEntry) {
-                throw BundleFormatException("Manifest asset entry name is invalid")
-            }
+        val assets = metadataAssets.sortedBy { it.assetId.value }.map { metadata ->
+            seenIds += metadata.assetId.value
             val payload = entries[metadata.entryName]
                 ?: throw BundleFormatException("Bundle is missing ${metadata.entryName}")
             if (payload.isEmpty()) throw BundleFormatException("Asset payload must not be empty")
@@ -298,6 +338,8 @@ object VeyarcBundle {
                 mimeType = metadata.mimeType,
                 bytes = payload,
                 encrypted = metadata.encrypted,
+                widthPx = metadata.widthPx,
+                heightPx = metadata.heightPx,
             )
         }
         checkSize("asset payloads", totalBytes, limits.maxTotalAssetBytes)
@@ -305,6 +347,43 @@ object VeyarcBundle {
             throw BundleFormatException("Manifest assets do not exactly match workflow.json references")
         }
         return assets
+    }
+
+    private fun validateAssetMetadata(
+        assets: List<BundleManifestAsset>,
+        document: WorkflowDocument,
+        entrySizes: Map<String, Long>,
+        limits: BundleLimits,
+    ) {
+        if (assets.size + 2 > limits.maxEntries) throw BundleFormatException("Manifest declares too many assets")
+        val references = document.assets.associateBy { it.assetId.value }
+        val seenIds = mutableSetOf<String>()
+        assets.forEach { metadata ->
+            if (!seenIds.add(metadata.assetId.value)) {
+                throw BundleFormatException("Manifest declares duplicate asset ${metadata.assetId.value}")
+            }
+            val reference = references[metadata.assetId.value]
+                ?: throw BundleFormatException("Manifest asset is not referenced by workflow.json")
+            if (reference.kind != metadata.kind) throw BundleFormatException("Manifest asset kind does not match workflow.json")
+            if (metadata.kind != AssetKind.IMAGE_TEMPLATE || !metadata.encrypted) {
+                throw BundleFormatException("Condition assets must be encrypted image templates")
+            }
+            if (!metadata.mimeType.startsWith("image/") || metadata.mimeType.length > 128) {
+                throw BundleFormatException("Manifest asset MIME type is invalid")
+            }
+            if (metadata.sha256.length != 64 || metadata.sha256.any { !it.isDigit() && it.lowercaseChar() !in 'a'..'f' }) {
+                throw BundleFormatException("Manifest asset hash is invalid")
+            }
+            if (metadata.entryName != assetEntryName(metadata.assetId)) {
+                throw BundleFormatException("Manifest asset entry name is invalid")
+            }
+            val actualSize = entrySizes[metadata.entryName]
+                ?: throw BundleFormatException("Bundle is missing ${metadata.entryName}")
+            if (metadata.byteLength != actualSize) throw BundleFormatException("Asset byte length does not match manifest")
+        }
+        if (seenIds != references.keys) {
+            throw BundleFormatException("Manifest assets do not exactly match workflow.json references")
+        }
     }
 
     private fun validateManifestIdentity(manifest: BundleManifest, document: WorkflowDocument) {
@@ -330,8 +409,13 @@ object VeyarcBundle {
         if (seen != references.keys) throw BundleFormatException("Bundle assets do not match workflow.json references")
     }
 
-    private fun readEntries(bytes: ByteArray, limits: BundleLimits): Map<String, ByteArray> {
-        val entries = linkedMapOf<String, ByteArray>()
+    private fun readEntries(
+        bytes: ByteArray,
+        limits: BundleLimits,
+        capture: (String) -> Boolean,
+    ): BundleArchive {
+        val payloads = linkedMapOf<String, ByteArray>()
+        val entrySizes = linkedMapOf<String, Long>()
         try {
             ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
                 var count = 0
@@ -341,7 +425,7 @@ object VeyarcBundle {
                     count++
                     if (count > limits.maxEntries) throw BundleFormatException("Bundle contains too many entries")
                     validateEntryName(entry.name, limits.maxEntryNameLength)
-                    if (entries.containsKey(entry.name)) throw BundleFormatException("Bundle contains duplicate entry ${entry.name}")
+                    if (entrySizes.containsKey(entry.name)) throw BundleFormatException("Bundle contains duplicate entry ${entry.name}")
                     val maxBytes = when (entry.name) {
                         WORKFLOW_ENTRY -> limits.maxWorkflowJsonBytes
                         MANIFEST_ENTRY -> limits.maxManifestBytes
@@ -350,12 +434,14 @@ object VeyarcBundle {
                     if (entry.size >= 0L && entry.size > maxBytes) {
                         throw BundleFormatException("Entry ${entry.name} exceeds its safety limit")
                     }
-                    val payload = readEntry(zip, entry.name, maxBytes)
+                    val read = readEntry(zip, entry.name, maxBytes, capture(entry.name))
+                    val size = read.byteLength
                     if (entry.name.startsWith(ASSET_PREFIX)) {
-                        totalAssetBytes += payload.size
+                        totalAssetBytes += size
                         checkSize("asset payloads", totalAssetBytes, limits.maxTotalAssetBytes)
                     }
-                    entries[entry.name] = payload
+                    entrySizes[entry.name] = size
+                    if (read.payload != null) payloads[entry.name] = read.payload
                     zip.closeEntry()
                 }
             }
@@ -364,11 +450,11 @@ object VeyarcBundle {
         } catch (error: Exception) {
             throw BundleFormatException("Bundle ZIP is malformed", error)
         }
-        return entries
+        return BundleArchive(payloads, entrySizes)
     }
 
-    private fun readEntry(zip: ZipInputStream, name: String, maxBytes: Long): ByteArray {
-        val output = ByteArrayOutputStream()
+    private fun readEntry(zip: ZipInputStream, name: String, maxBytes: Long, capture: Boolean): EntryRead {
+        val output = if (capture) ByteArrayOutputStream() else null
         val buffer = ByteArray(8192)
         var total = 0L
         while (true) {
@@ -376,9 +462,9 @@ object VeyarcBundle {
             if (count < 0) break
             total += count
             if (total > maxBytes) throw BundleFormatException("Entry $name exceeds its safety limit")
-            output.write(buffer, 0, count)
+            output?.write(buffer, 0, count)
         }
-        return output.toByteArray()
+        return EntryRead(output?.toByteArray(), total)
     }
 
     private fun validateEntryName(name: String, maxLength: Int) {
@@ -418,4 +504,14 @@ object VeyarcBundle {
 
     private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes)
         .joinToString(separator = "") { "%02x".format(it.toInt() and 0xff) }
+
+    private data class BundleArchive(
+        val payloads: Map<String, ByteArray>,
+        val entrySizes: Map<String, Long>,
+    )
+
+    private data class EntryRead(
+        val payload: ByteArray?,
+        val byteLength: Long,
+    )
 }
