@@ -64,6 +64,7 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.ArrowDropDown
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Loop
@@ -71,6 +72,7 @@ import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.ScreenRotation
+import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material.icons.outlined.Tune
@@ -79,8 +81,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -92,8 +92,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
@@ -133,6 +135,7 @@ import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowRevisionDocument
 import com.veyarc.data.storage.WorkflowRevisionEditorData
 import com.veyarc.data.storage.WorkflowStorageException
+import com.veyarc.model.AssetId
 import com.veyarc.model.Condition
 import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.IfElse
@@ -148,6 +151,7 @@ import com.veyarc.model.TapRegion
 import com.veyarc.model.Wait
 import com.veyarc.model.WaitUntil
 import com.veyarc.model.WhileStep
+import com.veyarc.model.WorkflowIds
 import com.veyarc.model.WorkflowStep
 import com.veyarc.model.bundle.WorkflowBundle
 import kotlinx.coroutines.Dispatchers
@@ -180,6 +184,13 @@ fun WorkflowEditorScreen(
     var pendingClose by remember { mutableStateOf(false) }
     var pendingReplacement by remember { mutableStateOf<DraftReplacement?>(null) }
     var pendingOrientationSave by remember { mutableStateOf<PendingOrientationSave?>(null) }
+    val blockClipboard = remember(context) { EditorBlockClipboard(context) }
+    var clipboardAvailable by remember { mutableStateOf(false) }
+    var pendingBlockPaste by remember { mutableStateOf<PendingBlockPaste?>(null) }
+
+    LaunchedEffect(Unit) {
+        clipboardAvailable = withContext(Dispatchers.IO) { runCatching { blockClipboard.read() != null }.getOrDefault(false) }
+    }
 
     val templatePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -446,6 +457,68 @@ fun WorkflowEditorScreen(
         }.getOrNull()
     }
 
+    fun copyBlocks(path: StepListPath, ids: List<String>) {
+        val current = session.draft ?: return
+        val selected = current.stepsAt(path).filter { it.id in ids }
+        if (selected.isEmpty()) return
+        scope.launch {
+            isBusy = true
+            statusMessage = null
+            runCatching {
+                val images = selected.clipboardImageIds().map { id ->
+                    val assetId = AssetId(id)
+                    val asset = loadDraftAsset(assetId) ?: error("A referenced image is unavailable: ${current.assetNames[id] ?: id}")
+                    asset to (current.assetNames[id] ?: "Image")
+                }
+                withContext(Dispatchers.IO) { blockClipboard.replace(current.viewport.recordedOrientation, selected, images) }
+            }.onSuccess {
+                clipboardAvailable = true
+                statusMessage = "Copied ${selected.size} block${if (selected.size == 1) "" else "s"}."
+            }.onFailure { error -> statusMessage = "Could not copy blocks: ${error.userMessage()}" }
+            isBusy = false
+        }
+    }
+
+    fun requestBlockPaste(path: StepListPath, index: Int) {
+        scope.launch {
+            runCatching { withContext(Dispatchers.IO) { blockClipboard.read() } }
+                .onSuccess { entry ->
+                    if (entry == null) {
+                        clipboardAvailable = false
+                        statusMessage = "The block clipboard is empty."
+                    } else {
+                        pendingBlockPaste = PendingBlockPaste(path, index, entry)
+                    }
+                }.onFailure { error -> statusMessage = "Could not open block clipboard: ${error.userMessage()}" }
+        }
+    }
+
+    fun confirmBlockPaste(importImages: Boolean) {
+        val pending = pendingBlockPaste ?: return
+        pendingBlockPaste = null
+        scope.launch {
+            isBusy = true
+            statusMessage = null
+            runCatching {
+                val current = session.draft ?: error("No workflow is open")
+                val existingIds = current.assetDescriptors.mapTo(mutableSetOf()) { it.assetId.value }
+                val required = pending.entry.steps.clipboardImageIds()
+                val imagesToImport = if (importImages) pending.entry.images.filter { it.id.value in required && it.id.value !in existingIds } else emptyList()
+                val ids = imagesToImport.associate { it.id.value to AssetId(WorkflowIds.newUuid()) }
+                val loaded = withContext(Dispatchers.IO) { imagesToImport.map { it to blockClipboard.importImage(it, requireNotNull(ids[it.id.value])) } }
+                var updated = current.insertSteps(pending.path, pending.index, remapClipboardSteps(pending.entry.steps, ids))
+                loaded.forEach { (image, asset) ->
+                    updated = updated.addAsset(asset).renameAsset(asset.assetId, uniqueClipboardImageName(updated, image.name))
+                }
+                check(session.draft === current) { "The workflow changed while pasting. Try again." }
+                session.update(updated)
+                val omitted = required - existingIds - ids.keys
+                statusMessage = if (omitted.isEmpty()) "Pasted ${pending.entry.steps.size} blocks." else "Pasted blocks. Add the missing images before saving."
+            }.onFailure { error -> statusMessage = "Could not paste blocks: ${error.userMessage()}" }
+            isBusy = false
+        }
+    }
+
     suspend fun loadDraftPreview(assetId: com.veyarc.model.AssetId, maxDimension: Int): TemplatePreviewData? {
         cachedTemplatePreview(assetId, maxDimension)?.let { return it }
         val current = session.draft ?: return null
@@ -504,8 +577,35 @@ fun WorkflowEditorScreen(
                     ),
                 )
             },
+            clipboardAvailable = clipboardAvailable,
+            onCopyBlocks = ::copyBlocks,
+            onPasteBlocks = ::requestBlockPaste,
             modifier = modifier,
         )
+        pendingBlockPaste?.let { pending ->
+            val missing = pending.entry.images.filter { image ->
+                image.id.value in pending.entry.steps.clipboardImageIds() && draft.assetDescriptors.none { it.assetId == image.id }
+            }
+            AlertDialog(
+                onDismissRequest = { pendingBlockPaste = null },
+                title = { Text("Paste ${pending.entry.steps.size} blocks?") },
+                text = {
+                    Column {
+                        if (pending.entry.orientation != draft.viewport.recordedOrientation) Text("These blocks were copied from a ${pending.entry.orientation.name.lowercase()} workflow. Check touch coordinates and images after pasting.")
+                        if (missing.isNotEmpty()) Text("Add ${missing.size} referenced image${if (missing.size == 1) "" else "s"} to this workflow?")
+                        Text("Packages, variables, and links to blocks outside the copied group may need review after pasting.")
+                    }
+                },
+                confirmButton = { TextButton(onClick = { confirmBlockPaste(true) }) { Text(if (missing.isEmpty()) "Paste" else "Paste with images") } },
+                dismissButton = {
+                    if (missing.isEmpty()) {
+                        TextButton(onClick = { pendingBlockPaste = null }) { Text("Cancel") }
+                    } else {
+                        TextButton(onClick = { confirmBlockPaste(false) }) { Text("Without images") }
+                    }
+                },
+            )
+        }
         geometryTarget?.let { target ->
             val targetStep = draft.stepsAt(target.path).getOrNull(target.index)
             if (targetStep != null) {
@@ -722,31 +822,98 @@ private fun WorkflowDraftScreen(
     revisions: List<RevisionSummary>,
     onOpenRevision: (Int) -> Unit,
     onPickApplication: () -> Unit,
+    clipboardAvailable: Boolean,
+    onCopyBlocks: (StepListPath, List<String>) -> Unit,
+    onPasteBlocks: (StepListPath, Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var selection by remember { mutableStateOf<BlockSelection?>(null) }
-    val scrollHeader = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    Column(
-        modifier = modifier.fillMaxSize().pointerInput(Unit) {
-            awaitEachGesture {
-                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                selection = null
+    var selectionMode by remember(draft.workflowId) { mutableStateOf(false) }
+    var selectedPath by remember(draft.workflowId) { mutableStateOf<StepListPath?>(null) }
+    var selectedIds by remember(draft.workflowId) { mutableStateOf<Set<String>>(emptySet()) }
+    val clipboardActions = BlockClipboardActions(
+        clipboardAvailable = clipboardAvailable,
+        selectionMode = selectionMode,
+        selectedIds = selectedIds,
+        canCopy = if (selectionMode) selectedIds.isNotEmpty() else selection != null,
+        onToggleSelectionMode = {
+            selectionMode = !selectionMode
+            selectedIds = emptySet()
+            selectedPath = null
+        },
+        onCopy = {
+            val path = if (selectionMode) selectedPath else selection?.path
+            val ids = if (selectionMode) selectedIds.toList() else listOfNotNull(selection?.stepId)
+            if (path != null && ids.isNotEmpty()) {
+                onCopyBlocks(path, ids)
+                selectionMode = false
+                selectedIds = emptySet()
             }
         },
-    ) {
-        if (!scrollHeader) {
-            WorkflowTitleEditor(
-                draft = draft,
-                onDraftChange = onDraftChange,
-                modifier = Modifier.padding(start = 20.dp, top = 20.dp, end = 20.dp),
-            )
-        }
-        BoxWithConstraints(
-            modifier = Modifier.fillMaxSize().weight(1f),
-        ) {
-            val wide = maxWidth >= 840.dp
-            if (wide) {
-                Row(modifier = Modifier.fillMaxSize()) {
+        onSelect = { chosen ->
+            if (selectionMode) {
+                if (selectedPath != chosen.path) {
+                    selectedPath = chosen.path
+                    selectedIds = setOf(chosen.stepId)
+                } else {
+                    selectedIds = if (chosen.stepId in selectedIds) selectedIds - chosen.stepId else selectedIds + chosen.stepId
+                }
+            } else {
+                selection = chosen
+            }
+        },
+        onPaste = onPasteBlocks,
+    )
+    val scrollHeader = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    CompositionLocalProvider(LocalBlockClipboardActions provides clipboardActions) {
+        Column(modifier = modifier.fillMaxSize()) {
+            if (!scrollHeader) {
+                WorkflowTitleEditor(
+                    draft = draft,
+                    onDraftChange = onDraftChange,
+                    modifier = Modifier.padding(start = 20.dp, top = 20.dp, end = 20.dp),
+                )
+            }
+            BoxWithConstraints(
+                modifier = Modifier.fillMaxSize().weight(1f),
+            ) {
+                val wide = maxWidth >= 840.dp
+                if (wide) {
+                    Row(modifier = Modifier.fillMaxSize()) {
+                        WorkflowDraftCanvas(
+                            draft = draft,
+                            validation = validation,
+                            session = session,
+                            isBusy = isBusy,
+                            statusMessage = statusMessage,
+                            validationState = validation.issues.isEmpty(),
+                            selection = selection,
+                            showInlineInspector = false,
+                            onSelectionChange = clipboardActions.onSelect,
+                            onDraftChange = onDraftChange,
+                            onSave = onSave,
+                            onRun = onRun,
+                            onValidate = onValidate,
+                            onEditGeometry = onEditGeometry,
+                            onEditCondition = onEditCondition,
+                            onAddTemplate = onAddTemplate,
+                            revisions = revisions,
+                            onOpenRevision = onOpenRevision,
+                            onPickApplication = onPickApplication,
+                            scrollHeader = scrollHeader,
+                            modifier = Modifier.weight(0.62f),
+                        )
+                        VerticalDivider()
+                        BlockInspector(
+                            draft = draft,
+                            selection = selection,
+                            onDraftChange = onDraftChange,
+                            onEditGeometry = onEditGeometry,
+                            onEditCondition = onEditCondition,
+                            modifier = Modifier.weight(0.38f),
+                        )
+                    }
+                } else {
                     WorkflowDraftCanvas(
                         draft = draft,
                         validation = validation,
@@ -755,8 +922,8 @@ private fun WorkflowDraftScreen(
                         statusMessage = statusMessage,
                         validationState = validation.issues.isEmpty(),
                         selection = selection,
-                        showInlineInspector = false,
-                        onSelectionChange = { selection = it },
+                        showInlineInspector = true,
+                        onSelectionChange = clipboardActions.onSelect,
                         onDraftChange = onDraftChange,
                         onSave = onSave,
                         onRun = onRun,
@@ -768,42 +935,9 @@ private fun WorkflowDraftScreen(
                         onOpenRevision = onOpenRevision,
                         onPickApplication = onPickApplication,
                         scrollHeader = scrollHeader,
-                        modifier = Modifier.weight(0.62f),
-                    )
-                    VerticalDivider()
-                    BlockInspector(
-                        draft = draft,
-                        selection = selection,
-                        onDraftChange = onDraftChange,
-                        onEditGeometry = onEditGeometry,
-                        onEditCondition = onEditCondition,
-                        modifier = Modifier.weight(0.38f),
+                        modifier = Modifier.fillMaxSize(),
                     )
                 }
-            } else {
-                WorkflowDraftCanvas(
-                    draft = draft,
-                    validation = validation,
-                    session = session,
-                    isBusy = isBusy,
-                    statusMessage = statusMessage,
-                    validationState = validation.issues.isEmpty(),
-                    selection = selection,
-                    showInlineInspector = true,
-                    onSelectionChange = { selection = it },
-                    onDraftChange = onDraftChange,
-                    onSave = onSave,
-                    onRun = onRun,
-                    onValidate = onValidate,
-                    onEditGeometry = onEditGeometry,
-                    onEditCondition = onEditCondition,
-                    onAddTemplate = onAddTemplate,
-                    revisions = revisions,
-                    onOpenRevision = onOpenRevision,
-                    onPickApplication = onPickApplication,
-                    scrollHeader = scrollHeader,
-                    modifier = Modifier.fillMaxSize(),
-                )
             }
         }
     }
@@ -836,6 +970,30 @@ private fun WorkflowTitleEditor(
 }
 
 private data class BlockSelection(val path: StepListPath, val stepId: String)
+
+private data class PendingBlockPaste(val path: StepListPath, val index: Int, val entry: BlockClipboardEntry)
+
+private data class BlockClipboardActions(
+    val clipboardAvailable: Boolean,
+    val selectionMode: Boolean,
+    val selectedIds: Set<String>,
+    val canCopy: Boolean,
+    val onToggleSelectionMode: () -> Unit,
+    val onCopy: () -> Unit,
+    val onSelect: (BlockSelection) -> Unit,
+    val onPaste: (StepListPath, Int) -> Unit,
+)
+
+private val LocalBlockClipboardActions = compositionLocalOf<BlockClipboardActions?> { null }
+
+private fun uniqueClipboardImageName(draft: WorkflowDraft, requested: String): String {
+    val base = requested.trim().take(48).ifEmpty { "Image" }
+    val used = draft.activeAssetNames().mapTo(mutableSetOf()) { it.lowercase() }
+    if (base.lowercase() !in used) return base
+    var suffix = 2
+    while ("$base $suffix".lowercase() in used) suffix++
+    return "$base $suffix"
+}
 
 internal data class StepBounds(val topInWindow: Float, val height: Int) {
     val centerInWindow: Float
@@ -1076,6 +1234,7 @@ private fun EditorToolbar(
     modifier: Modifier = Modifier,
 ) {
     var validationDetailsVisible by remember { mutableStateOf(false) }
+    val clipboard = LocalBlockClipboardActions.current
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1140,6 +1299,17 @@ private fun EditorToolbar(
             IconButton(onClick = session::redo, enabled = session.canRedo && !isBusy) {
                 Icon(Icons.AutoMirrored.Outlined.Redo, contentDescription = "Redo")
             }
+            IconButton(onClick = { clipboard?.onToggleSelectionMode?.invoke() }, enabled = !isBusy) {
+                Icon(
+                    Icons.Outlined.SelectAll,
+                    contentDescription = if (clipboard?.selectionMode == true) "Leave block selection" else "Select blocks to copy",
+                    tint = if (clipboard?.selectionMode == true) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            IconButton(
+                onClick = { clipboard?.onCopy?.invoke() },
+                enabled = !isBusy && clipboard?.canCopy == true,
+            ) { Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy selected blocks") }
             Spacer(Modifier.weight(1f))
             Box(
                 modifier = Modifier
@@ -1234,16 +1404,17 @@ private fun RevisionSelector(
                 }
             }
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            revisions.forEach { revision ->
-                DropdownMenuItem(
-                    text = { Text("Revision ${revision.revision}") },
-                    onClick = {
-                        expanded = false
-                        onOpenRevision(revision.revision)
-                    },
-                )
-            }
+        if (expanded) {
+            VeyarcChoicePicker(
+                title = "Choose revision",
+                options = revisions.map { VeyarcChoice(it.revision.toString(), "Revision ${it.revision}") },
+                selectedId = currentRevision?.toString(),
+                onDismiss = { expanded = false },
+                onSelect = { choice ->
+                    expanded = false
+                    onOpenRevision(choice.id.toInt())
+                },
+            )
         }
     }
 }
@@ -1463,6 +1634,7 @@ private fun StepListEditor(
     scrollState: androidx.compose.foundation.ScrollState,
     dragCoordinator: StepDragCoordinator,
 ) {
+    val clipboard = LocalBlockClipboardActions.current
     val density = androidx.compose.ui.platform.LocalDensity.current
     val view = LocalView.current
     val steps = draft.stepsAt(path)
@@ -1604,6 +1776,7 @@ private fun StepListEditor(
             canAddJump = steps.isNotEmpty(),
             modifier = Modifier.align(Alignment.CenterHorizontally).offset(y = (-10).dp),
             onAdd = { kind -> onDraftChange(draft.addStep(path, kind, draft.allowedPackagesText.firstPackageOrDefault())) },
+            onPaste = { clipboard?.onPaste?.invoke(path, steps.size) },
         )
     }
 }
@@ -1632,6 +1805,7 @@ private fun StepCard(
     onDragFinished: (Boolean) -> Unit,
     onInsertAfter: (WorkflowStepKind) -> Unit,
 ) {
+    val clipboard = LocalBlockClipboardActions.current
     var positionInWindow by remember(step.id) { mutableStateOf(Offset.Zero) }
     var dragHandlePositionInWindow by remember(step.id) { mutableStateOf(Offset.Zero) }
     val density = androidx.compose.ui.platform.LocalDensity.current
@@ -1646,7 +1820,7 @@ private fun StepCard(
     val expanded = step.id !in draft.collapsedStepIds
     val category = step.blockCategory()
     val accent = category.accent()
-    val selected = selection?.stepId == step.id
+    val selected = if (clipboard?.selectionMode == true) step.id in clipboard.selectedIds else selection?.stepId == step.id
     val containsDraggedBlock = dragCoordinator.source?.path?.segments?.any { it.parentId == step.id } == true
     if (step is StageBoundary) {
         StageBoundaryRow(
@@ -1687,7 +1861,7 @@ private fun StepCard(
                 .background(category.containerColor(selected), category.shape())
                 .clickable {
                     onSelectionChange(BlockSelection(path, step.id))
-                    onDraftChange(draft.toggleCollapsed(step.id))
+                    if (clipboard?.selectionMode != true) onDraftChange(draft.toggleCollapsed(step.id))
                 },
         ) {
             Column(
@@ -1808,6 +1982,7 @@ private fun StepCard(
                     canAddJump = draft.stepsAt(path).size > 1 || step !is Jump,
                     modifier = Modifier.align(Alignment.BottomStart).offset(x = 2.dp, y = 24.dp).zIndex(3f),
                     onAdd = onInsertAfter,
+                    onPaste = { clipboard?.onPaste?.invoke(path, index + 1) },
                 )
             }
         }
@@ -1829,6 +2004,7 @@ private fun StageBoundaryRow(
     onDragFinished: (Boolean) -> Unit,
     onInsertAfter: (WorkflowStepKind) -> Unit,
 ) {
+    val clipboard = LocalBlockClipboardActions.current
     val step = draft.stepsAt(path)[index] as StageBoundary
     val density = androidx.compose.ui.platform.LocalDensity.current
     var positionInWindow by remember(step.id) { mutableStateOf(Offset.Zero) }
@@ -1860,6 +2036,10 @@ private fun StageBoundaryRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .background(
+                    if (clipboard?.selectionMode == true && step.id in clipboard.selectedIds) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else Color.Transparent,
+                    MaterialTheme.shapes.small,
+                )
                 .clickable { onSelectionChange(BlockSelection(path, step.id)) }
                 .pointerInput(step.id) {
                     detectDragGesturesAfterLongPress(
@@ -1919,6 +2099,7 @@ private fun StageBoundaryRow(
                 canAddJump = true,
                 modifier = Modifier.align(Alignment.BottomStart).offset(x = 2.dp, y = 24.dp).zIndex(3f),
                 onAdd = onInsertAfter,
+                onPaste = { clipboard?.onPaste?.invoke(path, index + 1) },
             )
         }
     }
@@ -2227,16 +2408,17 @@ private fun JumpTargetPicker(
         TextButton(onClick = { expanded = true }) {
             Text(steps.jumpTargetLabel(selected), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            options.forEach { target ->
-                DropdownMenuItem(
-                    text = { Text(steps.jumpTargetLabel(target)) },
-                    onClick = {
-                        expanded = false
-                        onSelect(target.id)
-                    },
-                )
-            }
+        if (expanded) {
+            VeyarcChoicePicker(
+                title = "Go to",
+                options = options.map { VeyarcChoice(it.id, steps.jumpTargetLabel(it)) },
+                selectedId = selectedId,
+                onDismiss = { expanded = false },
+                onSelect = { choice ->
+                    expanded = false
+                    onSelect(choice.id)
+                },
+            )
         }
     }
 }
@@ -2343,12 +2525,14 @@ internal fun LongEditorField(
 @Composable
 private fun AddBlockMenu(
     onAdd: (WorkflowStepKind) -> Unit,
+    onPaste: () -> Unit,
     compact: Boolean = false,
     subdued: Boolean = false,
     canAddJump: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val clipboard = LocalBlockClipboardActions.current
     Box(modifier) {
         if (compact) {
             IconButton(onClick = { expanded = true }, modifier = Modifier.size(40.dp)) {
@@ -2366,19 +2550,19 @@ private fun AddBlockMenu(
         } else {
             OutlinedButton(onClick = { expanded = true }) { Text("Add block") }
         }
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-        ) {
-            WorkflowStepKind.entries.filter { it != WorkflowStepKind.JUMP || canAddJump }.forEach { kind ->
-                DropdownMenuItem(
-                    text = { Text(kind.displayName()) },
-                    onClick = {
-                        expanded = false
-                        onAdd(kind)
-                    },
-                )
-            }
+        if (expanded) {
+            VeyarcChoicePicker(
+                title = "Add block",
+                options = buildList {
+                    if (clipboard?.clipboardAvailable == true) add(VeyarcChoice("paste", "Paste blocks"))
+                    WorkflowStepKind.entries.filter { it != WorkflowStepKind.JUMP || canAddJump }.forEach { add(VeyarcChoice(it.name, it.displayName())) }
+                },
+                onDismiss = { expanded = false },
+                onSelect = { choice ->
+                    expanded = false
+                    if (choice.id == "paste") onPaste() else onAdd(WorkflowStepKind.entries.first { it.name == choice.id })
+                },
+            )
         }
     }
 }

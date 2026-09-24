@@ -365,6 +365,10 @@ data class WorkflowDraft(
             .copy(collapsedStepIds = collapsedStepIds + step.id)
     }
 
+    fun insertSteps(path: StepListPath, index: Int, inserted: List<WorkflowStep>): WorkflowDraft = updateList(path) { current ->
+        current.toMutableList().apply { addAll(index.coerceIn(0, size), inserted) }
+    }.copy(collapsedStepIds = collapsedStepIds + inserted.map { it.id })
+
     fun removeStep(path: StepListPath, index: Int): WorkflowDraft = updateList(path) { current ->
         current.toMutableList().apply {
             if (index in indices) removeAt(index)
