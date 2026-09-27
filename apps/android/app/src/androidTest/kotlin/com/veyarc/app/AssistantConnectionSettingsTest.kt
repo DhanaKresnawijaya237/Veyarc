@@ -1,0 +1,119 @@
+package com.veyarc.app
+
+import android.app.Activity
+import android.content.ContextWrapper
+import android.view.Window
+import android.view.WindowManager
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.junit4.StateRestorationTester
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextInput
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.test.espresso.Espresso
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import com.veyarc.app.ui.theme.VeyarcTheme
+import com.veyarc.data.storage.AssistantKeyStore
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.io.File
+import java.util.UUID
+
+@RunWith(AndroidJUnit4::class)
+class AssistantConnectionSettingsTest {
+    @get:Rule val compose = createComposeRule()
+
+    @Test
+    fun localKeySetupNeverEnablesAiAndDiscardsUnsavedEntry() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val directory = File(context.cacheDir, "key-ui-${UUID.randomUUID()}")
+        val store = AssistantKeyStore(object : ContextWrapper(context) {
+            override fun getNoBackupFilesDir() = directory
+        })
+        val owner = object : LifecycleOwner {
+            val registry = LifecycleRegistry(this)
+            override val lifecycle: Lifecycle get() = registry
+        }
+        val restoration = StateRestorationTester(compose)
+        var window: Window? = null
+        try {
+            compose.runOnUiThread { owner.registry.currentState = Lifecycle.State.RESUMED }
+            restoration.setContent {
+                var activityContext = LocalContext.current
+                while (activityContext is ContextWrapper && activityContext !is Activity) activityContext = activityContext.baseContext
+                window = (activityContext as? Activity)?.window
+                CompositionLocalProvider(LocalLifecycleOwner provides owner) {
+                    VeyarcTheme { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(store) } }
+                }
+            }
+            awaitText("Add API key")
+            compose.onNodeWithText("Enable AI").assertIsNotEnabled()
+            compose.onNodeWithText("Test connection").assertIsNotEnabled()
+            compose.onNodeWithText("Add API key").performScrollTo().performClick()
+            compose.runOnIdle { assertTrue(window!!.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0) }
+            compose.onNodeWithTag("assistant-key-entry").assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Password))
+            compose.onNodeWithTag("assistant-key-entry").performTextInput("fixture-unsaved-key")
+            Espresso.closeSoftKeyboard()
+            compose.onNodeWithText("Cancel").performClick()
+            compose.runOnIdle { assertTrue(window!!.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE == 0) }
+            compose.onNodeWithText("Add API key").performScrollTo().performClick()
+            compose.onNodeWithTag("assistant-key-entry").assertTextEquals("API key", "")
+            compose.onNodeWithTag("assistant-key-entry").performTextInput("fixture-saved-key")
+            Espresso.closeSoftKeyboard()
+            compose.onNodeWithText("Save key").performClick()
+            awaitText("API key saved on this device · Not tested")
+            assertTrue(store.hasKey())
+            compose.onNodeWithText("Replace API key").performScrollTo().performClick()
+            compose.onNodeWithTag("assistant-key-entry").assertTextEquals("API key", "")
+            compose.onNodeWithTag("assistant-key-entry").performTextInput("fixture-discard-on-background")
+            compose.runOnUiThread { owner.registry.currentState = Lifecycle.State.CREATED }
+            compose.waitForIdle()
+            compose.onNodeWithTag("assistant-key-entry").assertDoesNotExist()
+            compose.runOnUiThread { owner.registry.currentState = Lifecycle.State.RESUMED }
+            compose.onNodeWithText("Replace API key").performScrollTo().performClick()
+            compose.onNodeWithTag("assistant-key-entry").performTextInput("fixture-discard-on-restore")
+            restoration.emulateSavedInstanceStateRestore()
+            compose.onNodeWithTag("assistant-key-entry").assertDoesNotExist()
+            awaitText("API key saved on this device · Not tested")
+            compose.onNodeWithText("Replace API key").performScrollTo().performClick()
+            compose.onNodeWithTag("assistant-key-entry").assertTextEquals("API key", "")
+            compose.onNodeWithTag("assistant-key-entry").performTextInput("fixture-replacement-key")
+            Espresso.closeSoftKeyboard()
+            compose.onNodeWithText("Save key").performClick()
+            awaitText("API key saved on this device · Not tested")
+            compose.onNodeWithText("Remove API key").performScrollTo().performClick()
+            compose.onNodeWithText("Remove key", substring = false).performClick()
+            awaitText("No usable API key loaded")
+            assertFalse(store.hasKey())
+            compose.onNodeWithText("Enable AI").assertIsNotEnabled()
+        } finally {
+            store.remove()
+            directory.deleteRecursively()
+        }
+    }
+
+    private fun awaitText(value: String) {
+        compose.waitUntil(10_000) { runCatching { compose.onNodeWithText(value).assertExists() }.isSuccess }
+        compose.waitForIdle()
+    }
+}

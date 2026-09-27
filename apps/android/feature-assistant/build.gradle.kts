@@ -22,6 +22,25 @@ android {
     }
 }
 
+abstract class AssistantSchemaTask : DefaultTask() {
+    @get:InputFile abstract val schema: RegularFileProperty
+
+    @get:OutputDirectory abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction fun copySchema() {
+        val destination = outputDirectory.file("workflow.schema.json").get().asFile
+        destination.parentFile.mkdirs()
+        schema.get().asFile.copyTo(destination, overwrite = true)
+    }
+}
+androidComponents.onVariants { variant ->
+    val schemaTask = tasks.register<AssistantSchemaTask>("generate${variant.name.replaceFirstChar(Char::uppercaseChar)}AssistantSchema") {
+        schema.set(rootProject.layout.projectDirectory.file("../../spec/workflows/v1/workflow.schema.json"))
+        outputDirectory.set(layout.buildDirectory.dir("generated/assistantSchema/${variant.name}"))
+    }
+    variant.sources.resources!!.addGeneratedSourceDirectory(schemaTask, AssistantSchemaTask::outputDirectory)
+}
+
 dependencies {
     val composeBom = platform(libs.androidx.compose.bom)
 
@@ -36,6 +55,7 @@ dependencies {
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.okhttp)
 }
 
 val assistantRuntime = provider { configurations.getByName("debugRuntimeClasspath") }

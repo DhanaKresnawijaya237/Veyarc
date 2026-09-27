@@ -1,0 +1,226 @@
+package com.veyarc.feature.assistant
+
+import com.veyarc.data.storage.AssistantKeyStore
+import com.veyarc.model.WorkflowJson
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import okhttp3.Call
+import okhttp3.ConnectionPool
+import okhttp3.CookieJar
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
+import okio.BufferedSink
+import java.io.FilterInputStream
+import java.io.IOException
+import java.io.InputStream
+import java.io.InterruptedIOException
+import java.net.URL
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.zip.GZIPInputStream
+
+enum class DeepSeekFailure(val message: String) {
+    KEY_REQUIRED("Add or replace your DeepSeek API key in Settings."),
+    ACCESS_DENIED("DeepSeek denied access. Check your account and API key."),
+    INSUFFICIENT_BALANCE("Check your DeepSeek API account balance."),
+    INVALID_REQUEST("The request is invalid. Review the message and workflow."),
+    REQUEST_TOO_LARGE("The request exceeds 128 KiB. Shorten the message or chat; nothing was omitted."),
+    RATE_LIMITED("DeepSeek rate limit reached. Try again later."),
+    UNAVAILABLE("DeepSeek is unavailable. Try again later."),
+    NETWORK("Could not connect to DeepSeek. Check your connection."),
+    TIMEOUT("The request timed out. Retry only when ready; charges may still apply."),
+    INVALID_RESPONSE("DeepSeek returned an incomplete or unsupported response."),
+    RESPONSE_TOO_LARGE("DeepSeek's response exceeded the local size limit."),
+    BUSY("An AI request is already running."),
+    CANCELLED("The AI request was cancelled. No response was accepted."),
+}
+
+/** No raw body, headers, key, or underlying exception is exposed to callers/logging. */
+class DeepSeekException(val reason: DeepSeekFailure) : Exception(reason.message)
+
+/** Blocking adapter. Call off the UI thread. App dispatch and lifecycle binding belong to 4E. */
+class DeepSeekClient internal constructor(
+    private val endpoint: URL,
+    private val connectTimeoutMs: Int = 15000,
+    private val readTimeoutMs: Int = 30000,
+    private val deadlineMs: Long = 120000,
+) {
+    constructor() : this(URL("https://api.deepseek.com/chat/completions"))
+
+    init {
+        require(
+            endpoint.toString() == "https://api.deepseek.com/chat/completions" ||
+                (endpoint.protocol == "http" && endpoint.host == "127.0.0.1" && endpoint.userInfo == null),
+        )
+        require(connectTimeoutMs > 0 && readTimeoutMs > 0 && deadlineMs > 0)
+    }
+
+    private val busy = AtomicBoolean(false)
+    private val transport = OkHttpClient.Builder()
+        .connectTimeout(connectTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
+        .readTimeout(readTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
+        .writeTimeout(readTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
+        .callTimeout(deadlineMs, TimeUnit.MILLISECONDS)
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .retryOnConnectionFailure(false)
+        .cookieJar(CookieJar.NO_COOKIES)
+        .connectionPool(ConnectionPool(0, 1, TimeUnit.SECONDS))
+        .build()
+
+    /** Owner cancellation closes the same attempt used by explicit Stop/key-change cancellation. */
+    suspend fun await(request: DeepSeekRequest, apiKey: String, cancellation: DeepSeekCancellation = DeepSeekCancellation()): ByteArray = suspendCancellableCoroutine { continuation ->
+        continuation.invokeOnCancellation { cancellation.cancel() }
+        // The blocking worker always releases its connection in complete()'s finally block.
+        CoroutineScope(Dispatchers.IO).launch {
+            continuation.resumeWith(runCatching { complete(request, apiKey, cancellation) })
+        }
+    }
+
+    /** Returns original content bytes, ready for the existing state/validator boundary. No repairs. */
+    fun complete(request: DeepSeekRequest, apiKey: String, cancellation: DeepSeekCancellation = DeepSeekCancellation()): ByteArray {
+        if (!AssistantKeyStore.isValidEntry(apiKey)) throw DeepSeekException(DeepSeekFailure.KEY_REQUIRED)
+        if (!busy.compareAndSet(false, true)) throw DeepSeekException(DeepSeekFailure.BUSY)
+        var call: Call? = null
+        val started = System.nanoTime()
+        fun checkActive() {
+            cancellation.checkActive()
+            if (TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) >= deadlineMs) throw DeepSeekException(DeepSeekFailure.TIMEOUT)
+        }
+        try {
+            checkActive()
+            val body = object : RequestBody() {
+                override fun contentType() = "application/json".toMediaType()
+                override fun contentLength() = request.body.size.toLong()
+                override fun isOneShot() = true // Also prohibits status-driven follow-up POSTs.
+                override fun writeTo(sink: BufferedSink) {
+                    checkActive()
+                    sink.write(request.body)
+                }
+            }
+            val http = Request.Builder().url(endpoint)
+                .header("Authorization", "Bearer $apiKey")
+                .header("Accept", if (request.streaming) "text/event-stream" else "application/json")
+                .header("Accept-Encoding", "identity")
+                .post(body).build()
+            val active = transport.newCall(http)
+            call = active
+            cancellation.attach(active)
+            val content = active.execute().use { response ->
+                checkActive()
+                if (response.code != 200) {
+                    throw DeepSeekException(
+                        when (response.code) {
+                            401 -> DeepSeekFailure.KEY_REQUIRED
+                            402 -> DeepSeekFailure.INSUFFICIENT_BALANCE
+                            403 -> DeepSeekFailure.ACCESS_DENIED
+                            400, 413, 422 -> DeepSeekFailure.INVALID_REQUEST
+                            429 -> DeepSeekFailure.RATE_LIMITED
+                            in 500..599 -> DeepSeekFailure.UNAVAILABLE
+                            else -> DeepSeekFailure.INVALID_RESPONSE
+                        },
+                    )
+                }
+                require(response.header("Content-Type")?.substringBefore(';')?.trim()?.lowercase() == if (request.streaming) "text/event-stream" else "application/json")
+                val raw = response.body.byteStream()
+                val input = when (response.header("Content-Encoding")?.lowercase()) {
+                    null, "identity" -> raw
+                    "gzip" -> GZIPInputStream(raw)
+                    else -> throw DeepSeekException(DeepSeekFailure.INVALID_RESPONSE)
+                }
+                BoundedResponse(input, ::checkActive).use { bounded ->
+                    if (request.streaming) DeepSeekStream.read(bounded, request, cancellation) else decode(bounded.readBytes(), request)
+                }
+            }
+            checkActive()
+            cancellation.finish()
+            return content
+        } catch (error: Exception) {
+            cancellation.checkActive()
+            throw when {
+                error is InterruptedIOException -> DeepSeekException(DeepSeekFailure.TIMEOUT)
+                error is DeepSeekException -> error
+                error is IOException -> DeepSeekException(DeepSeekFailure.NETWORK)
+                else -> DeepSeekException(DeepSeekFailure.INVALID_RESPONSE)
+            }
+        } finally {
+            cancellation.detach()
+            try {
+                call?.cancel()
+            } finally {
+                busy.set(false)
+            }
+        }
+    }
+
+    private class BoundedResponse(input: InputStream, private val checkActive: () -> Unit) : FilterInputStream(input) {
+        private var total = 0
+        override fun read(): Int {
+            checkActive()
+            val value = `in`.read()
+            count(if (value < 0) 0 else 1)
+            return value
+        }
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+            checkActive()
+            val size = `in`.read(buffer, offset, minOf(length, MAX_RESPONSE_BYTES - total + 1))
+            count(maxOf(size, 0))
+            return size
+        }
+        private fun count(size: Int) {
+            checkActive()
+            total += size
+            if (total > MAX_RESPONSE_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
+        }
+    }
+
+    companion object {
+        internal const val MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+
+        internal fun decode(bytes: ByteArray, request: DeepSeekRequest): ByteArray = try {
+            if (bytes.size > MAX_RESPONSE_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
+            val envelope = parseObject(bytes)
+            require(envelope.string("object") == "chat.completion")
+            // The official completion example echoes the alias. Do not guess dated wire-model IDs.
+            require(envelope.string("model") == DeepSeekRequest.MODEL)
+            val choice = (envelope["choices"] as JsonArray).single() as JsonObject
+            require(choice["index"] == JsonPrimitive(0) && choice.string("finish_reason") == "stop")
+            val message = choice["message"] as JsonObject
+            require(message.string("role") == "assistant")
+            listOf(envelope, choice, message).forEach { fields ->
+                listOf("error", "tool_calls", "function_call", "refusal", "content_filter_results").forEach {
+                    require(fields[it] == null || fields[it] == JsonNull)
+                }
+            }
+            require(message["reasoning_content"] == null || message["reasoning_content"] == JsonNull || message["reasoning_content"] == JsonPrimitive(""))
+            val content = message.string("content").toByteArray(Charsets.UTF_8)
+            if (content.size > AssistantResponseCodec.MAX_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
+            AssistantResponseCodec.decode(content, request.requestId, request.conversationId, request.baseSnapshotId)
+            content
+        } catch (error: DeepSeekException) {
+            throw error
+        } catch (_: Exception) {
+            throw DeepSeekException(DeepSeekFailure.INVALID_RESPONSE)
+        }
+
+        internal fun parseObject(bytes: ByteArray): JsonObject {
+            val json = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString()
+            WorkflowJson.checkNesting(json, 64)
+            AssistantResponseCodec.rejectDuplicateKeys(json)
+            return WorkflowJson.format.parseToJsonElement(json) as JsonObject
+        }
+
+        internal fun JsonObject.string(key: String): String = (getValue(key) as JsonPrimitive).also { require(it.isString) }.content
+    }
+}

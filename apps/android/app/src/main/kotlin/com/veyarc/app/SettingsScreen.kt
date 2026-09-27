@@ -79,6 +79,7 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val assistantKeys = remember(context) { com.veyarc.data.storage.AssistantKeyStore(context.applicationContext) }
     val scope = rememberCoroutineScope()
     val shizukuProbe = remember(context) { ShizukuTouchProbe(context) }
     var shizuku by remember { mutableStateOf(shizukuProbe.snapshot()) }
@@ -190,6 +191,16 @@ fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("Settings", style = MaterialTheme.typography.headlineSmall)
+            }
+        }
+        if (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            item {
+                SettingsCard(
+                    title = "AI connection",
+                    summary = "Disabled",
+                    expanded = expandedSection == "assistant",
+                    onToggle = { expandedSection = if (expandedSection == "assistant") null else "assistant" },
+                ) { AssistantConnectionSettings(assistantKeys) }
             }
         }
         item {
