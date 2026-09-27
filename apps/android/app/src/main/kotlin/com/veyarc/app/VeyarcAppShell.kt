@@ -43,6 +43,7 @@ internal fun VeyarcAppShell(
     selectedDestination: VeyarcDestination,
     onDestinationSelected: (VeyarcDestination) -> Unit,
     selectionBar: ManagerSelectionBarState? = null,
+    showNavigation: Boolean = true,
     content: @Composable (VeyarcDestination) -> Unit,
 ) {
     val destinationStates = rememberSaveableStateHolder()
@@ -55,7 +56,9 @@ internal fun VeyarcAppShell(
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        if (usesNavigationRail(maxWidth.value, maxHeight.value)) {
+        if (!showNavigation) {
+            DestinationContent()
+        } else if (usesNavigationRail(maxWidth.value, maxHeight.value)) {
             Row(modifier = Modifier.fillMaxSize()) {
                 if (selectionBar != null) {
                     ManagerSelectionRail(selectionBar)

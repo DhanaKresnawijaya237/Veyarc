@@ -97,6 +97,19 @@ data class DraftBuildResult(
 )
 
 class WorkflowEditorSession {
+    var isSaving by mutableStateOf(false)
+        private set
+
+    fun beginSave(): Boolean {
+        if (isSaving) return false
+        isSaving = true
+        return true
+    }
+
+    fun finishSave() {
+        isSaving = false
+    }
+
     var draft by mutableStateOf<WorkflowDraft?>(null)
         private set
     var destinationFolderId by mutableStateOf<String?>(null)
@@ -134,6 +147,12 @@ class WorkflowEditorSession {
         savedDraft = null
         prepareRevisionCache(draft!!.workflowId)
         clearHistory()
+    }
+
+    fun createForAssistant(viewport: ViewportSpec) {
+        create(viewport)
+        // Start without guessed targets or gestures. Setup uses the existing editor controls.
+        draft = requireNotNull(draft).copy(allowedPackagesText = "", steps = emptyList(), collapsedStepIds = emptySet())
     }
 
     fun open(

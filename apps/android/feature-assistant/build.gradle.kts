@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.compose.compiler)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 android {
@@ -24,10 +25,40 @@ android {
 dependencies {
     val composeBom = platform(libs.androidx.compose.bom)
 
-    implementation(project(":core-engine"))
-    implementation(project(":core-model"))
     implementation(composeBom)
+    implementation(project(":data"))
+    implementation(project(":core-model"))
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.compose.foundation)
+    implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation(libs.kotlinx.coroutines.android)
+}
+
+val assistantRuntime = provider { configurations.getByName("debugRuntimeClasspath") }
+val assistantSources = fileTree("src/main/kotlin") { include("**/*.kt") }
+tasks.register("verifyAssistantIsolation") {
+    group = "verification"
+    inputs.files(assistantSources)
+    inputs.property(
+        "projectPaths",
+        assistantRuntime.map { configuration ->
+            configuration.incoming.resolutionResult.allComponents.mapNotNull {
+                (it.id as? org.gradle.api.artifacts.component.ProjectComponentIdentifier)?.projectPath
+            }
+        },
+    )
+    doLast {
+        val forbidden = setOf(":app", ":automation-android", ":feature-editor", ":feature-recorder", ":feature-runner", ":core-engine")
+        val projects = inputs.properties.getValue("projectPaths") as List<*>
+        check(projects.none { it in forbidden }) { "Assistant must not depend on execution modules: $projects" }
+        inputs.files.files.forEach { source ->
+            check(!Regex("com\\.veyarc\\.(engine|automation|feature\\.(editor|recorder|runner))\\.").containsMatchIn(source.readText())) {
+                "Assistant source imports an execution module: ${source.name}"
+            }
+        }
+    }
 }

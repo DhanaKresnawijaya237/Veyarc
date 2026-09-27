@@ -156,6 +156,7 @@ class WorkflowRepository internal constructor(
         AndroidKeystoreKeySource(TEMPLATE_ASSET_KEY_ALIAS),
     ),
     private val assetStore: WorkflowAssetBlobStore? = null,
+    private val chatFiles: EncryptedFileStore? = null,
 ) {
     private val previewCache = object : LinkedHashMap<String, BundleAsset>(PREVIEW_CACHE_SIZE + 1, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, BundleAsset>?): Boolean = size > PREVIEW_CACHE_SIZE
@@ -178,6 +179,7 @@ class WorkflowRepository internal constructor(
         ),
         nowMs = nowMs,
         assetStore = WorkflowAssetBlobStore.create(context, database, nowMs),
+        chatFiles = ChatRepository.createFiles(context),
     )
 
     fun saveRevision(
@@ -910,15 +912,18 @@ class WorkflowRepository internal constructor(
         ) { "Cannot delete a workflow while a run is active" }
 
         val revisions = dao.listRevisions(workflowId)
+        val chats = database.chatDao().list().filter { it.scopeId == workflowId }
         try {
             database.runInTransaction {
                 dao.deleteRunsForWorkflow(workflowId)
+                database.chatDao().deleteForWorkflow(workflowId)
                 dao.deleteRevisionsForWorkflow(workflowId)
                 check(dao.deleteWorkflow(workflowId) == 1) {
                     "Workflow disappeared while it was being deleted"
                 }
             }
             revisions.forEach { revision -> files.delete(revision.encryptedFileName) }
+            chats.forEach { chat -> runCatching { chatFiles?.delete(chat.encryptedFileName) } }
             previewCache.keys.removeAll { it.startsWith("$workflowId:") }
             runCatching { assetStore?.collectGarbage() }
         } catch (error: Exception) {

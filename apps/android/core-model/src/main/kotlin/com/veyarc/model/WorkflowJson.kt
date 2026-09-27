@@ -41,6 +41,10 @@ object WorkflowJson {
         return format.encodeToString(JsonElement.serializer(), canonicalize(element))
     }
 
+    fun checkNesting(json: String, maximumDepth: Int) {
+        com.veyarc.model.bundle.BundleImportSafety.checkJsonNesting("Workflow context", json, maximumDepth)
+    }
+
     fun decode(json: String): WorkflowDocument = decodeStrict(WorkflowDocument.serializer(), json)
 
     fun <T> decodeStrict(serializer: DeserializationStrategy<T>, json: String): T {

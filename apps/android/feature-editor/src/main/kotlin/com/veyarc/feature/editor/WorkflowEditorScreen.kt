@@ -63,6 +63,7 @@ import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.ArrowDropDown
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
@@ -164,6 +165,7 @@ fun WorkflowEditorScreen(
     session: WorkflowEditorSession,
     onRunWorkflow: (WorkflowRevisionDocument) -> Unit,
     onOpenWorkflowManager: () -> Unit,
+    onAskAi: (() -> Unit)? = null,
     initialBundle: WorkflowBundle? = null,
     initialStoredWorkflowId: String? = null,
     initialStoredRevision: Int? = null,
@@ -363,6 +365,10 @@ fun WorkflowEditorScreen(
         afterSave: ((WorkflowRevisionDocument) -> Unit)? = null,
         orientationConfirmed: Boolean = false,
     ) {
+        if (session.draft !== draft) {
+            statusMessage = "The draft changed. Review it before saving."
+            return
+        }
         val build = draft.buildBundle()
         val document = build.document
         if (document == null) {
@@ -375,44 +381,52 @@ fun WorkflowEditorScreen(
             return
         }
         val sourceJournalFileName = session.draft?.recordingJournalFileName
+        if (isBusy || !session.beginSave()) return
+        isBusy = true
         scope.launch {
-            isBusy = true
-            statusMessage = null
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    val sourceRevision = draft.lastSavedRevision
-                    if (sourceRevision == null) {
-                        val bundle = build.bundle
-                            ?: throw WorkflowStorageException("Unsaved workflow assets are incomplete")
-                        repository.saveRevision(bundle, session.destinationFolderId)
-                    } else {
-                        repository.saveRevisionFromAssetChanges(
-                            sourceWorkflowId = draft.workflowId,
-                            sourceRevision = sourceRevision,
-                            document = document,
-                            changedAssets = draft.assets,
-                            destinationFolderId = session.destinationFolderId,
-                        )
+            try {
+                statusMessage = null
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        val latest = repository.listRevisions(draft.workflowId).maxOfOrNull { it.revision }
+                        if (latest != null && latest > (draft.latestKnownRevision ?: 0)) {
+                            throw WorkflowStorageException("A newer saved revision exists. Open it and review your changes before saving again.")
+                        }
+                        val sourceRevision = draft.lastSavedRevision
+                        if (sourceRevision == null) {
+                            val bundle = build.bundle
+                                ?: throw WorkflowStorageException("Unsaved workflow assets are incomplete")
+                            repository.saveRevision(bundle, session.destinationFolderId)
+                        } else {
+                            repository.saveRevisionFromAssetChanges(
+                                sourceWorkflowId = draft.workflowId,
+                                sourceRevision = sourceRevision,
+                                document = document,
+                                changedAssets = draft.assets,
+                                destinationFolderId = session.destinationFolderId,
+                            )
+                        }
+                        repository.loadRevisionForEditor(document.id, document.revision)
                     }
-                    repository.loadRevisionForEditor(document.id, document.revision)
+                }.onSuccess { stored ->
+                    session.markSaved(WorkflowDraft.fromRevision(stored, sourceJournalFileName))
+                    ReplayWorkflowCatalog.addOrReplace(
+                        context,
+                        ReplayControllerWorkflow(
+                            workflowId = stored.revision.document.id,
+                            revision = stored.revision.document.revision,
+                            name = stored.revision.document.name,
+                        ),
+                    )
+                    statusMessage = "Saved revision ${stored.revision.document.revision}."
+                    afterSave?.invoke(stored.revision)
+                }.onFailure { error ->
+                    statusMessage = "Could not save revision: ${error.userMessage()}"
                 }
-            }.onSuccess { stored ->
-                session.markSaved(WorkflowDraft.fromRevision(stored, sourceJournalFileName))
-                ReplayWorkflowCatalog.addOrReplace(
-                    context,
-                    ReplayControllerWorkflow(
-                        workflowId = stored.revision.document.id,
-                        revision = stored.revision.document.revision,
-                        name = stored.revision.document.name,
-                    ),
-                )
-                statusMessage = "Saved revision ${stored.revision.document.revision}."
-                afterSave?.invoke(stored.revision)
-            }.onFailure { error ->
-                statusMessage = "Could not save revision: ${error.userMessage()}"
+            } finally {
+                isBusy = false
             }
-            isBusy = false
-        }
+        }.invokeOnCompletion { session.finishSave() }
     }
 
     fun saveAndRun(draft: WorkflowDraft) {
@@ -547,6 +561,13 @@ fun WorkflowEditorScreen(
                 statusMessage = null
             },
             onOpenWorkflowManager = onOpenWorkflowManager,
+            onAskAi = onAskAi?.let { openChat ->
+                {
+                    session.createForAssistant(viewportFor(context))
+                    statusMessage = null
+                    openChat()
+                }
+            },
             modifier = modifier,
         )
     } else {
@@ -558,6 +579,7 @@ fun WorkflowEditorScreen(
             statusMessage = statusMessage,
             session = session,
             onDraftChange = session::update,
+            onAskAi = onAskAi?.takeUnless { isBusy },
             onSave = { saveWorkflow(draft) },
             onRun = { saveAndRun(draft) },
             onValidate = {
@@ -780,6 +802,7 @@ private fun UnsavedDraftDialog(
 private fun EmptyWorkflowEditorScreen(
     onCreate: () -> Unit,
     onOpenWorkflowManager: () -> Unit,
+    onAskAi: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
@@ -801,6 +824,10 @@ private fun EmptyWorkflowEditorScreen(
             OutlinedButton(onClick = onOpenWorkflowManager) {
                 Text("Choose workflow")
             }
+            if (onAskAi != null) {
+                OutlinedButton(onClick = onAskAi) { Text("Create with AI") }
+                Text("Chat preview · No AI connected", style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }
@@ -813,6 +840,7 @@ private fun WorkflowDraftScreen(
     statusMessage: String?,
     session: WorkflowEditorSession,
     onDraftChange: (WorkflowDraft) -> Unit,
+    onAskAi: (() -> Unit)?,
     onSave: () -> Unit,
     onRun: () -> Unit,
     onValidate: () -> Unit,
@@ -871,6 +899,7 @@ private fun WorkflowDraftScreen(
                 WorkflowTitleEditor(
                     draft = draft,
                     onDraftChange = onDraftChange,
+                    onAskAi = onAskAi,
                     modifier = Modifier.padding(start = 20.dp, top = 20.dp, end = 20.dp),
                 )
             }
@@ -889,6 +918,7 @@ private fun WorkflowDraftScreen(
                             validationState = validation.issues.isEmpty(),
                             selection = selection,
                             showInlineInspector = false,
+                            onAskAi = onAskAi,
                             onSelectionChange = clipboardActions.onSelect,
                             onDraftChange = onDraftChange,
                             onSave = onSave,
@@ -923,6 +953,7 @@ private fun WorkflowDraftScreen(
                         validationState = validation.issues.isEmpty(),
                         selection = selection,
                         showInlineInspector = true,
+                        onAskAi = onAskAi,
                         onSelectionChange = clipboardActions.onSelect,
                         onDraftChange = onDraftChange,
                         onSave = onSave,
@@ -947,6 +978,7 @@ private fun WorkflowDraftScreen(
 private fun WorkflowTitleEditor(
     draft: WorkflowDraft,
     onDraftChange: (WorkflowDraft) -> Unit,
+    onAskAi: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -956,7 +988,7 @@ private fun WorkflowTitleEditor(
         BasicTextField(
             value = draft.name,
             onValueChange = { onDraftChange(draft.copy(name = it)) },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.weight(1f),
             singleLine = true,
             textStyle = MaterialTheme.typography.headlineSmall.copy(color = MaterialTheme.colorScheme.onSurface),
             decorationBox = { field ->
@@ -966,6 +998,9 @@ private fun WorkflowTitleEditor(
                 field()
             },
         )
+        if (onAskAi != null) {
+            IconButton(onClick = onAskAi) { Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = "Ask AI") }
+        }
     }
 }
 
@@ -1102,6 +1137,7 @@ private fun WorkflowDraftCanvas(
     validationState: Boolean?,
     selection: BlockSelection?,
     showInlineInspector: Boolean,
+    onAskAi: (() -> Unit)?,
     onSelectionChange: (BlockSelection) -> Unit,
     onDraftChange: (WorkflowDraft) -> Unit,
     onSave: () -> Unit,
@@ -1150,6 +1186,7 @@ private fun WorkflowDraftCanvas(
                 WorkflowTitleEditor(
                     draft = draft,
                     onDraftChange = onDraftChange,
+                    onAskAi = onAskAi,
                     modifier = Modifier.padding(top = verticalPadding),
                 )
                 EditorToolbar(

@@ -17,13 +17,15 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         RevisionAssetEntity::class,
         RunFolderEntity::class,
         RunRecordEntity::class,
+        ChatEntity::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = false,
 )
 internal abstract class VeyarcDatabase : RoomDatabase() {
     abstract fun workflowDao(): WorkflowDao
     abstract fun workflowAssetDao(): WorkflowAssetDao
+    abstract fun chatDao(): ChatDao
 
     companion object {
         fun create(context: Context): VeyarcDatabase = Room.databaseBuilder(
@@ -40,6 +42,7 @@ internal abstract class VeyarcDatabase : RoomDatabase() {
             MIGRATION_7_8,
             MIGRATION_8_9,
             MIGRATION_9_10,
+            MIGRATION_10_11,
         ).build()
 
         internal val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -165,6 +168,20 @@ internal abstract class VeyarcDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS index_revision_assets_blobKey ON revision_assets(blobKey)",
                 )
+            }
+        }
+
+        internal val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS chat_conversations (" +
+                        "conversationId TEXT NOT NULL PRIMARY KEY, scopeId TEXT, savedWorkflowId TEXT, " +
+                        "createdAtMs INTEGER NOT NULL, updatedAtMs INTEGER NOT NULL, requestId TEXT, " +
+                        "status TEXT NOT NULL, encryptedFileName TEXT NOT NULL, encryptedByteLength INTEGER NOT NULL, " +
+                        "FOREIGN KEY(savedWorkflowId) REFERENCES workflows(workflowId) ON UPDATE NO ACTION ON DELETE CASCADE)",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_chat_conversations_savedWorkflowId ON chat_conversations(savedWorkflowId)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_chat_conversations_encryptedFileName ON chat_conversations(encryptedFileName)")
             }
         }
 

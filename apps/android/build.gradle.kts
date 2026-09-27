@@ -85,7 +85,7 @@ subprojects {
 tasks.register("verifyLocal") {
     group = "verification"
     description = "Runs formatting, Android lint, and local JVM tests."
-    dependsOn("spotlessCheck")
+    dependsOn("spotlessCheck", ":feature-assistant:verifyAssistantIsolation")
     dependsOn(subprojects.map { "${it.path}:test" })
     dependsOn(androidProjectPaths.map { "$it:lint" })
 }

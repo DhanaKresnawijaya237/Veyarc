@@ -466,7 +466,7 @@ internal fun WorkflowManagerScreen(
         AlertDialog(
             onDismissRequest = { pendingWorkflowDelete = emptyList() },
             title = { Text(if (targets.size == 1) "Delete ${targets.single().summary.name}?" else "Delete ${targets.size} workflows?") },
-            text = { Text("This permanently removes the selected workflows, their revisions, and run history from this phone.") },
+            text = { Text("This permanently removes the selected workflows, their revisions, run history, and associated chats from this phone.") },
             confirmButton = {
                 TextButton(onClick = {
                     pendingWorkflowDelete = emptyList()

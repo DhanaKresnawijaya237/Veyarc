@@ -2,6 +2,7 @@ package com.veyarc.app
 
 import android.app.Application
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -19,8 +20,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
 import com.veyarc.app.ui.theme.VeyarcTheme
 import com.veyarc.automation.android.ReplayControllerWorkflow
 import com.veyarc.automation.android.ReplayFloatingController
@@ -29,6 +30,9 @@ import com.veyarc.data.storage.StoredRunRecord
 import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowRevisionDocument
 import com.veyarc.data.storage.WorkflowSummary
+import com.veyarc.feature.assistant.AssistantPreviewHost
+import com.veyarc.feature.assistant.AssistantPreviewState
+import com.veyarc.feature.assistant.PreviewReplyStatus
 import com.veyarc.feature.editor.WorkflowEditorScreen
 import com.veyarc.feature.editor.WorkflowEditorSession
 import com.veyarc.feature.recorder.CoordinateRecorderScreen
@@ -49,6 +53,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
+    private val assistantPreviewEnabled: Boolean
+        get() = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
     private var resumeGeneration by mutableIntStateOf(0)
     private var selectedDestination by mutableStateOf(VeyarcDestination.HOME)
     private var fullScreenDestination by mutableStateOf<FullScreenDestination?>(null)
@@ -180,6 +186,7 @@ class MainActivity : ComponentActivity() {
                                         selectedDestination = it
                                     },
                                     selectionBar = managerSelectionBar,
+                                    showNavigation = !(assistantPreviewEnabled && selectedDestination == VeyarcDestination.EDITOR && editorSession.assistant.isOpen),
                                 ) { destination ->
                                     when (destination) {
                                         VeyarcDestination.HOME -> HomeDashboardScreen(
@@ -200,29 +207,36 @@ class MainActivity : ComponentActivity() {
                                             onSelectionBarChange = { managerSelectionBar = it },
                                         )
 
-                                        VeyarcDestination.EDITOR -> WorkflowEditorScreen(
-                                            repository = workflowRepository,
-                                            session = editorSession.state,
-                                            onRunWorkflow = ::openStoredRunScreen,
-                                            onOpenWorkflowManager = {
-                                                selectedDestination = VeyarcDestination.WORKFLOWS
-                                            },
-                                            initialBundle = workflowToEdit,
-                                            initialStoredWorkflowId = storedWorkflowToEdit?.first,
-                                            initialStoredRevision = storedWorkflowToEdit?.second,
-                                            initialRecordingJournalFileName = recordedJournalFileName,
-                                            onInitialBundleConsumed = {
-                                                workflowToEdit = null
-                                                storedWorkflowToEdit = null
-                                                recordedJournalFileName = null
-                                            },
-                                            newWorkflowRequestId = newWorkflowRequestId,
-                                            newWorkflowFolderId = newWorkflowFolderId,
-                                            onNewWorkflowRequestConsumed = {
-                                                newWorkflowRequestId = 0
-                                                newWorkflowFolderId = null
-                                            },
-                                        )
+                                        VeyarcDestination.EDITOR -> AssistantPreviewHost(
+                                            enabled = assistantPreviewEnabled,
+                                            state = editorSession.assistant,
+                                            context = editorSession.state.assistantContext(),
+                                        ) { onAskAi ->
+                                            WorkflowEditorScreen(
+                                                repository = workflowRepository,
+                                                session = editorSession.state,
+                                                onAskAi = onAskAi?.let { { editorSession.assistant.open(editorSession.state.assistantContext()) } },
+                                                onRunWorkflow = ::openStoredRunScreen,
+                                                onOpenWorkflowManager = {
+                                                    selectedDestination = VeyarcDestination.WORKFLOWS
+                                                },
+                                                initialBundle = workflowToEdit,
+                                                initialStoredWorkflowId = storedWorkflowToEdit?.first,
+                                                initialStoredRevision = storedWorkflowToEdit?.second,
+                                                initialRecordingJournalFileName = recordedJournalFileName,
+                                                onInitialBundleConsumed = {
+                                                    workflowToEdit = null
+                                                    storedWorkflowToEdit = null
+                                                    recordedJournalFileName = null
+                                                },
+                                                newWorkflowRequestId = newWorkflowRequestId,
+                                                newWorkflowFolderId = newWorkflowFolderId,
+                                                onNewWorkflowRequestConsumed = {
+                                                    newWorkflowRequestId = 0
+                                                    newWorkflowFolderId = null
+                                                },
+                                            )
+                                        }
 
                                         VeyarcDestination.RUNS -> RunManagerScreen(
                                             repository = workflowRepository,
@@ -266,6 +280,11 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleControllerIntent(intent)
+    }
+
+    override fun onStop() {
+        if (!isChangingConfigurations) editorSession.assistant.stop(PreviewReplyStatus.INTERRUPTED)
+        super.onStop()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -496,6 +515,14 @@ class MainRecordingSession(application: Application) : AndroidViewModel(applicat
     }
 }
 
-class MainEditorSession : ViewModel() {
+class MainEditorSession(application: Application) : AndroidViewModel(application) {
     val state = WorkflowEditorSession()
+    private val chatRepository = com.veyarc.data.storage.ChatRepository(application)
+    private val assistantDraft = AssistantDraftBridge(state)
+    val assistant = AssistantPreviewState(chatRepository, viewModelScope, compileCandidate = ::assistantCompilationIssues, applyCandidate = assistantDraft::apply, contextSource = assistantDraft::capture)
+
+    override fun onCleared() {
+        chatRepository.close()
+        super.onCleared()
+    }
 }
