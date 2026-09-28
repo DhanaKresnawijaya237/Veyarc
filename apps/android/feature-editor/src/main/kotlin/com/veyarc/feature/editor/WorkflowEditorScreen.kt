@@ -826,7 +826,7 @@ private fun EmptyWorkflowEditorScreen(
             }
             if (onAskAi != null) {
                 OutlinedButton(onClick = onAskAi) { Text("Create with AI") }
-                Text("Chat preview · No AI connected", style = MaterialTheme.typography.bodySmall)
+                Text("Review AI proposals before applying or saving.", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
