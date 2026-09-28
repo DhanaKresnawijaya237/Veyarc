@@ -91,7 +91,7 @@ class AssistantApplyRecoveryTest {
         val owner = SupervisorJob()
         val editor = WorkflowEditorSession().apply { open(WorkflowDraft.newDefault().buildBundle().bundle!!) }
         val bridge = AssistantDraftBridge(editor)
-        val state = withContext(Dispatchers.Main) { AssistantPreviewState(repository, CoroutineScope(owner + Dispatchers.Main), ::assistantCompilationIssues, bridge::apply, bridge::capture) }
+        val state = withContext(Dispatchers.Main) { AssistantPreviewState(repository, CoroutineScope(owner + Dispatchers.Main), ::assistantCompilationIssues, bridge::apply, contextSource = bridge::capture) }
         try {
             await { state.canChange }
             withContext(Dispatchers.Main) { state.open(AssistantPreviewContext(editor.draft!!.workflowId)) }

@@ -16,7 +16,9 @@ It works with coordinates and screen images. It does not read an app's buttons, 
 
 The app has five main areas: **Home** for run statistics, recording, and favorite workflows; **Workflows** for folders and saved workflows; **Editor** for blocks and revisions; **Runs** for history and details; and **Settings** for permissions, appearance, the edge latch, and local data. The left or right edge latch offers quick recording and replay controls without opening the app.
 
-Workflow revisions, image templates, and recording journals are encrypted locally. Identical image data can be shared across revisions instead of stored repeatedly. Veyarc has no account, cloud sync, analytics, or internet permission. Settings supports local `.veyarc` workflow import and export.
+Workflow revisions, image templates, and recording journals are encrypted locally. Identical image data can be shared across revisions instead of stored repeatedly. Veyarc has no account, cloud sync, or analytics. The published v1 release has no internet permission. This branch adds an opt-in DeepSeek chat preview to debug builds only; recording, editing, and replay remain available offline. Settings supports local `.veyarc` workflow import and export.
+
+In the debug AI preview, save your own DeepSeek API key in Settings and confirm the disclosure to enable AI for that app session. Send shares the prompt, completed provider exchanges from that chat, and captured workflow text. Images, recordings, and run history are excluded. Provider billing, retention, and training policies apply. Stop cancels the local request but may not prevent charges. Review proposals before Apply; Save and Run remain separate actions. Keys and chats are stored encrypted locally, are excluded from workflow exports, and are not backed up. Local deletion does not delete provider records. Live provider acceptance remains pending.
 
 ## Device support and limits
 

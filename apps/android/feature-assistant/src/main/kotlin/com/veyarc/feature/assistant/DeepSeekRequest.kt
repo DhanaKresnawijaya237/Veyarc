@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.util.UUID
 
 /** Only completed, validated provider exchanges from this conversation belong here.
  * The 4E chat bridge must exclude local samples, failures, and interrupted turns. */
@@ -59,14 +60,7 @@ class DeepSeekRequest private constructor(
                 }
                 add(message("user", current.toString()))
             }
-            val bytes = buildJsonObject {
-                put("model", MODEL)
-                put("messages", JsonArray(messages))
-                put("max_tokens", 16384)
-                put("thinking", buildJsonObject { put("type", "disabled") })
-                put("response_format", buildJsonObject { put("type", "json_object") })
-                put("stream", streaming)
-            }.toString().toByteArray(Charsets.UTF_8)
+            val bytes = requestBody(messages, 16384, streaming)
             if (bytes.size > MAX_BYTES) throw DeepSeekException(DeepSeekFailure.REQUEST_TOO_LARGE)
             DeepSeekRequest(bytes, requestId, conversationId, baseSnapshotId, streaming)
         } catch (error: DeepSeekException) {
@@ -74,6 +68,25 @@ class DeepSeekRequest private constructor(
         } catch (_: Exception) {
             throw DeepSeekException(DeepSeekFailure.INVALID_REQUEST)
         }
+
+        internal fun connectionTest(): DeepSeekRequest {
+            val id = UUID.randomUUID().toString()
+            val example = AssistantResponseCodec.encode(AssistantResponse(1, id, id, "connection-test", AssistantOutcome.EXPLANATION, "Connected"))
+            val messages = listOf(
+                message("system", "Return only this JSON object, with all IDs unchanged: ${example.toString(Charsets.UTF_8)}"),
+                message("user", "Confirm this API connection."),
+            )
+            return DeepSeekRequest(requestBody(messages, 128, false), id, id, "connection-test", false)
+        }
+
+        private fun requestBody(messages: List<kotlinx.serialization.json.JsonObject>, maxTokens: Int, streaming: Boolean): ByteArray = buildJsonObject {
+            put("model", MODEL)
+            put("messages", JsonArray(messages))
+            put("max_tokens", maxTokens)
+            put("thinking", buildJsonObject { put("type", "disabled") })
+            put("response_format", buildJsonObject { put("type", "json_object") })
+            put("stream", streaming)
+        }.toString().toByteArray(Charsets.UTF_8)
 
         private fun message(role: String, content: String) = buildJsonObject {
             put("role", role)

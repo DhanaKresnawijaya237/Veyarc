@@ -44,7 +44,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-internal fun AssistantConnectionSettings(store: AssistantKeyStore) {
+internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: com.veyarc.feature.assistant.AssistantPreviewState? = null) {
     val scope = rememberCoroutineScope()
     val uri = LocalUriHandler.current
     var hasKey by remember { mutableStateOf(false) }
@@ -52,6 +52,8 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore) {
     var error by remember { mutableStateOf<String?>(null) }
     var editing by remember { mutableStateOf(false) }
     var removing by remember { mutableStateOf(false) }
+    var enabling by remember { mutableStateOf(false) }
+    var testing by remember { mutableStateOf(false) }
     LaunchedEffect(store) {
         try {
             hasKey = withContext(Dispatchers.IO) { store.hasKey() }
@@ -64,22 +66,62 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore) {
     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("AI connection", style = MaterialTheme.typography.titleMedium)
         Text("DeepSeek · deepseek-flash")
-        Text("AI disabled · Local setup only")
+        Text(if (assistant?.providerEnabled == true) "AI enabled for this app session" else "AI disabled")
         Text(if (hasKey) "API key saved on this device · Not tested" else "No usable API key loaded")
-        Text("Saving a key does not send anything. Connection testing and AI requests are not available yet.")
+        Text("Saving a key does not send anything. Enable AI for this session before sending messages or testing the connection. Restarting the app requires enabling it again.")
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         OutlinedButton(onClick = { editing = true }, enabled = !busy) { Text(if (hasKey || error != null) "Replace API key" else "Add API key") }
         TextButton(onClick = { removing = true }, enabled = !busy && (hasKey || error != null)) { Text("Remove API key") }
-        Button(onClick = {}, enabled = false) { Text("Test connection") }
-        Button(onClick = {}, enabled = false) { Text("Enable AI") }
+        Button(onClick = { testing = true }, enabled = !busy && hasKey && assistant?.providerEnabled == true && !assistant.isResponding) { Text("Test connection") }
+        if (assistant?.providerEnabled == true) {
+            Button(onClick = assistant::disableProvider) { Text("Disable AI") }
+        } else {
+            Button(onClick = { enabling = true }, enabled = !busy && hasKey && assistant?.usesProvider == true) { Text("Enable AI") }
+        }
+        if (assistant?.testingConnection == true) {
+            Text("Testing connection…")
+            TextButton(onClick = { assistant.stop() }) { Text("Stop connection test") }
+        }
+        assistant?.connectionTestStatus?.let { Text(it) }
         Text("When connected, your messages and shared workflow text go to DeepSeek and are billed to your API account. Images and recordings are excluded. Provider retention and training policies apply; no zero-retention guarantee is made.")
         TextButton(onClick = { uri.openUri("https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html") }) { Text("Provider privacy policy") }
         TextButton(onClick = { uri.openUri("https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html") }) { Text("Provider API terms") }
+    }
+    if (enabling || testing) {
+        val isTest = testing
+        AlertDialog(
+            onDismissRequest = {
+                enabling = false
+                testing = false
+            },
+            title = { Text(if (isTest) "Test DeepSeek connection?" else "Enable DeepSeek for this session?") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(if (isTest) "This sends a short fixed prompt to DeepSeek using your saved API key. It contains no chat history or workflow and can incur a small charge." else "When you press Send, your message, completed DeepSeek replies from this chat, and the captured workflow text go directly to DeepSeek using your saved key. Workflow text includes packages, coordinates, labels, variables, and image reference names. Images, recordings, run history, and other workflows are excluded.")
+                    Text("DeepSeek bills your API account. Veyarc cannot enforce an account spending cap; stopping may not prevent charges. Provider retention and training policies apply, with no zero-retention guarantee. Deleting local data does not delete provider records.")
+                    Text("Responses can be wrong. Review proposals before Apply, then Save separately. Enabling AI sends nothing by itself and lasts until you disable it, replace/remove the key, or restart the app.")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    enabling = false
+                    testing = false
+                    if (isTest) assistant?.testConnection() else assistant?.enableProvider()
+                }) { Text(if (isTest) "Send test request" else "Enable for this session") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    enabling = false
+                    testing = false
+                }) { Text("Cancel") }
+            },
+        )
     }
     if (editing) {
         AssistantKeyDialog(onDismiss = { editing = false }, onSave = { value ->
             // Copy only into this short-lived write; never save the entry in activity or chat state.
             editing = false
+            assistant?.disableProvider()
             busy = true
             scope.launch {
                 try {
@@ -102,6 +144,7 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore) {
             confirmButton = {
                 TextButton(onClick = {
                     removing = false
+                    assistant?.disableProvider()
                     busy = true
                     scope.launch {
                         try {

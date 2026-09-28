@@ -56,7 +56,7 @@ class AssistantCreationSaveTest {
         lateinit var state: AssistantPreviewState
         var workflowId: String? = null
         try {
-            compose.runOnIdle { state = AssistantPreviewState(chats, CoroutineScope(owner + Dispatchers.Main), ::assistantCompilationIssues, bridge::apply, bridge::capture) }
+            compose.runOnIdle { state = AssistantPreviewState(chats, CoroutineScope(owner + Dispatchers.Main), ::assistantCompilationIssues, bridge::apply, contextSource = bridge::capture) }
             compose.setContent {
                 VeyarcTheme {
                     AssistantPreviewHost(true, state, editor.assistantContext()) { ask ->

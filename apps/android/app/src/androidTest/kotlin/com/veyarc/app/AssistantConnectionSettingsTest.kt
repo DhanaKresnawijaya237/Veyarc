@@ -112,6 +112,65 @@ class AssistantConnectionSettingsTest {
         }
     }
 
+    @Test
+    fun optInSendsNothingAndReplacingTheKeyCancelsAnExplicitConnectionTest() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val directory = File(context.cacheDir, "key-opt-in-${UUID.randomUUID()}")
+        val store = AssistantKeyStore(object : ContextWrapper(context) {
+            override fun getNoBackupFilesDir() = directory
+        })
+        val owner = kotlinx.coroutines.SupervisorJob()
+        var calls = 0
+        var cancelled = false
+        val assistant = com.veyarc.feature.assistant.AssistantPreviewState(
+            scope = kotlinx.coroutines.CoroutineScope(owner + kotlinx.coroutines.Dispatchers.Main),
+            providerCall = {
+                calls++
+                try {
+                    kotlinx.coroutines.awaitCancellation()
+                } finally {
+                    cancelled = true
+                }
+            },
+        )
+        try {
+            store.save("fixture-opt-in-key")
+            compose.setContent {
+                VeyarcTheme { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(store, assistant) } }
+            }
+            awaitText("API key saved on this device · Not tested")
+            compose.onNodeWithText("Enable AI").performScrollTo().performClick()
+            compose.onNodeWithText("Enable for this session").performClick()
+            compose.runOnIdle {
+                assertTrue(assistant.providerEnabled)
+                org.junit.Assert.assertEquals(0, calls)
+            }
+            compose.onNodeWithText("Test connection").performScrollTo().performClick()
+            compose.onNodeWithText("Cancel").performClick()
+            compose.runOnIdle { org.junit.Assert.assertEquals(0, calls) }
+            compose.onNodeWithText("Test connection").performScrollTo().performClick()
+            compose.onNodeWithText("Send test request").performClick()
+            compose.waitUntil(10_000) { calls == 1 }
+            compose.onNodeWithText("Replace API key").performScrollTo().performClick()
+            compose.onNodeWithTag("assistant-key-entry").performTextInput("fixture-new-opt-in-key")
+            Espresso.closeSoftKeyboard()
+            compose.onNodeWithText("Save key").performClick()
+            compose.waitUntil(10_000) { cancelled }
+            compose.runOnIdle {
+                assertFalse(assistant.providerEnabled)
+                org.junit.Assert.assertEquals(1, calls)
+            }
+            awaitText("API key saved on this device · Not tested")
+            compose.onNodeWithText("Test connection").assertIsNotEnabled()
+            org.junit.Assert.assertEquals("fixture-new-opt-in-key", store.readForRequest())
+        } finally {
+            compose.runOnIdle { assistant.dispose() }
+            owner.cancel()
+            store.remove()
+            directory.deleteRecursively()
+        }
+    }
+
     private fun awaitText(value: String) {
         compose.waitUntil(10_000) { runCatching { compose.onNodeWithText(value).assertExists() }.isSuccess }
         compose.waitForIdle()

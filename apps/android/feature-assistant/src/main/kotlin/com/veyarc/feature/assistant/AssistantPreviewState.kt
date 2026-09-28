@@ -70,6 +70,7 @@ data class PreviewTurn(
     val localBindingId: String? = null,
     val applyState: ProposalApplyState = ProposalApplyState.NONE,
     val createdAtMs: Long = System.currentTimeMillis(),
+    val provider: Boolean = false,
 )
 
 @Serializable
@@ -92,6 +93,7 @@ class AssistantPreviewState(
     private val scope: CoroutineScope? = null,
     private val compileCandidate: ((WorkflowDocument) -> List<String>)? = null,
     private val applyCandidate: ((String, AssistantContextSnapshot, String) -> Boolean)? = null,
+    private val providerCall: (suspend (DeepSeekRequest) -> ByteArray)? = null,
     private var contextSource: (() -> AssistantContextCapture)? = null,
 ) {
     var isOpen by mutableStateOf(false)
@@ -115,6 +117,15 @@ class AssistantPreviewState(
         private set
     var loadFailed by mutableStateOf(false)
         private set
+    var providerEnabled by mutableStateOf(false)
+        private set
+    var connectionTestStatus by mutableStateOf<String?>(null)
+        private set
+    var testingConnection by mutableStateOf(false)
+        private set
+    val usesProvider: Boolean get() = providerCall != null
+    val isResponding: Boolean get() = requestId != null || pendingRequestId != null || testingConnection
+    private var providerJob: Job? = null
     private var pendingRequestId: String? = null
     private var applyGeneration = 0
     private var draftSave: Job? = null
@@ -126,23 +137,73 @@ class AssistantPreviewState(
     val canChange: Boolean get() = !isLoading && pendingWrites == 0 && storageError == null
     val conversation: PreviewConversation? get() = conversations.firstOrNull { it.id == selectedId }
     val history: List<PreviewConversation> get() = conversations.filter { it.workflowId == context.workflowId }.asReversed()
-    val canSend: Boolean get() = canChange && requestId == null && pendingRequestId == null && conversation?.let {
+    val canSend: Boolean get() = isOpen && (!usesProvider || providerEnabled) && canChange && !isResponding && conversation?.let {
         it.composer.isNotBlank() && it.composer.length <= MAX_PROMPT_LENGTH && it.turns.size < MAX_TURNS
     } == true
 
     init {
-        require(repository == null || scope != null)
+        require((repository == null && providerCall == null) || scope != null)
         if (repository != null) {
             scope!!.launch { for (write in writes) write() }
             reload()
         }
     }
 
+    // Consent belongs to this ViewModel lifetime; it is never restored or inferred from a saved key.
+    fun enableProvider() {
+        if (usesProvider) providerEnabled = true
+    }
+
+    fun disableProvider() {
+        connectionTestStatus = null
+        providerEnabled = false
+        stop(PreviewReplyStatus.INTERRUPTED)
+    }
+
+    fun testConnection() {
+        if (!providerEnabled || providerCall == null || isResponding) return
+        val generation = applyGeneration
+        testingConnection = true
+        connectionTestStatus = null
+        providerJob = requireNotNull(scope).launch {
+            try {
+                val request = DeepSeekRequest.connectionTest()
+                val bytes = providerCall(request)
+                if (testingConnection && providerEnabled && generation == applyGeneration) {
+                    val response = AssistantResponseCodec.decode(bytes, request.requestId, request.conversationId, request.baseSnapshotId)
+                    require(response.outcome == AssistantOutcome.EXPLANATION && response.text.length <= 512)
+                    connectionTestStatus = "Connection succeeded. Workflow quality has not been tested."
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (testingConnection && generation == applyGeneration) connectionTestStatus = (error as? DeepSeekException)?.reason?.message ?: "Connection test failed. No message was sent from your chat."
+            } finally {
+                if (generation == applyGeneration) testingConnection = false
+            }
+        }
+    }
+
+    fun dispose() {
+        providerEnabled = false
+        testingConnection = false
+        applyGeneration++
+        requestId = null
+        pendingRequestId = null
+        providerJob?.cancel()
+        providerJob = null
+        draftSave?.cancel()
+    }
+
     fun reload() {
         if (repository == null || pendingWrites != 0) return
         draftSave?.cancel()
+        applyGeneration++
+        testingConnection = false
         requestId = null
         pendingRequestId = null
+        providerJob?.cancel()
+        providerJob = null
         isLoading = true
         loadFailed = true
         enqueue { loadHistory() }
@@ -281,8 +342,12 @@ class AssistantPreviewState(
     fun clearHistory() {
         if (isLoading || pendingWrites != 0) return
         draftSave?.cancel()
+        applyGeneration++
+        testingConnection = false
         requestId = null
         pendingRequestId = null
+        providerJob?.cancel()
+        providerJob = null
         fun cleared() {
             conversations = emptyList()
             selectedId = null
@@ -303,7 +368,7 @@ class AssistantPreviewState(
     val supportsApply: Boolean get() = applyCandidate != null
 
     fun canApply(turn: PreviewTurn): Boolean {
-        if (!canChange || !isOpen || applyCandidate == null || requestId != null || pendingRequestId != null) return false
+        if (!canChange || !isOpen || applyCandidate == null || isResponding) return false
         if (turn.status != PreviewReplyStatus.COMPLETE || turn.proposalDismissed || turn.applyState != ProposalApplyState.NONE || turn.proposal?.isValid != true || turn.localBindingId == null) return false
         if (runCatching { AssistantProposalReview.changes(requireNotNull(turn.baseSnapshot), requireNotNull(turn.proposal)).isEmpty() }.getOrDefault(true)) return false
         val current = previewContext()
@@ -358,7 +423,7 @@ class AssistantPreviewState(
         }
         val current = requireNotNull(conversation)
         val prompt = current.composer.trim()
-        val turn = PreviewTurn(UUID.randomUUID().toString(), prompt, scenario, baseSnapshot = capture.snapshot, localBindingId = capture.localBindingId)
+        val turn = PreviewTurn(UUID.randomUUID().toString(), prompt, scenario, baseSnapshot = capture.snapshot, localBindingId = capture.localBindingId, provider = usesProvider)
         val updated = current.copy(
             title = if (current.turns.isEmpty() && current.title == "New chat") prompt.take(48) else current.title,
             composer = "",
@@ -382,14 +447,61 @@ class AssistantPreviewState(
             if (pendingRequestId == token && selectedId == chat.id && isOpen) {
                 pendingRequestId = null
                 requestId = token
+                if (chat.turns.last().provider) dispatchProvider(chat, token)
             }
         }
+    }
+
+    private fun dispatchProvider(chat: PreviewConversation, token: String) {
+        if (!providerEnabled || providerCall == null) {
+            stop(PreviewReplyStatus.INTERRUPTED)
+            return
+        }
+        providerJob = requireNotNull(scope).launch {
+            try {
+                val bytes = providerCall(providerRequest(chat))
+                receive(token, bytes)
+            } catch (cancelled: CancellationException) {
+                // Owner cancellation cannot publish a result. A persisted unfinished turn recovers interrupted.
+                if (requestId == token) stop(PreviewReplyStatus.INTERRUPTED)
+                throw cancelled
+            } catch (error: Exception) {
+                if (requestId == token) {
+                    updateLast { it.copy(status = PreviewReplyStatus.ERROR, responseError = (error as? DeepSeekException)?.reason?.message ?: "The AI request failed. Your prompt is kept; retry is explicit.") }
+                    requestId = null
+                    flush()
+                }
+            }
+        }
+    }
+
+    internal fun providerRequest(chat: PreviewConversation): DeepSeekRequest {
+        val current = chat.turns.last()
+        val history = chat.turns.dropLast(1).filter {
+            it.provider && it.status == PreviewReplyStatus.COMPLETE && it.outcome != null &&
+                (it.outcome != AssistantOutcome.PROPOSAL || it.proposal?.isValid == true)
+        }.map { turn ->
+            DeepSeekHistoryTurn(
+                turn.prompt,
+                AssistantResponse(
+                    1,
+                    turn.requestId,
+                    chat.id,
+                    turn.responseBaseId(chat),
+                    requireNotNull(turn.outcome),
+                    turn.reply,
+                    turn.proposal?.candidateJson?.let { WorkflowJson.format.parseToJsonElement(it).jsonObject },
+                ),
+            )
+        }
+        return DeepSeekRequest.create(current.requestId, chat.id, current.responseBaseId(chat), current.prompt, current.baseSnapshot, history, streaming = true)
     }
 
     fun advance(token: String) {
         if (requestId != token) return
         val chat = conversation ?: return
         val turn = chat.turns.lastOrNull() ?: return
+        if (turn.provider) return
         if (turn.scenario == PreviewScenario.INVALID_OUTPUT) {
             receive(token, "{invalid sample response}".toByteArray())
             return
@@ -453,17 +565,25 @@ class AssistantPreviewState(
 
     fun stop(status: PreviewReplyStatus = PreviewReplyStatus.STOPPED) {
         applyGeneration++
+        if (testingConnection) connectionTestStatus = "Connection test interrupted. Retry only when ready; charges may still apply."
+        testingConnection = false
         if (requestId != null || pendingRequestId != null) {
             requestId = null
             pendingRequestId = null
             updateLast { it.copy(status = status) }
         }
+        providerJob?.cancel()
+        providerJob = null
         flush()
     }
 
+    val canRetry: Boolean get() = conversation?.turns?.lastOrNull()?.let {
+        isOpen && canChange && !isResponding && it.status !in listOf(PreviewReplyStatus.COMPLETE, PreviewReplyStatus.RESPONDING) &&
+            it.provider == usesProvider && (!it.provider || providerEnabled)
+    } == true
+
     fun retry() {
-        val turn = conversation?.turns?.lastOrNull() ?: return
-        if (!canChange || requestId != null || pendingRequestId != null || turn.status == PreviewReplyStatus.COMPLETE) return
+        if (!canRetry) return
         val token = UUID.randomUUID().toString()
         updateLast { it.copy(reply = "", status = PreviewReplyStatus.RESPONDING, requestId = token, attempt = it.attempt + 1, outcome = null, responseError = null, proposal = null) }
         begin(token)
@@ -496,8 +616,12 @@ class AssistantPreviewState(
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
+                    applyGeneration++
+                    testingConnection = false
                     requestId = null
                     pendingRequestId = null
+                    providerJob?.cancel()
+                    providerJob = null
                     conversations = conversations.map { chat ->
                         chat.copy(turns = chat.turns.map { if (it.status == PreviewReplyStatus.RESPONDING) it.copy(status = PreviewReplyStatus.INTERRUPTED) else it })
                     }

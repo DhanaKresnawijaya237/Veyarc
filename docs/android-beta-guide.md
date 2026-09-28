@@ -30,6 +30,18 @@ A Shizuku service started through wireless debugging needs to be started again a
 | Per-run screen-capture consent | Taking temporary frames for pixel and image conditions | Veyarc does not encode video or save captured frames. Android asks again for each run that uses a visual condition. |
 | Launcher-app visibility | Finding installed launchable packages for **Launch app** workflow steps | This does not grant access to another app's private data. |
 
+## Optional AI chat in debug builds
+
+The development branch has a DeepSeek chat preview. Published v1 release builds do not include this network feature. Debug builds declare internet permission; ordinary recording, editing, and replay still work offline.
+
+In Settings, add your own DeepSeek API key and choose **Enable AI**. Read the disclosure and confirm **Enable for this session**. Saving a key or enabling AI sends nothing by itself. **Test connection** asks again before sending a small fixed prompt with no workflow or chat history. DeepSeek charges your API account. No account-wide spending cap is enforced by Veyarc.
+
+Open chat from the Editor. Send shares your message, completed DeepSeek exchanges from that chat, and a snapshot of the selected draft, including unsaved text. Use **Workflow context** to inspect shared blocks, packages, coordinates, labels, variables, and image reference names. Images, recordings, run history, earlier candidate JSON, local sample replies, and unrelated workflows are excluded. Review each proposal before **Apply to draft**. Apply does not Save or Run; use the editor controls explicitly afterward.
+
+Stop, leaving chat, backgrounding, disabling AI, or replacing/removing the key cancels active work. Rotation retains the existing request without sending another. Restart requires enabling AI again and restores unfinished turns as Interrupted; Retry is always explicit. Stopping may not prevent provider charges.
+
+Keys and chats are encrypted locally and excluded from workflow exports and Android backup. Removing the key does not revoke it at DeepSeek. Deleting local chats does not delete provider records. DeepSeek's retention and training policies apply; no zero-retention guarantee is made. Read the provider policy and API terms linked in Settings. Live provider acceptance is still pending.
+
 ## Record a workflow
 
 1. Start recording from Veyarc, the edge latch, or the Quick Settings tile.

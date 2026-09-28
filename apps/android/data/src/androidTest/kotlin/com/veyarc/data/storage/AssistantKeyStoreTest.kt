@@ -31,7 +31,9 @@ class AssistantKeyStoreTest {
         val first = "fixture-key-not-a-real-provider-secret"
         try {
             assertFalse(store.hasKey())
+            assertNull(store.readForRequest())
             store.save(first)
+            assertEquals(first, store.readForRequest())
             assertTrue(AssistantKeyStore(file, codec).hasKey())
             assertFalse(file.readBytes().toString(Charsets.ISO_8859_1).contains(first))
             val committed = file.readBytes()
@@ -43,6 +45,7 @@ class AssistantKeyStoreTest {
             unavailable = false
             assertTrue(store.hasKey())
             store.save("fixture-replacement")
+            assertEquals("fixture-replacement", store.readForRequest())
             assertEquals("fixture-replacement", codec.decrypt(file.readBytes(), "veyarc:assistant:deepseek:key:v1".toByteArray()).toString(Charsets.UTF_8))
             assertTrue(runCatching { codec.decrypt(file.readBytes(), "wrong-provider".toByteArray()) }.isFailure)
             File("${file.path}.bak").writeBytes(committed)
@@ -51,6 +54,7 @@ class AssistantKeyStoreTest {
             assertArrayEquals(committed, file.readBytes())
             file.writeBytes(ByteArray(5000))
             assertTrue(runCatching { store.hasKey() }.isFailure)
+            assertTrue(runCatching { store.readForRequest() }.isFailure)
             store.remove() // Corrupt/unreadable credentials can be removed without decryption.
             assertFalse(store.hasKey())
             assertTrue(directory.listFiles()!!.isEmpty())

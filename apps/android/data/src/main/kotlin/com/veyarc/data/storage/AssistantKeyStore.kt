@@ -17,6 +17,16 @@ class AssistantKeyStore internal constructor(private val file: File, private val
         true
     }
 
+    /** Read only for an explicitly authorized request; callers must not retain or log the result. */
+    fun readForRequest(): String? = synchronized(lock) {
+        val bytes = read() ?: return@synchronized null
+        try {
+            bytes.toString(Charsets.UTF_8)
+        } finally {
+            bytes.fill(0)
+        }
+    }
+
     fun save(key: String) = synchronized(lock) {
         require(isValidEntry(key)) { "Enter a key of 1 to 4096 visible ASCII characters without spaces." }
         val plain = key.toByteArray(Charsets.UTF_8)

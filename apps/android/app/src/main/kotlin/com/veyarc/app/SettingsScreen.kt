@@ -71,6 +71,7 @@ import java.io.ByteArrayOutputStream
 
 @Composable
 fun SettingsScreen(
+    assistant: com.veyarc.feature.assistant.AssistantPreviewState? = null,
     repository: WorkflowRepository,
     refreshGeneration: Int,
     themePreference: ThemePreference,
@@ -197,10 +198,10 @@ fun SettingsScreen(
             item {
                 SettingsCard(
                     title = "AI connection",
-                    summary = "Disabled",
+                    summary = if (assistant?.providerEnabled == true) "Enabled for this session" else "Disabled",
                     expanded = expandedSection == "assistant",
                     onToggle = { expandedSection = if (expandedSection == "assistant") null else "assistant" },
-                ) { AssistantConnectionSettings(assistantKeys) }
+                ) { AssistantConnectionSettings(assistantKeys, assistant) }
             }
         }
         item {

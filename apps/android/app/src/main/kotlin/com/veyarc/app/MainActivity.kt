@@ -246,6 +246,7 @@ class MainActivity : ComponentActivity() {
                                         )
 
                                         VeyarcDestination.SETTINGS -> SettingsScreen(
+                                            assistant = if (assistantPreviewEnabled) editorSession.assistant else null,
                                             repository = workflowRepository,
                                             refreshGeneration = resumeGeneration,
                                             themePreference = uiPreferences.theme,
@@ -519,9 +520,25 @@ class MainEditorSession(application: Application) : AndroidViewModel(application
     val state = WorkflowEditorSession()
     private val chatRepository = com.veyarc.data.storage.ChatRepository(application)
     private val assistantDraft = AssistantDraftBridge(state)
-    val assistant = AssistantPreviewState(chatRepository, viewModelScope, compileCandidate = ::assistantCompilationIssues, applyCandidate = assistantDraft::apply, contextSource = assistantDraft::capture)
+    private val assistantKeys = com.veyarc.data.storage.AssistantKeyStore(application)
+    private val deepSeek by lazy { com.veyarc.feature.assistant.DeepSeekClient() }
+    val assistant = AssistantPreviewState(
+        chatRepository,
+        viewModelScope,
+        compileCandidate = ::assistantCompilationIssues,
+        applyCandidate = assistantDraft::apply,
+        contextSource = assistantDraft::capture,
+        providerCall = { request ->
+            val key = withContext(Dispatchers.IO) {
+                runCatching { assistantKeys.readForRequest() }.getOrNull()
+                    ?: throw com.veyarc.feature.assistant.DeepSeekException(com.veyarc.feature.assistant.DeepSeekFailure.KEY_REQUIRED)
+            }
+            deepSeek.await(request, key)
+        },
+    )
 
     override fun onCleared() {
+        assistant.dispose()
         chatRepository.close()
         super.onCleared()
     }

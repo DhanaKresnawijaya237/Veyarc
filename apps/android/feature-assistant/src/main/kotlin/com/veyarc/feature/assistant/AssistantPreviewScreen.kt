@@ -75,7 +75,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/** Debug entry is supplied by the app. This module has no network or automation access. */
+/** Debug entry is supplied by the app. Network dispatch requires explicit consent; this module has no automation access. */
 @Composable
 fun AssistantPreviewHost(
     enabled: Boolean,
@@ -106,7 +106,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
     var clearVisible by remember { mutableStateOf(false) }
     if (storageVisible) {
         PreviewDialog("Chat storage", onDismiss = { storageVisible = false }) {
-            Text(if (state.persistent) "Chat text is encrypted on this device. Nothing is sent to a provider." else "This test fixture keeps history in memory.")
+            Text(if (state.persistent) "Chat text is encrypted on this device. Enabled DeepSeek requests send your message, completed provider exchanges from this chat, and captured workflow text. Local deletion does not delete provider records." else "This test fixture keeps history in memory.")
             Text("Limits: 20 chats, 40 turns per chat, 4,000 characters per message, 256 KiB per chat, 4 MiB total. Composer changes save after a short pause.")
             state.storageError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (state.storageError != null && !state.loadFailed) {
@@ -146,7 +146,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
             Column(Modifier.safeDrawingPadding().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 IconButton(onClick = state::close) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to editor") }
                 Text(if (state.isLoading) "Loading encrypted history…" else "No chat selected", style = MaterialTheme.typography.headlineSmall)
-                Text(state.storageError ?: "Create a chat for this workflow. Replies are still local samples; no AI is connected.")
+                Text(state.storageError ?: if (state.usesProvider) "Create a chat for this workflow. Enable AI in Settings before sending." else "Create a chat for this workflow. Replies are still local samples; no AI is connected.")
                 Button(onClick = state::newChat, enabled = state.canChange && state.conversations.size < AssistantPreviewState.MAX_CHATS) { Text("New chat") }
                 TextButton(onClick = { storageVisible = true }) { Text("Chat storage") }
                 if (state.conversations.size >= AssistantPreviewState.MAX_CHATS) Text("History is full. Open another workflow to delete one of its chats, or clear all history.")
@@ -197,6 +197,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
         }
     }
     LaunchedEffect(state.requestId) {
+        if (state.usesProvider) return@LaunchedEffect
         val token = state.requestId ?: return@LaunchedEffect
         while (state.requestId == token) {
             delay(180)
@@ -234,14 +235,16 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
                                     menuVisible = false
                                     deleteVisible = true
                                 })
-                                PreviewScenario.entries.forEach { scenario ->
-                                    DropdownMenuItem(
-                                        text = { Text("Sample: ${scenario.label}${if (state.scenario == scenario) " (selected)" else ""}") },
-                                        onClick = {
-                                            state.scenario = scenario
-                                            menuVisible = false
-                                        },
-                                    )
+                                if (!state.usesProvider) {
+                                    PreviewScenario.entries.forEach { scenario ->
+                                        DropdownMenuItem(
+                                            text = { Text("Sample: ${scenario.label}${if (state.scenario == scenario) " (selected)" else ""}") },
+                                            onClick = {
+                                                state.scenario = scenario
+                                                menuVisible = false
+                                            },
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -272,18 +275,18 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
                             enabled = !state.isLoading,
                             isError = state.inputError != null,
                             supportingText = if (tightWindow && state.inputError != null) ({ Text(state.inputError!!) }) else null,
-                            label = { Text(if (tightWindow) "Message · Local preview" else "Message") },
+                            label = { Text(if (tightWindow && !state.usesProvider) "Message · Local preview" else "Message") },
                             modifier = Modifier.weight(1f).testTag("assistant-composer"),
                             maxLines = if (shortWindow) 2 else 4,
                             shape = RoundedCornerShape(20.dp),
                         )
                         FilledIconButton(
                             onClick = {
-                                if (state.requestId != null) state.stop() else state.send()
+                                if (state.isResponding) state.stop() else state.send()
                             },
-                            enabled = state.requestId != null || state.canSend,
+                            enabled = state.isResponding || state.canSend,
                         ) {
-                            if (state.requestId != null) Icon(Icons.Outlined.StopCircle, "Stop response") else Icon(Icons.AutoMirrored.Outlined.Send, "Send message")
+                            if (state.isResponding) Icon(Icons.Outlined.StopCircle, "Stop response") else Icon(Icons.AutoMirrored.Outlined.Send, "Send message")
                         }
                     }
                     if (!tightWindow) {
@@ -292,8 +295,9 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
                                 state.storageError != null -> "Not saved · Open Chat storage in options"
                                 state.inputError != null -> state.inputError!!
                                 state.pendingWrites > 0 -> "Saving chat…"
-                                chat.turns.size >= AssistantPreviewState.MAX_TURNS -> "Preview limit reached. Start a new chat."
+                                chat.turns.size >= AssistantPreviewState.MAX_TURNS -> "Message limit reached. Start a new chat."
                                 chat.composer.length == AssistantPreviewState.MAX_PROMPT_LENGTH -> "Message limit: ${AssistantPreviewState.MAX_PROMPT_LENGTH} characters."
+                                state.usesProvider -> if (state.providerEnabled) "DeepSeek · API charges apply · Review before Apply" else "AI disabled · Enable in Settings"
                                 else -> "Local preview · No AI connected"
                             },
                             modifier = Modifier.padding(top = 4.dp),
@@ -308,7 +312,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
 
     if (contextVisible) {
         PreviewDialog(if (capturedTurn) "Captured workflow context" else "Workflow context", onDismiss = { contextVisible = false }) {
-            Text("Nothing is sent in this preview. The text below is the workflow context prepared for a future provider request, alongside your message and chat history.")
+            Text(if (state.usesProvider) "Send shares your message, the captured workflow text below, and completed DeepSeek prompt/reply text from this chat. Samples, errors, partial replies, earlier snapshots, and earlier candidate JSON are excluded." else "Nothing is sent in this preview. The text below is the workflow context prepared for a future provider request, alongside your message and chat history.")
             Text(if (capturedTurn) "This is the unchanged snapshot saved with that message. Retry uses the same snapshot." else "Send captures the current editor draft again, including unsaved edits. Invalid draft fields remain as entered; this is not a validated workflow.")
             contextCapture.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             val snapshot = contextCapture.snapshot
@@ -449,8 +453,8 @@ private fun ConversationBody(state: AssistantPreviewState, onReview: (PreviewTur
         LazyColumn(state = list, modifier = Modifier.fillMaxSize().testTag("assistant-messages"), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             item {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("AI chat preview", style = MaterialTheme.typography.headlineSmall)
-                    Text("Try sample replies and change reviews. Nothing is sent to an AI provider. Review changes before Apply, then Save in the editor. Chat history is ${if (state.persistent) "encrypted on this device" else "temporary in this test fixture"}.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if (state.usesProvider) "AI chat" else "AI chat preview", style = MaterialTheme.typography.headlineSmall)
+                    Text(if (state.usesProvider) "Ask DeepSeek to explain or propose changes to this workflow. Enable AI in Settings, then press Send. API charges apply. Review changes before Apply; Save and Run remain separate actions. Chat history is encrypted locally." else "Try sample replies and change reviews. Nothing is sent to an AI provider. Review changes before Apply, then Save in the editor. Chat history is ${if (state.persistent) "encrypted on this device" else "temporary in this test fixture"}.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (state.context.needsSetup) Text("Setup needed: return to the editor, choose the allowed app and orientation, and add the actions with their geometry or timing. Then ask for a proposal. No workflow has been saved.")
                     if (chat.turns.isEmpty()) {
                         val suggestions = if (state.context.needsSetup || state.context.workflowId == null) {
@@ -461,12 +465,12 @@ private fun ConversationBody(state: AssistantPreviewState, onReview: (PreviewTur
                         suggestions.forEach { suggestion ->
                             OutlinedButton(onClick = { state.compose(suggestion) }) { Text(suggestion) }
                         }
-                        Text("Choose a sample response in Chat options.", style = MaterialTheme.typography.bodySmall)
+                        if (!state.usesProvider) Text("Choose a sample response in Chat options.", style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
             items(chat.turns, key = { it.id }) { turn ->
-                PreviewTurnContent(turn, isLast = turn == chat.turns.last(), onRetry = state::retry, onReview = { onReview(turn) }, onContext = { onContext(turn) })
+                PreviewTurnContent(turn, isLast = turn == chat.turns.last(), canRetry = state.canRetry, onRetry = state::retry, onReview = { onReview(turn) }, onContext = { onContext(turn) })
             }
             item { Box(Modifier.heightIn(min = 32.dp)) }
         }
@@ -483,7 +487,7 @@ private fun ConversationBody(state: AssistantPreviewState, onReview: (PreviewTur
 }
 
 @Composable
-private fun PreviewTurnContent(turn: PreviewTurn, isLast: Boolean, onRetry: () -> Unit, onReview: () -> Unit, onContext: () -> Unit) {
+private fun PreviewTurnContent(turn: PreviewTurn, isLast: Boolean, canRetry: Boolean, onRetry: () -> Unit, onReview: () -> Unit, onContext: () -> Unit) {
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -496,17 +500,37 @@ private fun PreviewTurnContent(turn: PreviewTurn, isLast: Boolean, onRetry: () -
             }
         }
         if (turn.baseSnapshot != null) TextButton(onClick = onContext) { Text("View captured context") }
-        Text("Veyarc · Sample reply", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-        SelectionContainer { Text(turn.reply.ifEmpty { if (turn.status == PreviewReplyStatus.RESPONDING) "Preparing sample response…" else "No reply text was saved." }) }
+        Text(if (turn.provider) "DeepSeek" else "Veyarc · Sample reply", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+        SelectionContainer {
+            Text(
+                turn.reply.ifEmpty {
+                    if (turn.status == PreviewReplyStatus.RESPONDING) {
+                        if (turn.provider) "Waiting for a complete response…" else "Preparing sample response…"
+                    } else {
+                        "No reply text was saved."
+                    }
+                },
+            )
+        }
         turn.responseError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         if (turn.outcome == AssistantOutcome.CLARIFICATION) Text("Clarification needed", style = MaterialTheme.typography.labelMedium)
         Text(
             when (turn.status) {
-                PreviewReplyStatus.RESPONDING -> "Playing sample response"
-                PreviewReplyStatus.COMPLETE -> "Sample complete"
+                PreviewReplyStatus.RESPONDING -> if (turn.provider) "Request in progress" else "Playing sample response"
+
+                PreviewReplyStatus.COMPLETE -> if (turn.provider) "Response complete" else "Sample complete"
+
                 PreviewReplyStatus.STOPPED -> "Stopped"
+
                 PreviewReplyStatus.INTERRUPTED -> "Interrupted"
-                PreviewReplyStatus.ERROR -> if (turn.responseError != null) "Invalid sample response" else "Sample connection error"
+
+                PreviewReplyStatus.ERROR -> if (turn.provider) {
+                    "Request failed · Retry is explicit"
+                } else if (turn.responseError != null) {
+                    "Invalid sample response"
+                } else {
+                    "Sample connection error"
+                }
             },
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
             style = MaterialTheme.typography.labelSmall,
@@ -515,15 +539,15 @@ private fun PreviewTurnContent(turn: PreviewTurn, isLast: Boolean, onRetry: () -
         if (turn.proposal != null) {
             OutlinedButton(onClick = onReview) { Text("View proposal validation") }
         }
-        if (turn.status == PreviewReplyStatus.COMPLETE && turn.scenario in listOf(PreviewScenario.PROPOSAL, PreviewScenario.STALE)) {
+        if (!turn.provider && turn.status == PreviewReplyStatus.COMPLETE && turn.scenario in listOf(PreviewScenario.PROPOSAL, PreviewScenario.STALE)) {
             OutlinedButton(onClick = onReview) { Text("Review sample changes") }
         }
         Row {
             if (turn.reply.isNotEmpty()) {
-                TextButton(onClick = { scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("Sample reply", turn.reply))) } }) { Text("Copy reply") }
+                TextButton(onClick = { scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("Assistant reply", turn.reply))) } }) { Text("Copy reply") }
             }
             if (isLast && turn.status !in listOf(PreviewReplyStatus.COMPLETE, PreviewReplyStatus.RESPONDING)) {
-                TextButton(onClick = onRetry) { Text("Retry sample") }
+                TextButton(onClick = onRetry, enabled = canRetry) { Text(if (turn.provider) "Retry request" else "Retry sample") }
             }
         }
     }

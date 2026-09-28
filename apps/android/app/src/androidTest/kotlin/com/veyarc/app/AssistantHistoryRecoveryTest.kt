@@ -30,13 +30,14 @@ class AssistantHistoryRecoveryTest {
         val owner = SupervisorJob()
         var id: String? = null
         try {
-            val state = withContext(Dispatchers.Main) { AssistantPreviewState(repository, CoroutineScope(owner + Dispatchers.Main)) }
+            val state = withContext(Dispatchers.Main) { AssistantPreviewState(repository, CoroutineScope(owner + Dispatchers.Main), providerCall = { error("Storage failure must prevent provider dispatch") }) }
             await { state.canChange }
             withContext(Dispatchers.Main) { state.open(AssistantPreviewContext(UUID.randomUUID().toString(), "Storage failure test")) }
             await { state.canChange }
             id = state.selectedId!!
             repository.close()
             withContext(Dispatchers.Main) {
+                state.enableProvider()
                 state.compose("Do not lose this prompt")
                 state.send()
             }
