@@ -18,6 +18,13 @@ class VeyarcDatabaseMigrationTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val name = "chat-migration-${System.nanoTime()}.db"
         val original = Room.databaseBuilder(context, VeyarcDatabase::class.java, name).allowMainThreadQueries().build()
+        val tables = listOf("workflows", "workflow_revisions", "run_records", "asset_blobs", "revision_assets")
+        fun rows(db: SupportSQLiteDatabase) = tables.associateWith { table ->
+            db.query("SELECT * FROM $table").use { cursor ->
+                buildList { while (cursor.moveToNext()) add((0 until cursor.columnCount).map { if (cursor.isNull(it)) null else cursor.getString(it) }) }
+            }
+        }
+        lateinit var before: Map<String, List<List<String?>>>
         try {
             val db = original.openHelper.writableDatabase
             db.execSQL("INSERT INTO workflows (workflowId,name,latestRevision,createdAtMs,updatedAtMs) VALUES ('workflow','Existing',1,1,1)")
@@ -25,6 +32,7 @@ class VeyarcDatabaseMigrationTest {
             db.execSQL("INSERT INTO run_records (runId,workflowId,revision,status,startedAtMs) VALUES ('run','workflow',1,'COMPLETED',1)")
             db.execSQL("INSERT INTO asset_blobs VALUES ('blob','blob.wfenc',100,1,1,'image/png',1,1)")
             db.execSQL("INSERT INTO revision_assets VALUES ('workflow',1,'asset','blob',NULL,'CROPPED_TARGET','IMAGE_TEMPLATE','image/png',1,1)")
+            before = rows(db)
             // Version 11 only adds this table. Recreate the exact version-10 schema and reopen through Room.
             db.execSQL("DROP TABLE chat_conversations")
             db.execSQL("DELETE FROM room_master_table")
@@ -37,6 +45,7 @@ class VeyarcDatabaseMigrationTest {
         try {
             val db = migrated.openHelper.writableDatabase
             assertEquals(11, db.version)
+            assertEquals(before, rows(db))
             listOf("workflows", "workflow_revisions", "run_records", "asset_blobs", "revision_assets").forEach { table ->
                 db.query("SELECT COUNT(*) FROM $table").use { cursor ->
                     assertTrue(cursor.moveToFirst())

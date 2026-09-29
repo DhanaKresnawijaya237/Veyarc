@@ -19,8 +19,8 @@ plugins {
 
 spotless {
     kotlin {
-        target("**/src/**/*.kt")
-        targetExclude("**/build/**")
+        target("*/src/**/*.kt")
+        targetExclude("*/build/**")
         ktlint(libs.versions.ktlint.get()).editorConfigOverride(
             mapOf("ktlint_function_naming_ignore_when_annotated_with" to "Composable"),
         )

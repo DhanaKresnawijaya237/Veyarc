@@ -19,6 +19,23 @@ class AssistantDraftBridgeTest {
     private fun editor() = WorkflowEditorSession().apply { open(WorkflowDraft.newDefault().buildBundle().bundle!!, "private-journal") }
 
     @Test
+    fun applyingNewStepsCannotChangeAnAlreadyCompiledPlan() {
+        val editor = editor()
+        val bridge = AssistantDraftBridge(editor)
+        val base = editor.draft!!.buildBundle().document!!
+        val plan = com.veyarc.engine.WorkflowCompiler.compileOrThrow(base)
+        val expectedPlan = com.veyarc.engine.WorkflowCompiler.compileOrThrow(base)
+        val capture = bridge.capture()
+        val candidate = base.copy(name = "Edited draft", steps = listOf(com.veyarc.model.Wait(java.util.UUID.randomUUID().toString(), com.veyarc.model.DurationMillis(250))))
+        assertTrue(bridge.apply(capture.localBindingId!!, capture.snapshot!!, WorkflowJson.encode(candidate)))
+        assertEquals(candidate.steps, editor.draft!!.steps)
+        assertEquals(expectedPlan, plan)
+        editor.undo()
+        assertEquals(expectedPlan, plan)
+        assertEquals(base.steps, editor.draft!!.steps)
+    }
+
+    @Test
     fun creationStartsEmptyClarifiesMissingDetailsAndKeepsIdentityWhenConfigured() {
         val editor = WorkflowEditorSession()
         editor.createForAssistant(WorkflowDraft.newDefault().viewport)

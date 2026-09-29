@@ -64,6 +64,7 @@ class AssistantCreationSaveTest {
                     }
                 }
             }
+            compose.waitUntil(10000) { state.canChange }
             compose.onNodeWithText("Create with AI").performClick()
             compose.waitUntil(10000) { state.canChange && state.conversation != null }
             workflowId = editor.draft!!.workflowId

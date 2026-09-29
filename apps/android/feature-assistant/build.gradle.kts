@@ -58,16 +58,18 @@ dependencies {
     implementation(libs.okhttp)
 }
 
-val assistantRuntime = provider { configurations.getByName("debugRuntimeClasspath") }
+val assistantRuntimes = provider { listOf("debugRuntimeClasspath", "releaseRuntimeClasspath").map(configurations::getByName) }
 val assistantSources = fileTree("src/main/kotlin") { include("**/*.kt") }
 tasks.register("verifyAssistantIsolation") {
     group = "verification"
     inputs.files(assistantSources)
     inputs.property(
         "projectPaths",
-        assistantRuntime.map { configuration ->
-            configuration.incoming.resolutionResult.allComponents.mapNotNull {
-                (it.id as? org.gradle.api.artifacts.component.ProjectComponentIdentifier)?.projectPath
+        assistantRuntimes.map { configurations ->
+            configurations.flatMap { configuration ->
+                configuration.incoming.resolutionResult.allComponents.mapNotNull {
+                    (it.id as? org.gradle.api.artifacts.component.ProjectComponentIdentifier)?.projectPath
+                }
             }
         },
     )

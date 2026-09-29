@@ -16,6 +16,44 @@ import javax.crypto.spec.SecretKeySpec
 @RunWith(AndroidJUnit4::class)
 class ChatRepositoryTest {
     @Test
+    fun quotaAndUnavailableDirectoryRollBackWithoutLosingChatOrWorkflow() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val database = Room.inMemoryDatabaseBuilder(context, VeyarcDatabase::class.java).allowMainThreadQueries().build()
+        val root = File(context.cacheDir, "chat-capacity-${UUID.randomUUID()}").apply { mkdirs() }
+        val directory = File(root, "history")
+        val displaced = File(root, "displaced-history")
+        val files = EncryptedFileStore(directory, AesGcmFileCodec(SecretKeySource { SecretKeySpec(ByteArray(32) { 9 }, "AES") }))
+        val repository = ChatRepository(database, files)
+        val workflow = WorkflowEntity("workflow", "Preserve this workflow", 1, 1, 1)
+        val chat = StoredChat(UUID.randomUUID().toString(), "workflow", 1, 1, null, "EMPTY", "last saved chat".toByteArray())
+        try {
+            database.workflowDao().upsertWorkflow(workflow)
+            repository.save(chat, create = true)
+            repeat(15) { repository.save(chat.copy(id = UUID.randomUUID().toString(), workflowId = null, payload = ByteArray(ChatRepository.MAX_PAYLOAD_BYTES)), create = true) }
+            val before = database.chatDao().list()
+            // File write succeeds, then the transaction rejects the aggregate quota and removes the new file.
+            assertTrue(runCatching { repository.save(chat.copy(payload = ByteArray(ChatRepository.MAX_PAYLOAD_BYTES)), create = false) }.isFailure)
+            assertEquals(before, database.chatDao().list())
+            assertEquals(before.map { it.encryptedFileName }.toSet(), directory.listFiles()!!.map { it.name }.toSet())
+            assertArrayEquals(chat.payload, repository.load().single { it.id == chat.id }.payload)
+            // Deterministic write-path failure, without exhausting the emulator's real disk.
+            assertTrue(directory.renameTo(displaced))
+            directory.writeText("not a directory")
+            assertTrue(runCatching { repository.save(chat.copy(payload = "replacement".toByteArray()), create = false) }.isFailure)
+            assertEquals(before, database.chatDao().list())
+            assertTrue(directory.delete())
+            assertTrue(displaced.renameTo(directory))
+            assertArrayEquals(chat.payload, repository.load().single { it.id == chat.id }.payload)
+            repository.clear()
+            assertTrue(repository.load().isEmpty())
+            assertEquals(workflow, database.workflowDao().findWorkflow(workflow.workflowId))
+        } finally {
+            database.close()
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun replacementFailureOrphansAndMissingPayloadPreserveTheLastCommittedChat() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val database = Room.inMemoryDatabaseBuilder(context, VeyarcDatabase::class.java).allowMainThreadQueries().build()
