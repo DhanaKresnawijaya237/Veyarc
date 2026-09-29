@@ -45,6 +45,7 @@ class AssistantPreviewNavigationTest {
 
     @Test
     fun editorEntryRecreationAndBackKeepTheUnsentMessage() {
+        val owner = androidx.lifecycle.ViewModelProvider(compose.activity)[MainEditorSession::class.java]
         compose.onNodeWithContentDescription("Editor", useUnmergedTree = true).performClick()
         compose.onNodeWithText("Create with AI").performClick()
         compose.waitUntil(10_000) {
@@ -56,8 +57,13 @@ class AssistantPreviewNavigationTest {
         compose.onNodeWithTag("assistant-composer").performTextReplacement("Keep this unsent draft")
         Espresso.closeSoftKeyboard()
         compose.activityRule.scenario.recreate()
+        org.junit.Assert.assertSame(owner, androidx.lifecycle.ViewModelProvider(compose.activity)[MainEditorSession::class.java])
         compose.onNodeWithTag("assistant-preview").assertIsDisplayed()
         compose.onNodeWithText("Keep this unsent draft").assertExists()
+        compose.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+        compose.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+        compose.onNodeWithText("Keep this unsent draft").assertExists()
+        compose.runOnIdle { org.junit.Assert.assertNull(owner.assistant.requestId) }
         compose.onNodeWithContentDescription("Back to editor").performClick()
         compose.onNodeWithContentDescription("Ask AI").assertExists()
         compose.onNodeWithContentDescription("Ask AI").performClick()
