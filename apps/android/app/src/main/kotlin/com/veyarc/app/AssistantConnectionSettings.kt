@@ -83,9 +83,10 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
             TextButton(onClick = { assistant.stop() }) { Text("Stop connection test") }
         }
         assistant?.connectionTestStatus?.let { Text(it) }
-        Text("When connected, your messages and shared workflow text go to DeepSeek and are billed to your API account. Images and recordings are excluded. Provider retention and training policies apply; no zero-retention guarantee is made.")
+        Text("When you send, your messages and shared workflow text go to DeepSeek and are billed to your API account. Veyarc does not attach images or recordings. Text you enter is shared as written. No API-specific zero-retention or no-training guarantee has been established for this preview.")
         TextButton(onClick = { uri.openUri("https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html") }) { Text("Provider privacy policy") }
         TextButton(onClick = { uri.openUri("https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html") }) { Text("Provider API terms") }
+        TextButton(onClick = { uri.openUri("https://api-docs.deepseek.com/quick_start/pricing/") }) { Text("Provider pricing") }
     }
     if (enabling || testing) {
         val isTest = testing
@@ -98,7 +99,7 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(if (isTest) "This sends a short fixed prompt to DeepSeek using your saved API key. It contains no chat history or workflow and can incur a small charge." else "When you press Send, your message, completed DeepSeek replies from this chat, and the captured workflow text go directly to DeepSeek using your saved key. Workflow text includes packages, coordinates, labels, variables, and image reference names. Images, recordings, run history, and other workflows are excluded.")
-                    Text("DeepSeek bills your API account. Veyarc cannot enforce an account spending cap; stopping may not prevent charges. Provider retention and training policies apply, with no zero-retention guarantee. Deleting local data does not delete provider records.")
+                    Text("DeepSeek bills your API account. Veyarc cannot enforce an account spending cap; stopping may not prevent charges. No API-specific zero-retention or no-training guarantee has been established for this preview. Do not put API keys or sensitive information in messages, workflow labels, or variables. Deleting local data does not delete provider records.")
                     Text("Responses can be wrong. Review proposals before Apply, then Save separately. Enabling AI sends nothing by itself and lasts until you disable it, replace/remove the key, or restart the app.")
                 }
             },

@@ -201,7 +201,10 @@ fun SettingsScreen(
                     summary = if (assistant?.providerEnabled == true) "Enabled for this session" else "Disabled",
                     expanded = expandedSection == "assistant",
                     onToggle = { expandedSection = if (expandedSection == "assistant") null else "assistant" },
-                ) { AssistantConnectionSettings(assistantKeys, assistant) }
+                ) {
+                    OutlinedButton(onClick = { openGuide = "AI chat help" to "ai-chat-guide.md" }) { Text("AI chat help") }
+                    AssistantConnectionSettings(assistantKeys, assistant)
+                }
             }
         }
         item {

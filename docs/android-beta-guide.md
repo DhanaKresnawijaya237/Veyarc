@@ -1,6 +1,6 @@
 # Android setup and safety guide
 
-Status date: 2026-09-25
+Status date: 2026-09-29
 
 Veyarc `1.0.0` is a sideloaded release with limited verified device support. Playback installs on Android 7.0 and newer. Exact touch recording is supported only on tested Android 13 or newer devices where Shizuku can read the direct touchscreen input device. The verified physical target is the vivo V50 running Android 16 and OriginOS 6.
 
@@ -40,7 +40,9 @@ Open chat from the Editor. Send shares your message, completed DeepSeek exchange
 
 Stop, leaving chat, backgrounding, disabling AI, or replacing/removing the key cancels active work. Rotation retains the existing request without sending another. Restart requires enabling AI again and restores unfinished turns as Interrupted; Retry is always explicit. Stopping may not prevent provider charges.
 
-Keys and chats are encrypted locally and excluded from workflow exports and Android backup. Removing the key does not revoke it at DeepSeek. Deleting local chats does not delete provider records. DeepSeek's retention and training policies apply; no zero-retention guarantee is made. Read the provider policy and API terms linked in Settings. Live provider acceptance is still pending.
+Keys and chat text are encrypted locally and excluded from workflow exports and Android backup. Removing the key does not revoke it at DeepSeek. Deleting local chats does not delete provider records. No API-specific zero-retention or no-training guarantee has been established. Read the provider policy, API terms, and pricing linked in Settings. Text you type or paste is shared as written, so keep credentials and sensitive information out of messages and workflow values.
+
+Settings, then AI connection, then AI chat help explains creation setup, stale proposals, Retry, storage recovery, and deletion. Four live smoke requests passed for simple tasks; advanced live generation and public release review remain open. The preview cannot accept screenshots or file attachments even if a reply suggests them.
 
 ## Record a workflow
 
@@ -78,7 +80,7 @@ Captured frames stay in memory only while the run evaluates its conditions. Imag
 
 ## Local data and privacy
 
-- The app manifest does not request internet access. Veyarc has no account, cloud sync, analytics, or assistant backend.
+- Release builds do not request internet access. Debug builds declare it for the optional DeepSeek preview described above. Veyarc has no account, cloud sync, analytics, or assistant backend.
 - Workflow bodies, image-template assets, and recording journals are encrypted with keys held by Android Keystore.
 - Workflow names, revision metadata, and redacted run history are stored in the app-private local database. Run history does not store captured screen pixels or variable values.
 - Android cloud backup and device-to-device transfer are disabled for all Veyarc app data.
