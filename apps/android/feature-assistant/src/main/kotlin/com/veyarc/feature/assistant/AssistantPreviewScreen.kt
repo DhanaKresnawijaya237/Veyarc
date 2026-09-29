@@ -5,6 +5,7 @@ import android.content.ClipData
 import android.content.ContextWrapper
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -30,7 +31,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material3.AlertDialog
@@ -47,6 +47,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -60,6 +62,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
@@ -68,6 +71,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -106,14 +110,14 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
     var clearVisible by remember { mutableStateOf(false) }
     if (storageVisible) {
         PreviewDialog("Chat storage", onDismiss = { storageVisible = false }) {
-            Text(if (state.persistent) "Chat text is encrypted on this device. Enabled DeepSeek requests send your message, completed provider exchanges from this chat, and captured workflow text. Local deletion does not delete provider records." else "This test fixture keeps history in memory.")
-            Text("Limits: 20 chats, 40 turns per chat, 4,000 characters per message, 256 KiB per chat, 4 MiB total. Composer changes save after a short pause.")
+            Text(if (state.persistent) "Encrypted on this device. Deleting chats here does not delete DeepSeek records." else "Temporary sample history.")
+            Text("20 chats · 40 messages per chat · 4,000 characters per message\n256 KiB per chat · 4 MiB total")
             state.storageError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (state.storageError != null && !state.loadFailed) {
                 TextButton(onClick = state::saveAgain, enabled = state.pendingWrites == 0) { Text("Retry saving") }
             }
             if (state.persistent) {
-                Text("Reloading saved history discards any changes that have not reached storage. It never resends a message.")
+                Text("Reload discards unsaved chat edits. It does not resend messages.")
                 TextButton(onClick = {
                     state.reload()
                     storageVisible = false
@@ -129,7 +133,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
         AlertDialog(
             onDismissRequest = { clearVisible = false },
             title = { Text("Clear all chat history?") },
-            text = { Text("This removes every chat and unsent message on this device. Workflows and revisions are unchanged.") },
+            text = { Text("Deletes all chats and unsent messages. Keeps your workflows.") },
             confirmButton = {
                 TextButton(onClick = {
                     state.clearHistory()
@@ -146,10 +150,10 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
             Column(Modifier.safeDrawingPadding().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 IconButton(onClick = state::close) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to editor") }
                 Text(if (state.isLoading) "Loading encrypted history…" else "No chat selected", style = MaterialTheme.typography.headlineSmall)
-                Text(state.storageError ?: if (state.usesProvider) "Create a chat for this workflow. Enable AI in Settings before sending." else "Create a chat for this workflow. Replies are still local samples; no AI is connected.")
+                Text(state.storageError ?: if (state.usesProvider) "Start a chat for this workflow." else "Start a sample chat.")
                 Button(onClick = state::newChat, enabled = state.canChange && state.conversations.size < AssistantPreviewState.MAX_CHATS) { Text("New chat") }
                 TextButton(onClick = { storageVisible = true }) { Text("Chat storage") }
-                if (state.conversations.size >= AssistantPreviewState.MAX_CHATS) Text("History is full. Open another workflow to delete one of its chats, or clear all history.")
+                if (state.conversations.size >= AssistantPreviewState.MAX_CHATS) Text("Chat limit reached. Delete a chat to continue.")
             }
         }
         return
@@ -213,12 +217,18 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
                 if (!tightWindow) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = ::leave) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to editor") }
-                        Text(chat.title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Column(Modifier.weight(1f)) {
+                            Text(chat.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(if (state.usesProvider) "DeepSeek" else "Sample chat", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                         IconButton(onClick = state::newChat, enabled = state.canChange && state.conversations.size < AssistantPreviewState.MAX_CHATS) { Icon(Icons.Outlined.Add, "New chat") }
-                        IconButton(onClick = { historyVisible = true }) { Icon(Icons.Outlined.History, "Chat history") }
                         Box {
                             IconButton(onClick = { menuVisible = true }) { Icon(Icons.Outlined.MoreVert, "Chat options") }
                             DropdownMenu(expanded = menuVisible, onDismissRequest = { menuVisible = false }) {
+                                DropdownMenuItem(text = { Text("Chat history") }, onClick = {
+                                    menuVisible = false
+                                    historyVisible = true
+                                })
                                 DropdownMenuItem(text = { Text("Chat storage") }, onClick = {
                                     menuVisible = false
                                     storageVisible = true
@@ -250,12 +260,6 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
                         }
                     }
                 }
-                if (!tightWindow) {
-                    TextButton(onClick = ::showContext, modifier = Modifier.fillMaxWidth()) {
-                        Text("${state.context.name} · ${state.context.label}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-                HorizontalDivider()
                 key(chat.id) {
                     ConversationBody(state, onReview = { review = it }, onContext = {
                         contextCapture = AssistantContextCapture(it.baseSnapshot)
@@ -263,48 +267,50 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
                         contextVisible = true
                     }, modifier = Modifier.weight(1f))
                 }
-                HorizontalDivider()
-                Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                    Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (tightWindow) {
-                            IconButton(onClick = ::leave) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to editor") }
-                        }
-                        OutlinedTextField(
-                            value = chat.composer,
-                            onValueChange = state::compose,
-                            enabled = !state.isLoading,
-                            isError = state.inputError != null,
-                            supportingText = if (tightWindow && state.inputError != null) ({ Text(state.inputError!!) }) else null,
-                            label = { Text(if (tightWindow && !state.usesProvider) "Message · Local preview" else "Message") },
-                            modifier = Modifier.weight(1f).testTag("assistant-composer"),
-                            maxLines = if (shortWindow) 2 else 4,
-                            shape = RoundedCornerShape(20.dp),
-                        )
-                        FilledIconButton(
-                            onClick = {
-                                if (state.isResponding) state.stop() else state.send()
-                            },
-                            enabled = state.isResponding || state.canSend,
-                        ) {
-                            if (state.isResponding) Icon(Icons.Outlined.StopCircle, "Stop response") else Icon(Icons.AutoMirrored.Outlined.Send, "Send message")
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                        Row(Modifier.padding(4.dp), verticalAlignment = Alignment.Bottom) {
+                            if (tightWindow) {
+                                IconButton(onClick = ::leave) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to editor") }
+                            }
+                            TextField(
+                                value = chat.composer,
+                                onValueChange = state::compose,
+                                enabled = !state.isLoading,
+                                isError = state.inputError != null,
+                                supportingText = if (tightWindow && state.inputError != null) ({ Text(state.inputError!!) }) else null,
+                                placeholder = { Text("Message") },
+                                modifier = Modifier.weight(1f).testTag("assistant-composer"),
+                                maxLines = if (shortWindow) 2 else 4,
+                                colors = TextFieldDefaults.colors(
+                                    focusedContainerColor = Color.Transparent,
+                                    unfocusedContainerColor = Color.Transparent,
+                                    disabledContainerColor = Color.Transparent,
+                                    focusedIndicatorColor = Color.Transparent,
+                                    unfocusedIndicatorColor = Color.Transparent,
+                                    disabledIndicatorColor = Color.Transparent,
+                                ),
+                            )
+                            FilledIconButton(
+                                modifier = Modifier.padding(bottom = 4.dp),
+                                onClick = {
+                                    if (state.isResponding) state.stop() else state.send()
+                                },
+                                enabled = state.isResponding || state.canSend,
+                            ) {
+                                if (state.isResponding) Icon(Icons.Outlined.StopCircle, "Stop response") else Icon(Icons.AutoMirrored.Outlined.Send, "Send message")
+                            }
                         }
                     }
-                    if (!tightWindow) {
-                        Text(
-                            when {
-                                state.storageError != null -> "Not saved · Open Chat storage in options"
-                                state.inputError != null -> state.inputError!!
-                                state.pendingWrites > 0 -> "Saving chat…"
-                                chat.turns.size >= AssistantPreviewState.MAX_TURNS -> "Message limit reached. Start a new chat."
-                                chat.composer.length == AssistantPreviewState.MAX_PROMPT_LENGTH -> "Message limit: ${AssistantPreviewState.MAX_PROMPT_LENGTH} characters."
-                                state.usesProvider -> if (state.providerEnabled) "DeepSeek · API charges apply · Review before Apply" else "AI disabled · Enable in Settings"
-                                else -> "Local preview · No AI connected"
-                            },
-                            modifier = Modifier.padding(top = 4.dp),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    val notice = when {
+                        state.storageError != null -> "Chat not saved. Open Chat storage."
+                        state.inputError != null -> state.inputError
+                        chat.turns.size >= AssistantPreviewState.MAX_TURNS -> "Chat is full. Start a new chat."
+                        chat.composer.length == AssistantPreviewState.MAX_PROMPT_LENGTH -> "4,000 character limit reached."
+                        state.usesProvider && !state.providerEnabled -> "Enable AI in Settings to send."
+                        else -> null
                     }
+                    if (!tightWindow && notice != null) Text(notice, Modifier.padding(start = 12.dp, top = 4.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -312,25 +318,23 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
 
     if (contextVisible) {
         PreviewDialog(if (capturedTurn) "Captured workflow context" else "Workflow context", onDismiss = { contextVisible = false }) {
-            Text(if (state.usesProvider) "Send shares your message, the captured workflow text below, and completed DeepSeek prompt/reply text from this chat. Samples, errors, partial replies, earlier snapshots, and earlier candidate JSON are excluded." else "Nothing is sent in this preview. The text below is the workflow context prepared for a future provider request, alongside your message and chat history.")
-            Text(if (capturedTurn) "This is the unchanged snapshot saved with that message. Retry uses the same snapshot." else "Send captures the current editor draft again, including unsaved edits. Invalid draft fields remain as entered; this is not a validated workflow.")
+            Text(if (state.usesProvider) "DeepSeek receives your message, completed chat exchanges, and workflow text." else "Sample only. Nothing is sent.")
+            Text(if (capturedTurn) "Snapshot used for this message and retries." else "Send uses your current draft, including unsaved edits.")
             contextCapture.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             val snapshot = contextCapture.snapshot
-            if (snapshot == null && contextCapture.error == null) {
-                Text("No workflow is attached. Package, orientation, and geometry remain unspecified.")
-            }
+            if (snapshot == null && contextCapture.error == null) Text("No workflow attached.")
             if (snapshot != null) {
-                Text("Includes blocks, variables, package text, viewport, limits, and image reference names. Image bytes, recordings, run history, credentials, and other workflows are excluded.")
-                Text("${snapshot.json.toByteArray(Charsets.UTF_8).size} / ${AssistantContextSnapshot.MAX_BYTES} bytes · Snapshot ${snapshot.snapshotId.take(12)}")
-                SelectionContainer { Text(snapshot.json, modifier = Modifier.testTag("assistant-context-json"), style = MaterialTheme.typography.bodySmall) }
+                Text("No image files, recordings, or run history are attached.")
+                var expanded by remember(snapshot.snapshotId) { mutableStateOf(false) }
+                TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide shared data" else "Show shared data") }
+                if (expanded) SelectionContainer { Text(snapshot.json, modifier = Modifier.testTag("assistant-context-json"), style = MaterialTheme.typography.bodySmall) }
             }
         }
     }
 
     if (historyVisible) {
         PreviewDialog("Chats for ${state.context.name}", onDismiss = { historyVisible = false }) {
-            Text(if (state.persistent) "Chat history is encrypted on this device." else "Preview history stays in memory until the app closes.")
-            if (state.conversations.size >= AssistantPreviewState.MAX_CHATS) Text("Preview limit reached. Delete a chat before creating another.")
+            if (state.conversations.size >= AssistantPreviewState.MAX_CHATS) Text("Chat limit reached. Delete a chat to continue.")
             state.history.forEach { entry ->
                 TextButton(onClick = {
                     state.select(entry.id)
@@ -346,7 +350,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
         AlertDialog(
             onDismissRequest = { renameVisible = false },
             title = { Text("Rename chat") },
-            text = { OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Chat title (80 characters max)") }, isError = title.length > 80) },
+            text = { OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Chat title") }, isError = title.length > 80) },
             confirmButton = {
                 TextButton(onClick = {
                     state.rename(title)
@@ -372,7 +376,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
     }
     review?.let { selectedTurn ->
         val turn = chat.turns.firstOrNull { it.id == selectedTurn.id } ?: selectedTurn
-        PreviewDialog(if (turn.proposal != null) "Proposal validation" else "Review sample changes", onDismiss = { review = null }) {
+        PreviewDialog("Review changes", onDismiss = { review = null }) {
             val proposal = turn.proposal
             if (proposal != null) {
                 val current = state.previewContext()
@@ -396,18 +400,18 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
                     style = MaterialTheme.typography.titleMedium,
                 )
                 when (turn.applyState) {
-                    ProposalApplyState.RESERVED -> Text("This attempt cannot be repeated. Check the editor if it was interrupted; your unsaved draft may not survive restarting the app.")
-                    ProposalApplyState.APPLIED -> Text("Applied once to the editable draft. Use the editor's Undo to revert. Save remains a separate action.")
-                    ProposalApplyState.REJECTED -> Text("The draft changed or you left chat before Apply completed. Nothing was applied by this attempt. Send a new request.")
+                    ProposalApplyState.RESERVED -> Text("Check the editor after an interrupted Apply. Unsaved edits may be lost on restart.")
+                    ProposalApplyState.APPLIED -> Text("Use Undo in the editor to revert. Save when ready.")
+                    ProposalApplyState.REJECTED -> Text("Nothing applied. Send a new request.")
                     ProposalApplyState.NONE -> Unit
                 }
-                if (status == AssistantReviewStatus.STALE && turn.applyState == ProposalApplyState.NONE) Text("The draft or its local editor binding changed or is unavailable. Send a new request before applying changes.", color = MaterialTheme.colorScheme.error)
-                if (status == AssistantReviewStatus.DISMISSED) Text("This proposal was dismissed. Send a new request for another proposal.")
+                if (status == AssistantReviewStatus.STALE && turn.applyState == ProposalApplyState.NONE) Text("Draft changed. Send a new request.", color = MaterialTheme.colorScheme.error)
+                if (status == AssistantReviewStatus.DISMISSED) Text("Dismissed. Send a new request for changes.")
                 proposal.issues.forEach { Text(it, color = MaterialTheme.colorScheme.error) }
-                if (proposal.isValid && result.isFailure) Text("The saved proposal could not be reviewed. Send a new request.", color = MaterialTheme.colorScheme.error)
-                if (state.supportsApply && turn.localBindingId == null) Text("This older proposal has no editor binding. Send a new request to apply changes.")
-                Text(AssistantCandidateValidator.CAPABILITY_NOTICE)
-                Text(if (state.supportsApply) "Changes below compare the captured base with the candidate. Apply updates only the draft; it does not save or run the workflow." else "Changes below compare the captured base with the candidate. Applying is unavailable in this fixture.")
+                if (proposal.isValid && result.isFailure) Text("Cannot review this proposal. Send a new request.", color = MaterialTheme.colorScheme.error)
+                if (state.supportsApply && turn.localBindingId == null) Text("Reopened proposal. Send a new request to apply changes.")
+                Text("Device capabilities have not been checked.", style = MaterialTheme.typography.bodySmall)
+                Text(if (state.supportsApply) "Apply changes the draft. Save and Run stay separate." else "Sample only. Apply is unavailable.")
                 Button(onClick = { state.applyProposal(turn.id) }, enabled = result.isSuccess && state.canApply(turn)) { Text("Apply to draft") }
                 if (!turn.proposalDismissed && turn.applyState == ProposalApplyState.NONE) TextButton(onClick = { state.dismissProposal(turn.id) }, enabled = state.canChange) { Text("Dismiss proposal") }
                 result.getOrNull()?.let { changes ->
@@ -449,30 +453,26 @@ private fun ConversationBody(state: AssistantPreviewState, onReview: (PreviewTur
     LaunchedEffect(chat.turns.lastOrNull(), chat.turns.size) {
         if (followLatest && chat.turns.isNotEmpty()) list.scrollToItem((list.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
     }
-    Box(modifier) {
-        LazyColumn(state = list, modifier = Modifier.fillMaxSize().testTag("assistant-messages"), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            item {
-                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(if (state.usesProvider) "AI chat" else "AI chat preview", style = MaterialTheme.typography.headlineSmall)
-                    Text(if (state.usesProvider) "Ask DeepSeek to explain or propose changes to this workflow. Enable AI in Settings, then press Send. API charges apply. Review changes before Apply; Save and Run remain separate actions. Chat history is encrypted locally." else "Try sample replies and change reviews. Nothing is sent to an AI provider. Review changes before Apply, then Save in the editor. Chat history is ${if (state.persistent) "encrypted on this device" else "temporary in this test fixture"}.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (state.context.needsSetup) Text("Setup needed: return to the editor, choose the allowed app and orientation, and add the actions with their geometry or timing. Then ask for a proposal. No workflow has been saved.")
-                    if (chat.turns.isEmpty()) {
-                        val suggestions = if (state.context.needsSetup || state.context.workflowId == null) {
-                            listOf("Help me create a workflow", "What details do you need?")
-                        } else {
-                            listOf("Explain this workflow", "Suggest an improvement", "Describe a change")
-                        }
-                        suggestions.forEach { suggestion ->
-                            OutlinedButton(onClick = { state.compose(suggestion) }) { Text(suggestion) }
-                        }
-                        if (!state.usesProvider) Text("Choose a sample response in Chat options.", style = MaterialTheme.typography.bodySmall)
-                    }
+    Box(modifier.fillMaxWidth()) {
+        if (chat.turns.isEmpty()) {
+            Column(Modifier.align(Alignment.Center).padding(24.dp).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("How can I help?", style = MaterialTheme.typography.headlineSmall)
+                Text("Explain, create or edit a workflow.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (state.context.needsSetup) Text("Choose an app and orientation in the editor first.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val suggestions = if (state.context.needsSetup || state.context.workflowId == null) listOf("Help me create a workflow", "What details do you need?") else listOf("Explain this workflow", "Suggest an improvement", "Describe a change")
+                suggestions.forEach { suggestion ->
+                    OutlinedButton(onClick = { state.compose(suggestion) }, shape = RoundedCornerShape(24.dp)) { Text(suggestion) }
                 }
             }
-            items(chat.turns, key = { it.id }) { turn ->
-                PreviewTurnContent(turn, isLast = turn == chat.turns.last(), canRetry = state.canRetry, onRetry = state::retry, onReview = { onReview(turn) }, onContext = { onContext(turn) })
+        }
+        if (chat.turns.isNotEmpty()) {
+            LazyColumn(state = list, modifier = Modifier.fillMaxSize().testTag("assistant-messages"), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                item { Box(Modifier.heightIn(min = 12.dp)) }
+                items(chat.turns, key = { it.id }) { turn ->
+                    PreviewTurnContent(turn, isLast = turn == chat.turns.last(), canRetry = state.canRetry, onRetry = state::retry, onReview = { onReview(turn) }, onContext = { onContext(turn) })
+                }
+                item { Box(Modifier.heightIn(min = 32.dp)) }
             }
-            item { Box(Modifier.heightIn(min = 32.dp)) }
         }
         if (!followLatest && list.canScrollForward) {
             Button(
@@ -488,69 +488,62 @@ private fun ConversationBody(state: AssistantPreviewState, onReview: (PreviewTur
 
 @Composable
 private fun PreviewTurnContent(turn: PreviewTurn, isLast: Boolean, canRetry: Boolean, onRetry: () -> Unit, onReview: () -> Unit, onContext: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Surface(Modifier.align(Alignment.End).widthIn(max = 560.dp), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+            MessageText(turn.prompt, "Your message", Modifier.padding(horizontal = 16.dp, vertical = 12.dp), onContext = if (turn.baseSnapshot != null) onContext else null)
+        }
+        if (turn.reply.isNotEmpty()) MessageText(turn.reply, if (turn.provider) "DeepSeek reply" else "Sample reply", Modifier.fillMaxWidth(), onContext = if (turn.baseSnapshot != null) onContext else null)
+        turn.responseError?.let { Text(it, Modifier.semantics { liveRegion = LiveRegionMode.Polite }, color = MaterialTheme.colorScheme.error) }
+        val status = when (turn.status) {
+            PreviewReplyStatus.RESPONDING -> "Responding…"
+            PreviewReplyStatus.COMPLETE -> null
+            PreviewReplyStatus.STOPPED -> "Stopped"
+            PreviewReplyStatus.INTERRUPTED -> "Interrupted"
+            PreviewReplyStatus.ERROR -> if (turn.responseError != null) null else "Couldn’t get a reply."
+        }
+        if (status != null) Text(status, Modifier.semantics { liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (turn.proposal != null || (!turn.provider && turn.status == PreviewReplyStatus.COMPLETE && turn.scenario in listOf(PreviewScenario.PROPOSAL, PreviewScenario.STALE))) {
+            OutlinedButton(onClick = onReview, shape = RoundedCornerShape(24.dp)) { Text("Review changes") }
+        }
+        if (isLast && turn.status !in listOf(PreviewReplyStatus.COMPLETE, PreviewReplyStatus.RESPONDING)) {
+            TextButton(onClick = onRetry, enabled = canRetry) { Text(if (turn.provider) "Retry request" else "Retry sample") }
+        }
+    }
+}
+
+@Composable
+private fun MessageText(text: String, speaker: String, modifier: Modifier = Modifier, onContext: (() -> Unit)? = null) {
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
-    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Surface(Modifier.align(Alignment.End).widthIn(max = 560.dp), shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
-            SelectionContainer {
-                Column(Modifier.padding(12.dp)) {
-                    Text("You", style = MaterialTheme.typography.labelSmall)
-                    Text(turn.prompt)
-                }
-            }
-        }
-        if (turn.baseSnapshot != null) TextButton(onClick = onContext) { Text("View captured context") }
-        Text(if (turn.provider) "DeepSeek" else "Veyarc · Sample reply", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-        SelectionContainer {
-            Text(
-                turn.reply.ifEmpty {
-                    if (turn.status == PreviewReplyStatus.RESPONDING) {
-                        if (turn.provider) "Waiting for a complete response…" else "Preparing sample response…"
-                    } else {
-                        "No reply text was saved."
-                    }
-                },
-            )
-        }
-        turn.responseError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        if (turn.outcome == AssistantOutcome.CLARIFICATION) Text("Clarification needed", style = MaterialTheme.typography.labelMedium)
+    var actionsVisible by remember { mutableStateOf(false) }
+    var selectionVisible by remember { mutableStateOf(false) }
+    Box {
         Text(
-            when (turn.status) {
-                PreviewReplyStatus.RESPONDING -> if (turn.provider) "Request in progress" else "Playing sample response"
-
-                PreviewReplyStatus.COMPLETE -> if (turn.provider) "Response complete" else "Sample complete"
-
-                PreviewReplyStatus.STOPPED -> "Stopped"
-
-                PreviewReplyStatus.INTERRUPTED -> "Interrupted"
-
-                PreviewReplyStatus.ERROR -> if (turn.provider) {
-                    "Request failed · Retry is explicit"
-                } else if (turn.responseError != null) {
-                    "Invalid sample response"
-                } else {
-                    "Sample connection error"
-                }
+            text,
+            modifier.combinedClickable(onClick = {}, onLongClickLabel = "Message actions", onLongClick = { actionsVisible = true }).semantics {
+                contentDescription = "$speaker: $text"
+                if (speaker != "Your message") liveRegion = LiveRegionMode.Polite
             },
-            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-            style = MaterialTheme.typography.labelSmall,
-            color = if (turn.status == PreviewReplyStatus.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyLarge,
         )
-        if (turn.proposal != null) {
-            OutlinedButton(onClick = onReview) { Text("View proposal validation") }
-        }
-        if (!turn.provider && turn.status == PreviewReplyStatus.COMPLETE && turn.scenario in listOf(PreviewScenario.PROPOSAL, PreviewScenario.STALE)) {
-            OutlinedButton(onClick = onReview) { Text("Review sample changes") }
-        }
-        Row {
-            if (turn.reply.isNotEmpty()) {
-                TextButton(onClick = { scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("Assistant reply", turn.reply))) } }) { Text("Copy reply") }
-            }
-            if (isLast && turn.status !in listOf(PreviewReplyStatus.COMPLETE, PreviewReplyStatus.RESPONDING)) {
-                TextButton(onClick = onRetry, enabled = canRetry) { Text(if (turn.provider) "Retry request" else "Retry sample") }
+        DropdownMenu(expanded = actionsVisible, onDismissRequest = { actionsVisible = false }) {
+            DropdownMenuItem(text = { Text("Copy") }, onClick = {
+                actionsVisible = false
+                scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText(speaker, text))) }
+            })
+            DropdownMenuItem(text = { Text("Select text") }, onClick = {
+                actionsVisible = false
+                selectionVisible = true
+            })
+            if (onContext != null) {
+                DropdownMenuItem(text = { Text("View captured context") }, onClick = {
+                    actionsVisible = false
+                    onContext()
+                })
             }
         }
     }
+    if (selectionVisible) PreviewDialog("Select text", onDismiss = { selectionVisible = false }) { SelectionContainer { Text(text) } }
 }
 
 @Composable

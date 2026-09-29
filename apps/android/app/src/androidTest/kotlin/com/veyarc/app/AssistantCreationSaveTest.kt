@@ -70,7 +70,7 @@ class AssistantCreationSaveTest {
             workflowId = editor.draft!!.workflowId
             val chatId = state.selectedId
             val draftId = state.conversation!!.draftId
-            compose.onNodeWithText("Setup needed:", substring = true).assertIsDisplayed()
+            compose.onNodeWithText("Choose an app and orientation", substring = true).assertIsDisplayed()
             assertTrue(repository.listRevisions(workflowId).isEmpty())
             capture("creation-setup")
             completeSample(state)
@@ -90,7 +90,7 @@ class AssistantCreationSaveTest {
             compose.onNodeWithContentDescription("Ask AI").performClick()
             compose.waitUntil(10000) { state.canChange }
             completeSample(state)
-            compose.onNodeWithText("View proposal validation").performScrollTo().performClick()
+            compose.onNodeWithText("Review changes").performScrollTo().performClick()
             compose.onNodeWithText("Apply to draft").performScrollTo().performClick()
             compose.waitUntil(10000) { state.canChange }
             assertTrue(repository.listRevisions(workflowId).isEmpty())

@@ -17,6 +17,7 @@ import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -123,22 +124,25 @@ class AssistantAccessibilityAcceptanceTest {
     @Test
     fun providerControlsHaveTouchTargetsAndStatusAnnouncements() {
         val owner = show()
-        listOf("Back to editor", "New chat", "Chat history", "Chat options", "Send message").forEach {
+        listOf("Back to editor", "New chat", "Chat options", "Send message").forEach {
             compose.onNodeWithContentDescription(it).assertIsDisplayed().assertTouchWidthIsEqualTo(48.dp).assertTouchHeightIsEqualTo(48.dp)
         }
         compose.runOnIdle {
             owner.state.compose("Explain")
             owner.state.send()
         }
-        compose.onNodeWithText("Request in progress").performScrollTo().assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
+        compose.onNodeWithText("Responding…").performScrollTo().assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
         compose.onNodeWithContentDescription("Stop response").assertIsEnabled().performClick()
         compose.onNodeWithText("Stopped").performScrollTo().assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
         compose.runOnIdle { owner.response = CompletableDeferred() }
         compose.onNodeWithText("Retry request").performScrollTo().performClick()
         compose.waitUntil(10_000) { owner.calls == 2 }
         compose.runOnIdle { owner.complete("A complete explanation.") }
-        compose.onNodeWithText("Response complete").performScrollTo().assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
-        compose.onNodeWithText("Copy reply").performScrollTo().performClick()
+        compose.onNodeWithText("A complete explanation.").performScrollTo().assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
+        compose.onNodeWithText("Copy").assertDoesNotExist()
+        compose.onNodeWithText("View captured context").assertDoesNotExist()
+        compose.onNodeWithText("A complete explanation.").performTouchInput { longClick() }
+        compose.onNodeWithText("Copy").performClick()
         compose.runOnIdle {
             val clipboard = compose.activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             assertEquals("A complete explanation.", clipboard.primaryClip!!.getItemAt(0).text.toString())
@@ -154,7 +158,7 @@ class AssistantAccessibilityAcceptanceTest {
         }
         compose.waitUntil(10_000) { owner.calls == 1 }
         compose.runOnIdle { owner.complete((1..80).joinToString("\n") { "Line $it describes a workflow detail." }) }
-        compose.onNodeWithText("Response complete").performScrollTo()
+        compose.onNodeWithText(owner.state.conversation!!.turns.single().reply).performScrollTo()
         compose.runOnIdle {
             owner.response = CompletableDeferred()
             owner.state.compose("Second question")

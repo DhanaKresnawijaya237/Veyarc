@@ -15,6 +15,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -22,6 +23,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.Density
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -129,7 +131,7 @@ class AssistantPreviewUiTest {
             state.send()
         }
         compose.mainClock.advanceTimeBy(5000)
-        compose.onNodeWithText("Review sample changes").performScrollTo().performClick()
+        compose.onNodeWithText("Review changes").performScrollTo().performClick()
         compose.mainClock.advanceTimeBy(100)
         compose.onNodeWithText("Apply to draft").assertIsNotEnabled()
         capture("proposal-light")
@@ -153,8 +155,9 @@ class AssistantPreviewUiTest {
         Espresso.closeSoftKeyboard()
         compose.onNodeWithContentDescription("Send message").assertIsDisplayed()
         capture("empty-dark-large-text")
-        compose.onNodeWithContentDescription("Chat history").performClick()
-        compose.onNodeWithText("Preview history stays in memory until the app closes.").assertExists()
+        compose.onNodeWithContentDescription("Chat options").performClick()
+        compose.onNodeWithText("Chat history").performClick()
+        compose.onNodeWithText("Chats for A workflow with a deliberately long name").assertExists()
         compose.onNodeWithText("Done").performClick()
         compose.onNodeWithContentDescription("New chat").performClick()
         assertEquals(2, state.history.size)
@@ -169,6 +172,7 @@ class AssistantPreviewUiTest {
         compose.setContent { VeyarcTheme { AssistantPreviewScreen(state) } }
         compose.onNodeWithContentDescription("Chat options").performClick()
         compose.onNodeWithText("Workflow context").performClick()
+        compose.onNodeWithText("Show shared data").performScrollTo().performClick()
         compose.onNodeWithTag("assistant-context-json").assertTextContains("Unsaved context name", substring = true)
         capture("workflow-context")
         compose.onNodeWithText("Done").performClick()
@@ -178,12 +182,17 @@ class AssistantPreviewUiTest {
             state.stop()
             draft = draft.copy(name = "Later edit")
         }
-        compose.onNodeWithText("View captured context").performScrollTo().performClick()
+        compose.onNodeWithText("View captured context").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Your message: Explain").performScrollTo().performTouchInput { longClick() }
+        capture("message-actions")
+        compose.onNodeWithText("View captured context").performClick()
         compose.onNodeWithText("Captured workflow context").assertExists()
+        compose.onNodeWithText("Show shared data").performScrollTo().performClick()
         compose.onNodeWithTag("assistant-context-json").assertTextContains("Unsaved context name", substring = true)
         compose.onNodeWithText("Done").performClick()
         compose.onNodeWithContentDescription("Chat options").performClick()
         compose.onNodeWithText("Workflow context").performClick()
+        compose.onNodeWithText("Show shared data").performScrollTo().performClick()
         compose.onNodeWithTag("assistant-context-json").assertTextContains("Later edit", substring = true)
         assertEquals("Later edit", draft.name)
     }
@@ -198,8 +207,8 @@ class AssistantPreviewUiTest {
             repeat(100) { requestId?.let(::advance) }
         }
         compose.setContent { VeyarcTheme { AssistantPreviewScreen(state) } }
-        compose.onNodeWithText("Clarification needed").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Review sample changes").assertDoesNotExist()
+        compose.onNodeWithText(state.conversation!!.turns.single().reply).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Review changes").assertDoesNotExist()
         compose.runOnIdle {
             state.scenario = PreviewScenario.INVALID_OUTPUT
             state.compose("Keep this rejected prompt")
@@ -207,7 +216,6 @@ class AssistantPreviewUiTest {
             state.advance(state.requestId!!)
         }
         compose.onNodeWithText("Response rejected:", substring = true).performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Invalid sample response").assertExists()
         compose.onNodeWithText("Retry sample").assertExists()
         compose.onNodeWithText("Apply to draft").assertDoesNotExist()
         capture("response-rejected")
@@ -223,7 +231,7 @@ class AssistantPreviewUiTest {
         state.send()
         state.advance(state.requestId!!)
         compose.setContent { VeyarcTheme { AssistantPreviewScreen(state) } }
-        compose.onNodeWithText("View proposal validation").performScrollTo().performClick()
+        compose.onNodeWithText("Review changes").performScrollTo().performClick()
         compose.onNodeWithText("Ready for review").assertIsDisplayed()
         compose.onNodeWithText("Device capabilities have not been checked.", substring = true).assertExists()
         compose.onNodeWithText("Apply to draft").assertIsNotEnabled()
@@ -236,7 +244,7 @@ class AssistantPreviewUiTest {
             state.send()
             state.advance(state.requestId!!)
         }
-        compose.onNodeWithText("View proposal validation").performScrollTo().performClick()
+        compose.onNodeWithText("Review changes").performScrollTo().performClick()
         compose.onNodeWithText("Invalid proposal").assertIsDisplayed()
         compose.onNodeWithText("Candidate changed locked fields:", substring = true).assertExists()
         compose.onNodeWithText("Apply to draft").assertIsNotEnabled()
@@ -254,7 +262,7 @@ class AssistantPreviewUiTest {
         state.send()
         state.advance(state.requestId!!)
         compose.setContent { VeyarcTheme { AssistantPreviewScreen(state) } }
-        compose.onNodeWithText("View proposal validation").performScrollTo().performClick()
+        compose.onNodeWithText("Review changes").performScrollTo().performClick()
         compose.onNodeWithText("After: \"Sample workflow name\"").performScrollTo().assertIsDisplayed()
         capture("review-values")
         compose.runOnIdle { draft = draft.copy(name = "Edited after Send") }
@@ -264,7 +272,7 @@ class AssistantPreviewUiTest {
         compose.onNodeWithText("Dismiss proposal").performScrollTo().performClick()
         compose.onNodeWithText("Dismissed proposal").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Done").performClick()
-        compose.onNodeWithText("View proposal validation").performScrollTo().performClick()
+        compose.onNodeWithText("Review changes").performScrollTo().performClick()
         compose.onNodeWithText("Dismissed proposal").assertIsDisplayed()
         assertEquals("Edited after Send", draft.name)
     }
@@ -282,7 +290,7 @@ class AssistantPreviewUiTest {
         state.advance(state.requestId!!)
         assertEquals(before, editor.draft)
         compose.setContent { VeyarcTheme { AssistantPreviewScreen(state) } }
-        compose.onNodeWithText("View proposal validation").performScrollTo().performClick()
+        compose.onNodeWithText("Review changes").performScrollTo().performClick()
         compose.onNodeWithText("Apply to draft").performScrollTo().assertIsEnabled().performClick()
         compose.onNodeWithText("Applied to draft").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Apply to draft").performScrollTo().assertIsNotEnabled()
@@ -294,6 +302,10 @@ class AssistantPreviewUiTest {
     }
 
     private fun capture(name: String) {
+        compose.waitForIdle()
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        // Compose idle can precede the compositor frame, especially when a dialog closes.
+        android.os.SystemClock.sleep(300)
         val directory = File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "assistant-preview-qa").apply { mkdirs() }
         val layout = InstrumentationRegistry.getArguments().getString("layoutLabel") ?: "portrait"
         File(directory, "$layout-$name.png").outputStream().use { output ->

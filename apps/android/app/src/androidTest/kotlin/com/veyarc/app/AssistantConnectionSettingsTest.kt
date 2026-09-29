@@ -81,7 +81,7 @@ class AssistantConnectionSettingsTest {
             compose.onNodeWithTag("assistant-key-entry").performTextInput("fixture-saved-key")
             Espresso.closeSoftKeyboard()
             compose.onNodeWithText("Save key").performClick()
-            awaitText("API key saved on this device · Not tested")
+            awaitText("Key saved")
             assertTrue(store.hasKey())
             compose.onNodeWithText("Replace API key").performScrollTo().performClick()
             compose.onNodeWithTag("assistant-key-entry").assertTextEquals("API key", "")
@@ -94,16 +94,16 @@ class AssistantConnectionSettingsTest {
             compose.onNodeWithTag("assistant-key-entry").performTextInput("fixture-discard-on-restore")
             restoration.emulateSavedInstanceStateRestore()
             compose.onNodeWithTag("assistant-key-entry").assertDoesNotExist()
-            awaitText("API key saved on this device · Not tested")
+            awaitText("Key saved")
             compose.onNodeWithText("Replace API key").performScrollTo().performClick()
             compose.onNodeWithTag("assistant-key-entry").assertTextEquals("API key", "")
             compose.onNodeWithTag("assistant-key-entry").performTextInput("fixture-replacement-key")
             Espresso.closeSoftKeyboard()
             compose.onNodeWithText("Save key").performClick()
-            awaitText("API key saved on this device · Not tested")
+            awaitText("Key saved")
             compose.onNodeWithText("Remove API key").performScrollTo().performClick()
             compose.onNodeWithText("Remove key", substring = false).performClick()
-            awaitText("No usable API key loaded")
+            awaitText("No API key")
             assertFalse(store.hasKey())
             compose.onNodeWithText("Enable AI").assertIsNotEnabled()
         } finally {
@@ -138,8 +138,18 @@ class AssistantConnectionSettingsTest {
             compose.setContent {
                 VeyarcTheme { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(store, assistant) } }
             }
-            awaitText("API key saved on this device · Not tested")
+            awaitText("Key saved")
+            compose.onNodeWithText("Provider privacy policy").assertDoesNotExist()
+            capture("settings")
+            compose.onNodeWithText("Privacy and costs").performScrollTo().performClick()
+            compose.onNodeWithText("Provider privacy policy").performScrollTo().assertExists()
+            compose.onNodeWithText("Done").performClick()
             compose.onNodeWithText("Enable AI").performScrollTo().performClick()
+            capture("consent")
+            compose.onNodeWithText("Details").performScrollTo().performClick()
+            compose.onNodeWithText("Provider API terms").performScrollTo().assertExists()
+            compose.onNodeWithText("Done").performClick()
+            compose.runOnIdle { org.junit.Assert.assertEquals(0, calls) }
             compose.onNodeWithText("Enable for this session").performClick()
             compose.runOnIdle {
                 assertTrue(assistant.providerEnabled)
@@ -160,7 +170,7 @@ class AssistantConnectionSettingsTest {
                 assertFalse(assistant.providerEnabled)
                 org.junit.Assert.assertEquals(1, calls)
             }
-            awaitText("API key saved on this device · Not tested")
+            awaitText("Key saved")
             compose.onNodeWithText("Test connection").assertIsNotEnabled()
             org.junit.Assert.assertEquals("fixture-new-opt-in-key", store.readForRequest())
         } finally {
@@ -174,5 +184,16 @@ class AssistantConnectionSettingsTest {
     private fun awaitText(value: String) {
         compose.waitUntil(10_000) { runCatching { compose.onNodeWithText(value).assertExists() }.isSuccess }
         compose.waitForIdle()
+    }
+
+    private fun capture(name: String) {
+        compose.waitForIdle()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.waitForIdleSync()
+        android.os.SystemClock.sleep(300)
+        val directory = File(instrumentation.targetContext.cacheDir, "assistant-preview-qa").apply { mkdirs() }
+        File(directory, "portrait-$name.png").outputStream().use {
+            instrumentation.uiAutomation.takeScreenshot().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+        }
     }
 }

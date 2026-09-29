@@ -202,8 +202,8 @@ fun SettingsScreen(
                     expanded = expandedSection == "assistant",
                     onToggle = { expandedSection = if (expandedSection == "assistant") null else "assistant" },
                 ) {
-                    OutlinedButton(onClick = { openGuide = "AI chat help" to "ai-chat-guide.md" }) { Text("AI chat help") }
                     AssistantConnectionSettings(assistantKeys, assistant)
+                    TextButton(onClick = { openGuide = "AI chat help" to "ai-chat-guide.md" }) { Text("AI chat help") }
                 }
             }
         }
@@ -257,10 +257,10 @@ fun SettingsScreen(
                         }.onFailure { message = "Android notification settings are unavailable on this device." }
                     },
                 )
-                Text("Add the Veyarc Quick Settings tile as an emergency stop.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Quick Settings tile: emergency stop.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 HorizontalDivider()
                 StatusRow("Screen capture", if (MediaProjectionCaptureRuntime.isActive) "Active" else "Inactive", MediaProjectionCaptureRuntime.isActive)
-                Text("Android asks for screen-capture consent when a visual-condition run starts.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Android asks for capture permission before each visual run.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         item {
@@ -318,7 +318,7 @@ fun SettingsScreen(
                 }
                 OutlinedButton(onClick = { ReplayFloatingController.resetPosition(context) }) { Text("Reset latch position") }
                 Text(
-                    "The latch uses only its visible area. Notifications and the Quick Settings tile remain emergency controls.",
+                    "Stop anytime from notifications or the Quick Settings tile.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -332,7 +332,7 @@ fun SettingsScreen(
             ) {
                 Text("$workflowFolderCount workflow folders • $runFolderCount run folders")
                 Text(
-                    "Workflows, journals, run details, and templates stay on this device. Revisions and journals are encrypted.",
+                    "Stored on this device. Revisions and journals are encrypted.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 OutlinedButton(onClick = { importBundle.launch(arrayOf("application/zip", "application/octet-stream")) }) {
@@ -375,7 +375,7 @@ fun SettingsScreen(
         AlertDialog(
             onDismissRequest = { confirmClearHistory = false },
             title = { Text("Clear finished run history?") },
-            text = { Text("This permanently deletes $runCount completed, failed, cancelled, or interrupted run records. An active run is never deleted.") },
+            text = { Text("Permanently deletes $runCount finished run records. Keeps active runs.") },
             confirmButton = {
                 Button(onClick = {
                     confirmClearHistory = false

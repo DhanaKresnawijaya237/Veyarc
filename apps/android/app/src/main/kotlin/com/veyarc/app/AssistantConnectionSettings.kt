@@ -6,8 +6,8 @@ import android.content.ContextWrapper
 import android.view.WindowManager
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -54,6 +54,7 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
     var removing by remember { mutableStateOf(false) }
     var enabling by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
+    var privacyVisible by remember { mutableStateOf(false) }
     LaunchedEffect(store) {
         try {
             hasKey = withContext(Dispatchers.IO) { store.hasKey() }
@@ -63,31 +64,52 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
             busy = false
         }
     }
-    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("AI connection", style = MaterialTheme.typography.titleMedium)
-        Text("DeepSeek · deepseek-flash")
-        Text(if (assistant?.providerEnabled == true) "AI enabled for this app session" else "AI disabled")
-        Text(if (hasKey) "API key saved on this device · Not tested" else "No usable API key loaded")
-        Text("Saving a key does not send anything. Enable AI for this session before sending messages or testing the connection. Restarting the app requires enabling it again.")
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("DeepSeek", style = MaterialTheme.typography.titleMedium)
+        Text(if (assistant?.providerEnabled == true) "Enabled until app restart" else "AI disabled")
+        Text(if (hasKey) "Key saved" else "No API key")
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        OutlinedButton(onClick = { editing = true }, enabled = !busy) { Text(if (hasKey || error != null) "Replace API key" else "Add API key") }
-        TextButton(onClick = { removing = true }, enabled = !busy && (hasKey || error != null)) { Text("Remove API key") }
-        Button(onClick = { testing = true }, enabled = !busy && hasKey && assistant?.providerEnabled == true && !assistant.isResponding) { Text("Test connection") }
-        if (assistant?.providerEnabled == true) {
-            Button(onClick = assistant::disableProvider) { Text("Disable AI") }
-        } else {
-            Button(onClick = { enabling = true }, enabled = !busy && hasKey && assistant?.usesProvider == true) { Text("Enable AI") }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { editing = true }, enabled = !busy) { Text(if (hasKey || error != null) "Replace API key" else "Add API key") }
+            if (hasKey || error != null) TextButton(onClick = { removing = true }, enabled = !busy) { Text("Remove API key") }
+        }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (assistant?.providerEnabled == true) {
+                Button(onClick = assistant::disableProvider) { Text("Disable AI") }
+            } else {
+                Button(onClick = { enabling = true }, enabled = !busy && hasKey && assistant?.usesProvider == true) { Text("Enable AI") }
+            }
+            OutlinedButton(onClick = { testing = true }, enabled = !busy && hasKey && assistant?.providerEnabled == true && !assistant.isResponding) { Text("Test connection") }
         }
         if (assistant?.testingConnection == true) {
             Text("Testing connection…")
             TextButton(onClick = { assistant.stop() }) { Text("Stop connection test") }
         }
         assistant?.connectionTestStatus?.let { Text(it) }
-        Text("When you send, your messages and shared workflow text go to DeepSeek and are billed to your API account. Veyarc does not attach images or recordings. Text you enter is shared as written. No API-specific zero-retention or no-training guarantee has been established for this preview.")
-        TextButton(onClick = { uri.openUri("https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html") }) { Text("Provider privacy policy") }
-        TextButton(onClick = { uri.openUri("https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html") }) { Text("Provider API terms") }
-        TextButton(onClick = { uri.openUri("https://api-docs.deepseek.com/quick_start/pricing/") }) { Text("Provider pricing") }
+        TextButton(onClick = { privacyVisible = true }) { Text("Privacy and costs") }
     }
+    if (privacyVisible) {
+        AlertDialog(
+            onDismissRequest = { privacyVisible = false },
+            title = { Text("Privacy and costs") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Shared: messages, completed chat exchanges, and workflow text.")
+                    Text("Workflow text includes apps, coordinates, labels, variables, and image names.")
+                    Text("No image files, recordings, run history, or other workflows.")
+                    Text("Your API account pays. No spending cap; Stop may still cost.")
+                    Text("No verified retention or training guarantees. Avoid secrets.")
+                    Text("Deleting local data does not delete DeepSeek records.")
+                    Text("deepseek-flash · Saving or enabling sends nothing. AI turns off on restart or key changes.")
+                    TextButton(onClick = { uri.openUri("https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html") }) { Text("Provider privacy policy") }
+                    TextButton(onClick = { uri.openUri("https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html") }) { Text("Provider API terms") }
+                    TextButton(onClick = { uri.openUri("https://api-docs.deepseek.com/quick_start/pricing/") }) { Text("Provider pricing") }
+                }
+            },
+            confirmButton = { TextButton(onClick = { privacyVisible = false }) { Text("Done") } },
+        )
+    }
+
     if (enabling || testing) {
         val isTest = testing
         AlertDialog(
@@ -95,12 +117,14 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
                 enabling = false
                 testing = false
             },
-            title = { Text(if (isTest) "Test DeepSeek connection?" else "Enable DeepSeek for this session?") },
+            title = { Text(if (isTest) "Test connection?" else "Enable DeepSeek?") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(if (isTest) "This sends a short fixed prompt to DeepSeek using your saved API key. It contains no chat history or workflow and can incur a small charge." else "When you press Send, your message, completed DeepSeek replies from this chat, and the captured workflow text go directly to DeepSeek using your saved key. Workflow text includes packages, coordinates, labels, variables, and image reference names. Images, recordings, run history, and other workflows are excluded.")
-                    Text("DeepSeek bills your API account. Veyarc cannot enforce an account spending cap; stopping may not prevent charges. No API-specific zero-retention or no-training guarantee has been established for this preview. Do not put API keys or sensitive information in messages, workflow labels, or variables. Deleting local data does not delete provider records.")
-                    Text("Responses can be wrong. Review proposals before Apply, then Save separately. Enabling AI sends nothing by itself and lasts until you disable it, replace/remove the key, or restart the app.")
+                    Text(if (isTest) "Sends a short test prompt. No chat or workflow is shared." else "Send shares your message, completed chat exchanges, and workflow text with DeepSeek. No images or recordings.")
+                    Text("Your API account pays. Stopping may still cost money. Veyarc cannot cap spending.")
+                    Text("Avoid sensitive text. Retention and training guarantees are unverified.")
+                    Text(if (isTest) "A successful test does not validate a workflow." else "AI can be wrong. Review changes before Apply. Save separately. Enabled until app restart.")
+                    TextButton(onClick = { privacyVisible = true }) { Text("Details") }
                 }
             },
             confirmButton = {
@@ -140,8 +164,8 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
     if (removing) {
         AlertDialog(
             onDismissRequest = { removing = false },
-            title = { Text("Remove saved API key?") },
-            text = { Text("This removes the key from Veyarc. It does not revoke it at DeepSeek or delete provider records. Chat and workflows are kept.") },
+            title = { Text("Remove API key?") },
+            text = { Text("Removes it from this device only. Chats stay. Revoke the key through DeepSeek to stop its use elsewhere.") },
             confirmButton = {
                 TextButton(onClick = {
                     removing = false
@@ -194,7 +218,7 @@ private fun AssistantKeyDialog(onDismiss: () -> Unit, onSave: (String) -> Unit) 
         title = { Text("DeepSeek API key") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Stored encrypted on this device. The key is never shown again. Unsaved input is discarded when this form closes or the app backgrounds.")
+                Text("Encrypted on this device. Unsaved entry is discarded when you leave.")
                 OutlinedTextField(
                     value = key,
                     onValueChange = {

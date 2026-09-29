@@ -1,6 +1,6 @@
 # AI chat help
 
-Updated 2026-09-29. This help describes the debug preview. Release builds hide AI chat and have no internet permission. Recording, editing, and replay still work offline. Veyarc is not an official DeepSeek app.
+Updated 2026-09-30. This help describes the debug preview. Release builds hide AI chat and have no internet permission. Recording, editing, and replay still work offline. Veyarc is not an official DeepSeek app.
 
 ## Connect your account
 
@@ -8,7 +8,7 @@ Open Settings, expand AI connection, and choose Add API key. Use your own DeepSe
 
 Save key stores it encrypted on this device. Then choose Enable AI, read the disclosure, and confirm Enable for this session. Neither saving nor enabling sends a request. Restarting the app, disabling AI, or replacing/removing the key requires enabling AI again.
 
-Test connection is optional. Send test request sends a short fixed prompt without your workflow or chat history and may incur a charge. Success proves the connection worked, not that a generated workflow is correct. Provider privacy policy, Provider API terms, and Provider pricing in Settings open the provider's website.
+Test connection is optional. Send test request sends a short fixed prompt without your workflow or chat history and may incur a charge. Success proves the connection worked, not that a generated workflow is correct. Privacy and costs in Settings contains the provider policy, API terms, and pricing links.
 
 ## Explain, create, or edit
 
@@ -16,9 +16,9 @@ Open a workflow in the Editor and choose Ask AI. From an empty editor, choose Cr
 
 For creation, fill in the allowed app, orientation, and required actions with their coordinates or timing in the editor. An empty or invalid draft may receive questions instead of a proposal. Chat cannot inspect your screen, select an installed app for you, or obtain missing coordinates from an image. This preview has no image or file attachments.
 
-To edit, ask for a specific change, such as changing a wait or workflow name. Use Chat options, then Workflow context, to inspect the current draft text. Send captures the draft again, including unsaved edits. View captured context under a sent message shows the snapshot used for that request.
+To edit, ask for a specific change, such as changing a wait or workflow name. Use Chat options, then Workflow context, to inspect the current draft text. Send captures the draft again, including unsaved edits. Long-press a message, then choose View captured context to inspect the snapshot used for that request. Show shared data reveals the full text.
 
-When a proposal arrives, choose View proposal validation and read the before/after changes. Apply to draft changes only the editable draft. Undo in the editor reverses that Apply. Save revision creates a saved revision; Run is a separate action. Receiving a reply never saves or runs a workflow, changes permissions, or starts recording.
+When a proposal arrives, choose Review changes and read the before/after changes. Apply to draft changes only the editable draft. Undo in the editor reverses that Apply. Save revision creates a saved revision; Run is a separate action. Receiving a reply never saves or runs a workflow, changes permissions, or starts recording.
 
 AI can be wrong even when validation passes. Validation checks the workflow format and references, not whether its coordinates match your device or its actions do what you want. If you edit the draft, change workflows, or restore an old chat, a proposal may become stale. Send a new request rather than trying to apply it again. After an interrupted Apply, check the editor before continuing; unsaved editor work may not survive an app restart.
 
@@ -42,11 +42,11 @@ No API-specific zero-retention or no-training guarantee has been established for
 
 Chat text, captured snapshots, proposals, titles, and unsent messages are stored encrypted locally using Android Keystore. Conversation/workflow IDs, timestamps, status, and encrypted-file metadata remain in the app-private database. Composer changes save after a short pause. Your saved API key uses separate encrypted storage and is never shown again. Unsaved key entry is discarded when the form closes or the app backgrounds.
 
-Use Chat history to select chats for the current workflow. Chat options provides Rename chat and Delete chat. Chat options, then Chat storage, provides Clear all chat history for all workflows, including unsent messages. These actions do not delete saved workflows or the API key. Deleting a saved workflow also deletes its linked chats.
+Use Chat options, then Chat history, to select chats for the current workflow. Chat options provides Rename chat and Delete chat. Chat options, then Chat storage, provides Clear all chat history for all workflows, including unsent messages. These actions do not delete saved workflows or the API key. Deleting a saved workflow also deletes its linked chats.
 
 Remove API key in Settings removes the local key and disables AI. It does not delete chats, revoke the key at DeepSeek, or erase provider records. Revoke a leaked key through your DeepSeek account. Local chat deletion does not request deletion at the provider and is not a promise of forensic erasure.
 
-Keys and chats are excluded from workflow exports and Android backup/device transfer. Uninstalling removes local data and Keystore keys. A .veyarc export contains a workflow revision and its assets, not chat history or a full app backup. Copy reply places the reply on the system clipboard, where it is outside encrypted chat storage.
+Keys and chats are excluded from workflow exports and Android backup/device transfer. Uninstalling removes local data and Keystore keys. A .veyarc export contains a workflow revision and its assets, not chat history or a full app backup. Long-press a message for Copy or Select text. Copy places text on the system clipboard, outside encrypted chat storage.
 
 ## When something fails
 
