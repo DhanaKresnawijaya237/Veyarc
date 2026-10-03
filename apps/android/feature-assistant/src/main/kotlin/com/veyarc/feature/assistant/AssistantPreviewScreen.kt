@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.ClipData
 import android.content.ContextWrapper
 import android.content.Intent
+import android.text.format.DateUtils
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
@@ -33,6 +35,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -41,12 +44,16 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.CallSplit
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.CameraAlt
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.MoreVert
@@ -54,6 +61,7 @@ import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.StopCircle
+import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
@@ -63,7 +71,6 @@ import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -74,7 +81,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.VerticalDivider
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -87,6 +96,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
@@ -98,6 +108,7 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -350,7 +361,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
                     }, modifier = Modifier.weight(1f))
                 }
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                    Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                    Surface(shape = RoundedCornerShape(28.dp), color = chatPanelColor(raised = true)) {
                         Column(Modifier.padding(4.dp).testTag("assistant-composer-panel")) {
                             Row(verticalAlignment = Alignment.Bottom) {
                                 if (tightWindow) {
@@ -386,10 +397,16 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
                             }
                             if (!tightWindow) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    IconButton(onClick = { composerSheet = "attachments" }) { Icon(Icons.Outlined.Add, "Add attachment") }
-                                    TextButton(onClick = { composerSheet = "model" }) {
-                                        Text(if (state.usesProvider) "DeepSeek Flash · Standard" else "Sample · Standard", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        Icon(Icons.Outlined.KeyboardArrowDown, null)
+                                    Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                                        Surface(onClick = { composerSheet = "attachments" }, shape = CircleShape, color = chatControlColor(), modifier = Modifier.size(40.dp)) {
+                                            Box(contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Add, "Add attachment", Modifier.size(22.dp)) }
+                                        }
+                                    }
+                                    Surface(onClick = { composerSheet = "model" }, shape = CircleShape, color = chatControlColor(), modifier = Modifier.weight(1f, fill = false)) {
+                                        Row(Modifier.heightIn(min = 40.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            Text(if (state.usesProvider) "DeepSeek Flash" else "Sample", modifier = Modifier.weight(1f, fill = false), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text("Standard", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                                        }
                                     }
                                 }
                             }
@@ -434,14 +451,38 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
     }
 
     if (historyVisible) {
-        PreviewDialog("Chats for ${state.context.name}", onDismiss = { historyVisible = false }) {
+        PreviewDialog("Chats", onDismiss = { historyVisible = false }) {
+            Text(state.context.name, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (state.conversations.size >= AssistantPreviewState.MAX_CHATS) Text("Chat limit reached. Delete a chat to continue.")
-            state.history.forEach { entry ->
-                TextButton(onClick = {
-                    state.select(entry.id)
-                    historyVisible = false
-                }, enabled = state.canChange, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (entry.pinned) "Pinned · ${entry.title}" else entry.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            val history = state.history
+            listOf(true, false).forEach { pinned ->
+                val entries = history.filter { it.pinned == pinned }
+                if (entries.isNotEmpty()) {
+                    Text(if (pinned) "Pinned" else "Recent", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+                    Column {
+                        entries.forEach { entry ->
+                            val current = entry.id == state.selectedId
+                            Surface(
+                                onClick = {
+                                    state.select(entry.id)
+                                    historyVisible = false
+                                },
+                                enabled = state.canChange,
+                                color = if (current) chatPanelColor(raised = true) else Color.Transparent,
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier.fillMaxWidth().semantics { selected = current }.testTag("assistant-history-${entry.id}"),
+                            ) {
+                                Row(Modifier.heightIn(min = 76.dp).padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Icon(if (entry.pinned) Icons.Outlined.PushPin else Icons.Outlined.ChatBubbleOutline, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(entry.title, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        Text(DateUtils.getRelativeTimeSpanString(entry.updatedAtMs, System.currentTimeMillis(), DateUtils.DAY_IN_MILLIS).toString(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    if (current) Icon(Icons.Outlined.Check, "Current chat", Modifier.size(20.dp))
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -613,12 +654,51 @@ private fun MessageText(text: String, speaker: String, modifier: Modifier = Modi
 
 @Composable
 private fun PreviewDialog(title: String, onDismiss: () -> Unit, content: @Composable () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) { content() } },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
-    )
+    ChatPanel(title, onDismiss, content = content)
+}
+
+@Composable
+private fun chatPanelColor(raised: Boolean = false): Color {
+    val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    return if (dark) Color(if (raised) 0xFF222222 else 0xFF141414) else Color(if (raised) 0xFFF0EFEB else 0xFFFAF9F6)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChatPanel(title: String, onDismiss: () -> Unit, onBack: (() -> Unit)? = null, content: @Composable () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val dark = colors.surface.luminance() < 0.5f
+    val density = LocalDensity.current
+    MaterialTheme(
+        colorScheme = colors.copy(
+            surface = chatPanelColor(),
+            onSurface = if (dark) Color(0xFFF2F1EE) else Color(0xFF20201E),
+            onSurfaceVariant = if (dark) Color(0xFFA3A39B) else Color(0xFF6D6D66),
+            primary = if (dark) Color(0xFFF2F1EE) else Color(0xFF20201E),
+        ),
+    ) {
+        ModalBottomSheet(
+            onDismissRequest = onDismiss,
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            dragHandle = null,
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            containerColor = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp,
+        ) {
+            CompositionLocalProvider(LocalDensity provides density) {
+                Column(Modifier.fillMaxWidth()) {
+                    Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).heightIn(min = 56.dp)) {
+                        Text(title, Modifier.align(Alignment.Center).padding(horizontal = 52.dp, vertical = 12.dp), style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        IconButton(onClick = onBack ?: onDismiss, modifier = Modifier.align(Alignment.CenterStart)) {
+                            Icon(if (onBack == null) Icons.Outlined.Close else Icons.AutoMirrored.Outlined.ArrowBack, if (onBack == null) "Close $title" else "Back to models")
+                        }
+                        if (onBack != null) IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterEnd)) { Icon(Icons.Outlined.Close, "Close $title") }
+                    }
+                    Column(Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { content() }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -721,46 +801,93 @@ private fun DiffValue(label: String, value: String, added: Boolean) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ComposerOptions(sheet: String, provider: Boolean, onSelect: (String) -> Unit, onDismiss: () -> Unit) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.padding(bottom = 24.dp).verticalScroll(rememberScrollState())) {
-            Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, "Close options") }
-                Text(
-                    when (sheet) {
-                        "attachments" -> "Add to chat"
-                        "effort" -> "Effort"
-                        else -> "Select model"
-                    },
-                    Modifier.padding(vertical = 12.dp),
-                    style = MaterialTheme.typography.titleLarge,
-                )
+    val title = when (sheet) {
+        "attachments" -> "Add to chat"
+        "effort" -> "Effort"
+        else -> "Select model"
+    }
+    ChatPanel(title, onDismiss, onBack = if (sheet == "effort") ({ onSelect("model") }) else null) {
+        when (sheet) {
+            "attachments" -> {
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    if (maxWidth < 300.dp || LocalDensity.current.fontScale > 1.5f) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            PanelOption("Camera", icon = Icons.Outlined.CameraAlt, enabled = false)
+                            PanelOption("Photos", icon = Icons.Outlined.Image, enabled = false)
+                            PanelOption("Files", icon = Icons.Outlined.UploadFile, enabled = false)
+                        }
+                    } else {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            AttachmentTile("Camera", Icons.Outlined.CameraAlt, Modifier.weight(1f))
+                            AttachmentTile("Photos", Icons.Outlined.Image, Modifier.weight(1f))
+                            AttachmentTile("Files", Icons.Outlined.UploadFile, Modifier.weight(1f))
+                        }
+                    }
+                }
+                Text("Attachments coming soon", Modifier.fillMaxWidth(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            when (sheet) {
-                "attachments" -> {
-                    Text("Attachments coming soon", Modifier.padding(horizontal = 24.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    listOf("Take a photo", "Add photos", "Attach files").forEach { FutureOption(it) }
-                }
 
-                "effort" -> {
-                    ListItem(headlineContent = { Text("Standard") }, supportingContent = { Text("Current setting") })
-                    listOf("Low", "Medium", "High", "Extra", "Max").forEach { FutureOption(it) }
-                    TextButton(onClick = { onSelect("model") }, modifier = Modifier.padding(horizontal = 16.dp)) { Text("Back to models") }
+            "effort" -> {
+                Surface(shape = RoundedCornerShape(18.dp), color = chatPanelColor(raised = true)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        PanelOption("Standard", subtitle = "Current setting", selected = true)
+                        listOf("Low", "Medium", "High", "Extra", "Max").forEach { PanelOption(it, enabled = false) }
+                    }
                 }
+            }
 
-                else -> {
-                    ListItem(headlineContent = { Text(if (provider) "DeepSeek Flash" else "Sample chat") }, supportingContent = { Text("Current model") }, trailingContent = { Text("Selected", color = MaterialTheme.colorScheme.primary) })
-                    ListItem(headlineContent = { Text("Effort") }, trailingContent = { Text("Standard ›") }, modifier = Modifier.clickable { onSelect("effort") })
-                    FutureOption("More models")
-                }
+            else -> {
+                PanelOption(if (provider) "DeepSeek Flash" else "Sample chat", subtitle = if (provider) "Fast responses" else "Offline preview", selected = true)
+                PanelOption("Effort", value = "Standard", onClick = { onSelect("effort") })
+                PanelOption("More models", enabled = false)
             }
         }
     }
 }
 
 @Composable
-private fun FutureOption(label: String) {
-    ListItem(headlineContent = { Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant) }, supportingContent = { Text("Coming soon", style = MaterialTheme.typography.labelSmall) }, modifier = Modifier.semantics { disabled() })
+private fun PanelOption(
+    label: String,
+    subtitle: String? = null,
+    value: String? = null,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    selected: Boolean = false,
+    enabled: Boolean = true,
+    onClick: (() -> Unit)? = null,
+) {
+    val modifier = Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(enabled = enabled, onClick = onClick) else Modifier)
+        .semantics(mergeDescendants = true) {
+            if (!enabled) disabled()
+            this.selected = selected
+        }
+    Surface(shape = RoundedCornerShape(18.dp), color = chatPanelColor(raised = true), modifier = modifier) {
+        Row(Modifier.heightIn(min = 56.dp).padding(horizontal = 14.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (icon != null) Icon(icon, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(label, style = MaterialTheme.typography.bodyLarge)
+                if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (!enabled) Text("Soon", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (value != null) Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (selected) Icon(Icons.Outlined.Check, "Selected", Modifier.size(24.dp), tint = Color(0xFF66A8EF))
+            if (onClick != null) Icon(Icons.Outlined.ChevronRight, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }
+
+@Composable
+private fun AttachmentTile(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier) {
+    Surface(shape = RoundedCornerShape(18.dp), color = chatPanelColor(raised = true), modifier = modifier.semantics(mergeDescendants = true) { disabled() }) {
+        Column(Modifier.heightIn(min = 108.dp).padding(vertical = 16.dp, horizontal = 8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Surface(shape = CircleShape, color = chatControlColor()) {
+                Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(24.dp)) }
+            }
+            Text(label, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun chatControlColor(): Color = if (MaterialTheme.colorScheme.surface.luminance() < 0.5f) Color(0xFF333333) else Color(0xFFE4E3DF)

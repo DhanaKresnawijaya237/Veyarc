@@ -12,6 +12,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -183,22 +185,40 @@ class AssistantPreviewUiTest {
         capture("chat-menu")
         compose.onNodeWithText("Pin").performClick()
         compose.runOnIdle { org.junit.Assert.assertTrue(state.conversation!!.pinned) }
+        val branchId = state.selectedId!!
+        compose.onNodeWithContentDescription("Chat options").performClick()
+        compose.onNodeWithText("Chat history").performClick()
+        compose.onNodeWithTag("assistant-history-$branchId").assertIsSelected()
+        compose.onNodeWithTag("assistant-history-${original.id}").assertIsNotSelected()
+        compose.onNodeWithText("Done").assertDoesNotExist()
+        capture("history-dark")
+        compose.onNodeWithContentDescription("Close Chats").performClick()
         compose.onNodeWithContentDescription("Chat options").performClick()
         compose.onNodeWithText("More").performClick()
         compose.onNodeWithText("Workflow context").assertIsDisplayed()
+        compose.onNodeWithText("Chat storage").performClick()
+        compose.onNodeWithText("Done").assertDoesNotExist()
+        capture("storage-dark")
+        compose.onNodeWithContentDescription("Close Chat storage").performClick()
+        compose.onNodeWithContentDescription("Chat options").performClick()
+        compose.onNodeWithText("More").performClick()
         Espresso.pressBack()
         compose.onNodeWithContentDescription("Add attachment").performClick()
         compose.onNodeWithText("Attachments coming soon").assertIsDisplayed()
-        compose.onNodeWithText("Add photos").assertIsNotEnabled()
+        compose.onNodeWithText("Photos").assertIsNotEnabled()
         capture("attachments")
         Espresso.pressBack()
-        compose.onNodeWithText("Sample · Standard").performClick()
+        compose.onNodeWithText("Sample").performClick()
         compose.onNodeWithText("Select model").assertIsDisplayed()
         compose.onNodeWithText("More models").assertIsNotEnabled()
         capture("models")
         compose.onNodeWithText("Effort").performClick()
         compose.onNodeWithText("High").assertIsNotEnabled()
         capture("effort")
+        compose.onNodeWithContentDescription("Back to models").performClick()
+        compose.onNodeWithText("Select model").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Close Select model").performClick()
+        compose.onNodeWithTag("assistant-composer").assertIsDisplayed()
     }
 
     @Test
@@ -249,10 +269,20 @@ class AssistantPreviewUiTest {
         capture("empty-dark-large-text")
         compose.onNodeWithContentDescription("Chat options").performClick()
         compose.onNodeWithText("Chat history").performClick()
-        compose.onNodeWithText("Chats for A workflow with a deliberately long name").assertExists()
-        compose.onNodeWithText("Done").performClick()
+        compose.onNodeWithText("Chats").assertIsDisplayed()
+        compose.onNodeWithText("Done").assertDoesNotExist()
+        capture("history-large-text")
+        compose.onNodeWithContentDescription("Close Chats").performClick()
+        val originalId = state.selectedId!!
         compose.onNodeWithContentDescription("New chat").performClick()
         assertEquals(2, state.history.size)
+        compose.onNodeWithContentDescription("Chat options").performClick()
+        compose.onNodeWithText("Chat history").performClick()
+        compose.onNodeWithTag("assistant-history-$originalId").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertEquals(originalId, state.selectedId)
+            assertEquals("Explain", state.conversation!!.composer)
+        }
     }
 
     @Test
@@ -268,7 +298,7 @@ class AssistantPreviewUiTest {
         compose.onNodeWithText("Show shared data").performScrollTo().performClick()
         compose.onNodeWithTag("assistant-context-json").assertTextContains("Unsaved context name", substring = true)
         capture("workflow-context")
-        compose.onNodeWithText("Done").performClick()
+        compose.onNodeWithContentDescription("Close Workflow context").performClick()
         compose.runOnIdle {
             state.compose("Explain")
             state.send()
@@ -282,7 +312,7 @@ class AssistantPreviewUiTest {
         compose.onNodeWithText("Captured workflow context").assertExists()
         compose.onNodeWithText("Show shared data").performScrollTo().performClick()
         compose.onNodeWithTag("assistant-context-json").assertTextContains("Unsaved context name", substring = true)
-        compose.onNodeWithText("Done").performClick()
+        compose.onNodeWithContentDescription("Close Captured workflow context").performClick()
         compose.onNodeWithContentDescription("Chat options").performClick()
         compose.onNodeWithText("More").performClick()
         compose.onNodeWithText("Workflow context").performClick()
