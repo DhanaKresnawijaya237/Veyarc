@@ -10,6 +10,9 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.ScrollableState
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,13 +21,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
@@ -109,6 +115,8 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
@@ -462,9 +470,10 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
     }
 
     if (historyVisible) {
-        ChatPanel("Chats", onDismiss = { historyVisible = false }, scrollBody = false) {
+        val historyList = rememberLazyListState()
+        ChatPanel("Chats", onDismiss = { historyVisible = false }, scrollBody = false, bodyState = historyList) {
             val history = state.history
-            LazyColumn(Modifier.fillMaxWidth().testTag("assistant-history-list"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            LazyColumn(Modifier.fillMaxWidth().testTag("assistant-history-list"), state = historyList, overscrollEffect = null, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 item { Text(state.context.name, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) }
                 listOf(true, false).forEach { pinned ->
                     val entries = history.filter { it.pinned == pinned }
@@ -769,10 +778,13 @@ private fun chatPanelColor(raised: Boolean = false): Color {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ChatPanel(title: String, onDismiss: () -> Unit, onBack: (() -> Unit)? = null, scrollBody: Boolean = true, content: @Composable () -> Unit) {
+private fun ChatPanel(title: String, onDismiss: () -> Unit, onBack: (() -> Unit)? = null, scrollBody: Boolean = true, bodyState: ScrollableState? = null, content: @Composable () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val dark = colors.surface.luminance() < 0.5f
     val density = LocalDensity.current
+    val scroll = rememberScrollState()
+    val scrolling = bodyState ?: scroll
+    val routing = remember(scrolling) { PanelScrollConnection() }
     MaterialTheme(
         colorScheme = colors.copy(
             surface = chatPanelColor(),
@@ -782,9 +794,12 @@ private fun ChatPanel(title: String, onDismiss: () -> Unit, onBack: (() -> Unit)
         ),
     ) {
         ModalBottomSheet(
+            modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
             onDismissRequest = onDismiss,
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-            sheetGesturesEnabled = false,
+            sheetGesturesEnabled = true,
+            // Keep the sheet's measured height independent of its changing drag offset.
+            contentWindowInsets = { WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal) },
             dragHandle = null,
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
             containerColor = MaterialTheme.colorScheme.surface,
@@ -799,11 +814,33 @@ private fun ChatPanel(title: String, onDismiss: () -> Unit, onBack: (() -> Unit)
                         }
                         if (onBack != null) IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterEnd)) { Icon(Icons.Outlined.Close, "Close $title") }
                     }
-                    Column(Modifier.fillMaxWidth().weight(1f, fill = false).testTag("assistant-panel-scroll").nestedScroll(IsolatedScroll).then(if (scrollBody) Modifier.verticalScroll(rememberScrollState()) else Modifier).padding(start = 12.dp, end = 12.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { content() }
+                    Column(
+                        Modifier.fillMaxWidth().weight(1f, fill = false).testTag("assistant-panel-scroll")
+                            .pointerInput(routing) {
+                                awaitEachGesture {
+                                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                    routing.pullSheet = !scrolling.canScrollBackward
+                                }
+                            }
+                            .nestedScroll(routing).then(if (scrollBody) Modifier.verticalScroll(scroll, overscrollEffect = null) else Modifier).padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) { content() }
                 }
             }
         }
     }
+}
+
+/** A drag that scrolls content keeps ownership until release, including any leftover fling. */
+private class PanelScrollConnection : NestedScrollConnection {
+    var pullSheet = false
+
+    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+        if (consumed.y != 0f) pullSheet = false
+        return if (pullSheet && available.y > 0f && source == NestedScrollSource.UserInput) Offset.Zero else Offset(0f, available.y)
+    }
+
+    override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity = if (pullSheet && available.y > 0f) Velocity.Zero else Velocity(0f, available.y)
 }
 
 @Composable

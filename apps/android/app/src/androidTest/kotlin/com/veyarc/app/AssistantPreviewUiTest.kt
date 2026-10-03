@@ -8,6 +8,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
@@ -33,6 +34,7 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipe
 import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.Density
@@ -764,7 +766,7 @@ class AssistantPreviewUiTest {
     }
 
     @Test
-    fun panelBoundaryFlingsKeepEveryPanelStationary() {
+    fun panelBoundariesStayStableAndEveryHeaderStillDrags() {
         val state = AssistantPreviewState().apply {
             open(AssistantPreviewContext())
             repeat(80) { index ->
@@ -788,10 +790,8 @@ class AssistantPreviewUiTest {
             val header = compose.onNodeWithTag("assistant-panel-header").fetchSemanticsNode().boundsInRoot
             compose.mainClock.autoAdvance = false
             try {
-                repeat(4) { index ->
-                    compose.onNodeWithTag(scrollTag).performTouchInput {
-                        if (index < 2) swipeUp(durationMillis = 100) else swipeDown(durationMillis = 100)
-                    }
+                repeat(2) {
+                    compose.onNodeWithTag(scrollTag).performTouchInput { swipeUp(durationMillis = 100) }
                     repeat(45) {
                         compose.mainClock.advanceTimeByFrame()
                         val now = compose.onNodeWithTag("assistant-panel").fetchSemanticsNode().boundsInRoot
@@ -802,6 +802,18 @@ class AssistantPreviewUiTest {
             } finally {
                 compose.mainClock.autoAdvance = true
             }
+            val density = InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
+            compose.onNodeWithTag("assistant-panel-header").performTouchInput {
+                down(center)
+                moveBy(Offset(0f, 28f * density), delayMillis = 300)
+            }
+            org.junit.Assert.assertTrue("$title header must pull the panel", compose.onNodeWithTag("assistant-panel").fetchSemanticsNode().boundsInRoot.top > before.top + 4f)
+            compose.onNodeWithTag("assistant-panel-header").performTouchInput {
+                advanceEventTime(500)
+                up()
+            }
+            compose.waitForIdle()
+            assertEquals("$title must return to its stable position", before.top, compose.onNodeWithTag("assistant-panel").fetchSemanticsNode().boundsInRoot.top, 2f)
             capture("stable-${title.lowercase().replace(' ', '-')}")
         }
         compose.onNodeWithContentDescription("Chat options").performClick()
@@ -828,6 +840,46 @@ class AssistantPreviewUiTest {
         compose.onNodeWithText("Effort").performScrollTo().performClick()
         checkPanel("Effort")
         compose.onNodeWithContentDescription("Close Effort").performClick()
+    }
+
+    @Test
+    fun historyScrollReachesTopWithoutPullingThenFreshPullAndHeaderDragDismiss() {
+        val state = AssistantPreviewState().apply {
+            open(AssistantPreviewContext())
+            repeat(20) { index ->
+                compose("Saved chat $index")
+                send()
+                repeat(100) { requestId?.let(::advance) }
+                newChat()
+            }
+        }
+        compose.setContent { VeyarcTheme(darkTheme = true) { AssistantPreviewScreen(state) } }
+        fun openHistory() {
+            compose.onNodeWithContentDescription("Chat options").performClick()
+            compose.onNodeWithText("Chat history").performClick()
+            compose.waitForIdle()
+        }
+        openHistory()
+        compose.onNodeWithTag("assistant-history-list").performScrollToIndex(3)
+        val top = compose.onNodeWithTag("assistant-panel").fetchSemanticsNode().boundsInRoot.top
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithTag("assistant-history-list").performTouchInput { swipeDown(durationMillis = 400) }
+        repeat(45) {
+            compose.mainClock.advanceTimeByFrame()
+            assertEquals("Returning content to the top must not drag the sheet", top, compose.onNodeWithTag("assistant-panel").fetchSemanticsNode().boundsInRoot.top, 2f)
+        }
+        compose.mainClock.autoAdvance = true
+        compose.onNodeWithTag("assistant-history-list").performScrollToIndex(0)
+        compose.onNodeWithTag("assistant-history-list").performTouchInput { swipeDown(durationMillis = 400) }
+        compose.onNodeWithTag("assistant-panel").assertDoesNotExist()
+        openHistory()
+        compose.onNodeWithTag("assistant-history-list").performScrollToIndex(10)
+        val density = InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
+        compose.onNodeWithTag("assistant-panel-header").performTouchInput {
+            swipe(start = center, end = center + Offset(0f, 240f * density), durationMillis = 400)
+        }
+        compose.onNodeWithTag("assistant-panel").assertDoesNotExist()
+        compose.onNodeWithTag("assistant-composer").assertIsDisplayed()
     }
 
     private fun capture(name: String) {
