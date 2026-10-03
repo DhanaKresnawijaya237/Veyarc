@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -63,6 +64,7 @@ import com.veyarc.automation.android.ReplayFloatingController
 import com.veyarc.automation.android.ShizukuTouchProbe
 import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowSummary
+import com.veyarc.feature.assistant.AssistantPanel
 import com.veyarc.model.bundle.BundleLimits
 import com.veyarc.model.bundle.VeyarcBundle
 import kotlinx.coroutines.Dispatchers
@@ -473,28 +475,36 @@ fun SettingsScreen(
             runCatching { if (assetName == "ai-chat-guide.md") AI_CHAT_HELP else context.assets.open(assetName).bufferedReader().use { it.readText() } }
                 .getOrElse { "This guide could not be loaded: ${it.message ?: it.javaClass.simpleName}" }
         }
-        Dialog(onDismissRequest = { openGuide = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            Card(Modifier.fillMaxWidth(0.94f).fillMaxHeight(0.9f)) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-                        TextButton(onClick = { openGuide = null }) { Text("Close") }
-                    }
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(guide.lines().filter(String::isNotBlank)) { line ->
-                            when {
-                                line.startsWith("# ") -> Unit
+        val guideList = rememberLazyListState()
+        val guideContent: @Composable () -> Unit = {
+            LazyColumn(state = guideList, overscrollEffect = null, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(guide.lines().filter(String::isNotBlank)) { line ->
+                    when {
+                        line.startsWith("# ") -> Unit
 
-                                line.startsWith("## ") -> Text(line.removePrefix("## "), style = MaterialTheme.typography.titleMedium)
+                        line.startsWith("## ") -> Text(line.removePrefix("## "), style = MaterialTheme.typography.titleMedium)
 
-                                line.startsWith("- ") -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("•", style = MaterialTheme.typography.bodyMedium)
-                                    Text(line.removePrefix("- "), style = MaterialTheme.typography.bodyMedium)
-                                }
-
-                                else -> Text(line, style = MaterialTheme.typography.bodyMedium)
-                            }
+                        line.startsWith("- ") -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("•", style = MaterialTheme.typography.bodyMedium)
+                            Text(line.removePrefix("- "), style = MaterialTheme.typography.bodyMedium)
                         }
+
+                        else -> Text(line, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+        }
+        if (assetName == "ai-chat-guide.md") {
+            AssistantPanel(title, onDismiss = { openGuide = null }, scrollBody = false, bodyState = guideList, content = guideContent)
+        } else {
+            Dialog(onDismissRequest = { openGuide = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+                Card(Modifier.fillMaxWidth(0.94f).fillMaxHeight(0.9f)) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                            TextButton(onClick = { openGuide = null }) { Text("Close") }
+                        }
+                        guideContent()
                     }
                 }
             }

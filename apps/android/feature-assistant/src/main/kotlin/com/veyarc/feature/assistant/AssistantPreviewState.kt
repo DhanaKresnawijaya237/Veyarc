@@ -73,6 +73,7 @@ data class PreviewTurn(
     val provider: Boolean = false,
     val effort: DeepSeekEffort = DeepSeekEffort.OFF,
     val thinking: AssistantThinking? = null,
+    val model: DeepSeekModel = DeepSeekModel.FLASH,
 )
 
 @Serializable
@@ -89,6 +90,7 @@ data class PreviewConversation(
     val formatVersion: Int = 1,
     val pinned: Boolean = false,
     val effort: DeepSeekEffort = DeepSeekEffort.OFF,
+    val model: DeepSeekModel = DeepSeekModel.FLASH,
 )
 
 /** Null storage is reserved for deterministic UI/unit fixtures. The app supplies encrypted storage. */
@@ -98,6 +100,7 @@ class AssistantPreviewState(
     private val compileCandidate: ((WorkflowDocument) -> List<String>)? = null,
     private val applyCandidate: ((String, AssistantContextSnapshot, String) -> Boolean)? = null,
     private val providerCall: (suspend (DeepSeekRequest) -> ByteArray)? = null,
+    private val onModelChanged: ((DeepSeekModel) -> Unit)? = null,
     private var contextSource: (() -> AssistantContextCapture)? = null,
 ) {
     var isOpen by mutableStateOf(false)
@@ -127,6 +130,9 @@ class AssistantPreviewState(
         private set
     var testingConnection by mutableStateOf(false)
         private set
+    var defaultModel by mutableStateOf(DeepSeekModel.FLASH)
+        private set
+    val selectedModel: DeepSeekModel get() = conversation?.model ?: defaultModel
     val usesProvider: Boolean get() = providerCall != null
     val isResponding: Boolean get() = requestId != null || pendingRequestId != null || testingConnection
     private var providerJob: Job? = null
@@ -170,9 +176,10 @@ class AssistantPreviewState(
         val generation = applyGeneration
         testingConnection = true
         connectionTestStatus = null
+        val model = selectedModel
         providerJob = requireNotNull(scope).launch {
             try {
-                val request = DeepSeekRequest.connectionTest()
+                val request = DeepSeekRequest.connectionTest(model)
                 val bytes = providerCall(request)
                 if (testingConnection && providerEnabled && generation == applyGeneration) {
                     val response = AssistantResponseCodec.decode(bytes, request.requestId, request.conversationId, request.baseSnapshotId)
@@ -305,6 +312,18 @@ class AssistantPreviewState(
         flush()
     }
 
+    fun restoreModelPreference(model: DeepSeekModel) {
+        defaultModel = model
+    }
+
+    fun setModel(model: DeepSeekModel) {
+        if (!usesProvider || !canChange || isResponding) return
+        defaultModel = model
+        update { it.copy(model = model) }
+        onModelChanged?.invoke(model)
+        flush()
+    }
+
     fun newChat() {
         if (!canChange || conversation?.let { it.workflowId == context.workflowId && it.turns.isEmpty() } == true) return
         stop(PreviewReplyStatus.INTERRUPTED)
@@ -312,7 +331,7 @@ class AssistantPreviewState(
     }
 
     private fun createChat() {
-        val chat = PreviewConversation(UUID.randomUUID().toString(), context.workflowId, context = context)
+        val chat = PreviewConversation(UUID.randomUUID().toString(), context.workflowId, context = context, model = defaultModel)
         conversations = conversations + chat
         selectedId = chat.id
         persist(chat)
@@ -386,6 +405,7 @@ class AssistantPreviewState(
                 outcome = null, responseError = null, proposal = null, proposalDismissed = false,
                 localBindingId = if (turn.applyState == ProposalApplyState.NONE) turn.localBindingId else null,
                 effort = requireNotNull(conversation).effort,
+                model = requireNotNull(conversation).model,
             )
         }
         begin(token)
@@ -494,7 +514,7 @@ class AssistantPreviewState(
         }
         val current = requireNotNull(conversation)
         val prompt = current.composer.trim()
-        val turn = PreviewTurn(UUID.randomUUID().toString(), prompt, scenario, baseSnapshot = capture.snapshot, localBindingId = capture.localBindingId, provider = usesProvider, effort = current.effort)
+        val turn = PreviewTurn(UUID.randomUUID().toString(), prompt, scenario, baseSnapshot = capture.snapshot, localBindingId = capture.localBindingId, provider = usesProvider, effort = current.effort, model = current.model)
         val updated = current.copy(
             title = if (current.turns.isEmpty() && current.title == "New chat") prompt.take(48) else current.title,
             composer = "",
@@ -572,7 +592,7 @@ class AssistantPreviewState(
                 ),
             )
         }
-        return DeepSeekRequest.create(current.requestId, chat.id, current.responseBaseId(chat), current.prompt, current.baseSnapshot, history, streaming = true, effort = current.effort, onThinking = onThinking)
+        return DeepSeekRequest.create(current.requestId, chat.id, current.responseBaseId(chat), current.prompt, current.baseSnapshot, history, streaming = true, effort = current.effort, onThinking = onThinking, model = current.model)
     }
 
     private fun receiveThinking(token: String, thinking: AssistantThinking) {
@@ -670,7 +690,7 @@ class AssistantPreviewState(
     fun retry() {
         if (!canRetry) return
         val token = UUID.randomUUID().toString()
-        updateLast { it.copy(reply = "", thinking = null, status = PreviewReplyStatus.RESPONDING, requestId = token, attempt = it.attempt + 1, outcome = null, responseError = null, proposal = null, effort = requireNotNull(conversation).effort) }
+        updateLast { it.copy(reply = "", thinking = null, status = PreviewReplyStatus.RESPONDING, requestId = token, attempt = it.attempt + 1, outcome = null, responseError = null, proposal = null, effort = requireNotNull(conversation).effort, model = requireNotNull(conversation).model) }
         begin(token)
     }
 

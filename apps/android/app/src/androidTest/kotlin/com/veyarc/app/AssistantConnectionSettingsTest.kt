@@ -144,12 +144,12 @@ class AssistantConnectionSettingsTest {
             capture("settings")
             compose.onNodeWithText("Privacy and costs").performScrollTo().performClick()
             compose.onNodeWithText("Provider privacy policy").performScrollTo().assertExists()
-            compose.onNodeWithText("Done").performClick()
+            compose.onNodeWithContentDescription("Close Privacy and costs").performClick()
             compose.onNodeWithText("Enable AI").performScrollTo().performClick()
             capture("consent")
             compose.onNodeWithText("Details").performScrollTo().performClick()
             compose.onNodeWithText("Provider API terms").performScrollTo().assertExists()
-            compose.onNodeWithText("Done").performClick()
+            compose.onNodeWithContentDescription("Close Privacy and costs").performClick()
             compose.runOnIdle { org.junit.Assert.assertEquals(0, calls) }
             compose.onNodeWithText("Enable for this session").performClick()
             compose.runOnIdle {

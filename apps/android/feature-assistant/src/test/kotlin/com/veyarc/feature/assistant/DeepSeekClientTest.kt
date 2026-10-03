@@ -41,6 +41,24 @@ class DeepSeekClientTest {
     private val key = "fixture-secret-never-real"
 
     @Test
+    fun bothModelsUseTheirWireIdAndRejectTheOtherModelsResponse() = server { server, url ->
+        var sentModel: String? = null
+        var replyModel = DeepSeekModel.FLASH.apiId
+        server.createContext("/chat/completions") { exchange ->
+            sentModel = Json.parseToJsonElement(exchange.requestBody.bufferedReader().use { it.readText() }).jsonObject.getValue("model").jsonPrimitive.content
+            exchange.respond(200, envelope(model = replyModel))
+        }
+        DeepSeekModel.entries.forEach { model ->
+            val selected = DeepSeekRequest.create("request", "chat", "draft:draft", "Explain", null, model = model)
+            replyModel = model.apiId
+            assertArrayEquals(content, DeepSeekClient(url).complete(selected, key))
+            assertEquals(model.apiId, sentModel)
+            replyModel = DeepSeekModel.entries.first { it != model }.apiId
+            failure(DeepSeekFailure.INVALID_RESPONSE) { DeepSeekClient(url).complete(selected, key) }
+        }
+    }
+
+    @Test
     fun effortControlsProviderThinkingAndKeepsReasoningSeparateFromValidatedContent() {
         val thinkingEnvelope = envelope().toString(Charsets.UTF_8).replace("\"role\":\"assistant\"", "\"role\":\"assistant\",\"reasoning_content\":\"Untrusted thought, not workflow JSON\"")
         DeepSeekEffort.entries.forEach { effort ->
@@ -280,9 +298,9 @@ class DeepSeekClientTest {
         }
     }
 
-    private fun envelope(text: String = content.toString(Charsets.UTF_8)): ByteArray = buildJsonObject {
+    private fun envelope(text: String = content.toString(Charsets.UTF_8), model: String = DeepSeekModel.FLASH.apiId): ByteArray = buildJsonObject {
         put("object", "chat.completion")
-        put("model", "deepseek-flash")
+        put("model", model)
         put(
             "choices",
             JsonArray(

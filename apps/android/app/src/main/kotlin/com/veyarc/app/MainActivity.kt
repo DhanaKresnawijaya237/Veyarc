@@ -542,7 +542,14 @@ class MainEditorSession(application: Application) : AndroidViewModel(application
             }
             deepSeek.await(request, key)
         },
+        onModelChanged = { model -> viewModelScope.launch { AppPreferences.setAssistantModel(application, model) } },
     )
+
+    init {
+        viewModelScope.launch {
+            assistant.restoreModelPreference(AppPreferences.observe(application).first().assistantModel)
+        }
+    }
 
     override fun onCleared() {
         assistant.dispose()

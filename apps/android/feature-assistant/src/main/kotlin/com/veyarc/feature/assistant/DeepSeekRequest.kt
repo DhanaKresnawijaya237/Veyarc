@@ -12,6 +12,12 @@ import java.util.UUID
 @Serializable
 enum class DeepSeekEffort(val label: String) { OFF("Off"), LOW("Low"), HIGH("High"), MAX("Max") }
 
+@Serializable
+enum class DeepSeekModel(val apiId: String, val label: String, val shortLabel: String) {
+    FLASH("deepseek-flash", "DeepSeek V4.1 Flash", "V4.1 Flash"),
+    PRO("deepseek-v4-pro", "DeepSeek V4 Pro", "V4 Pro"),
+}
+
 /** Only completed, validated provider exchanges from this conversation belong here.
  * The 4E chat bridge must exclude local samples, failures, and interrupted turns. */
 class DeepSeekHistoryTurn(val prompt: String, val response: AssistantResponse)
@@ -24,6 +30,7 @@ class DeepSeekRequest private constructor(
     internal val baseSnapshotId: String,
     internal val streaming: Boolean,
     internal val effort: DeepSeekEffort,
+    internal val model: DeepSeekModel,
     private val onThinking: ((AssistantThinking) -> Unit)? = null,
 ) {
     @Volatile
@@ -40,7 +47,6 @@ class DeepSeekRequest private constructor(
     companion object {
         const val MAX_BYTES = 2 * 1024 * 1024
         internal const val MAX_OUTPUT_TOKENS = 393216
-        internal const val MODEL = "deepseek-flash"
 
         fun create(
             requestId: String,
@@ -52,6 +58,7 @@ class DeepSeekRequest private constructor(
             streaming: Boolean = false,
             effort: DeepSeekEffort = DeepSeekEffort.OFF,
             onThinking: ((AssistantThinking) -> Unit)? = null,
+            model: DeepSeekModel = DeepSeekModel.FLASH,
         ): DeepSeekRequest = try {
             require(listOf(requestId, conversationId, baseSnapshotId).all { it.isNotBlank() && it.length <= 128 })
             require(prompt.isNotBlank() && prompt.length <= AssistantPreviewState.MAX_PROMPT_LENGTH)
@@ -70,7 +77,7 @@ class DeepSeekRequest private constructor(
             val system = message("system", systemPrompt)
             val user = message("user", current.toString())
             val selected = ArrayDeque<kotlinx.serialization.json.JsonObject>()
-            var size = requestBody(listOf(system, user), MAX_OUTPUT_TOKENS, streaming, effort).size
+            var size = requestBody(listOf(system, user), MAX_OUTPUT_TOKENS, streaming, effort, model).size
             if (size > MAX_BYTES) throw DeepSeekException(DeepSeekFailure.REQUEST_TOO_LARGE)
             // Keep the complete local chat. Only the oldest context falls outside the request byte budget.
             for (turn in history.asReversed()) {
@@ -86,27 +93,27 @@ class DeepSeekRequest private constructor(
                 selected.addFirst(oldAssistant)
                 selected.addFirst(oldUser)
             }
-            val bytes = requestBody(listOf(system) + selected + user, MAX_OUTPUT_TOKENS, streaming, effort)
+            val bytes = requestBody(listOf(system) + selected + user, MAX_OUTPUT_TOKENS, streaming, effort, model)
             if (bytes.size > MAX_BYTES) throw DeepSeekException(DeepSeekFailure.REQUEST_TOO_LARGE)
-            DeepSeekRequest(bytes, requestId, conversationId, baseSnapshotId, streaming, effort, onThinking)
+            DeepSeekRequest(bytes, requestId, conversationId, baseSnapshotId, streaming, effort, model, onThinking)
         } catch (error: DeepSeekException) {
             throw error
         } catch (_: Exception) {
             throw DeepSeekException(DeepSeekFailure.INVALID_REQUEST)
         }
 
-        internal fun connectionTest(): DeepSeekRequest {
+        internal fun connectionTest(model: DeepSeekModel = DeepSeekModel.FLASH): DeepSeekRequest {
             val id = UUID.randomUUID().toString()
             val example = AssistantResponseCodec.encode(AssistantResponse(1, id, id, "connection-test", AssistantOutcome.EXPLANATION, "Connected"))
             val messages = listOf(
                 message("system", "Return only this JSON object, with all IDs unchanged: ${example.toString(Charsets.UTF_8)}"),
                 message("user", "Confirm this API connection."),
             )
-            return DeepSeekRequest(requestBody(messages, 128, false), id, id, "connection-test", false, DeepSeekEffort.OFF)
+            return DeepSeekRequest(requestBody(messages, 128, false, model = model), id, id, "connection-test", false, DeepSeekEffort.OFF, model)
         }
 
-        private fun requestBody(messages: List<kotlinx.serialization.json.JsonObject>, maxTokens: Int, streaming: Boolean, effort: DeepSeekEffort = DeepSeekEffort.OFF): ByteArray = buildJsonObject {
-            put("model", MODEL)
+        private fun requestBody(messages: List<kotlinx.serialization.json.JsonObject>, maxTokens: Int, streaming: Boolean, effort: DeepSeekEffort = DeepSeekEffort.OFF, model: DeepSeekModel = DeepSeekModel.FLASH): ByteArray = buildJsonObject {
+            put("model", model.apiId)
             put("messages", JsonArray(messages))
             put("max_tokens", maxTokens)
             put("thinking", buildJsonObject { put("type", if (effort == DeepSeekEffort.OFF) "disabled" else "enabled") })

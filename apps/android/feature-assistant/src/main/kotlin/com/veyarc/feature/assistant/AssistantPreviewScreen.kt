@@ -424,7 +424,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
                                     }
                                     Surface(onClick = { composerSheet = "model" }, shape = CircleShape, color = chatControlColor(), modifier = Modifier.weight(1f, fill = false)) {
                                         Row(Modifier.heightIn(min = 40.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            Text(if (state.usesProvider) "DeepSeek Flash" else "Sample", modifier = Modifier.weight(1f, fill = false), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(if (state.usesProvider) state.selectedModel.shortLabel else "Sample", modifier = Modifier.weight(1f, fill = false), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             Text(chat.effort.label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                                         }
                                     }
@@ -471,7 +471,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
 
     if (historyVisible) {
         val historyList = rememberLazyListState()
-        ChatPanel("Chats", onDismiss = { historyVisible = false }, scrollBody = false, bodyState = historyList) {
+        AssistantPanel("Chats", onDismiss = { historyVisible = false }, scrollBody = false, bodyState = historyList) {
             val history = state.history
             LazyColumn(Modifier.fillMaxWidth().testTag("assistant-history-list"), state = historyList, overscrollEffect = null, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 item { Text(state.context.name, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) }
@@ -767,7 +767,7 @@ private fun MessageText(text: String, speaker: String, modifier: Modifier = Modi
 
 @Composable
 private fun PreviewDialog(title: String, onDismiss: () -> Unit, content: @Composable () -> Unit) {
-    ChatPanel(title, onDismiss, content = content)
+    AssistantPanel(title, onDismiss, content = content)
 }
 
 @Composable
@@ -778,7 +778,7 @@ private fun chatPanelColor(raised: Boolean = false): Color {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ChatPanel(title: String, onDismiss: () -> Unit, onBack: (() -> Unit)? = null, scrollBody: Boolean = true, bodyState: ScrollableState? = null, content: @Composable () -> Unit) {
+fun AssistantPanel(title: String, onDismiss: () -> Unit, onBack: (() -> Unit)? = null, scrollBody: Boolean = true, bodyState: ScrollableState? = null, content: @Composable () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val dark = colors.surface.luminance() < 0.5f
     val density = LocalDensity.current
@@ -871,7 +871,7 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
         ProposalApplyState.REJECTED -> "Apply was blocked"
     }
     if (allChangesVisible) {
-        ChatPanel("All changes", onDismiss = { allChangesVisible = false }) {
+        AssistantPanel("All changes", onDismiss = { allChangesVisible = false }) {
             Text("${values.size} changes · $reviewLabel", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             SelectionContainer { ProposalChanges(values, modifier = Modifier.testTag("assistant-all-changes")) }
         }
@@ -977,7 +977,7 @@ private fun ComposerOptions(sheet: String, state: AssistantPreviewState, onSelec
         "effort" -> "Effort"
         else -> "Select model"
     }
-    ChatPanel(title, onDismiss, onBack = if (sheet == "effort") ({ onSelect("model") }) else null) {
+    AssistantPanel(title, onDismiss, onBack = if (sheet == "effort") ({ onSelect("model") }) else null) {
         when (sheet) {
             "attachments" -> {
                 BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -1013,9 +1013,17 @@ private fun ComposerOptions(sheet: String, state: AssistantPreviewState, onSelec
             }
 
             else -> {
-                PanelOption(if (state.usesProvider) "DeepSeek Flash" else "Sample chat", subtitle = if (state.usesProvider) "Fast responses" else "Offline preview", selected = true)
+                if (state.usesProvider) {
+                    DeepSeekModel.entries.forEach { model ->
+                        PanelOption(model.label, selected = state.selectedModel == model, enabled = state.canChange && !state.isResponding, disabledLabel = null, onClick = {
+                            state.setModel(model)
+                            onDismiss()
+                        })
+                    }
+                } else {
+                    PanelOption("Sample chat", subtitle = "Offline preview", selected = true)
+                }
                 PanelOption("Effort", value = state.conversation?.effort?.label ?: "Off", opensPanel = true, onClick = { onSelect("effort") })
-                PanelOption("More models", enabled = false)
             }
         }
     }

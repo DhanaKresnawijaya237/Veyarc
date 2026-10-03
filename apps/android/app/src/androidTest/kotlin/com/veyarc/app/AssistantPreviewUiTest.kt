@@ -1,5 +1,7 @@
 package com.veyarc.app
 
+import android.app.UiAutomation
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
@@ -19,6 +21,7 @@ import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -30,6 +33,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
@@ -48,8 +52,10 @@ import com.veyarc.feature.assistant.AssistantPreviewScreen
 import com.veyarc.feature.assistant.AssistantPreviewState
 import com.veyarc.feature.assistant.AssistantThinking
 import com.veyarc.feature.assistant.DeepSeekEffort
+import com.veyarc.feature.assistant.DeepSeekModel
 import com.veyarc.feature.assistant.DeepSeekRequest
 import com.veyarc.feature.assistant.PreviewScenario
+import kotlinx.coroutines.flow.first
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -125,10 +131,59 @@ class AssistantPreviewNavigationTest {
         compose.onNodeWithText("AI chat help").performScrollTo().performClick()
         compose.onNodeWithText("Get started").assertIsDisplayed()
         compose.onNodeWithText("Apply updates your draft. Undo is in the editor.").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Close").performClick()
+        compose.onNodeWithContentDescription("Close AI chat help").performClick()
         compose.onNodeWithContentDescription("Home", useUnmergedTree = true).performClick()
         compose.onNodeWithContentDescription("Settings", useUnmergedTree = true).performClick()
         compose.onNodeWithText("AI chat help").assertDoesNotExist()
+    }
+
+    @Test
+    fun connectionPanelsFitTheirContentAndModelChoiceIsSaved() {
+        if (InstrumentationRegistry.getArguments().getString("layoutLabel")?.contains("landscape") == true) {
+            InstrumentationRegistry.getInstrumentation().uiAutomation.setRotation(UiAutomation.ROTATION_FREEZE_90)
+            compose.waitUntil(10_000) { compose.activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE }
+        }
+        val owner = androidx.lifecycle.ViewModelProvider(compose.activity)[MainEditorSession::class.java]
+        val originalModel = owner.assistant.selectedModel
+        compose.waitUntil(10_000) { owner.assistant.canChange }
+        compose.onNodeWithContentDescription("Settings", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("AI connection").performClick()
+        compose.onNodeWithTag("deepseek-logo").assertExists()
+        capture("connection-settings")
+        compose.onNodeWithText("Privacy and costs").performScrollTo().performClick()
+        compose.onNodeWithText("Done").assertDoesNotExist()
+        compose.onNodeWithText("Provider pricing").performScrollTo().assertIsDisplayed()
+        capture("connection-privacy")
+        compose.onNodeWithContentDescription("Close Privacy and costs").performClick()
+        compose.onNodeWithText("AI chat help").performScrollTo().performClick()
+        compose.onNode(hasScrollToIndexAction() and hasAnyAncestor(hasTestTag("assistant-panel-scroll")))
+            .performScrollToNode(hasText("See Privacy and costs for shared data and charges."))
+        val last = compose.onNodeWithText("See Privacy and costs for shared data and charges.").fetchSemanticsNode().boundsInRoot
+        val panel = compose.onNodeWithTag("assistant-panel").fetchSemanticsNode().boundsInRoot
+        val density = compose.activity.resources.displayMetrics.density
+        org.junit.Assert.assertTrue("Help must not reserve a blank footer: ${panel.bottom - last.bottom}", panel.bottom - last.bottom in 0f..24f * density)
+        capture("connection-help")
+        compose.onNodeWithContentDescription("Close AI chat help").performClick()
+        compose.onNodeWithText("Model").performScrollTo().performClick()
+        capture("connection-models")
+        compose.onNodeWithText("DeepSeek V4 Pro").assertIsEnabled().performClick()
+        compose.waitUntil(10_000) { owner.assistant.selectedModel == DeepSeekModel.PRO }
+        compose.waitUntil(10_000) {
+            kotlinx.coroutines.runBlocking { AppPreferences.observe(compose.activity).first().assistantModel == DeepSeekModel.PRO }
+        }
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithText("AI connection").performClick()
+        compose.onNodeWithText("V4 Pro").performScrollTo().assertIsDisplayed()
+        compose.waitUntil(10_000) { owner.assistant.canChange }
+        compose.runOnIdle { owner.assistant.setModel(originalModel) }
+        compose.waitUntil(10_000) {
+            kotlinx.coroutines.runBlocking { AppPreferences.observe(compose.activity).first().assistantModel == originalModel }
+        }
+    }
+
+    private fun capture(name: String) {
+        compose.waitForIdle()
+        captureAssistantPreview(name)
     }
 }
 
@@ -152,7 +207,9 @@ class AssistantPreviewUiTest {
         try {
             compose.setContent { VeyarcTheme(darkTheme = true) { AssistantPreviewScreen(state) } }
             compose.onNodeWithText("Off").assertIsDisplayed()
-            compose.onNodeWithText("DeepSeek Flash").performClick()
+            compose.onNodeWithText("V4.1 Flash").performClick()
+            compose.onNodeWithText("DeepSeek V4 Pro").assertIsEnabled().performClick()
+            compose.onNodeWithText("V4 Pro").performClick()
             compose.onNodeWithContentDescription("Open Effort").assertExists()
             compose.onNodeWithText("Effort").performClick()
             DeepSeekEffort.entries.forEach { compose.onNodeWithContentDescription("Open ${it.label}").assertDoesNotExist() }
@@ -164,20 +221,27 @@ class AssistantPreviewUiTest {
             Espresso.closeSoftKeyboard()
             compose.onNodeWithContentDescription("Send message").performClick()
             compose.waitUntil(10_000) { calls == 1 }
-            compose.onNodeWithText("DeepSeek Flash").performClick()
+            compose.onNodeWithText("V4 Pro").performClick()
+            compose.onNodeWithText("DeepSeek V4.1 Flash").assertIsNotEnabled()
+            compose.onNodeWithText("DeepSeek V4 Pro").assertIsSelected().assertIsNotEnabled()
             compose.onNodeWithText("Effort").performClick()
             effortOption("High").assertIsSelected().assertIsNotEnabled()
             effortOption("Low").assertIsNotEnabled()
             compose.onNodeWithContentDescription("Close Effort").performClick()
             compose.onNodeWithContentDescription("Stop response").performClick()
-            compose.onNodeWithText("DeepSeek Flash").performClick()
+            compose.onNodeWithText("V4 Pro").performClick()
             compose.onNodeWithText("Effort").performClick()
             effortOption("Max").assertIsEnabled().performClick()
             compose.runOnIdle {
                 assertEquals(com.veyarc.feature.assistant.DeepSeekEffort.MAX, state.conversation!!.effort)
                 assertEquals(com.veyarc.feature.assistant.DeepSeekEffort.HIGH, state.conversation!!.turns.single().effort)
+                assertEquals(DeepSeekModel.PRO, state.conversation!!.turns.single().model)
                 assertEquals(1, calls)
             }
+            compose.onNodeWithText("V4 Pro").performClick()
+            compose.onNodeWithText("DeepSeek V4.1 Flash").performClick()
+            compose.onNodeWithText("V4.1 Flash").assertIsDisplayed()
+            compose.runOnIdle { assertEquals(DeepSeekModel.FLASH, state.selectedModel) }
             capture("effort-selected")
         } finally {
             compose.runOnIdle { state.dispose() }
@@ -286,7 +350,8 @@ class AssistantPreviewUiTest {
         Espresso.pressBack()
         compose.onNodeWithText("Sample").performClick()
         compose.onNodeWithText("Select model").assertIsDisplayed()
-        compose.onNodeWithText("More models").assertIsNotEnabled()
+        compose.onNode(hasText("Sample chat") and hasAnyAncestor(hasTestTag("assistant-panel"))).assertIsSelected()
+        compose.onNodeWithText("DeepSeek V4 Pro").assertDoesNotExist()
         capture("models")
         compose.onNodeWithText("Effort").performClick()
         compose.onNodeWithText("High").assertIsNotEnabled()
@@ -884,13 +949,17 @@ class AssistantPreviewUiTest {
 
     private fun capture(name: String) {
         compose.waitForIdle()
-        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-        // Compose idle can precede the compositor frame, especially when a dialog closes.
-        android.os.SystemClock.sleep(300)
-        val directory = File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "assistant-preview-qa").apply { mkdirs() }
-        val layout = InstrumentationRegistry.getArguments().getString("layoutLabel") ?: "portrait"
-        File(directory, "$layout-$name.png").outputStream().use { output ->
-            InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot().compress(Bitmap.CompressFormat.PNG, 100, output)
-        }
+        captureAssistantPreview(name)
+    }
+}
+
+private fun captureAssistantPreview(name: String) {
+    InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+    // Compose idle can precede the compositor frame, especially when a dialog closes.
+    android.os.SystemClock.sleep(300)
+    val directory = File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "assistant-preview-qa").apply { mkdirs() }
+    val layout = InstrumentationRegistry.getArguments().getString("layoutLabel") ?: "portrait"
+    File(directory, "$layout-$name.png").outputStream().use { output ->
+        InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot().compress(Bitmap.CompressFormat.PNG, 100, output)
     }
 }

@@ -59,7 +59,7 @@ internal object DeepSeekStream {
             }
             require(!stopped)
             val chunk = DeepSeekClient.parseObject(payload.toByteArray(Charsets.UTF_8))
-            require(chunk.string("object") == "chat.completion.chunk" && chunk.string("model") == DeepSeekRequest.MODEL)
+            require(chunk.string("object") == "chat.completion.chunk" && chunk.string("model") == request.model.apiId)
             val id = chunk.string("id")
             require(id.isNotBlank() && id.length <= 256 && (completionId == null || completionId == id))
             completionId = id

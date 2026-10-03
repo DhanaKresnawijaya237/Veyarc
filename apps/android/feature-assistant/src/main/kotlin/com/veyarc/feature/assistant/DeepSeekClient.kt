@@ -205,7 +205,7 @@ class DeepSeekClient internal constructor(
             val envelope = parseObject(bytes)
             require(envelope.string("object") == "chat.completion")
             // The official completion example echoes the alias. Do not guess dated wire-model IDs.
-            require(envelope.string("model") == DeepSeekRequest.MODEL)
+            require(envelope.string("model") == request.model.apiId)
             val choice = (envelope["choices"] as JsonArray).single() as JsonObject
             require(choice["index"] == JsonPrimitive(0) && choice.string("finish_reason") == "stop")
             val message = choice["message"] as JsonObject

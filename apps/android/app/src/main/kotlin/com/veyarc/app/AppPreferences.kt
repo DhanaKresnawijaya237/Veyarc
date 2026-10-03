@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.veyarc.feature.assistant.DeepSeekModel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
@@ -19,12 +20,14 @@ enum class ThemePreference {
 
 data class AppUiPreferences(
     val theme: ThemePreference = ThemePreference.SYSTEM,
+    val assistantModel: DeepSeekModel = DeepSeekModel.FLASH,
 )
 
 private val Context.uiPreferencesStore by preferencesDataStore(name = "veyarc_ui")
 
 object AppPreferences {
     private val themeKey = stringPreferencesKey("theme")
+    private val assistantModelKey = stringPreferencesKey("assistant_model")
     private val workflowFolderOrderKey = stringPreferencesKey("workflow_folder_order")
     private val runFolderOrderKey = stringPreferencesKey("run_folder_order")
 
@@ -35,11 +38,16 @@ object AppPreferences {
                 theme = preferences[themeKey]
                     ?.let { saved -> ThemePreference.entries.firstOrNull { it.name == saved } }
                     ?: ThemePreference.SYSTEM,
+                assistantModel = DeepSeekModel.entries.firstOrNull { it.name == preferences[assistantModelKey] } ?: DeepSeekModel.FLASH,
             )
         }
 
     suspend fun setTheme(context: Context, theme: ThemePreference) {
         context.applicationContext.uiPreferencesStore.edit { it[themeKey] = theme.name }
+    }
+
+    suspend fun setAssistantModel(context: Context, model: DeepSeekModel) {
+        context.applicationContext.uiPreferencesStore.edit { it[assistantModelKey] = model.name }
     }
 
     suspend fun workflowFolderOrder(context: Context): List<String> = folderOrder(context, workflowFolderOrderKey)

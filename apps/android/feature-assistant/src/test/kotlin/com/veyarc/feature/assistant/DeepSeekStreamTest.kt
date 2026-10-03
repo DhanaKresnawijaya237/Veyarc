@@ -33,10 +33,10 @@ class DeepSeekStreamTest {
     private val request = DeepSeekRequest.create("r", "c", "draft:d", "Explain", null, streaming = true)
     private val key = "fixture-only-key"
     private val content = AssistantResponseCodec.encode(AssistantResponse(1, "r", "c", "draft:d", AssistantOutcome.EXPLANATION, "Hello 界 🌍"))
-    private fun chunk(text: String? = null, stop: String? = null, role: String? = null, reasoning: String? = null) = buildJsonObject {
+    private fun chunk(text: String? = null, stop: String? = null, role: String? = null, reasoning: String? = null, model: String = DeepSeekModel.FLASH.apiId) = buildJsonObject {
         put("id", "completion-1")
         put("object", "chat.completion.chunk")
-        put("model", "deepseek-flash")
+        put("model", model)
         put(
             "choices",
             JsonArray(
@@ -59,6 +59,16 @@ class DeepSeekStreamTest {
     }.toString()
     private fun event(value: String) = "data: $value\n\n"
     private fun valid() = event(chunk(content.toString(Charsets.UTF_8), role = "assistant")) + event(chunk(stop = "stop")) + event("[DONE]")
+
+    @Test
+    fun proStreamsAcceptOnlyTheRequestedModelIncludingTheTerminalChunk() {
+        val pro = DeepSeekRequest.create("r", "c", "draft:d", "Explain", null, streaming = true, model = DeepSeekModel.PRO)
+        val first = event(chunk(content.toString(Charsets.UTF_8), role = "assistant", model = DeepSeekModel.PRO.apiId))
+        val terminal = event(chunk(stop = "stop", model = DeepSeekModel.PRO.apiId)) + event("[DONE]")
+        assertArrayEquals(content, DeepSeekStream.read((first + terminal).byteInputStream(), pro, DeepSeekCancellation()))
+        assertTrue(runCatching { DeepSeekStream.read((first + terminal).byteInputStream(), request, DeepSeekCancellation()) }.isFailure)
+        assertTrue(runCatching { DeepSeekStream.read((first + event(chunk(stop = "stop")) + event("[DONE]")).byteInputStream(), pro, DeepSeekCancellation()) }.isFailure)
+    }
 
     @Test
     fun thinkingChunksStaySeparateAndBoundedAndCannotCompleteWithoutFinalJson() {

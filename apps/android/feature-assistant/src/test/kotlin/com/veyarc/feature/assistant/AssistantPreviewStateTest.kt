@@ -176,5 +176,9 @@ class AssistantPreviewStateTest {
         assertEquals(chat, AssistantPreviewState.decode(stored))
         assertTrue(runCatching { AssistantPreviewState.decode(stored.copy(id = java.util.UUID.randomUUID().toString())) }.isFailure)
         assertTrue(runCatching { AssistantPreviewState.decode(stored.copy(status = "COMPLETE")) }.isFailure)
+        val legacy = stored.copy(payload = stored.payload.toString(Charsets.UTF_8).replace(",\"model\":\"FLASH\"", "").toByteArray(Charsets.UTF_8))
+        assertEquals(chat, AssistantPreviewState.decode(legacy))
+        val pro = chat.copy(model = DeepSeekModel.PRO, turns = chat.turns.map { it.copy(model = DeepSeekModel.PRO) })
+        assertEquals(pro, AssistantPreviewState.decode(AssistantPreviewState.encode(pro)))
     }
 }

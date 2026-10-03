@@ -10,7 +10,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -26,6 +28,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -40,9 +43,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -52,6 +58,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.veyarc.data.storage.AssistantKeyStore
+import com.veyarc.feature.assistant.AssistantPanel
+import com.veyarc.feature.assistant.DeepSeekModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -68,6 +76,7 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
     var enabling by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var privacyVisible by remember { mutableStateOf(false) }
+    var modelVisible by remember { mutableStateOf(false) }
     LaunchedEffect(store) {
         try {
             hasKey = withContext(Dispatchers.IO) { store.hasKey() }
@@ -82,14 +91,19 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.primaryContainer) {
-                Text("D", Modifier.padding(horizontal = 16.dp, vertical = 12.dp), style = MaterialTheme.typography.titleLarge)
+                Icon(painterResource(R.drawable.ic_deepseek), null, Modifier.padding(12.dp).size(32.dp).testTag("deepseek-logo"), tint = Color.Unspecified)
             }
             Column(Modifier.weight(1f).padding(start = 12.dp)) {
                 Text("DeepSeek", style = MaterialTheme.typography.titleMedium)
-                Text("Your API key · Flash", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Your API key", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         HorizontalDivider()
+        TextButton(onClick = { modelVisible = true }, modifier = Modifier.fillMaxWidth(), enabled = assistant?.usesProvider == true) {
+            Text("Model", Modifier.weight(1f))
+            Text((assistant?.selectedModel ?: DeepSeekModel.FLASH).shortLabel, Modifier.padding(end = 8.dp))
+            Icon(Icons.Outlined.ChevronRight, null)
+        }
         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.Key, null)
             Column(Modifier.weight(1f).padding(start = 12.dp)) {
@@ -132,24 +146,34 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
             }
         }
     }
-    if (privacyVisible) {
-        AlertDialog(
-            onDismissRequest = { privacyVisible = false },
-            title = { Text("Privacy and costs") },
-            text = {
-                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("• Sends chat and workflow text to DeepSeek.")
-                    Text("• No images, recordings or run history.")
-                    Text("• Your API account pays. No cap; Stop may still cost.")
-                    Text("• Avoid secrets. Retention/training guarantees are unverified.")
-                    Text("• Deleting locally doesn't erase DeepSeek records.")
-                    TextButton(onClick = { uri.openUri("https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html") }) { Text("Provider privacy policy") }
-                    TextButton(onClick = { uri.openUri("https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html") }) { Text("Provider API terms") }
-                    TextButton(onClick = { uri.openUri("https://api-docs.deepseek.com/quick_start/pricing/") }) { Text("Provider pricing") }
+    if (modelVisible && assistant != null) {
+        AssistantPanel("Select model", onDismiss = { modelVisible = false }) {
+            DeepSeekModel.entries.forEach { model ->
+                val selected = assistant.selectedModel == model
+                Row(
+                    Modifier.fillMaxWidth().selectable(selected = selected, enabled = assistant.canChange && !assistant.isResponding, role = Role.RadioButton, onClick = {
+                        assistant.setModel(model)
+                        modelVisible = false
+                    }).padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(selected = selected, onClick = null)
+                    Text(model.label, Modifier.padding(start = 12.dp))
                 }
-            },
-            confirmButton = { TextButton(onClick = { privacyVisible = false }) { Text("Done") } },
-        )
+            }
+        }
+    }
+    if (privacyVisible) {
+        AssistantPanel("Privacy and costs", onDismiss = { privacyVisible = false }) {
+            Text("• Sends chat and workflow text to DeepSeek.")
+            Text("• No images, recordings or run history.")
+            Text("• Your API account pays. No cap; Stop may still cost.")
+            Text("• Avoid secrets. Retention/training guarantees are unverified.")
+            Text("• Deleting locally doesn't erase DeepSeek records.")
+            TextButton(onClick = { uri.openUri("https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html") }) { Text("Provider privacy policy") }
+            TextButton(onClick = { uri.openUri("https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html") }) { Text("Provider API terms") }
+            TextButton(onClick = { uri.openUri("https://api-docs.deepseek.com/quick_start/pricing/") }) { Text("Provider pricing") }
+        }
     }
 
     if (enabling || testing) {
