@@ -63,6 +63,7 @@ class DeepSeekClientTest {
                 failure(DeepSeekFailure.INVALID_RESPONSE) { DeepSeekClient.decode(thinkingEnvelope.toByteArray(), selected) }
             } else {
                 assertArrayEquals(content, DeepSeekClient.decode(thinkingEnvelope.toByteArray(), selected))
+                assertEquals(AssistantThinking("Untrusted thought, not workflow JSON", finished = true), selected.latestThinking)
                 failure(DeepSeekFailure.INVALID_RESPONSE) { DeepSeekClient.decode(thinkingEnvelope.replace("\"Untrusted thought, not workflow JSON\"", "true").toByteArray(), selected) }
                 failure(DeepSeekFailure.RESPONSE_TOO_LARGE) { DeepSeekClient.decode(thinkingEnvelope.replace("Untrusted thought, not workflow JSON", "x".repeat(DeepSeekClient.MAX_REASONING_BYTES + 1)).toByteArray(), selected) }
                 failure(DeepSeekFailure.INVALID_RESPONSE) { DeepSeekClient.decode(thinkingEnvelope.replace("\"stop\"", "\"length\"").toByteArray(), selected) }

@@ -42,6 +42,9 @@ import com.veyarc.feature.assistant.AssistantPreviewContext
 import com.veyarc.feature.assistant.AssistantPreviewHost
 import com.veyarc.feature.assistant.AssistantPreviewScreen
 import com.veyarc.feature.assistant.AssistantPreviewState
+import com.veyarc.feature.assistant.AssistantThinking
+import com.veyarc.feature.assistant.DeepSeekEffort
+import com.veyarc.feature.assistant.DeepSeekRequest
 import com.veyarc.feature.assistant.PreviewScenario
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -578,6 +581,120 @@ class AssistantPreviewUiTest {
         compose.runOnIdle { editor.undo() }
         assertEquals(before, editor.draft)
         compose.onNodeWithText("Apply to draft").assertIsNotEnabled()
+    }
+
+    @Test
+    fun thinkingStreamsSeparatelyAndStaysCompactWhenExpanded() {
+        val owner = kotlinx.coroutines.SupervisorJob()
+        val result = kotlinx.coroutines.CompletableDeferred<ByteArray>()
+        var request: DeepSeekRequest? = null
+        lateinit var state: AssistantPreviewState
+        val largeText = InstrumentationRegistry.getArguments().getString("thinkingLargeText") == "true"
+        val thought = "I’ll check the order of the steps before suggesting a change."
+        try {
+            compose.runOnIdle {
+                state = AssistantPreviewState(
+                    scope = kotlinx.coroutines.CoroutineScope(owner + kotlinx.coroutines.Dispatchers.Main),
+                    providerCall = {
+                        request = it
+                        result.await()
+                    },
+                ).apply {
+                    open(AssistantPreviewContext())
+                    enableProvider()
+                    setEffort(DeepSeekEffort.HIGH)
+                    compose("Explain this workflow")
+                    send()
+                }
+            }
+            compose.setContent {
+                val density = LocalDensity.current
+                CompositionLocalProvider(LocalDensity provides Density(density.density, if (largeText) 2f else density.fontScale)) {
+                    VeyarcTheme(darkTheme = true) { AssistantPreviewScreen(state) }
+                }
+            }
+            compose.waitUntil(10_000) { request != null }
+            val turn = state.conversation!!.turns.single()
+            val toggle = "assistant-thinking-toggle-${turn.id}"
+            val panel = "assistant-thinking-text-${turn.id}"
+            compose.onNodeWithText("Thinking…").performScrollTo().assertIsDisplayed()
+            compose.runOnIdle { request!!.reportThinking(AssistantThinking(thought)) }
+            compose.onNodeWithTag(panel).assertDoesNotExist()
+            compose.onNodeWithTag("assistant-reply-${turn.id}").assertDoesNotExist()
+            compose.onNodeWithText("Apply to draft").assertDoesNotExist()
+            compose.onNodeWithTag(toggle).performScrollTo().performClick()
+            compose.onNodeWithText(thought).assertIsDisplayed()
+            capture("thinking-live")
+            compose.runOnIdle { request!!.reportThinking(AssistantThinking("Checking step order.\n".repeat(1000).take(AssistantThinking.MAX_LENGTH), truncated = true)) }
+            val bounds = compose.onNodeWithTag(panel).performScrollTo().fetchSemanticsNode().boundsInRoot
+            val density = InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
+            org.junit.Assert.assertTrue("Expanded thinking must stay compact", bounds.height <= 180f * density + 2f)
+            compose.onNodeWithContentDescription("Stop response").assertIsDisplayed().performClick()
+            compose.onNodeWithText("Partial thoughts").assertExists()
+            compose.onNodeWithText("Thinking shortened.").performScrollTo().assertIsDisplayed()
+            capture("thinking-stopped")
+            compose.onNodeWithTag(toggle).performScrollTo().performClick()
+            compose.onNodeWithTag(panel).assertDoesNotExist()
+            compose.onNodeWithTag("assistant-composer").assertIsDisplayed()
+        } finally {
+            compose.runOnIdle { state.dispose() }
+            owner.cancel()
+        }
+    }
+
+    @Test
+    fun completedThinkingRemainsCollapsibleBesideTheFormattedAnswer() {
+        val owner = kotlinx.coroutines.SupervisorJob()
+        lateinit var state: AssistantPreviewState
+        val thought = "The wait step needs to stay before the next action."
+        try {
+            compose.runOnIdle {
+                state = AssistantPreviewState(
+                    scope = kotlinx.coroutines.CoroutineScope(owner + kotlinx.coroutines.Dispatchers.Main),
+                    providerCall = { request ->
+                        request.reportThinking(AssistantThinking(thought, finished = true))
+                        val chat = state.conversation!!
+                        val turn = chat.turns.single()
+                        com.veyarc.model.WorkflowJson.encodeCanonical(
+                            com.veyarc.feature.assistant.AssistantResponse.serializer(),
+                            com.veyarc.feature.assistant.AssistantResponse(
+                                1,
+                                turn.requestId,
+                                chat.id,
+                                "draft:${chat.draftId}",
+                                com.veyarc.feature.assistant.AssistantOutcome.EXPLANATION,
+                                "## Step order\n\nKeep the **Wait** before the next action.",
+                            ),
+                        ).toByteArray()
+                    },
+                ).apply {
+                    open(AssistantPreviewContext())
+                    enableProvider()
+                    setEffort(DeepSeekEffort.LOW)
+                    compose("Explain step order")
+                    send()
+                }
+            }
+            compose.setContent { VeyarcTheme { AssistantPreviewScreen(state) } }
+            compose.waitUntil(10_000) { state.conversation!!.turns.single().outcome != null }
+            val turn = state.conversation!!.turns.single()
+            val panel = "assistant-thinking-text-${turn.id}"
+            compose.onNodeWithText("Thoughts").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithTag(panel).assertDoesNotExist()
+            compose.onNodeWithText("Step order").assertExists()
+            compose.onNodeWithTag("assistant-thinking-toggle-${turn.id}").performClick()
+            compose.onNodeWithText(thought).assertIsDisplayed()
+            capture("thinking-complete-light")
+            compose.onNodeWithTag("assistant-thinking-toggle-${turn.id}").performClick()
+            compose.onNodeWithTag(panel).assertDoesNotExist()
+            compose.onNodeWithContentDescription("Copy reply").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithContentDescription("Branch to new chat").performClick()
+            compose.onNodeWithText("Thoughts").performScrollTo().performClick()
+            compose.onNodeWithText(thought).assertIsDisplayed()
+        } finally {
+            compose.runOnIdle { state.dispose() }
+            owner.cancel()
+        }
     }
 
     private fun capture(name: String) {

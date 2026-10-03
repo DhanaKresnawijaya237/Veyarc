@@ -74,6 +74,46 @@ class DeepSeekStreamTest {
     }
 
     @Test
+    fun thinkingProgressArrivesBeforeTheAnswerAndIsBoundedWithoutBreakingUtf8() {
+        val updates = mutableListOf<AssistantThinking>()
+        val selected = DeepSeekRequest.create("r", "c", "draft:d", "Explain", null, streaming = true, effort = DeepSeekEffort.HIGH, onThinking = updates::add)
+        val first = event(chunk(role = "assistant", reasoning = "First thought 界 🌍"))
+        val second = event(chunk(reasoning = " Then another thought."))
+        val body = first + second + event(chunk(content.toString(Charsets.UTF_8))) + event(chunk(stop = "stop")) + event("[DONE]")
+        val input = object : ByteArrayInputStream(body.toByteArray()) {
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                if (pos == first.toByteArray().size) {
+                    assertEquals("First thought 界 🌍", updates.single().text)
+                    assertFalse(updates.single().finished)
+                }
+                return super.read(buffer, offset, minOf(length, 1))
+            }
+        }
+        assertArrayEquals(content, DeepSeekStream.read(input, selected, DeepSeekCancellation()))
+        assertEquals(AssistantThinking("First thought 界 🌍 Then another thought.", finished = true), updates.last())
+        assertFalse(updates.any { it.text.contains("contractVersion") })
+
+        val longThinking = "界".repeat(AssistantThinking.MAX_LENGTH - 1) + "🌍 and more"
+        val longBody = event(chunk(role = "assistant", reasoning = longThinking)) + valid()
+        assertArrayEquals(content, DeepSeekStream.read(longBody.byteInputStream(), selected, DeepSeekCancellation()))
+        assertEquals("界".repeat(AssistantThinking.MAX_LENGTH - 1), selected.latestThinking!!.text)
+        assertTrue(selected.latestThinking!!.truncated)
+        assertTrue(selected.latestThinking!!.finished)
+    }
+
+    @Test
+    fun unfinishedThinkingRemainsPartialAndCannotBecomeAReply() {
+        val selected = DeepSeekRequest.create("r", "c", "draft:d", "Explain", null, streaming = true, effort = DeepSeekEffort.LOW)
+        val body = event(chunk(role = "assistant", reasoning = "Partial thought")) + event(chunk(reasoning = " kept on disconnect"))
+        failure(DeepSeekFailure.INVALID_RESPONSE) { DeepSeekStream.read(body.byteInputStream(), selected, DeepSeekCancellation()) }
+        assertEquals(AssistantThinking("Partial thought kept on disconnect"), selected.latestThinking)
+        assertTrue(runCatching { request.reportThinking(AssistantThinking("Unexpected thinking while off")) }.isFailure)
+        assertNull(request.latestThinking)
+        // Reasoning after final-answer generation starts is an invalid stream.
+        assertTrue(runCatching { DeepSeekStream.read((event(chunk(content.toString(Charsets.UTF_8), role = "assistant")) + body).byteInputStream(), selected, DeepSeekCancellation()) }.isFailure)
+    }
+
+    @Test
     fun parsesFragmentedUtf8CrLfMultilineDataCommentsAndTerminalUsage() {
         listOf("\n", "\r\n", "\r").forEach { newline ->
             val first = chunk(content.toString(Charsets.UTF_8), role = "assistant").replace(",\"choices\"", ",\ndata: \"choices\"")

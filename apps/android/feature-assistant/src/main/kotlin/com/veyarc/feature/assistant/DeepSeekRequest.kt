@@ -16,7 +16,7 @@ enum class DeepSeekEffort(val label: String) { OFF("Off"), LOW("Low"), HIGH("Hig
  * The 4E chat bridge must exclude local samples, failures, and interrupted turns. */
 class DeepSeekHistoryTurn(val prompt: String, val response: AssistantResponse)
 
-/** Immutable serialized input; deliberately has no generated toString containing workflow text. */
+/** Immutable serialized input with display progress; no generated toString containing workflow text. */
 class DeepSeekRequest private constructor(
     internal val body: ByteArray,
     internal val requestId: String,
@@ -24,7 +24,19 @@ class DeepSeekRequest private constructor(
     internal val baseSnapshotId: String,
     internal val streaming: Boolean,
     internal val effort: DeepSeekEffort,
+    private val onThinking: ((AssistantThinking) -> Unit)? = null,
 ) {
+    @Volatile
+    internal var latestThinking: AssistantThinking? = null
+        private set
+
+    /** May be called by the provider worker. Consumers must marshal to their UI owner and check attempt identity. */
+    fun reportThinking(thinking: AssistantThinking) {
+        require(effort != DeepSeekEffort.OFF)
+        latestThinking = thinking
+        onThinking?.invoke(thinking)
+    }
+
     companion object {
         const val MAX_BYTES = 128 * 1024
         internal const val MODEL = "deepseek-flash"
@@ -38,6 +50,7 @@ class DeepSeekRequest private constructor(
             history: List<DeepSeekHistoryTurn> = emptyList(),
             streaming: Boolean = false,
             effort: DeepSeekEffort = DeepSeekEffort.OFF,
+            onThinking: ((AssistantThinking) -> Unit)? = null,
         ): DeepSeekRequest = try {
             require(listOf(requestId, conversationId, baseSnapshotId).all { it.isNotBlank() && it.length <= 128 })
             require(prompt.isNotBlank() && prompt.length <= AssistantPreviewState.MAX_PROMPT_LENGTH)
@@ -73,7 +86,7 @@ class DeepSeekRequest private constructor(
             }
             val bytes = requestBody(messages, maxTokens, streaming, effort)
             if (bytes.size > MAX_BYTES) throw DeepSeekException(DeepSeekFailure.REQUEST_TOO_LARGE)
-            DeepSeekRequest(bytes, requestId, conversationId, baseSnapshotId, streaming, effort)
+            DeepSeekRequest(bytes, requestId, conversationId, baseSnapshotId, streaming, effort, onThinking)
         } catch (error: DeepSeekException) {
             throw error
         } catch (_: Exception) {

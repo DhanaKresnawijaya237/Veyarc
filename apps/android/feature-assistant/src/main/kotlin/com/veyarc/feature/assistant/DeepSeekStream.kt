@@ -18,6 +18,7 @@ internal object DeepSeekStream {
         val content = StringBuilder()
         var contentBytes = 0
         var reasoningBytes = 0
+        val thinking = AssistantThinkingBuffer(request)
         var completionId: String? = null
         var assistant = false
         var stopped = false
@@ -77,10 +78,18 @@ internal object DeepSeekStream {
                 require(delta.string("role") == "assistant")
                 assistant = true
             }
+            if (delta["reasoning_content"] != null && delta["reasoning_content"] != JsonNull) {
+                val piece = delta.string("reasoning_content")
+                if (piece.isNotEmpty()) {
+                    require(assistant)
+                    thinking.append(piece)
+                }
+            }
             if (delta["content"] != null && delta["content"] != JsonNull) {
                 val piece = delta.string("content")
                 contentBytes += piece.toByteArray(Charsets.UTF_8).size
                 if (contentBytes > AssistantResponseCodec.MAX_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
+                if (piece.isNotEmpty()) thinking.finish()
                 content.append(piece)
             }
             when (choice.getValue("finish_reason")) {
@@ -93,27 +102,31 @@ internal object DeepSeekStream {
 
         // Read bytes so event limits apply before UTF-8 decoding, including comments and metadata.
         val buffered = input.buffered()
-        while (true) {
-            cancellation.checkActive()
-            val value = buffered.read()
-            if (value < 0) throw DeepSeekException(DeepSeekFailure.INVALID_RESPONSE)
-            if (skipLf && value == 10) {
-                skipLf = false
-                if (event.size() > 0) {
-                    if (event.size() == MAX_EVENT_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
-                    event.write(value)
+        try {
+            while (true) {
+                cancellation.checkActive()
+                val value = buffered.read()
+                if (value < 0) throw DeepSeekException(DeepSeekFailure.INVALID_RESPONSE)
+                if (skipLf && value == 10) {
+                    skipLf = false
+                    if (event.size() > 0) {
+                        if (event.size() == MAX_EVENT_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
+                        event.write(value)
+                    }
+                    continue
                 }
-                continue
+                skipLf = value == 13
+                if (event.size() == MAX_EVENT_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
+                event.write(value)
+                if (value == 10 || value == 13) {
+                    if (lineLength == 0) dispatch()?.let { return it }
+                    lineLength = 0
+                } else {
+                    lineLength++
+                }
             }
-            skipLf = value == 13
-            if (event.size() == MAX_EVENT_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
-            event.write(value)
-            if (value == 10 || value == 13) {
-                if (lineLength == 0) dispatch()?.let { return it }
-                lineLength = 0
-            } else {
-                lineLength++
-            }
+        } finally {
+            thinking.publish(force = true)
         }
     }
 }

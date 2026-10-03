@@ -220,6 +220,12 @@ class DeepSeekClient internal constructor(
             val content = message.string("content").toByteArray(Charsets.UTF_8)
             if (content.size > AssistantResponseCodec.MAX_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
             AssistantResponseCodec.decode(content, request.requestId, request.conversationId, request.baseSnapshotId)
+            if (message["reasoning_content"] != null && message["reasoning_content"] != JsonNull) {
+                AssistantThinkingBuffer(request).apply {
+                    append(message.string("reasoning_content"))
+                    finish()
+                }
+            }
             content
         } catch (error: DeepSeekException) {
             throw error

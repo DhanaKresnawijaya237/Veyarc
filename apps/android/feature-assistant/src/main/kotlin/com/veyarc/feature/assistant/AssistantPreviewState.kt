@@ -72,6 +72,7 @@ data class PreviewTurn(
     val createdAtMs: Long = System.currentTimeMillis(),
     val provider: Boolean = false,
     val effort: DeepSeekEffort = DeepSeekEffort.OFF,
+    val thinking: AssistantThinking? = null,
 )
 
 @Serializable
@@ -382,7 +383,7 @@ class AssistantPreviewState(
         val token = UUID.randomUUID().toString()
         updateLast {
             it.copy(
-                reply = "", status = PreviewReplyStatus.RESPONDING, requestId = token, attempt = it.attempt + 1,
+                reply = "", thinking = null, status = PreviewReplyStatus.RESPONDING, requestId = token, attempt = it.attempt + 1,
                 outcome = null, responseError = null, proposal = null, proposalDismissed = false,
                 localBindingId = if (turn.applyState == ProposalApplyState.NONE) turn.localBindingId else null,
                 effort = requireNotNull(conversation).effort,
@@ -529,8 +530,14 @@ class AssistantPreviewState(
             return
         }
         providerJob = requireNotNull(scope).launch {
+            var request: DeepSeekRequest? = null
             try {
-                val bytes = providerCall(providerRequest(chat))
+                request = providerRequest(chat) { thinking ->
+                    // Network callbacks run on IO. State belongs to the ViewModel's main scope.
+                    scope.launch { receiveThinking(token, thinking) }
+                }
+                val bytes = providerCall(request)
+                request.latestThinking?.let { receiveThinking(token, it) }
                 receive(token, bytes)
             } catch (cancelled: CancellationException) {
                 // Owner cancellation cannot publish a result. A persisted unfinished turn recovers interrupted.
@@ -538,6 +545,7 @@ class AssistantPreviewState(
                 throw cancelled
             } catch (error: Exception) {
                 if (requestId == token) {
+                    request?.latestThinking?.let { receiveThinking(token, it) }
                     updateLast { it.copy(status = PreviewReplyStatus.ERROR, responseError = (error as? DeepSeekException)?.reason?.message ?: "The AI request failed. Your prompt is kept; retry is explicit.") }
                     requestId = null
                     flush()
@@ -546,7 +554,7 @@ class AssistantPreviewState(
         }
     }
 
-    internal fun providerRequest(chat: PreviewConversation): DeepSeekRequest {
+    internal fun providerRequest(chat: PreviewConversation, onThinking: ((AssistantThinking) -> Unit)? = null): DeepSeekRequest {
         val current = chat.turns.last()
         val history = chat.turns.dropLast(1).filter {
             it.provider && it.status == PreviewReplyStatus.COMPLETE && it.outcome != null &&
@@ -565,7 +573,14 @@ class AssistantPreviewState(
                 ),
             )
         }
-        return DeepSeekRequest.create(current.requestId, chat.id, current.responseBaseId(chat), current.prompt, current.baseSnapshot, history, streaming = true, effort = current.effort)
+        return DeepSeekRequest.create(current.requestId, chat.id, current.responseBaseId(chat), current.prompt, current.baseSnapshot, history, streaming = true, effort = current.effort, onThinking = onThinking)
+    }
+
+    private fun receiveThinking(token: String, thinking: AssistantThinking) {
+        if (requestId != token) return
+        val turn = conversation?.turns?.lastOrNull() ?: return
+        if (turn.requestId != token || turn.status != PreviewReplyStatus.RESPONDING || !turn.provider || turn.effort == DeepSeekEffort.OFF) return
+        updateLast { it.copy(thinking = thinking) }
     }
 
     fun advance(token: String) {
@@ -656,7 +671,7 @@ class AssistantPreviewState(
     fun retry() {
         if (!canRetry) return
         val token = UUID.randomUUID().toString()
-        updateLast { it.copy(reply = "", status = PreviewReplyStatus.RESPONDING, requestId = token, attempt = it.attempt + 1, outcome = null, responseError = null, proposal = null, effort = requireNotNull(conversation).effort) }
+        updateLast { it.copy(reply = "", thinking = null, status = PreviewReplyStatus.RESPONDING, requestId = token, attempt = it.attempt + 1, outcome = null, responseError = null, proposal = null, effort = requireNotNull(conversation).effort) }
         begin(token)
     }
 
@@ -724,7 +739,25 @@ class AssistantPreviewState(
         internal fun encode(chat: PreviewConversation): StoredChat {
             validate(chat)
             val last = chat.turns.lastOrNull()
-            val payload = json.encodeToString(chat).toByteArray(Charsets.UTF_8)
+            var saved = chat
+            var payload = json.encodeToString(saved).toByteArray(Charsets.UTF_8)
+            // Optional thinking must never displace a prompt, answer, captured context, or proposal.
+            // Drop older thinking first when the existing encrypted chat payload is full.
+            for (index in chat.turns.indices) {
+                if (payload.size <= ChatRepository.MAX_PAYLOAD_BYTES) break
+                val thinking = saved.turns[index].thinking ?: continue
+                if (thinking.text.isEmpty()) continue
+                saved = saved.copy(
+                    turns = saved.turns.mapIndexed { i, turn ->
+                        if (i == index) turn.copy(thinking = thinking.copy(text = "", truncated = true)) else turn
+                    },
+                )
+                payload = json.encodeToString(saved).toByteArray(Charsets.UTF_8)
+            }
+            if (payload.size > ChatRepository.MAX_PAYLOAD_BYTES && saved.turns.any { it.thinking != null }) {
+                saved = saved.copy(turns = saved.turns.map { it.copy(thinking = null) })
+                payload = json.encodeToString(saved).toByteArray(Charsets.UTF_8)
+            }
             require(payload.size <= ChatRepository.MAX_PAYLOAD_BYTES)
             return StoredChat(chat.id, chat.workflowId, chat.createdAtMs, chat.updatedAtMs, last?.requestId, last?.status?.name ?: "EMPTY", payload)
         }
@@ -752,6 +785,7 @@ class AssistantPreviewState(
                 }
                 require(UUID.fromString(turn.id).toString() == turn.id && UUID.fromString(turn.requestId).toString() == turn.requestId)
                 require(turn.prompt.isNotBlank() && turn.prompt.length <= MAX_PROMPT_LENGTH && turn.reply.length <= MAX_REPLY_LENGTH && turn.attempt > 0 && turn.createdAtMs >= 0)
+                turn.thinking?.let { require(turn.provider && turn.effort != DeepSeekEffort.OFF) }
                 require((turn.outcome == AssistantOutcome.PROPOSAL) == (turn.proposal != null))
                 require(turn.localBindingId == null || turn.localBindingId.length in 1..128)
                 require(turn.applyState == ProposalApplyState.NONE || (turn.proposal != null && turn.baseSnapshot != null && turn.localBindingId != null && !turn.proposalDismissed))

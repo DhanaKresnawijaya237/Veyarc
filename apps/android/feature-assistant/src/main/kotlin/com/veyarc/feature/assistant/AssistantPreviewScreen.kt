@@ -64,6 +64,7 @@ import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -593,6 +594,7 @@ private fun PreviewTurnContent(state: AssistantPreviewState, turn: PreviewTurn, 
             MessageText(turn.prompt, "Your message", Modifier.padding(horizontal = 16.dp, vertical = 12.dp), onContext = if (turn.baseSnapshot != null) onContext else null)
         }
         val reply = remember(turn.reply, turn.baseSnapshot) { readableReply(turn) }
+        ThinkingDisclosure(turn)
         if (turn.reply.isNotEmpty()) MessageText(reply, if (turn.provider) "DeepSeek reply" else "Sample reply", Modifier.fillMaxWidth().testTag("assistant-reply-${turn.id}"), markdown = true, onContext = if (turn.baseSnapshot != null) onContext else null)
         if (turn.status == PreviewReplyStatus.COMPLETE && reply.isNotBlank()) {
             val clipboard = LocalClipboard.current
@@ -605,10 +607,18 @@ private fun PreviewTurnContent(state: AssistantPreviewState, turn: PreviewTurn, 
         }
         turn.responseError?.let { Text(it, Modifier.semantics { liveRegion = LiveRegionMode.Polite }, color = MaterialTheme.colorScheme.error) }
         val status = when (turn.status) {
-            PreviewReplyStatus.RESPONDING -> "Responding…"
+            PreviewReplyStatus.RESPONDING -> if (turn.provider && turn.effort != DeepSeekEffort.OFF && turn.thinking?.finished != true) {
+                if (turn.thinking == null) "Thinking…" else null
+            } else {
+                "Responding…"
+            }
+
             PreviewReplyStatus.COMPLETE -> null
+
             PreviewReplyStatus.STOPPED -> "Stopped"
+
             PreviewReplyStatus.INTERRUPTED -> "Interrupted"
+
             PreviewReplyStatus.ERROR -> if (turn.responseError != null) null else "Couldn’t get a reply."
         }
         if (status != null) Text(status, Modifier.semantics { liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -617,6 +627,45 @@ private fun PreviewTurnContent(state: AssistantPreviewState, turn: PreviewTurn, 
         }
         if (isLast && turn.status !in listOf(PreviewReplyStatus.COMPLETE, PreviewReplyStatus.RESPONDING)) {
             TextButton(onClick = state::retry, enabled = state.canRetry) { Text(if (turn.provider) "Retry request" else "Retry sample") }
+        }
+    }
+}
+
+@Composable
+private fun ThinkingDisclosure(turn: PreviewTurn) {
+    val thinking = turn.thinking ?: return
+    var expanded by remember(turn.id, turn.requestId) { mutableStateOf(false) }
+    val inProgress = turn.status == PreviewReplyStatus.RESPONDING && !thinking.finished
+    val label = when {
+        inProgress -> "Thinking…"
+        turn.status in listOf(PreviewReplyStatus.STOPPED, PreviewReplyStatus.INTERRUPTED, PreviewReplyStatus.ERROR) -> "Partial thoughts"
+        else -> "Thoughts"
+    }
+    val color = MaterialTheme.colorScheme.onSurfaceVariant
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                .testTag("assistant-thinking-toggle-${turn.id}")
+                .clickable(onClickLabel = if (expanded) "Hide thinking" else "Show thinking") { expanded = !expanded }
+                .semantics { liveRegion = LiveRegionMode.Polite },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (inProgress) CircularProgressIndicator(Modifier.size(14.dp), color = color, strokeWidth = 1.5.dp)
+            Text(label, style = MaterialTheme.typography.labelLarge, color = color)
+            Icon(if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown, if (expanded) "Hide thinking" else "Show thinking", Modifier.size(18.dp), tint = color)
+        }
+        if (expanded) {
+            Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainer) {
+                Column(
+                    Modifier.fillMaxWidth().heightIn(max = 180.dp).testTag("assistant-thinking-text-${turn.id}")
+                        .verticalScroll(rememberScrollState()).padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (thinking.text.isNotEmpty()) SelectionContainer { Text(thinking.text, style = MaterialTheme.typography.bodyMedium, color = color) }
+                    if (thinking.truncated) Text(if (thinking.text.isEmpty()) "Thinking not saved (chat full)." else "Thinking shortened.", style = MaterialTheme.typography.labelSmall, color = color)
+                }
+            }
         }
     }
 }
