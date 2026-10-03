@@ -2,6 +2,9 @@ package com.veyarc.feature.assistant
 
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import com.veyarc.model.AssetId
+import com.veyarc.model.AssetKind
+import com.veyarc.model.AssetReference
 import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.DurationMillis
 import com.veyarc.model.RunLimits
@@ -71,7 +74,14 @@ class DeepSeekClientTest {
         val messages = json["messages"] as JsonArray
         assertEquals(2, messages.size)
         messages.forEach { assertEquals(setOf("role", "content"), it.jsonObject.keys) }
-        assertTrue(messages[0].jsonObject.getValue("content").jsonPrimitive.content.contains("Veyarc workflow document"))
+        val instructions = messages[0].jsonObject.getValue("content").jsonPrimitive.content
+        assertTrue(instructions.contains("Veyarc workflow document"))
+        assertTrue(instructions.contains("Copy snapshot.assets exactly"))
+        val schema = Json.parseToJsonElement(instructions.substringAfter("Workflow schema (spec/workflows/v1/workflow.schema.json):")).jsonObject
+        val imageSchema = schema.getValue("$" + "defs").jsonObject.getValue("assetReference").jsonObject
+        val nameSchema = imageSchema.getValue("properties").jsonObject.getValue("displayName").jsonObject
+        assertEquals(Json.parseToJsonElement("[\"string\",\"null\"]"), nameSchema.getValue("type"))
+        assertEquals(JsonPrimitive(64), nameSchema.getValue("maxLength"))
         val current = Json.parseToJsonElement(messages.last().jsonObject.getValue("content").jsonPrimitive.content).jsonObject
         assertEquals(JsonNull, current["snapshot"])
         assertEquals(JsonPrimitive(false), current["proposalAllowed"])
@@ -83,7 +93,7 @@ class DeepSeekClientTest {
             AssistantDraftContext(
                 "00000000-0000-0000-0000-000000000001", 2, 5, "Workflow", "com.example.app",
                 ViewportSpec(recordedWidthPx = 1080, recordedHeightPx = 2400, recordedDensityDpi = 420, recordedOrientation = DisplayOrientation.PORTRAIT),
-                RunLimits(1000, 60000, 100, 12, 4096, 10000), emptyMap(), emptyList(),
+                RunLimits(1000, 60000, 100, 12, 4096, 10000), emptyMap(), listOf(AssetReference(AssetId("existing_image"), AssetKind.IMAGE_TEMPLATE, "Sign in button")),
                 listOf(Wait("00000000-0000-0000-0000-000000000002", DurationMillis(100))),
             ),
         )
@@ -98,6 +108,8 @@ class DeepSeekClientTest {
         assertEquals(JsonPrimitive(6), current["expectedRevision"])
         assertEquals(JsonPrimitive(true), current["proposalAllowed"])
         assertEquals(Json.parseToJsonElement(snapshot.json), current["snapshot"])
+        val image = (current.getValue("snapshot").jsonObject.getValue("assets") as JsonArray).single().jsonObject
+        assertEquals(JsonPrimitive("Sign in button"), image.getValue("displayName"))
         failure(DeepSeekFailure.INVALID_REQUEST) { DeepSeekRequest.create("r", "chat", "wrong", "Explain", snapshot) }
         failure(DeepSeekFailure.INVALID_REQUEST) { DeepSeekRequest.create("r", "chat", "draft:d", "", null) }
         failure(DeepSeekFailure.INVALID_REQUEST) { DeepSeekRequest.create("r", "other-chat", "draft:d", "Explain", null, listOf(DeepSeekHistoryTurn("Old", old))) }

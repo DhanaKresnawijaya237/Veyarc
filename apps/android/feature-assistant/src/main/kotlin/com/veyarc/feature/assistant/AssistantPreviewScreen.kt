@@ -6,6 +6,7 @@ import android.content.ContextWrapper
 import android.content.Intent
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -25,6 +26,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -39,6 +41,7 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.CallSplit
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
@@ -191,6 +194,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
         contextVisible = true
     }
     var menuVisible by remember { mutableStateOf(false) }
+    var moreMenuVisible by remember { mutableStateOf(false) }
     var renameVisible by remember { mutableStateOf(false) }
     var deleteVisible by remember { mutableStateOf(false) }
     var composerSheet by remember { mutableStateOf<String?>(null) }
@@ -255,56 +259,84 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
                         IconButton(onClick = state::newChat, enabled = state.canChange && state.conversations.size < AssistantPreviewState.MAX_CHATS) { Icon(Icons.Outlined.Add, "New chat") }
                         Box {
                             IconButton(onClick = { menuVisible = true }) { Icon(Icons.Outlined.MoreVert, "Chat options") }
-                            DropdownMenu(expanded = menuVisible, onDismissRequest = { menuVisible = false }) {
-                                DropdownMenuItem(text = { Text(chat.title) }, enabled = false, onClick = {})
-                                DropdownMenuItem(text = { Text("Share") }, leadingIcon = { Icon(Icons.Outlined.Share, null) }, enabled = chat.turns.isNotEmpty(), onClick = {
+                            DropdownMenu(
+                                expanded = menuVisible,
+                                onDismissRequest = {
                                     menuVisible = false
-                                    val text = chat.turns.joinToString("\n\n") { "You: ${it.prompt}\n\nAI: ${readableReply(it)}" }
-                                    androidContext.startActivity(
-                                        Intent.createChooser(
-                                            Intent(Intent.ACTION_SEND).apply {
-                                                type = "text/plain"
-                                                putExtra(Intent.EXTRA_TEXT, text)
-                                            },
-                                            "Share chat",
-                                        ),
-                                    )
-                                })
-                                DropdownMenuItem(text = { Text("Rename chat") }, leadingIcon = { Icon(Icons.Outlined.Edit, null) }, enabled = state.canChange, onClick = {
-                                    menuVisible = false
-                                    renameVisible = true
-                                })
-                                DropdownMenuItem(text = { Text(if (chat.pinned) "Unpin" else "Pin") }, leadingIcon = { Icon(Icons.Outlined.PushPin, null) }, enabled = state.canChange, onClick = {
-                                    menuVisible = false
-                                    state.togglePin()
-                                })
-                                DropdownMenuItem(text = { Text("Delete chat", color = MaterialTheme.colorScheme.error) }, leadingIcon = { Icon(Icons.Outlined.Delete, null, tint = MaterialTheme.colorScheme.error) }, enabled = state.canChange, onClick = {
-                                    menuVisible = false
-                                    deleteVisible = true
-                                })
-                                HorizontalDivider()
-                                DropdownMenuItem(text = { Text("Chat history") }, leadingIcon = { Icon(Icons.Outlined.History, null) }, onClick = {
-                                    menuVisible = false
-                                    historyVisible = true
-                                })
-                                DropdownMenuItem(text = { Text("Workflow context") }, onClick = {
-                                    menuVisible = false
-                                    showContext()
-                                })
-                                DropdownMenuItem(text = { Text("Chat storage") }, onClick = {
-                                    menuVisible = false
-                                    storageVisible = true
-                                })
-                                if (!state.usesProvider) {
-                                    PreviewScenario.entries.forEach { scenario ->
-                                        DropdownMenuItem(
-                                            text = { Text("Sample: ${scenario.label}${if (state.scenario == scenario) " (selected)" else ""}") },
-                                            onClick = {
-                                                state.scenario = scenario
-                                                menuVisible = false
-                                            },
+                                    moreMenuVisible = false
+                                },
+                                modifier = Modifier.width(272.dp).testTag("assistant-chat-menu"),
+                                shape = RoundedCornerShape(24.dp),
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                                tonalElevation = 0.dp,
+                                shadowElevation = 10.dp,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                            ) {
+                                Text(
+                                    if (moreMenuVisible) "More options" else chat.title,
+                                    Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                if (moreMenuVisible) {
+                                    ChatMenuItem("Back", Icons.AutoMirrored.Outlined.ArrowBack) { moreMenuVisible = false }
+                                    ChatMenuItem("Workflow context", Icons.Outlined.ContentCopy) {
+                                        menuVisible = false
+                                        moreMenuVisible = false
+                                        showContext()
+                                    }
+                                    ChatMenuItem("Chat storage", Icons.Outlined.History) {
+                                        menuVisible = false
+                                        moreMenuVisible = false
+                                        storageVisible = true
+                                    }
+                                    if (!state.usesProvider) {
+                                        HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+                                        PreviewScenario.entries.forEach { scenario ->
+                                            DropdownMenuItem(
+                                                text = { Text("Sample: ${scenario.label}${if (state.scenario == scenario) " (selected)" else ""}") },
+                                                onClick = {
+                                                    state.scenario = scenario
+                                                    menuVisible = false
+                                                    moreMenuVisible = false
+                                                },
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    ChatMenuItem("Share", Icons.Outlined.Share, enabled = chat.turns.isNotEmpty()) {
+                                        menuVisible = false
+                                        val text = chat.turns.joinToString("\n\n") { "You: ${it.prompt}\n\nAI: ${readableReply(it)}" }
+                                        androidContext.startActivity(
+                                            Intent.createChooser(
+                                                Intent(Intent.ACTION_SEND).apply {
+                                                    type = "text/plain"
+                                                    putExtra(Intent.EXTRA_TEXT, text)
+                                                },
+                                                "Share chat",
+                                            ),
                                         )
                                     }
+                                    ChatMenuItem("Rename chat", Icons.Outlined.Edit, enabled = state.canChange) {
+                                        menuVisible = false
+                                        renameVisible = true
+                                    }
+                                    ChatMenuItem(if (chat.pinned) "Unpin" else "Pin", Icons.Outlined.PushPin, enabled = state.canChange) {
+                                        menuVisible = false
+                                        state.togglePin()
+                                    }
+                                    ChatMenuItem("Chat history", Icons.Outlined.History) {
+                                        menuVisible = false
+                                        historyVisible = true
+                                    }
+                                    HorizontalDivider(Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+                                    ChatMenuItem("Delete chat", Icons.Outlined.Delete, enabled = state.canChange, destructive = true) {
+                                        menuVisible = false
+                                        deleteVisible = true
+                                    }
+                                    ChatMenuItem("More", Icons.Outlined.ChevronRight) { moreMenuVisible = true }
                                 }
                             }
                         }
@@ -444,6 +476,25 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
         )
     }
     composerSheet?.let { sheet -> ComposerOptions(sheet, state.usesProvider, onSelect = { composerSheet = it }, onDismiss = { composerSheet = null }) }
+}
+
+@Composable
+private fun ChatMenuItem(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    enabled: Boolean = true,
+    destructive: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val color = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+    DropdownMenuItem(
+        text = { Text(label, style = MaterialTheme.typography.bodyLarge, color = if (enabled) color else color.copy(alpha = 0.38f)) },
+        leadingIcon = { Icon(icon, null, tint = if (enabled) color.copy(alpha = 0.8f) else color.copy(alpha = 0.38f)) },
+        modifier = Modifier.heightIn(min = 56.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp),
+        enabled = enabled,
+        onClick = onClick,
+    )
 }
 
 @Composable
@@ -627,7 +678,9 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
                         }
                     }
                     if (proposal != null && proposal.issues.isNotEmpty()) {
-                        if (proposal.issues.any { it.startsWith("Candidate changed locked fields:") }) Text("Change apps, images or device setup in the editor first.")
+                        if (proposal.issues.any { it.startsWith("Candidate changed locked fields:") }) {
+                            Text(if (proposal.issues.any { "image catalog" in it }) "AI changed your image list or names. Ask it to keep your images unchanged." else "Change apps or device setup in the editor first.")
+                        }
                         TextButton(onClick = { diagnostics = !diagnostics }) { Text(if (diagnostics) "Hide technical details" else "Technical details") }
                         if (diagnostics) proposal.issues.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
                     }

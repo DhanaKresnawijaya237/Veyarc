@@ -54,6 +54,8 @@ class AssistantCandidateValidationTest {
         assertEquals("local-journal-only", source.recordingJournalFileName)
         assertFalse(result.candidateJson!!.contains("local-journal"))
         assertFalse(validate(original.copy(assets = emptyList()), source).isValid)
+        val missingName = validate(original.copy(assets = listOf(AssetReference(imageId, AssetKind.IMAGE_TEMPLATE))), source)
+        assertTrue(missingName.issues.single().contains("image catalog"))
         assertFalse(validate(original.copy(assets = listOf(AssetReference(imageId, AssetKind.IMAGE_TEMPLATE, "Renamed image"))), source).isValid)
     }
 

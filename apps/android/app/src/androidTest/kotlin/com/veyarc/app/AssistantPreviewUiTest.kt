@@ -66,6 +66,28 @@ class AssistantPreviewNavigationTest {
         compose.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
         compose.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
         compose.onNodeWithText("Keep this unsent draft").assertExists()
+        assertEquals(
+            android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE,
+            compose.activity.window.attributes.softInputMode and android.view.WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST,
+        )
+        val headerTop = compose.onNodeWithTag("assistant-header").fetchSemanticsNode().boundsInWindow.top
+        repeat(3) {
+            compose.onNodeWithTag("assistant-composer").performTouchInput { click() }
+            compose.waitUntil(10_000) {
+                androidx.core.view.ViewCompat.getRootWindowInsets(compose.activity.window.decorView)?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()) == true
+            }
+            compose.waitForIdle()
+            assertEquals(headerTop, compose.onNodeWithTag("assistant-header").fetchSemanticsNode().boundsInWindow.top, 2f)
+            val ime = androidx.core.view.ViewCompat.getRootWindowInsets(compose.activity.window.decorView)!!.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()).bottom
+            val bottom = compose.onNodeWithTag("assistant-composer-panel").fetchSemanticsNode().boundsInWindow.bottom
+            val gap = compose.activity.window.decorView.height - ime - bottom
+            org.junit.Assert.assertTrue("Production composer must sit above the keyboard: $gap", gap in -2f..80f)
+            Espresso.pressBack()
+            compose.waitUntil(10_000) {
+                androidx.core.view.ViewCompat.getRootWindowInsets(compose.activity.window.decorView)?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()) == false
+            }
+        }
+
         compose.runOnIdle { org.junit.Assert.assertNull(owner.assistant.requestId) }
         compose.onNodeWithContentDescription("Back to editor").performClick()
         compose.onNodeWithContentDescription("Ask AI").assertExists()
@@ -121,6 +143,7 @@ class AssistantPreviewUiTest {
         org.junit.Assert.assertTrue("Composer must stay above the keyboard without a large gap", rootBottom - imeBottom - composerBottom in -2f..80f)
         Espresso.pressBack()
         compose.waitUntil(10_000) { !keyboardVisible }
+        compose.waitForIdle()
         compose.onNodeWithTag("assistant-preview").assertIsDisplayed()
         repeat(3) {
             compose.onNodeWithTag("assistant-composer").performTouchInput { click() }
@@ -128,7 +151,11 @@ class AssistantPreviewUiTest {
             compose.onNodeWithContentDescription("Send message").assertIsDisplayed()
             Espresso.pressBack()
             compose.waitUntil(10_000) { !keyboardVisible }
-            if (headerTop != null) assertEquals(headerTop, compose.onNodeWithTag("assistant-header").fetchSemanticsNode().boundsInRoot.top, 2f)
+            compose.waitForIdle()
+            if (headerTop != null) {
+                compose.waitUntil(10_000) { runCatching { compose.onNodeWithTag("assistant-header").assertExists() }.isSuccess }
+                assertEquals(headerTop, compose.onNodeWithTag("assistant-header").fetchSemanticsNode().boundsInRoot.top, 2f)
+            }
         }
     }
 
@@ -141,7 +168,7 @@ class AssistantPreviewUiTest {
             repeat(100) { requestId?.let(::advance) }
         }
         val original = state.conversation!!
-        compose.setContent { VeyarcTheme { AssistantPreviewScreen(state) } }
+        compose.setContent { VeyarcTheme(darkTheme = true) { AssistantPreviewScreen(state) } }
         compose.onNodeWithContentDescription("Copy reply").performScrollTo().assertIsDisplayed()
         compose.onNodeWithContentDescription("Branch to new chat").performScrollTo().performClick()
         compose.runOnIdle {
@@ -149,6 +176,17 @@ class AssistantPreviewUiTest {
             assertEquals(original, state.conversations.first { it.id == original.id })
             org.junit.Assert.assertNull(state.requestId)
         }
+
+        compose.onNodeWithContentDescription("Chat options").performClick()
+        compose.onNodeWithText("Pin").assertIsDisplayed()
+        compose.onNodeWithText("Workflow context").assertDoesNotExist()
+        capture("chat-menu")
+        compose.onNodeWithText("Pin").performClick()
+        compose.runOnIdle { org.junit.Assert.assertTrue(state.conversation!!.pinned) }
+        compose.onNodeWithContentDescription("Chat options").performClick()
+        compose.onNodeWithText("More").performClick()
+        compose.onNodeWithText("Workflow context").assertIsDisplayed()
+        Espresso.pressBack()
         compose.onNodeWithContentDescription("Add attachment").performClick()
         compose.onNodeWithText("Attachments coming soon").assertIsDisplayed()
         compose.onNodeWithText("Add photos").assertIsNotEnabled()
@@ -225,6 +263,7 @@ class AssistantPreviewUiTest {
         }
         compose.setContent { VeyarcTheme { AssistantPreviewScreen(state) } }
         compose.onNodeWithContentDescription("Chat options").performClick()
+        compose.onNodeWithText("More").performClick()
         compose.onNodeWithText("Workflow context").performClick()
         compose.onNodeWithText("Show shared data").performScrollTo().performClick()
         compose.onNodeWithTag("assistant-context-json").assertTextContains("Unsaved context name", substring = true)
@@ -245,6 +284,7 @@ class AssistantPreviewUiTest {
         compose.onNodeWithTag("assistant-context-json").assertTextContains("Unsaved context name", substring = true)
         compose.onNodeWithText("Done").performClick()
         compose.onNodeWithContentDescription("Chat options").performClick()
+        compose.onNodeWithText("More").performClick()
         compose.onNodeWithText("Workflow context").performClick()
         compose.onNodeWithText("Show shared data").performScrollTo().performClick()
         compose.onNodeWithTag("assistant-context-json").assertTextContains("Later edit", substring = true)

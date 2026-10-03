@@ -113,6 +113,8 @@ class DeepSeekRequest private constructor(
             If proposalAllowed is false, explain or ask for missing details; do not propose a candidate.
             Preserve workflow identity (snapshot.workflowId maps to candidate.id), schema version, viewport, run limits,
             allowed packages, and the image catalog. Set candidate.revision to expectedRevision. Preserve unchanged block IDs.
+            Copy snapshot.assets exactly, including each assetId, kind, and displayName. Keep unused images too.
+            Never add, remove, rename, or replace an image in a proposal. Image changes belong in the editor.
             Do not invent packages, coordinates, image references, or device capabilities. Ask for missing details.
             At most 200 blocks and 12 nesting levels. Never execute anything or claim a change was saved or run.
             A proposal is subject to local validation and explicit user review before saving.

@@ -152,7 +152,8 @@
       "required": ["assetId", "kind"],
       "properties": {
         "assetId": { "$ref": "#/$defs/assetId" },
-        "kind": { "const": "imageTemplate" }
+        "kind": { "const": "imageTemplate" },
+        "displayName": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 }
       }
     },
     "scalarValue": {
