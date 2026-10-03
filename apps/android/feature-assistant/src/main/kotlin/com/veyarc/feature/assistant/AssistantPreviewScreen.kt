@@ -799,7 +799,7 @@ private fun ChatPanel(title: String, onDismiss: () -> Unit, onBack: (() -> Unit)
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             sheetGesturesEnabled = true,
             // Keep the sheet's measured height independent of its changing drag offset.
-            contentWindowInsets = { WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal) },
+            contentWindowInsets = { WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom) },
             dragHandle = null,
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
             containerColor = MaterialTheme.colorScheme.surface,
