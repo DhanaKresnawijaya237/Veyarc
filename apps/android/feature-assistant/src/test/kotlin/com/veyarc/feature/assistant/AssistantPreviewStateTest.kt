@@ -95,6 +95,47 @@ class AssistantPreviewStateTest {
     }
 
     @Test
+    fun branchAndRegenerateKeepOriginalMessagesAndNeverSendOnPinOrBranch() {
+        val state = AssistantPreviewState().apply { open(AssistantPreviewContext("workflow-a")) }
+        repeat(3) {
+            state.compose("Question $it")
+            state.send()
+            finish(state)
+        }
+        state.compose("Unsent follow-up")
+        val original = state.conversation!!
+        state.togglePin()
+        val pinned = state.conversation!!
+        assertTrue(pinned.pinned)
+        assertEquals(pinned, AssistantPreviewState.decode(AssistantPreviewState.encode(pinned)))
+        state.branch(original.turns[1].id)
+        val branch = state.conversation!!
+        assertNotEquals(original.id, branch.id)
+        assertEquals(original.turns.take(2).map { it.reply }, branch.turns.map { it.reply })
+        assertEquals("", branch.composer)
+        assertTrue(branch.turns.all { it.localBindingId == null })
+        assertFalse(branch.pinned)
+        assertEquals(pinned, state.conversations.first { it.id == original.id })
+        assertNull(state.requestId)
+        assertEquals(pinned, state.history.first())
+        state.select(original.id)
+        state.regenerate(original.turns.first().id)
+        assertNotEquals(original.id, state.selectedId)
+        assertEquals(1, state.conversation!!.turns.size)
+        assertEquals("Question 0", state.conversation!!.turns.single().prompt)
+        assertNotEquals(original.turns.first().requestId, state.requestId)
+        finish(state)
+        assertEquals(pinned, state.conversations.first { it.id == original.id })
+        repeat(AssistantPreviewState.MAX_CHATS) { state.newChat() }
+        state.select(original.id)
+        assertFalse(state.canBranch(original.turns.first()))
+        assertFalse(state.canRegenerate(original.turns.first()))
+        state.regenerate(original.turns.first().id)
+        assertEquals(original.id, state.selectedId)
+        assertNull(state.requestId)
+    }
+
+    @Test
     fun encryptedPayloadContractPreservesIdsAndRejectsMetadataMismatch() {
         val state = AssistantPreviewState()
         state.open(AssistantPreviewContext("workflow-a", "My workflow", 2))

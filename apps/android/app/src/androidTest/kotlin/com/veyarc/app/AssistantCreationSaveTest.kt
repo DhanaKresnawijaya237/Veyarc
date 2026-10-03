@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
@@ -90,11 +91,10 @@ class AssistantCreationSaveTest {
             compose.onNodeWithContentDescription("Ask AI").performClick()
             compose.waitUntil(10000) { state.canChange }
             completeSample(state)
-            compose.onNodeWithText("Review changes").performScrollTo().performClick()
+            compose.onNodeWithTag("assistant-review-toggle").performScrollTo().performClick()
             compose.onNodeWithText("Apply to draft").performScrollTo().performClick()
             compose.waitUntil(10000) { state.canChange }
             assertTrue(repository.listRevisions(workflowId).isEmpty())
-            compose.onNodeWithText("Done").performClick()
             compose.onNodeWithContentDescription("Back to editor").performClick()
             compose.onNodeWithContentDescription("Save revision 1").performClick()
             compose.waitUntil(10000) { !editor.isSaving }

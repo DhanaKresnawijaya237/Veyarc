@@ -19,6 +19,38 @@ class AssistantDraftBridgeTest {
     private fun editor() = WorkflowEditorSession().apply { open(WorkflowDraft.newDefault().buildBundle().bundle!!, "private-journal") }
 
     @Test
+    fun branchingNeverCopiesApplyAuthorityAndRegenerationRequiresFreshReview() {
+        val editor = editor()
+        val before = editor.draft
+        val bridge = AssistantDraftBridge(editor)
+        val state = AssistantPreviewState(compileCandidate = ::assistantCompilationIssues, applyCandidate = bridge::apply, contextSource = bridge::capture)
+        state.open(editor.assistantContext())
+        state.scenario = PreviewScenario.VALIDATED_PROPOSAL
+        state.compose("Rename the workflow")
+        state.send()
+        state.advance(state.requestId!!)
+        val original = state.conversation!!
+        val turn = original.turns.single()
+        assertTrue(state.canApply(turn))
+        state.branch(turn.id)
+        val copied = state.conversation!!.turns.single()
+        assertFalse(state.canApply(copied))
+        state.applyProposal(copied.id)
+        assertEquals(before, editor.draft)
+        state.select(original.id)
+        state.regenerate(turn.id)
+        val refreshed = state.conversation!!.turns.single()
+        assertEquals(turn.baseSnapshot, refreshed.baseSnapshot)
+        assertFalse(state.canApply(refreshed))
+        state.advance(state.requestId!!)
+        assertEquals(before, editor.draft)
+        assertTrue(state.canApply(state.conversation!!.turns.single()))
+        state.applyProposal(state.conversation!!.turns.single().id)
+        assertEquals("Sample workflow name", editor.draft!!.name)
+        assertEquals(original, state.conversations.first { it.id == original.id })
+    }
+
+    @Test
     fun applyingNewStepsCannotChangeAnAlreadyCompiledPlan() {
         val editor = editor()
         val bridge = AssistantDraftBridge(editor)

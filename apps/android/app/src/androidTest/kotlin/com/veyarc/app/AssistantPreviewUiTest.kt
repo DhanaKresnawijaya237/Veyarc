@@ -13,6 +13,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.longClick
@@ -69,9 +70,13 @@ class AssistantPreviewNavigationTest {
         compose.onNodeWithContentDescription("Back to editor").performClick()
         compose.onNodeWithContentDescription("Ask AI").assertExists()
         compose.onNodeWithContentDescription("Ask AI").performClick()
-        compose.onNodeWithTag("assistant-preview").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Back to editor").performClick()
-        compose.onNodeWithContentDescription("Ask AI").assertExists()
+        compose.waitUntil(10_000) { runCatching { compose.onNodeWithText("Enable AI in Settings").assertExists() }.isSuccess }
+        compose.onNodeWithText("Enable AI in Settings").performClick()
+        compose.onNodeWithText("AI connection").assertIsDisplayed()
+        compose.onNodeWithText("AI chat help").performScrollTo().performClick()
+        compose.onNodeWithText("Get started").assertIsDisplayed()
+        compose.onNodeWithText("Apply updates your draft. Undo is in the editor.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Close").performClick()
     }
 }
 
@@ -84,9 +89,12 @@ class AssistantPreviewUiTest {
     fun currentWindowKeepsTypingAndNavigationReachable() {
         val state = AssistantPreviewState().apply { open(AssistantPreviewContext()) }
         var keyboardVisible by mutableStateOf(false)
+        var imeBottom = 0
         compose.setContent {
-            val visible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+            val bottom = WindowInsets.ime.getBottom(LocalDensity.current)
+            val visible = bottom > 0
             SideEffect { keyboardVisible = visible }
+            SideEffect { imeBottom = bottom }
             VeyarcTheme(darkTheme = false) {
                 AssistantPreviewHost(true, state, AssistantPreviewContext()) {
                     androidx.compose.material3.Text("Editor pane")
@@ -98,15 +106,61 @@ class AssistantPreviewUiTest {
             compose.onNodeWithText("Editor pane").assertIsDisplayed()
         }
         capture("empty-light")
+        val headerTop = runCatching { compose.onNodeWithTag("assistant-header").fetchSemanticsNode().boundsInRoot.top }.getOrNull()
         compose.onNodeWithTag("assistant-composer").performClick().performTextInput("Create a workflow")
         compose.waitUntil(10_000) { keyboardVisible }
         compose.waitForIdle()
         capture("keyboard-light")
         compose.onNodeWithContentDescription("Send message").assertIsDisplayed()
         compose.onNodeWithContentDescription("Back to editor").assertIsDisplayed()
+        if (runCatching { compose.onNodeWithTag("assistant-header").assertExists() }.isSuccess) {
+            assertEquals(headerTop!!, compose.onNodeWithTag("assistant-header").fetchSemanticsNode().boundsInRoot.top, 2f)
+        }
+        val rootBottom = compose.onNodeWithTag("assistant-preview").fetchSemanticsNode().boundsInRoot.bottom
+        val composerBottom = compose.onNodeWithTag("assistant-composer-panel").fetchSemanticsNode().boundsInRoot.bottom
+        org.junit.Assert.assertTrue("Composer must stay above the keyboard without a large gap", rootBottom - imeBottom - composerBottom in -2f..80f)
         Espresso.pressBack()
         compose.waitUntil(10_000) { !keyboardVisible }
         compose.onNodeWithTag("assistant-preview").assertIsDisplayed()
+        repeat(3) {
+            compose.onNodeWithTag("assistant-composer").performTouchInput { click() }
+            compose.waitUntil(10_000) { keyboardVisible }
+            compose.onNodeWithContentDescription("Send message").assertIsDisplayed()
+            Espresso.pressBack()
+            compose.waitUntil(10_000) { !keyboardVisible }
+            if (headerTop != null) assertEquals(headerTop, compose.onNodeWithTag("assistant-header").fetchSemanticsNode().boundsInRoot.top, 2f)
+        }
+    }
+
+    @Test
+    fun replyBarBranchesAndFutureControlsStayHonest() {
+        val state = AssistantPreviewState().apply {
+            open(AssistantPreviewContext())
+            compose("Explain a workflow")
+            send()
+            repeat(100) { requestId?.let(::advance) }
+        }
+        val original = state.conversation!!
+        compose.setContent { VeyarcTheme { AssistantPreviewScreen(state) } }
+        compose.onNodeWithContentDescription("Copy reply").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("Branch to new chat").performScrollTo().performClick()
+        compose.runOnIdle {
+            org.junit.Assert.assertNotEquals(original.id, state.selectedId)
+            assertEquals(original, state.conversations.first { it.id == original.id })
+            org.junit.Assert.assertNull(state.requestId)
+        }
+        compose.onNodeWithContentDescription("Add attachment").performClick()
+        compose.onNodeWithText("Attachments coming soon").assertIsDisplayed()
+        compose.onNodeWithText("Add photos").assertIsNotEnabled()
+        capture("attachments")
+        Espresso.pressBack()
+        compose.onNodeWithText("Sample · Standard").performClick()
+        compose.onNodeWithText("Select model").assertIsDisplayed()
+        compose.onNodeWithText("More models").assertIsNotEnabled()
+        capture("models")
+        compose.onNodeWithText("Effort").performClick()
+        compose.onNodeWithText("High").assertIsNotEnabled()
+        capture("effort")
     }
 
     @Test
@@ -131,11 +185,11 @@ class AssistantPreviewUiTest {
             state.send()
         }
         compose.mainClock.advanceTimeBy(5000)
-        compose.onNodeWithText("Review changes").performScrollTo().performClick()
+        compose.onNodeWithTag("assistant-review-toggle").performScrollTo().performClick()
         compose.mainClock.advanceTimeBy(100)
         compose.onNodeWithText("Apply to draft").assertIsNotEnabled()
         capture("proposal-light")
-        compose.onNodeWithText("Done").performClick()
+        compose.onNodeWithTag("assistant-review-toggle").performScrollTo().performClick()
         compose.mainClock.advanceTimeBy(100)
         capture("conversation-light")
     }
@@ -208,7 +262,7 @@ class AssistantPreviewUiTest {
         }
         compose.setContent { VeyarcTheme { AssistantPreviewScreen(state) } }
         compose.onNodeWithText(state.conversation!!.turns.single().reply).performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Review changes").assertDoesNotExist()
+        compose.onNodeWithTag("assistant-review-toggle").assertDoesNotExist()
         compose.runOnIdle {
             state.scenario = PreviewScenario.INVALID_OUTPUT
             state.compose("Keep this rejected prompt")
@@ -231,12 +285,12 @@ class AssistantPreviewUiTest {
         state.send()
         state.advance(state.requestId!!)
         compose.setContent { VeyarcTheme { AssistantPreviewScreen(state) } }
-        compose.onNodeWithText("Review changes").performScrollTo().performClick()
+        compose.onNodeWithTag("assistant-review-toggle").performScrollTo().performClick()
         compose.onNodeWithText("Ready for review").assertIsDisplayed()
         compose.onNodeWithText("Device capabilities have not been checked.", substring = true).assertExists()
         compose.onNodeWithText("Apply to draft").assertIsNotEnabled()
         capture("candidate-valid")
-        compose.onNodeWithText("Done").performClick()
+        compose.onNodeWithTag("assistant-review-toggle").performScrollTo().performClick()
         compose.runOnIdle {
             state.newChat()
             state.scenario = PreviewScenario.INVALID_CANDIDATE
@@ -244,8 +298,9 @@ class AssistantPreviewUiTest {
             state.send()
             state.advance(state.requestId!!)
         }
-        compose.onNodeWithText("Review changes").performScrollTo().performClick()
+        compose.onNodeWithTag("assistant-review-toggle").performScrollTo().performClick()
         compose.onNodeWithText("Invalid proposal").assertIsDisplayed()
+        compose.onNodeWithText("Technical details").performScrollTo().performClick()
         compose.onNodeWithText("Candidate changed locked fields:", substring = true).assertExists()
         compose.onNodeWithText("Apply to draft").assertIsNotEnabled()
         capture("candidate-invalid")
@@ -262,8 +317,8 @@ class AssistantPreviewUiTest {
         state.send()
         state.advance(state.requestId!!)
         compose.setContent { VeyarcTheme { AssistantPreviewScreen(state) } }
-        compose.onNodeWithText("Review changes").performScrollTo().performClick()
-        compose.onNodeWithText("After: \"Sample workflow name\"").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("assistant-review-toggle").performScrollTo().performClick()
+        compose.onNodeWithText("After: Sample workflow name").performScrollTo().assertIsDisplayed()
         capture("review-values")
         compose.runOnIdle { draft = draft.copy(name = "Edited after Send") }
         compose.onNodeWithText("Stale proposal").performScrollTo().assertIsDisplayed()
@@ -271,8 +326,8 @@ class AssistantPreviewUiTest {
         capture("review-stale")
         compose.onNodeWithText("Dismiss proposal").performScrollTo().performClick()
         compose.onNodeWithText("Dismissed proposal").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Done").performClick()
-        compose.onNodeWithText("Review changes").performScrollTo().performClick()
+        compose.onNodeWithTag("assistant-review-toggle").performScrollTo().performClick()
+        compose.onNodeWithTag("assistant-review-toggle").performScrollTo().performClick()
         compose.onNodeWithText("Dismissed proposal").assertIsDisplayed()
         assertEquals("Edited after Send", draft.name)
     }
@@ -290,7 +345,7 @@ class AssistantPreviewUiTest {
         state.advance(state.requestId!!)
         assertEquals(before, editor.draft)
         compose.setContent { VeyarcTheme { AssistantPreviewScreen(state) } }
-        compose.onNodeWithText("Review changes").performScrollTo().performClick()
+        compose.onNodeWithTag("assistant-review-toggle").performScrollTo().performClick()
         compose.onNodeWithText("Apply to draft").performScrollTo().assertIsEnabled().performClick()
         compose.onNodeWithText("Applied to draft").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Apply to draft").performScrollTo().assertIsNotEnabled()

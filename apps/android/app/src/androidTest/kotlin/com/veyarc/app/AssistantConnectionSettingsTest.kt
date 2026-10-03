@@ -17,6 +17,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -101,7 +102,7 @@ class AssistantConnectionSettingsTest {
             Espresso.closeSoftKeyboard()
             compose.onNodeWithText("Save key").performClick()
             awaitText("Key saved")
-            compose.onNodeWithText("Remove API key").performScrollTo().performClick()
+            compose.onNodeWithContentDescription("Remove API key").performScrollTo().performClick()
             compose.onNodeWithText("Remove key", substring = false).performClick()
             awaitText("No API key")
             assertFalse(store.hasKey())

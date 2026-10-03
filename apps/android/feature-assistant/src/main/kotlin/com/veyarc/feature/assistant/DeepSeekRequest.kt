@@ -102,6 +102,12 @@ class DeepSeekRequest private constructor(
             The final user message contains the current prompt and authoritative local binding IDs. Echo those IDs exactly.
             Example response: {"contractVersion":1,"requestId":"copy current requestId","conversationId":"copy current conversationId","baseSnapshotId":"copy current baseSnapshotId","outcome":"explanation","text":"Explanation here"}
             outcome must be explanation, clarification, or proposal. text must be nonempty and at most 16000 characters.
+            Write text for a nontechnical phone user. Keep it brief, with Markdown headings, short bullets,
+            bold emphasis, and code blocks only when useful. Markdown belongs inside the JSON text string.
+            Refer to steps by position and action, such as "Step 2: Wait", and images by their names.
+            Never expose internal block IDs, workflow IDs, snapshot hashes, request IDs, JSON field names,
+            or package identifiers in text unless the user explicitly asks for technical details.
+            Describe proposed changes in everyday language. Ask short, specific questions for missing details.
             Only proposal includes candidate: a complete workflow object matching the schema below, at most 32 KiB UTF-8.
             Never include candidate for explanation or clarification. No other response fields. Total response at most 64 KiB UTF-8.
             If proposalAllowed is false, explain or ask for missing details; do not propose a candidate.

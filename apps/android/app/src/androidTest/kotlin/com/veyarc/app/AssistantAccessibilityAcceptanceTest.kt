@@ -138,7 +138,7 @@ class AssistantAccessibilityAcceptanceTest {
         compose.onNodeWithText("Retry request").performScrollTo().performClick()
         compose.waitUntil(10_000) { owner.calls == 2 }
         compose.runOnIdle { owner.complete("A complete explanation.") }
-        compose.onNodeWithText("A complete explanation.").performScrollTo().assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
+        compose.onNodeWithTag("assistant-reply-${owner.state.conversation!!.turns.last().id}").performScrollTo().assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite))
         compose.onNodeWithText("Copy").assertDoesNotExist()
         compose.onNodeWithText("View captured context").assertDoesNotExist()
         compose.onNodeWithText("A complete explanation.").performTouchInput { longClick() }
@@ -158,7 +158,7 @@ class AssistantAccessibilityAcceptanceTest {
         }
         compose.waitUntil(10_000) { owner.calls == 1 }
         compose.runOnIdle { owner.complete((1..80).joinToString("\n") { "Line $it describes a workflow detail." }) }
-        compose.onNodeWithText(owner.state.conversation!!.turns.single().reply).performScrollTo()
+        compose.onNodeWithTag("assistant-reply-${owner.state.conversation!!.turns.single().id}").performScrollTo()
         compose.runOnIdle {
             owner.response = CompletableDeferred()
             owner.state.compose("Second question")

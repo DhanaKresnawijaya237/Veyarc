@@ -78,6 +78,7 @@ class MainActivity : ComponentActivity() {
         ViewModelProvider(this)[MainEditorSession::class.java]
     }
     private val catalogScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var assistantSettingsRequest by mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -211,6 +212,10 @@ class MainActivity : ComponentActivity() {
                                             enabled = assistantPreviewEnabled,
                                             state = editorSession.assistant,
                                             context = editorSession.state.assistantContext(),
+                                            onOpenSettings = {
+                                                assistantSettingsRequest++
+                                                selectedDestination = VeyarcDestination.SETTINGS
+                                            },
                                         ) { onAskAi ->
                                             WorkflowEditorScreen(
                                                 repository = workflowRepository,
@@ -247,6 +252,7 @@ class MainActivity : ComponentActivity() {
 
                                         VeyarcDestination.SETTINGS -> SettingsScreen(
                                             assistant = if (assistantPreviewEnabled) editorSession.assistant else null,
+                                            assistantConnectionRequestId = assistantSettingsRequest,
                                             repository = workflowRepository,
                                             refreshGeneration = resumeGeneration,
                                             themePreference = uiPreferences.theme,

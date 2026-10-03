@@ -28,6 +28,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -72,6 +74,7 @@ import java.io.ByteArrayOutputStream
 @Composable
 fun SettingsScreen(
     assistant: com.veyarc.feature.assistant.AssistantPreviewState? = null,
+    assistantConnectionRequestId: Int = 0,
     repository: WorkflowRepository,
     refreshGeneration: Int,
     themePreference: ThemePreference,
@@ -97,10 +100,14 @@ fun SettingsScreen(
     var confirmClearHistory by remember { mutableStateOf(false) }
     var chooseExportWorkflow by remember { mutableStateOf(false) }
     var pendingExportWorkflow by remember { mutableStateOf<WorkflowSummary?>(null) }
-    var expandedSection by rememberSaveable { mutableStateOf<String?>(null) }
+    var expandedSection by rememberSaveable { mutableStateOf<String?>(if (assistant != null && !assistant.providerEnabled) "assistant" else null) }
+    LaunchedEffect(assistantConnectionRequestId) {
+        if (assistantConnectionRequestId > 0) expandedSection = "assistant"
+    }
     var confirmShizukuDownload by remember { mutableStateOf(false) }
     var chooseShizukuSource by remember { mutableStateOf(false) }
     var openGuide by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var noticesVisible by remember { mutableStateOf(false) }
 
     fun refreshCapabilities() {
         accessibilityEnabled = AccessibilityGestureDispatcher.isEnabled(context)
@@ -199,11 +206,11 @@ fun SettingsScreen(
                 SettingsCard(
                     title = "AI connection",
                     summary = if (assistant?.providerEnabled == true) "Enabled for this session" else "Disabled",
+                    summaryActive = assistant?.providerEnabled == true,
                     expanded = expandedSection == "assistant",
                     onToggle = { expandedSection = if (expandedSection == "assistant") null else "assistant" },
                 ) {
-                    AssistantConnectionSettings(assistantKeys, assistant)
-                    TextButton(onClick = { openGuide = "AI chat help" to "ai-chat-guide.md" }) { Text("AI chat help") }
+                    AssistantConnectionSettings(assistantKeys, assistant, onHelp = { openGuide = "AI chat help" to "ai-chat-guide.md" })
                 }
             }
         }
@@ -366,11 +373,20 @@ fun SettingsScreen(
                 OutlinedButton(onClick = { openGuide = "Device compatibility notes" to "android-device-compatibility.md" }) {
                     Text("Device compatibility notes")
                 }
+                TextButton(onClick = { noticesVisible = true }) { Text("Third-party notices") }
             }
         }
         message?.let { status -> item { Text(status, color = MaterialTheme.colorScheme.primary) } }
     }
 
+    if (noticesVisible) {
+        AlertDialog(
+            onDismissRequest = { noticesVisible = false },
+            title = { Text("CommonMark · BSD 2-Clause") },
+            text = { Text(COMMONMARK_LICENSE, Modifier.verticalScroll(rememberScrollState()), style = MaterialTheme.typography.bodySmall) },
+            confirmButton = { TextButton(onClick = { noticesVisible = false }) { Text("Done") } },
+        )
+    }
     if (confirmClearHistory) {
         AlertDialog(
             onDismissRequest = { confirmClearHistory = false },
@@ -451,7 +467,7 @@ fun SettingsScreen(
     }
     openGuide?.let { (title, assetName) ->
         val guide = remember(assetName) {
-            runCatching { context.assets.open(assetName).bufferedReader().use { it.readText() } }
+            runCatching { if (assetName == "ai-chat-guide.md") AI_CHAT_HELP else context.assets.open(assetName).bufferedReader().use { it.readText() } }
                 .getOrElse { "This guide could not be loaded: ${it.message ?: it.javaClass.simpleName}" }
         }
         Dialog(onDismissRequest = { openGuide = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -465,7 +481,14 @@ fun SettingsScreen(
                         items(guide.lines().filter(String::isNotBlank)) { line ->
                             when {
                                 line.startsWith("# ") -> Unit
+
                                 line.startsWith("## ") -> Text(line.removePrefix("## "), style = MaterialTheme.typography.titleMedium)
+
+                                line.startsWith("- ") -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("•", style = MaterialTheme.typography.bodyMedium)
+                                    Text(line.removePrefix("- "), style = MaterialTheme.typography.bodyMedium)
+                                }
+
                                 else -> Text(line, style = MaterialTheme.typography.bodyMedium)
                             }
                         }
@@ -566,6 +589,53 @@ private fun openUrl(context: android.content.Context, url: String) {
 }
 
 private data class DownloadSource(val label: String, val url: String)
+
+private val AI_CHAT_HELP = """
+    ## Get started
+    - Add a DeepSeek key and enable AI in Settings.
+    - In the Editor, tap Ask AI or Create with AI.
+
+    ## Review changes
+    - Expand a changes card to compare Before and After.
+    - Apply updates your draft. Undo is in the editor.
+    - Save and Run are separate. Check AI changes first.
+
+    ## Reply controls
+    - Copy copies text. Branch starts a new chat.
+    - Resend is a paid retry. Stop cancels, but may still cost.
+
+    ## Need help?
+    - Draft changed? Send a new message.
+    - AI off after restart? Enable it in Settings.
+    - Key or balance error? Check your DeepSeek account.
+    - See Privacy and costs for shared data and charges.
+""".trimIndent()
+
+private val COMMONMARK_LICENSE = """
+    Copyright (c) 2015, Atlassian Pty Ltd
+    All rights reserved.
+
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions are met:
+
+    * Redistributions of source code must retain the above copyright notice, this
+      list of conditions and the following disclaimer.
+
+    * Redistributions in binary form must reproduce the above copyright notice,
+      this list of conditions and the following disclaimer in the documentation
+      and/or other materials provided with the distribution.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+    AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+    IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+    DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+    FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+    DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+    SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+    CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+    OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+""".trimIndent()
 
 private const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
 private val SHIZUKU_DOWNLOAD_SOURCES = listOf(

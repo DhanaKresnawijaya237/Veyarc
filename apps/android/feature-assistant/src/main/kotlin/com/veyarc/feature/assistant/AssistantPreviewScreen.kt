@@ -3,15 +3,19 @@ package com.veyarc.feature.assistant
 import android.app.Activity
 import android.content.ClipData
 import android.content.ContextWrapper
+import android.content.Intent
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -19,7 +23,10 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -29,19 +36,33 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.CallSplit
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -72,6 +93,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -85,6 +107,7 @@ fun AssistantPreviewHost(
     enabled: Boolean,
     state: AssistantPreviewState,
     context: AssistantPreviewContext,
+    onOpenSettings: (() -> Unit)? = null,
     editorContent: @Composable (onAskAi: (() -> Unit)?) -> Unit,
 ) {
     val openChat: (() -> Unit)? = if (enabled) ({ state.open(context) }) else null
@@ -96,16 +119,16 @@ fun AssistantPreviewHost(
             Row(Modifier.fillMaxSize().testTag("assistant-split")) {
                 Box(Modifier.weight(1f)) { editorContent(openChat) }
                 VerticalDivider()
-                Box(Modifier.weight(1f)) { AssistantPreviewScreen(state) }
+                Box(Modifier.weight(1f)) { AssistantPreviewScreen(state, onOpenSettings) }
             }
         } else {
-            AssistantPreviewScreen(state)
+            AssistantPreviewScreen(state, onOpenSettings)
         }
     }
 }
 
 @Composable
-fun AssistantPreviewScreen(state: AssistantPreviewState) {
+fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> Unit)? = null) {
     var storageVisible by remember { mutableStateOf(false) }
     var clearVisible by remember { mutableStateOf(false) }
     if (storageVisible) {
@@ -170,15 +193,23 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
     var menuVisible by remember { mutableStateOf(false) }
     var renameVisible by remember { mutableStateOf(false) }
     var deleteVisible by remember { mutableStateOf(false) }
-    var review by remember(chat.id) { mutableStateOf<PreviewTurn?>(null) }
+    var composerSheet by remember { mutableStateOf<String?>(null) }
+    val androidContext = LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    LaunchedEffect(keyboardVisible) {
+        // Android can consume Back to dismiss the IME before our BackHandler runs.
+        // Release the old input connection so the next tap can open it normally.
+        if (!keyboardVisible) focus.clearFocus()
+    }
     val activity = generateSequence(LocalContext.current) { (it as? ContextWrapper)?.baseContext }
         .filterIsInstance<Activity>().firstOrNull()
 
     DisposableEffect(state, activity) {
         val previousSoftInputMode = activity?.window?.attributes?.softInputMode
+        // Resize delivers IME insets; system bars and keyboard padding are consumed separately below.
+        // Never let Android pan the entire chat to keep the composer in view.
         activity?.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         onDispose {
             previousSoftInputMode?.let { activity?.window?.setSoftInputMode(it) }
@@ -210,12 +241,12 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
     }
 
     Surface(Modifier.fillMaxSize().testTag("assistant-preview")) {
-        BoxWithConstraints(Modifier.safeDrawingPadding().imePadding()) {
+        BoxWithConstraints(Modifier.windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.displayCutout)).imePadding()) {
             val shortWindow = maxHeight < 420.dp
             val tightWindow = maxHeight < 240.dp
             Column(Modifier.fillMaxSize()) {
                 if (!tightWindow) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().testTag("assistant-header"), verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = ::leave) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to editor") }
                         Column(Modifier.weight(1f)) {
                             Text(chat.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -225,25 +256,44 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
                         Box {
                             IconButton(onClick = { menuVisible = true }) { Icon(Icons.Outlined.MoreVert, "Chat options") }
                             DropdownMenu(expanded = menuVisible, onDismissRequest = { menuVisible = false }) {
-                                DropdownMenuItem(text = { Text("Chat history") }, onClick = {
+                                DropdownMenuItem(text = { Text(chat.title) }, enabled = false, onClick = {})
+                                DropdownMenuItem(text = { Text("Share") }, leadingIcon = { Icon(Icons.Outlined.Share, null) }, enabled = chat.turns.isNotEmpty(), onClick = {
+                                    menuVisible = false
+                                    val text = chat.turns.joinToString("\n\n") { "You: ${it.prompt}\n\nAI: ${readableReply(it)}" }
+                                    androidContext.startActivity(
+                                        Intent.createChooser(
+                                            Intent(Intent.ACTION_SEND).apply {
+                                                type = "text/plain"
+                                                putExtra(Intent.EXTRA_TEXT, text)
+                                            },
+                                            "Share chat",
+                                        ),
+                                    )
+                                })
+                                DropdownMenuItem(text = { Text("Rename chat") }, leadingIcon = { Icon(Icons.Outlined.Edit, null) }, enabled = state.canChange, onClick = {
+                                    menuVisible = false
+                                    renameVisible = true
+                                })
+                                DropdownMenuItem(text = { Text(if (chat.pinned) "Unpin" else "Pin") }, leadingIcon = { Icon(Icons.Outlined.PushPin, null) }, enabled = state.canChange, onClick = {
+                                    menuVisible = false
+                                    state.togglePin()
+                                })
+                                DropdownMenuItem(text = { Text("Delete chat", color = MaterialTheme.colorScheme.error) }, leadingIcon = { Icon(Icons.Outlined.Delete, null, tint = MaterialTheme.colorScheme.error) }, enabled = state.canChange, onClick = {
+                                    menuVisible = false
+                                    deleteVisible = true
+                                })
+                                HorizontalDivider()
+                                DropdownMenuItem(text = { Text("Chat history") }, leadingIcon = { Icon(Icons.Outlined.History, null) }, onClick = {
                                     menuVisible = false
                                     historyVisible = true
-                                })
-                                DropdownMenuItem(text = { Text("Chat storage") }, onClick = {
-                                    menuVisible = false
-                                    storageVisible = true
                                 })
                                 DropdownMenuItem(text = { Text("Workflow context") }, onClick = {
                                     menuVisible = false
                                     showContext()
                                 })
-                                DropdownMenuItem(text = { Text("Rename chat") }, enabled = state.canChange, onClick = {
+                                DropdownMenuItem(text = { Text("Chat storage") }, onClick = {
                                     menuVisible = false
-                                    renameVisible = true
-                                })
-                                DropdownMenuItem(text = { Text("Delete chat") }, enabled = state.canChange, onClick = {
-                                    menuVisible = false
-                                    deleteVisible = true
+                                    storageVisible = true
                                 })
                                 if (!state.usesProvider) {
                                     PreviewScenario.entries.forEach { scenario ->
@@ -261,7 +311,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
                     }
                 }
                 key(chat.id) {
-                    ConversationBody(state, onReview = { review = it }, onContext = {
+                    ConversationBody(state, onContext = {
                         contextCapture = AssistantContextCapture(it.baseSnapshot)
                         capturedTurn = true
                         contextVisible = true
@@ -269,45 +319,64 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
                 }
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                     Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                        Row(Modifier.padding(4.dp), verticalAlignment = Alignment.Bottom) {
-                            if (tightWindow) {
-                                IconButton(onClick = ::leave) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to editor") }
+                        Column(Modifier.padding(4.dp).testTag("assistant-composer-panel")) {
+                            Row(verticalAlignment = Alignment.Bottom) {
+                                if (tightWindow) {
+                                    IconButton(onClick = ::leave) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to editor") }
+                                }
+                                TextField(
+                                    value = chat.composer,
+                                    onValueChange = state::compose,
+                                    enabled = !state.isLoading,
+                                    isError = state.inputError != null,
+                                    supportingText = if (tightWindow && state.inputError != null) ({ Text(state.inputError!!) }) else null,
+                                    placeholder = { Text("Message") },
+                                    modifier = Modifier.weight(1f).testTag("assistant-composer"),
+                                    maxLines = if (shortWindow) 2 else 4,
+                                    colors = TextFieldDefaults.colors(
+                                        focusedContainerColor = Color.Transparent,
+                                        unfocusedContainerColor = Color.Transparent,
+                                        disabledContainerColor = Color.Transparent,
+                                        focusedIndicatorColor = Color.Transparent,
+                                        unfocusedIndicatorColor = Color.Transparent,
+                                        disabledIndicatorColor = Color.Transparent,
+                                    ),
+                                )
+                                FilledIconButton(
+                                    modifier = Modifier.padding(bottom = 4.dp),
+                                    onClick = {
+                                        if (state.isResponding) state.stop() else state.send()
+                                    },
+                                    enabled = state.isResponding || state.canSend,
+                                ) {
+                                    if (state.isResponding) Icon(Icons.Outlined.StopCircle, "Stop response") else Icon(Icons.AutoMirrored.Outlined.Send, "Send message")
+                                }
                             }
-                            TextField(
-                                value = chat.composer,
-                                onValueChange = state::compose,
-                                enabled = !state.isLoading,
-                                isError = state.inputError != null,
-                                supportingText = if (tightWindow && state.inputError != null) ({ Text(state.inputError!!) }) else null,
-                                placeholder = { Text("Message") },
-                                modifier = Modifier.weight(1f).testTag("assistant-composer"),
-                                maxLines = if (shortWindow) 2 else 4,
-                                colors = TextFieldDefaults.colors(
-                                    focusedContainerColor = Color.Transparent,
-                                    unfocusedContainerColor = Color.Transparent,
-                                    disabledContainerColor = Color.Transparent,
-                                    focusedIndicatorColor = Color.Transparent,
-                                    unfocusedIndicatorColor = Color.Transparent,
-                                    disabledIndicatorColor = Color.Transparent,
-                                ),
-                            )
-                            FilledIconButton(
-                                modifier = Modifier.padding(bottom = 4.dp),
-                                onClick = {
-                                    if (state.isResponding) state.stop() else state.send()
-                                },
-                                enabled = state.isResponding || state.canSend,
-                            ) {
-                                if (state.isResponding) Icon(Icons.Outlined.StopCircle, "Stop response") else Icon(Icons.AutoMirrored.Outlined.Send, "Send message")
+                            if (!tightWindow) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(onClick = { composerSheet = "attachments" }) { Icon(Icons.Outlined.Add, "Add attachment") }
+                                    TextButton(onClick = { composerSheet = "model" }) {
+                                        Text(if (state.usesProvider) "DeepSeek Flash · Standard" else "Sample · Standard", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Icon(Icons.Outlined.KeyboardArrowDown, null)
+                                    }
+                                }
                             }
                         }
+                    }
+                    if (state.usesProvider && !state.providerEnabled && onOpenSettings != null) {
+                        TextButton(onClick = {
+                            keyboard?.hide()
+                            focus.clearFocus()
+                            state.close()
+                            onOpenSettings()
+                        }) { Text("Enable AI in Settings") }
                     }
                     val notice = when {
                         state.storageError != null -> "Chat not saved. Open Chat storage."
                         state.inputError != null -> state.inputError
                         chat.turns.size >= AssistantPreviewState.MAX_TURNS -> "Chat is full. Start a new chat."
                         chat.composer.length == AssistantPreviewState.MAX_PROMPT_LENGTH -> "4,000 character limit reached."
-                        state.usesProvider && !state.providerEnabled -> "Enable AI in Settings to send."
+                        state.usesProvider && !state.providerEnabled && onOpenSettings == null -> "Enable AI in Settings to send."
                         else -> null
                     }
                     if (!tightWindow && notice != null) Text(notice, Modifier.padding(start = 12.dp, top = 4.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -340,7 +409,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
                     state.select(entry.id)
                     historyVisible = false
                 }, enabled = state.canChange, modifier = Modifier.fillMaxWidth()) {
-                    Text(entry.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(if (entry.pinned) "Pinned · ${entry.title}" else entry.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -374,73 +443,11 @@ fun AssistantPreviewScreen(state: AssistantPreviewState) {
             dismissButton = { TextButton(onClick = { deleteVisible = false }) { Text("Cancel") } },
         )
     }
-    review?.let { selectedTurn ->
-        val turn = chat.turns.firstOrNull { it.id == selectedTurn.id } ?: selectedTurn
-        PreviewDialog("Review changes", onDismiss = { review = null }) {
-            val proposal = turn.proposal
-            if (proposal != null) {
-                val current = state.previewContext()
-                val result = remember(turn.baseSnapshot, proposal) {
-                    runCatching { AssistantProposalReview.changes(requireNotNull(turn.baseSnapshot), proposal) }
-                }
-                val status = if (proposal.isValid && result.isFailure) {
-                    AssistantReviewStatus.INVALID
-                } else if (turn.localBindingId != null && turn.localBindingId != current.localBindingId && !turn.proposalDismissed) {
-                    AssistantReviewStatus.STALE
-                } else {
-                    AssistantProposalReview.status(turn.baseSnapshot, current, proposal, turn.proposalDismissed)
-                }
-                Text(
-                    when (turn.applyState) {
-                        ProposalApplyState.NONE -> status.label
-                        ProposalApplyState.RESERVED -> "Apply attempt recorded"
-                        ProposalApplyState.APPLIED -> "Applied to draft"
-                        ProposalApplyState.REJECTED -> "Apply was blocked"
-                    },
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                when (turn.applyState) {
-                    ProposalApplyState.RESERVED -> Text("Check the editor after an interrupted Apply. Unsaved edits may be lost on restart.")
-                    ProposalApplyState.APPLIED -> Text("Use Undo in the editor to revert. Save when ready.")
-                    ProposalApplyState.REJECTED -> Text("Nothing applied. Send a new request.")
-                    ProposalApplyState.NONE -> Unit
-                }
-                if (status == AssistantReviewStatus.STALE && turn.applyState == ProposalApplyState.NONE) Text("Draft changed. Send a new request.", color = MaterialTheme.colorScheme.error)
-                if (status == AssistantReviewStatus.DISMISSED) Text("Dismissed. Send a new request for changes.")
-                proposal.issues.forEach { Text(it, color = MaterialTheme.colorScheme.error) }
-                if (proposal.isValid && result.isFailure) Text("Cannot review this proposal. Send a new request.", color = MaterialTheme.colorScheme.error)
-                if (state.supportsApply && turn.localBindingId == null) Text("Reopened proposal. Send a new request to apply changes.")
-                Text("Device capabilities have not been checked.", style = MaterialTheme.typography.bodySmall)
-                Text(if (state.supportsApply) "Apply changes the draft. Save and Run stay separate." else "Sample only. Apply is unavailable.")
-                Button(onClick = { state.applyProposal(turn.id) }, enabled = result.isSuccess && state.canApply(turn)) { Text("Apply to draft") }
-                if (!turn.proposalDismissed && turn.applyState == ProposalApplyState.NONE) TextButton(onClick = { state.dismissProposal(turn.id) }, enabled = state.canChange) { Text("Dismiss proposal") }
-                result.getOrNull()?.let { changes ->
-                    if (changes.isEmpty()) Text("No workflow changes")
-                    SelectionContainer {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            changes.forEach { change ->
-                                HorizontalDivider()
-                                Text(change.label, style = MaterialTheme.typography.titleSmall)
-                                Text("Before: ${change.before ?: "Absent"}")
-                                Text("After: ${change.after ?: "Absent"}")
-                            }
-                        }
-                    }
-                }
-            } else {
-                Text(if (turn.scenario == PreviewScenario.STALE) "Stale proposal" else "Sample proposal", style = MaterialTheme.typography.titleMedium)
-                Text("Example only · Wait block")
-                Text("Before: 1 second\nAfter: 2 seconds")
-                if (turn.scenario == PreviewScenario.STALE) Text("The example draft has changed. A new proposal would be required.")
-                Text("This example is not based on your workflow. Applying changes is unavailable in the preview.")
-            }
-            if (proposal == null) Button(onClick = {}, enabled = false) { Text("Apply to draft") }
-        }
-    }
+    composerSheet?.let { sheet -> ComposerOptions(sheet, state.usesProvider, onSelect = { composerSheet = it }, onDismiss = { composerSheet = null }) }
 }
 
 @Composable
-private fun ConversationBody(state: AssistantPreviewState, onReview: (PreviewTurn) -> Unit, onContext: (PreviewTurn) -> Unit, modifier: Modifier = Modifier) {
+private fun ConversationBody(state: AssistantPreviewState, onContext: (PreviewTurn) -> Unit, modifier: Modifier = Modifier) {
     val chat = state.conversation ?: return
     val list = rememberLazyListState()
     var followLatest by remember { mutableStateOf(true) }
@@ -469,7 +476,7 @@ private fun ConversationBody(state: AssistantPreviewState, onReview: (PreviewTur
             LazyColumn(state = list, modifier = Modifier.fillMaxSize().testTag("assistant-messages"), verticalArrangement = Arrangement.spacedBy(24.dp)) {
                 item { Box(Modifier.heightIn(min = 12.dp)) }
                 items(chat.turns, key = { it.id }) { turn ->
-                    PreviewTurnContent(turn, isLast = turn == chat.turns.last(), canRetry = state.canRetry, onRetry = state::retry, onReview = { onReview(turn) }, onContext = { onContext(turn) })
+                    PreviewTurnContent(state, turn, isLast = turn == chat.turns.last(), onContext = { onContext(turn) })
                 }
                 item { Box(Modifier.heightIn(min = 32.dp)) }
             }
@@ -487,12 +494,22 @@ private fun ConversationBody(state: AssistantPreviewState, onReview: (PreviewTur
 }
 
 @Composable
-private fun PreviewTurnContent(turn: PreviewTurn, isLast: Boolean, canRetry: Boolean, onRetry: () -> Unit, onReview: () -> Unit, onContext: () -> Unit) {
+private fun PreviewTurnContent(state: AssistantPreviewState, turn: PreviewTurn, isLast: Boolean, onContext: () -> Unit) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Surface(Modifier.align(Alignment.End).widthIn(max = 560.dp), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
             MessageText(turn.prompt, "Your message", Modifier.padding(horizontal = 16.dp, vertical = 12.dp), onContext = if (turn.baseSnapshot != null) onContext else null)
         }
-        if (turn.reply.isNotEmpty()) MessageText(turn.reply, if (turn.provider) "DeepSeek reply" else "Sample reply", Modifier.fillMaxWidth(), onContext = if (turn.baseSnapshot != null) onContext else null)
+        val reply = remember(turn.reply, turn.baseSnapshot) { readableReply(turn) }
+        if (turn.reply.isNotEmpty()) MessageText(reply, if (turn.provider) "DeepSeek reply" else "Sample reply", Modifier.fillMaxWidth().testTag("assistant-reply-${turn.id}"), markdown = true, onContext = if (turn.baseSnapshot != null) onContext else null)
+        if (turn.status == PreviewReplyStatus.COMPLETE && reply.isNotBlank()) {
+            val clipboard = LocalClipboard.current
+            val scope = rememberCoroutineScope()
+            Row {
+                IconButton(onClick = { scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("AI reply", reply))) } }) { Icon(Icons.Outlined.ContentCopy, "Copy reply") }
+                IconButton(onClick = { state.branch(turn.id) }, enabled = state.canBranch(turn)) { Icon(Icons.AutoMirrored.Outlined.CallSplit, "Branch to new chat") }
+                IconButton(onClick = { state.regenerate(turn.id) }, enabled = state.canRegenerate(turn)) { Icon(Icons.Outlined.Refresh, "Resend message") }
+            }
+        }
         turn.responseError?.let { Text(it, Modifier.semantics { liveRegion = LiveRegionMode.Polite }, color = MaterialTheme.colorScheme.error) }
         val status = when (turn.status) {
             PreviewReplyStatus.RESPONDING -> "Responding…"
@@ -503,29 +520,26 @@ private fun PreviewTurnContent(turn: PreviewTurn, isLast: Boolean, canRetry: Boo
         }
         if (status != null) Text(status, Modifier.semantics { liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (turn.proposal != null || (!turn.provider && turn.status == PreviewReplyStatus.COMPLETE && turn.scenario in listOf(PreviewScenario.PROPOSAL, PreviewScenario.STALE))) {
-            OutlinedButton(onClick = onReview, shape = RoundedCornerShape(24.dp)) { Text("Review changes") }
+            InlineProposal(state, turn)
         }
         if (isLast && turn.status !in listOf(PreviewReplyStatus.COMPLETE, PreviewReplyStatus.RESPONDING)) {
-            TextButton(onClick = onRetry, enabled = canRetry) { Text(if (turn.provider) "Retry request" else "Retry sample") }
+            TextButton(onClick = state::retry, enabled = state.canRetry) { Text(if (turn.provider) "Retry request" else "Retry sample") }
         }
     }
 }
 
 @Composable
-private fun MessageText(text: String, speaker: String, modifier: Modifier = Modifier, onContext: (() -> Unit)? = null) {
+private fun MessageText(text: String, speaker: String, modifier: Modifier = Modifier, markdown: Boolean = false, onContext: (() -> Unit)? = null) {
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     var actionsVisible by remember { mutableStateOf(false) }
     var selectionVisible by remember { mutableStateOf(false) }
     Box {
-        Text(
-            text,
-            modifier.combinedClickable(onClick = {}, onLongClickLabel = "Message actions", onLongClick = { actionsVisible = true }).semantics {
-                contentDescription = "$speaker: $text"
-                if (speaker != "Your message") liveRegion = LiveRegionMode.Polite
-            },
-            style = MaterialTheme.typography.bodyLarge,
-        )
+        val messageModifier = modifier.combinedClickable(onClick = {}, onLongClickLabel = "Message actions", onLongClick = { actionsVisible = true }).semantics {
+            if (!markdown) contentDescription = "$speaker: $text"
+            if (speaker != "Your message") liveRegion = LiveRegionMode.Polite
+        }
+        if (markdown) AssistantMarkdown(text, messageModifier) else Text(text, messageModifier, style = MaterialTheme.typography.bodyLarge)
         DropdownMenu(expanded = actionsVisible, onDismissRequest = { actionsVisible = false }) {
             DropdownMenuItem(text = { Text("Copy") }, onClick = {
                 actionsVisible = false
@@ -554,4 +568,146 @@ private fun PreviewDialog(title: String, onDismiss: () -> Unit, content: @Compos
         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) { content() } },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
     )
+}
+
+@Composable
+private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
+    var expanded by remember(turn.id) { mutableStateOf(false) }
+    var diagnostics by remember(turn.id) { mutableStateOf(false) }
+    val proposal = turn.proposal
+    val current = state.previewContext()
+    val changes = remember(turn.baseSnapshot, proposal) {
+        runCatching { readableChanges(requireNotNull(turn.baseSnapshot), requireNotNull(proposal)) }
+    }
+    val status = when {
+        proposal == null -> if (turn.scenario == PreviewScenario.STALE) AssistantReviewStatus.STALE else AssistantReviewStatus.READY
+        proposal.isValid && changes.isFailure -> AssistantReviewStatus.INVALID
+        turn.localBindingId != null && turn.localBindingId != current.localBindingId && !turn.proposalDismissed -> AssistantReviewStatus.STALE
+        else -> AssistantProposalReview.status(turn.baseSnapshot, current, proposal, turn.proposalDismissed)
+    }
+    Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.fillMaxWidth()) {
+        Column {
+            Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("assistant-review-toggle").clickable { expanded = !expanded }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        when {
+                            proposal == null -> "Example change"
+                            changes.isSuccess -> "Changes · ${changes.getOrNull()?.size ?: 0}"
+                            else -> "Proposed changes"
+                        },
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        when (turn.applyState) {
+                            ProposalApplyState.NONE -> status.label
+                            ProposalApplyState.RESERVED -> "Apply attempt recorded"
+                            ProposalApplyState.APPLIED -> "Applied to draft"
+                            ProposalApplyState.REJECTED -> "Apply was blocked"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Icon(if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown, if (expanded) "Collapse changes" else "Expand changes")
+            }
+            if (expanded) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    when (turn.applyState) {
+                        ProposalApplyState.RESERVED -> Text("Check your draft in the editor before continuing.")
+
+                        ProposalApplyState.APPLIED -> Text("Undo in the editor. Save when ready.")
+
+                        ProposalApplyState.REJECTED -> Text("Nothing applied. Send a new request.")
+
+                        ProposalApplyState.NONE -> when (status) {
+                            AssistantReviewStatus.STALE -> Text("Draft changed. Send a new request.", color = MaterialTheme.colorScheme.error)
+                            AssistantReviewStatus.INVALID -> Text("These changes couldn't be validated. Ask for a new reply.", color = MaterialTheme.colorScheme.error)
+                            AssistantReviewStatus.DISMISSED -> Text("Dismissed. Send a new request for changes.")
+                            AssistantReviewStatus.READY -> Unit
+                        }
+                    }
+                    if (proposal != null && proposal.issues.isNotEmpty()) {
+                        if (proposal.issues.any { it.startsWith("Candidate changed locked fields:") }) Text("Change apps, images or device setup in the editor first.")
+                        TextButton(onClick = { diagnostics = !diagnostics }) { Text(if (diagnostics) "Hide technical details" else "Technical details") }
+                        if (diagnostics) proposal.issues.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    }
+                    if (state.supportsApply && turn.localBindingId == null && proposal != null) Text("Copied or reopened changes. Send a new message to apply.")
+                    SelectionContainer {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (proposal == null) {
+                                Text("Wait", style = MaterialTheme.typography.titleSmall)
+                                DiffValue("Before", "1 second", false)
+                                DiffValue("After", "2 seconds", true)
+                            } else {
+                                changes.getOrNull()?.forEach { change ->
+                                    HorizontalDivider()
+                                    Text(change.label, style = MaterialTheme.typography.titleSmall)
+                                    change.before?.let { DiffValue("Before", it, false) }
+                                    change.after?.let { DiffValue("After", it, true) }
+                                }
+                            }
+                        }
+                    }
+                    Text(if (state.supportsApply && proposal != null) "Draft only. Save and Run are separate." else "Sample only. Apply is unavailable.", style = MaterialTheme.typography.bodySmall)
+                    Text("Device capabilities have not been checked.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { state.applyProposal(turn.id) }, enabled = changes.isSuccess && state.canApply(turn)) { Text("Apply to draft") }
+                        if (proposal != null && !turn.proposalDismissed && turn.applyState == ProposalApplyState.NONE) TextButton(onClick = { state.dismissProposal(turn.id) }, enabled = state.canChange) { Text("Dismiss proposal") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiffValue(label: String, value: String, added: Boolean) {
+    val colors = MaterialTheme.colorScheme
+    Surface(color = if (added) colors.secondaryContainer else colors.errorContainer, shape = RoundedCornerShape(8.dp)) {
+        Text("$label: $value", Modifier.fillMaxWidth().padding(10.dp), style = MaterialTheme.typography.bodyMedium, color = if (added) colors.onSecondaryContainer else colors.onErrorContainer)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ComposerOptions(sheet: String, provider: Boolean, onSelect: (String) -> Unit, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.padding(bottom = 24.dp).verticalScroll(rememberScrollState())) {
+            Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, "Close options") }
+                Text(
+                    when (sheet) {
+                        "attachments" -> "Add to chat"
+                        "effort" -> "Effort"
+                        else -> "Select model"
+                    },
+                    Modifier.padding(vertical = 12.dp),
+                    style = MaterialTheme.typography.titleLarge,
+                )
+            }
+            when (sheet) {
+                "attachments" -> {
+                    Text("Attachments coming soon", Modifier.padding(horizontal = 24.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    listOf("Take a photo", "Add photos", "Attach files").forEach { FutureOption(it) }
+                }
+
+                "effort" -> {
+                    ListItem(headlineContent = { Text("Standard") }, supportingContent = { Text("Current setting") })
+                    listOf("Low", "Medium", "High", "Extra", "Max").forEach { FutureOption(it) }
+                    TextButton(onClick = { onSelect("model") }, modifier = Modifier.padding(horizontal = 16.dp)) { Text("Back to models") }
+                }
+
+                else -> {
+                    ListItem(headlineContent = { Text(if (provider) "DeepSeek Flash" else "Sample chat") }, supportingContent = { Text("Current model") }, trailingContent = { Text("Selected", color = MaterialTheme.colorScheme.primary) })
+                    ListItem(headlineContent = { Text("Effort") }, trailingContent = { Text("Standard ›") }, modifier = Modifier.clickable { onSelect("effort") })
+                    FutureOption("More models")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FutureOption(label: String) {
+    ListItem(headlineContent = { Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant) }, supportingContent = { Text("Coming soon", style = MaterialTheme.typography.labelSmall) }, modifier = Modifier.semantics { disabled() })
 }

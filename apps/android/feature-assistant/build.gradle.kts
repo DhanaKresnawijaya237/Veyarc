@@ -56,6 +56,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
+    implementation("org.commonmark:commonmark:0.30.0")
 }
 
 val assistantRuntimes = provider { listOf("debugRuntimeClasspath", "releaseRuntimeClasspath").map(configurations::getByName) }

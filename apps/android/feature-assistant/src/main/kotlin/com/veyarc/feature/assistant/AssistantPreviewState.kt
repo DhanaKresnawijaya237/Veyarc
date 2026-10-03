@@ -85,6 +85,7 @@ data class PreviewConversation(
     val createdAtMs: Long = System.currentTimeMillis(),
     val updatedAtMs: Long = createdAtMs,
     val formatVersion: Int = 1,
+    val pinned: Boolean = false,
 )
 
 /** Null storage is reserved for deterministic UI/unit fixtures. The app supplies encrypted storage. */
@@ -136,7 +137,8 @@ class AssistantPreviewState(
     val persistent: Boolean get() = repository != null
     val canChange: Boolean get() = !isLoading && pendingWrites == 0 && storageError == null
     val conversation: PreviewConversation? get() = conversations.firstOrNull { it.id == selectedId }
-    val history: List<PreviewConversation> get() = conversations.filter { it.workflowId == context.workflowId }.asReversed()
+    val history: List<PreviewConversation> get() = conversations.filter { it.workflowId == context.workflowId }
+        .sortedWith(compareByDescending<PreviewConversation> { it.pinned }.thenByDescending { it.updatedAtMs })
     val canSend: Boolean get() = isOpen && (!usesProvider || providerEnabled) && canChange && !isResponding && conversation?.let {
         it.composer.isNotBlank() && it.composer.length <= MAX_PROMPT_LENGTH && it.turns.size < MAX_TURNS
     } == true
@@ -231,7 +233,7 @@ class AssistantPreviewState(
         conversations = loaded
         savedIds.clear()
         savedIds.addAll(loaded.map { it.id })
-        selectedId = history.firstOrNull()?.id
+        selectedId = history.maxByOrNull { it.updatedAtMs }?.id
         storageError = null
         isLoading = false
         loadFailed = false
@@ -244,7 +246,7 @@ class AssistantPreviewState(
             return
         }
         if (isOpen) stop(PreviewReplyStatus.INTERRUPTED)
-        selectedId = conversations.lastOrNull { it.workflowId == currentContext.workflowId }?.id
+        selectedId = conversations.filter { it.workflowId == currentContext.workflowId }.maxByOrNull { it.updatedAtMs }?.id
         context = currentContext
         isOpen = true
         if (repository != null && storageError == null && !isLoading) {
@@ -318,6 +320,66 @@ class AssistantPreviewState(
         if (!canChange || title.isBlank() || title.length > 80) return
         update { it.copy(title = title.trim()) }
         flush()
+    }
+
+    fun togglePin() {
+        if (!canChange) return
+        update { it.copy(pinned = !it.pinned) }
+        flush()
+    }
+
+    fun canBranch(turn: PreviewTurn): Boolean = isOpen && canChange && !isResponding &&
+        conversations.size < MAX_CHATS && conversation?.turns?.any { it.id == turn.id } == true && turn.status == PreviewReplyStatus.COMPLETE
+
+    /** Copies the chosen exchange and earlier messages, never authority to apply a copied proposal. */
+    fun branch(turnId: String) {
+        val source = conversation ?: return
+        val index = source.turns.indexOfFirst { it.id == turnId }
+        if (index < 0 || !canBranch(source.turns[index])) return
+        val fork = source.copy(
+            id = UUID.randomUUID().toString(),
+            title = "${source.title.take(68)} · Branch",
+            composer = "",
+            turns = source.turns.take(index + 1).map {
+                it.copy(id = UUID.randomUUID().toString(), localBindingId = null, applyState = ProposalApplyState.NONE)
+            },
+            createdAtMs = System.currentTimeMillis(),
+            updatedAtMs = System.currentTimeMillis(),
+            pinned = false,
+        )
+        if (runCatching { encode(fork) }.isFailure) {
+            inputError = "This branch is too large. Start a new chat."
+            return
+        }
+        flush()
+        conversations = conversations + fork
+        selectedId = fork.id
+        persist(fork)
+    }
+
+    fun canRegenerate(turn: PreviewTurn): Boolean = turn.provider == usesProvider && (!usesProvider || providerEnabled) &&
+        if (turn.status == PreviewReplyStatus.COMPLETE) canBranch(turn) else conversation?.turns?.lastOrNull()?.id == turn.id && canRetry
+
+    /** A completed reply is kept in its original chat. Regeneration uses its captured context in a branch. */
+    fun regenerate(turnId: String) {
+        val turn = conversation?.turns?.firstOrNull { it.id == turnId } ?: return
+        if (!canRegenerate(turn)) return
+        if (turn.status != PreviewReplyStatus.COMPLETE) {
+            retry()
+            return
+        }
+        val sourceId = selectedId
+        branch(turnId)
+        if (selectedId == sourceId) return
+        val token = UUID.randomUUID().toString()
+        updateLast {
+            it.copy(
+                reply = "", status = PreviewReplyStatus.RESPONDING, requestId = token, attempt = it.attempt + 1,
+                outcome = null, responseError = null, proposal = null, proposalDismissed = false,
+                localBindingId = if (turn.applyState == ProposalApplyState.NONE) turn.localBindingId else null,
+            )
+        }
+        begin(token)
     }
 
     fun deleteCurrent() {
@@ -699,11 +761,10 @@ class AssistantPreviewState(
 
 private fun sampleReply(scenario: PreviewScenario): String = when (scenario) {
     PreviewScenario.EXPLANATION ->
-        "This is a sample reply, not an analysis of your workflow.\n\n" +
-            "A workflow runs its blocks in order. Wait blocks pause before the next action. " +
-            "Conditions decide which branch to follow, and bounded loops repeat a group of blocks.\n\n" +
-            "In the connected version, you will be able to ask about your own blocks or describe a change. " +
-            "You will review proposed changes before applying them to the editor."
+        "## How workflows work\n\n" +
+            "- **Steps** run in order.\n- **Wait** pauses before the next action.\n" +
+            "- **Conditions** choose a branch.\n- **Repeat** runs a group of steps again.\n\n" +
+            "> Sample reply. Your workflow hasn't changed."
 
     PreviewScenario.CLARIFICATION -> "Sample clarification: which Android app should the workflow use, and what should happen first? Supply the package, orientation, and recorded or selected touch positions before asking for a runnable workflow. This sample does not inspect your screen."
 
