@@ -95,6 +95,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.ClipEntry
@@ -705,16 +706,34 @@ private fun ChatPanel(title: String, onDismiss: () -> Unit, onBack: (() -> Unit)
 private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
     var expanded by remember(turn.id) { mutableStateOf(false) }
     var diagnostics by remember(turn.id) { mutableStateOf(false) }
+    var allChangesVisible by remember(turn.id) { mutableStateOf(false) }
     val proposal = turn.proposal
     val current = state.previewContext()
     val changes = remember(turn.baseSnapshot, proposal) {
         runCatching { readableChanges(requireNotNull(turn.baseSnapshot), requireNotNull(proposal)) }
     }
+    val values = changes.getOrNull().orEmpty()
+    val compact = values.size > 3 || values.any { change ->
+        listOfNotNull(change.before, change.after).any { it.length > 160 || it.lines().size > 3 }
+    }
+    val previewCount = if (LocalDensity.current.fontScale > 1.5f) 1 else 2
     val status = when {
         proposal == null -> if (turn.scenario == PreviewScenario.STALE) AssistantReviewStatus.STALE else AssistantReviewStatus.READY
         proposal.isValid && changes.isFailure -> AssistantReviewStatus.INVALID
         turn.localBindingId != null && turn.localBindingId != current.localBindingId && !turn.proposalDismissed -> AssistantReviewStatus.STALE
         else -> AssistantProposalReview.status(turn.baseSnapshot, current, proposal, turn.proposalDismissed)
+    }
+    val reviewLabel = when (turn.applyState) {
+        ProposalApplyState.NONE -> status.label
+        ProposalApplyState.RESERVED -> "Apply attempt recorded"
+        ProposalApplyState.APPLIED -> "Applied to draft"
+        ProposalApplyState.REJECTED -> "Apply was blocked"
+    }
+    if (allChangesVisible) {
+        ChatPanel("All changes", onDismiss = { allChangesVisible = false }) {
+            Text("${values.size} changes · $reviewLabel", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            SelectionContainer { ProposalChanges(values, modifier = Modifier.testTag("assistant-all-changes")) }
+        }
     }
     Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.fillMaxWidth()) {
         Column {
@@ -729,12 +748,7 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Text(
-                        when (turn.applyState) {
-                            ProposalApplyState.NONE -> status.label
-                            ProposalApplyState.RESERVED -> "Apply attempt recorded"
-                            ProposalApplyState.APPLIED -> "Applied to draft"
-                            ProposalApplyState.REJECTED -> "Apply was blocked"
-                        },
+                        reviewLabel,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -765,26 +779,24 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
                         if (diagnostics) proposal.issues.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
                     }
                     if (state.supportsApply && turn.localBindingId == null && proposal != null) Text("Copied or reopened changes. Send a new message to apply.")
-                    SelectionContainer {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (proposal == null) {
+                    if (proposal == null) {
+                        SelectionContainer {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("Wait", style = MaterialTheme.typography.titleSmall)
                                 DiffValue("Before", "1 second", false)
                                 DiffValue("After", "2 seconds", true)
-                            } else {
-                                changes.getOrNull()?.forEach { change ->
-                                    HorizontalDivider()
-                                    Text(change.label, style = MaterialTheme.typography.titleSmall)
-                                    change.before?.let { DiffValue("Before", it, false) }
-                                    change.after?.let { DiffValue("After", it, true) }
-                                }
                             }
                         }
+                    } else {
+                        Box(Modifier.fillMaxWidth().then(if (compact) Modifier.heightIn(max = 220.dp).clipToBounds() else Modifier).testTag("assistant-changes-preview")) {
+                            SelectionContainer { ProposalChanges(if (compact) values.take(previewCount) else values, compact) }
+                        }
+                        if (compact) OutlinedButton(onClick = { allChangesVisible = true }, modifier = Modifier.fillMaxWidth()) { Text("View all changes") }
                     }
                     Text(if (state.supportsApply && proposal != null) "Draft only. Save and Run are separate." else "Sample only. Apply is unavailable.", style = MaterialTheme.typography.bodySmall)
                     Text("Device capabilities have not been checked.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { state.applyProposal(turn.id) }, enabled = changes.isSuccess && state.canApply(turn)) { Text("Apply to draft") }
+                        Button(onClick = { state.applyProposal(turn.id) }, enabled = changes.isSuccess && state.canApply(turn)) { Text(if (compact) "Apply all changes" else "Apply to draft") }
                         if (proposal != null && !turn.proposalDismissed && turn.applyState == ProposalApplyState.NONE) TextButton(onClick = { state.dismissProposal(turn.id) }, enabled = state.canChange) { Text("Dismiss proposal") }
                     }
                 }
@@ -794,10 +806,26 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
 }
 
 @Composable
-private fun DiffValue(label: String, value: String, added: Boolean) {
-    val colors = MaterialTheme.colorScheme
-    Surface(color = if (added) colors.secondaryContainer else colors.errorContainer, shape = RoundedCornerShape(8.dp)) {
-        Text("$label: $value", Modifier.fillMaxWidth().padding(10.dp), style = MaterialTheme.typography.bodyMedium, color = if (added) colors.onSecondaryContainer else colors.onErrorContainer)
+private fun ProposalChanges(changes: List<AssistantValueChange>, compact: Boolean = false, modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        changes.forEach { change ->
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                HorizontalDivider()
+                Text(change.label, style = MaterialTheme.typography.titleSmall, maxLines = if (compact) 1 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis)
+                change.before?.let { DiffValue("Before", it, false, compact) }
+                change.after?.let { DiffValue("After", it, true, compact) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiffValue(label: String, value: String, added: Boolean, compact: Boolean = false) {
+    val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val background = if (added) Color(if (dark) 0xFF173326 else 0xFFE5F2E9) else Color(if (dark) 0xFF381E22 else 0xFFFBE9E8)
+    val foreground = if (added) Color(if (dark) 0xFFD4EDDD else 0xFF173F25) else Color(if (dark) 0xFFF4D4D4 else 0xFF603232)
+    Surface(color = background, shape = RoundedCornerShape(8.dp)) {
+        Text("$label: $value", Modifier.fillMaxWidth().padding(if (compact) 8.dp else 10.dp), style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium, color = foreground, maxLines = if (compact) 2 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis)
     }
 }
 

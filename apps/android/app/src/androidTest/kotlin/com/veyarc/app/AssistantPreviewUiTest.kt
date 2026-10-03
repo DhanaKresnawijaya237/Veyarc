@@ -9,6 +9,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -16,6 +17,9 @@ import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.longClick
@@ -24,9 +28,11 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.Density
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -400,6 +406,93 @@ class AssistantPreviewUiTest {
         compose.onNodeWithTag("assistant-review-toggle").performScrollTo().performClick()
         compose.onNodeWithText("Dismissed proposal").assertIsDisplayed()
         assertEquals("Edited after Send", draft.name)
+    }
+
+    @Test
+    fun largeProposalPreviewOpensEveryChangeWithoutApplying() {
+        val args = InstrumentationRegistry.getArguments()
+        val singleChange = args.getString("singleLongChange") == "true"
+        val largeText = args.getString("previewLargeText") == "true"
+        val owner = kotlinx.coroutines.SupervisorJob()
+        val editor = com.veyarc.feature.editor.WorkflowEditorSession().apply { open(com.veyarc.feature.editor.WorkflowDraft.newDefault().buildBundle().bundle!!) }
+        val before = editor.draft!!
+        val bridge = AssistantDraftBridge(editor)
+        val note = "Keep this full note. ".repeat(100) + "End of full note"
+        val candidate = before.buildBundle().bundle!!.document.copy(
+            variables = mapOf("note" to com.veyarc.model.VariableDeclaration(com.veyarc.model.VariableType.STRING, com.veyarc.model.StringValue(note))),
+            steps = if (singleChange) before.steps else List(20) { com.veyarc.model.Wait(java.util.UUID.randomUUID().toString(), com.veyarc.model.DurationMillis(1000L + it)) },
+        )
+        lateinit var state: AssistantPreviewState
+        try {
+            compose.runOnIdle {
+                state = AssistantPreviewState(
+                    scope = kotlinx.coroutines.CoroutineScope(owner + kotlinx.coroutines.Dispatchers.Main),
+                    compileCandidate = ::assistantCompilationIssues,
+                    applyCandidate = bridge::apply,
+                    providerCall = {
+                        val chat = state.conversation!!
+                        val turn = chat.turns.last()
+                        val response = com.veyarc.feature.assistant.AssistantResponse(
+                            1,
+                            turn.requestId,
+                            chat.id,
+                            turn.baseSnapshot!!.snapshotId,
+                            com.veyarc.feature.assistant.AssistantOutcome.PROPOSAL,
+                            "Here are the changes.",
+                            com.veyarc.model.WorkflowJson.format.parseToJsonElement(com.veyarc.model.WorkflowJson.encode(candidate)) as kotlinx.serialization.json.JsonObject,
+                        )
+                        com.veyarc.model.WorkflowJson.encodeCanonical(com.veyarc.feature.assistant.AssistantResponse.serializer(), response).toByteArray()
+                    },
+                    contextSource = bridge::capture,
+                ).apply {
+                    open(AssistantPreviewContext(before.workflowId))
+                    enableProvider()
+                    compose("Update this workflow")
+                    send()
+                }
+            }
+            compose.setContent {
+                val density = LocalDensity.current
+                CompositionLocalProvider(LocalDensity provides Density(density.density, if (largeText) 2f else density.fontScale)) {
+                    VeyarcTheme(darkTheme = true) { AssistantPreviewScreen(state) }
+                }
+            }
+            compose.waitUntil(10_000) { state.conversation!!.turns.last().outcome != null }
+            compose.runOnIdle { org.junit.Assert.assertTrue(state.conversation!!.turns.last().proposal!!.isValid) }
+            compose.onNodeWithTag("assistant-review-toggle").performScrollTo().performClick()
+            val preview = compose.onNodeWithTag("assistant-changes-preview").performScrollTo().fetchSemanticsNode().boundsInRoot
+            val density = InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
+            org.junit.Assert.assertTrue("Inline preview must stay compact", preview.height <= 220f * density + 2f)
+            if (!singleChange) compose.onNodeWithText("1019 ms", substring = true).assertDoesNotExist()
+            capture("changes-preview")
+            repeat(2) { compose.onNodeWithTag("assistant-messages").performTouchInput { swipeUp() } }
+            compose.onNodeWithText("View all changes").assertIsDisplayed().performClick()
+            capture("all-changes-open")
+            compose.waitUntil(10_000) { runCatching { compose.onNodeWithText("All changes").assertIsDisplayed() }.isSuccess }
+            compose.onNodeWithText("All changes").assertIsDisplayed()
+            val fullNote = compose.onNode(hasText("End of full note", substring = true) and hasAnyAncestor(hasTestTag("assistant-all-changes")))
+            fullNote.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { action ->
+                val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+                action(layouts)
+                org.junit.Assert.assertFalse("Full review must not truncate values", layouts.single().hasVisualOverflow)
+                org.junit.Assert.assertTrue(layouts.single().lineCount > 2)
+            }
+            if (!singleChange) compose.onNodeWithText("1019 ms", substring = true).performScrollTo().assertIsDisplayed()
+            capture("all-changes")
+            compose.runOnIdle { assertEquals(before, editor.draft) }
+            compose.onNodeWithContentDescription("Close All changes").performClick()
+            repeat(2) { compose.onNodeWithTag("assistant-messages").performTouchInput { swipeUp() } }
+            compose.onNodeWithText("Apply all changes").assertIsDisplayed().assertIsEnabled().performClick()
+            compose.runOnIdle {
+                assertEquals(candidate.steps, editor.draft!!.steps)
+                assertEquals(candidate.variables, editor.draft!!.variables)
+                editor.undo()
+                assertEquals(before, editor.draft)
+            }
+            compose.onNodeWithText("Apply all changes").assertIsNotEnabled()
+        } finally {
+            owner.cancel()
+        }
     }
 
     @Test
