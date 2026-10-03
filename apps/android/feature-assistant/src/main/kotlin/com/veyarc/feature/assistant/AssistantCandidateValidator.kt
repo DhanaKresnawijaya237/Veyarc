@@ -23,7 +23,7 @@ data class AssistantProposalCheck(val candidateJson: String? = null, val issues:
 
 /** Pure validation. The injected compiler returns diagnostics only, never an execution plan. */
 object AssistantCandidateValidator {
-    const val MAX_CANDIDATE_BYTES = 32 * 1024
+    const val MAX_CANDIDATE_BYTES = AssistantContextSnapshot.MAX_BYTES
     const val CAPABILITY_NOTICE = "Device capabilities have not been checked. Passing local validation does not mean this device can run the workflow."
 
     fun validate(
@@ -47,7 +47,7 @@ object AssistantCandidateValidator {
                 checkPrimitiveTypes(WorkflowJson.format.parseToJsonElement(candidateJson), WorkflowJson.format.encodeToJsonElement(WorkflowDocument.serializer(), document))
             }
         } catch (_: Exception) {
-            return invalid("Candidate format or size is invalid. Only complete supported workflow documents up to 32 KiB are accepted.")
+            return invalid("The proposed workflow has an invalid format or is too large to review safely.")
         }
         val locked = buildList {
             if (candidate.id != base.id) add("workflow identity")
@@ -76,7 +76,7 @@ object AssistantCandidateValidator {
                 diagnostics(errors)
             } else {
                 val canonical = WorkflowJson.encode(candidate)
-                if (canonical.toByteArray(Charsets.UTF_8).size > MAX_CANDIDATE_BYTES) invalid("Normalized candidate exceeds the 32 KiB limit.") else AssistantProposalCheck(candidateJson = canonical)
+                if (canonical.toByteArray(Charsets.UTF_8).size > MAX_CANDIDATE_BYTES) invalid("The proposed workflow is too large to review safely.") else AssistantProposalCheck(candidateJson = canonical)
             }
         } catch (_: Exception) {
             invalid("Candidate exceeds the local compilation budget or could not be compiled.")

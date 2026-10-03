@@ -63,7 +63,7 @@ class AssistantPreviewStateTest {
     }
 
     @Test
-    fun everyFixtureTerminatesAndPreviewBoundsAreEnforced() {
+    fun everyFixtureTerminatesAndLongChatsAreAllowed() {
         val state = AssistantPreviewState()
         state.open(AssistantPreviewContext())
         PreviewScenario.entries.forEach { scenario ->
@@ -78,15 +78,37 @@ class AssistantPreviewStateTest {
         state.compose("x".repeat(AssistantPreviewState.MAX_PROMPT_LENGTH + 1))
         assertEquals("", state.conversation!!.composer)
         assertTrue(state.inputError != null)
-        repeat(AssistantPreviewState.MAX_TURNS) {
-            state.compose("Sample")
+        state.scenario = PreviewScenario.EXPLANATION
+        repeat(45) {
+            state.compose("Sample $it " + "x".repeat(5000))
             state.send()
             finish(state)
         }
-        assertEquals(AssistantPreviewState.MAX_TURNS, state.conversation!!.turns.size)
-        assertFalse(state.canSend)
-        repeat(AssistantPreviewState.MAX_CHATS) { state.newChat() }
-        assertEquals(AssistantPreviewState.MAX_CHATS, state.conversations.size)
+        assertTrue(state.conversation!!.turns.size > 40)
+        state.compose("One more")
+        assertTrue(state.canSend)
+        repeat(25) {
+            state.newChat()
+            state.compose("Chat $it")
+            state.send()
+            finish(state)
+        }
+        assertEquals(26, state.conversations.size)
+    }
+
+    @Test
+    fun newChatReusesAnEmptyChatAndKeepsItsUnsentMessage() {
+        val state = AssistantPreviewState().apply { open(AssistantPreviewContext()) }
+        val id = state.selectedId
+        state.compose("Unsent message")
+        repeat(5) { state.newChat() }
+        assertEquals(id, state.selectedId)
+        assertEquals("Unsent message", state.conversation!!.composer)
+        assertEquals(1, state.conversations.size)
+        state.send()
+        state.newChat()
+        assertNotEquals(id, state.selectedId)
+        assertEquals(2, state.conversations.size)
     }
 
     private fun finish(state: AssistantPreviewState) {
@@ -126,13 +148,18 @@ class AssistantPreviewStateTest {
         assertNotEquals(original.turns.first().requestId, state.requestId)
         finish(state)
         assertEquals(pinned, state.conversations.first { it.id == original.id })
-        repeat(AssistantPreviewState.MAX_CHATS) { state.newChat() }
+        repeat(25) {
+            state.newChat()
+            state.compose("Chat $it")
+            state.send()
+            finish(state)
+        }
         state.select(original.id)
-        assertFalse(state.canBranch(original.turns.first()))
-        assertFalse(state.canRegenerate(original.turns.first()))
+        assertTrue(state.canBranch(original.turns.first()))
+        assertTrue(state.canRegenerate(original.turns.first()))
         state.regenerate(original.turns.first().id)
-        assertEquals(original.id, state.selectedId)
-        assertNull(state.requestId)
+        assertNotEquals(original.id, state.selectedId)
+        finish(state)
     }
 
     @Test

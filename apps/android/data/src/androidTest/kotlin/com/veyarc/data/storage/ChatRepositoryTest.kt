@@ -16,7 +16,7 @@ import javax.crypto.spec.SecretKeySpec
 @RunWith(AndroidJUnit4::class)
 class ChatRepositoryTest {
     @Test
-    fun quotaAndUnavailableDirectoryRollBackWithoutLosingChatOrWorkflow() {
+    fun largeHistoryAndUnavailableDirectoryPreserveChatsAndWorkflow() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val database = Room.inMemoryDatabaseBuilder(context, VeyarcDatabase::class.java).allowMainThreadQueries().build()
         val root = File(context.cacheDir, "chat-capacity-${UUID.randomUUID()}").apply { mkdirs() }
@@ -29,11 +29,10 @@ class ChatRepositoryTest {
         try {
             database.workflowDao().upsertWorkflow(workflow)
             repository.save(chat, create = true)
-            repeat(15) { repository.save(chat.copy(id = UUID.randomUUID().toString(), workflowId = null, payload = ByteArray(ChatRepository.MAX_PAYLOAD_BYTES)), create = true) }
+            repeat(25) { repository.save(chat.copy(id = UUID.randomUUID().toString(), workflowId = null, payload = ByteArray(300 * 1024)), create = true) }
             val before = database.chatDao().list()
-            // File write succeeds, then the transaction rejects the aggregate quota and removes the new file.
-            assertTrue(runCatching { repository.save(chat.copy(payload = ByteArray(ChatRepository.MAX_PAYLOAD_BYTES)), create = false) }.isFailure)
-            assertEquals(before, database.chatDao().list())
+            assertEquals(26, repository.load().size)
+            assertTrue(before.sumOf { it.encryptedByteLength } > 4 * 1024 * 1024)
             assertEquals(before.map { it.encryptedFileName }.toSet(), directory.listFiles()!!.map { it.name }.toSet())
             assertArrayEquals(chat.payload, repository.load().single { it.id == chat.id }.payload)
             // Deterministic write-path failure, without exhausting the emulator's real disk.
@@ -113,10 +112,11 @@ class ChatRepositoryTest {
             assertTrue(repository.load().isEmpty())
             assertTrue(directory.listFiles().orEmpty().isEmpty())
             assertTrue(runCatching { repository.save(chat, create = false) }.isFailure)
-            repeat(ChatRepository.MAX_CHATS) {
+            repeat(25) {
                 repository.save(chat.copy(id = UUID.randomUUID().toString(), workflowId = null), create = true)
             }
-            assertTrue(runCatching { repository.save(chat.copy(workflowId = null), create = true) }.isFailure)
+            repository.save(chat.copy(workflowId = null), create = true)
+            assertEquals(26, repository.load().size)
         } finally {
             database.close()
             directory.deleteRecursively()

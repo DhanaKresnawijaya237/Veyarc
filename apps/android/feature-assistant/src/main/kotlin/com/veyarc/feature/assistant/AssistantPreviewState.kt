@@ -143,7 +143,7 @@ class AssistantPreviewState(
     val history: List<PreviewConversation> get() = conversations.filter { it.workflowId == context.workflowId }
         .sortedWith(compareByDescending<PreviewConversation> { it.pinned }.thenByDescending { it.updatedAtMs })
     val canSend: Boolean get() = isOpen && (!usesProvider || providerEnabled) && canChange && !isResponding && conversation?.let {
-        it.composer.isNotBlank() && it.composer.length <= MAX_PROMPT_LENGTH && it.turns.size < MAX_TURNS
+        it.composer.isNotBlank() && it.composer.length <= MAX_PROMPT_LENGTH
     } == true
 
     init {
@@ -306,13 +306,12 @@ class AssistantPreviewState(
     }
 
     fun newChat() {
-        if (!canChange || conversations.size >= MAX_CHATS) return
+        if (!canChange || conversation?.let { it.workflowId == context.workflowId && it.turns.isEmpty() } == true) return
         stop(PreviewReplyStatus.INTERRUPTED)
         createChat()
     }
 
     private fun createChat() {
-        if (conversations.size >= MAX_CHATS) return
         val chat = PreviewConversation(UUID.randomUUID().toString(), context.workflowId, context = context)
         conversations = conversations + chat
         selectedId = chat.id
@@ -338,7 +337,7 @@ class AssistantPreviewState(
     }
 
     fun canBranch(turn: PreviewTurn): Boolean = isOpen && canChange && !isResponding &&
-        conversations.size < MAX_CHATS && conversation?.turns?.any { it.id == turn.id } == true && turn.status == PreviewReplyStatus.COMPLETE
+        conversation?.turns?.any { it.id == turn.id } == true && turn.status == PreviewReplyStatus.COMPLETE
 
     /** Copies the chosen exchange and earlier messages, never authority to apply a copied proposal. */
     fun branch(turnId: String) {
@@ -730,34 +729,15 @@ class AssistantPreviewState(
     }
 
     companion object {
-        const val MAX_PROMPT_LENGTH = 4000
-        const val MAX_REPLY_LENGTH = 16000
-        const val MAX_TURNS = 40
-        const val MAX_CHATS = ChatRepository.MAX_CHATS
+        // Bound pasted input by the request transport budget, rather than a small chat character quota.
+        const val MAX_PROMPT_LENGTH = DeepSeekRequest.MAX_BYTES / 4
+        const val MAX_REPLY_LENGTH = AssistantResponseCodec.MAX_BYTES
         private val json = Json { encodeDefaults = true }
 
         internal fun encode(chat: PreviewConversation): StoredChat {
             validate(chat)
             val last = chat.turns.lastOrNull()
-            var saved = chat
-            var payload = json.encodeToString(saved).toByteArray(Charsets.UTF_8)
-            // Optional thinking must never displace a prompt, answer, captured context, or proposal.
-            // Drop older thinking first when the existing encrypted chat payload is full.
-            for (index in chat.turns.indices) {
-                if (payload.size <= ChatRepository.MAX_PAYLOAD_BYTES) break
-                val thinking = saved.turns[index].thinking ?: continue
-                if (thinking.text.isEmpty()) continue
-                saved = saved.copy(
-                    turns = saved.turns.mapIndexed { i, turn ->
-                        if (i == index) turn.copy(thinking = thinking.copy(text = "", truncated = true)) else turn
-                    },
-                )
-                payload = json.encodeToString(saved).toByteArray(Charsets.UTF_8)
-            }
-            if (payload.size > ChatRepository.MAX_PAYLOAD_BYTES && saved.turns.any { it.thinking != null }) {
-                saved = saved.copy(turns = saved.turns.map { it.copy(thinking = null) })
-                payload = json.encodeToString(saved).toByteArray(Charsets.UTF_8)
-            }
+            val payload = json.encodeToString(chat).toByteArray(Charsets.UTF_8)
             require(payload.size <= ChatRepository.MAX_PAYLOAD_BYTES)
             return StoredChat(chat.id, chat.workflowId, chat.createdAtMs, chat.updatedAtMs, last?.requestId, last?.status?.name ?: "EMPTY", payload)
         }
@@ -774,7 +754,7 @@ class AssistantPreviewState(
 
         private fun validate(chat: PreviewConversation) {
             require(chat.formatVersion == 1 && UUID.fromString(chat.id).toString() == chat.id)
-            require(chat.title.length in 1..80 && chat.composer.length <= MAX_PROMPT_LENGTH && chat.turns.size <= MAX_TURNS)
+            require(chat.title.length in 1..80 && chat.composer.length <= MAX_PROMPT_LENGTH)
             require(chat.context.name.length <= 1000 && chat.createdAtMs >= 0 && chat.updatedAtMs >= chat.createdAtMs)
             require(chat.draftId.length in 1..128 && chat.context.workflowId == chat.workflowId)
             require(chat.turns.map { it.id }.distinct().size == chat.turns.size)

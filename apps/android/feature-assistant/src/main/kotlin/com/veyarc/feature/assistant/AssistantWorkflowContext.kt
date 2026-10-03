@@ -52,7 +52,7 @@ data class AssistantContextSnapshot(val workflowId: String, val snapshotId: Stri
     }
 
     companion object {
-        const val MAX_BYTES = 32 * 1024
+        const val MAX_BYTES = 256 * 1024
         const val MAX_STEPS = 200
         const val MAX_DEPTH = 12
 
@@ -61,11 +61,11 @@ data class AssistantContextSnapshot(val workflowId: String, val snapshotId: Stri
             val bytes = ByteArrayOutputStream()
             val bounded = object : OutputStream() {
                 override fun write(value: Int) {
-                    require(bytes.size() < MAX_BYTES) { "Workflow context exceeds 32 KiB. Reduce the workflow before sending; no blocks were omitted." }
+                    require(bytes.size() < MAX_BYTES) { "Workflow context is too large to send safely. No blocks were omitted." }
                     bytes.write(value)
                 }
                 override fun write(buffer: ByteArray, offset: Int, length: Int) {
-                    require(length <= MAX_BYTES - bytes.size()) { "Workflow context exceeds 32 KiB. Reduce the workflow before sending; no blocks were omitted." }
+                    require(length <= MAX_BYTES - bytes.size()) { "Workflow context is too large to send safely. No blocks were omitted." }
                     bytes.write(buffer, offset, length)
                 }
             }

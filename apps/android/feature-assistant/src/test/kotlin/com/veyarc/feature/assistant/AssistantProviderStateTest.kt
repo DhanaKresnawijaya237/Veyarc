@@ -130,8 +130,11 @@ class AssistantProviderStateTest {
         assertFalse(body.contains("secret"))
         val other = chat.copy(id = UUID.randomUUID().toString(), turns = listOf(chat.turns.last()))
         assertEquals(2, WorkflowJson.format.parseToJsonElement(state.providerRequest(other).body.toString(Charsets.UTF_8)).jsonObject.getValue("messages").jsonArray.size)
-        val oversized = chat.copy(turns = List(12) { turn("x".repeat(4000)).copy(reply = "y".repeat(16000)) } + chat.turns.last())
-        assertEquals(DeepSeekFailure.REQUEST_TOO_LARGE, (runCatching { state.providerRequest(oversized) }.exceptionOrNull() as DeepSeekException).reason)
+        val longChat = chat.copy(turns = List(45) { turn("Earlier $it").copy(reply = "y".repeat(60000)) } + chat.turns.last())
+        val window = WorkflowJson.format.parseToJsonElement(state.providerRequest(longChat).body.toString(Charsets.UTF_8)).jsonObject.getValue("messages").jsonArray
+        assertTrue(window.size < 92)
+        assertEquals("Earlier 44", window[window.size - 3].jsonObject.getValue("content").jsonPrimitive.content)
+        assertEquals(46, longChat.turns.size)
         val stored = AssistantPreviewState.encode(chat.copy(turns = listOf(chat.turns.first())))
         val legacy = stored.copy(payload = stored.payload.toString(Charsets.UTF_8).replace(",\"provider\":false", "").toByteArray())
         assertFalse(AssistantPreviewState.decode(legacy).turns.single().provider)
@@ -143,7 +146,7 @@ class AssistantProviderStateTest {
     }
 
     @Test
-    fun savingLongThinkingPreservesEveryAnswerAndRetainsNewerThinkingFirst() {
+    fun savingLongThinkingRetainsEveryThoughtAndAnswerWithoutTruncating() {
         val chat = PreviewConversation(
             UUID.randomUUID().toString(),
             null,
@@ -152,7 +155,7 @@ class AssistantProviderStateTest {
                     UUID.randomUUID().toString(), "Prompt $it", PreviewScenario.EXPLANATION,
                     reply = "Answer $it " + "a".repeat(15000), status = PreviewReplyStatus.COMPLETE,
                     provider = true, effort = DeepSeekEffort.HIGH, outcome = AssistantOutcome.EXPLANATION,
-                    thinking = AssistantThinking("Thought $it " + "b".repeat(15000), finished = true),
+                    thinking = AssistantThinking("Thought $it " + "b".repeat(30000), finished = true),
                 )
             },
         )
@@ -161,13 +164,13 @@ class AssistantProviderStateTest {
         val restored = AssistantPreviewState.decode(stored)
         assertEquals(chat.turns.map { it.reply }, restored.turns.map { it.reply })
         assertEquals(chat.turns.map { it.prompt }, restored.turns.map { it.prompt })
-        assertTrue(restored.turns.first().thinking!!.truncated)
-        assertEquals("", restored.turns.first().thinking!!.text)
-        assertEquals(chat.turns.last().thinking, restored.turns.last().thinking)
+        assertTrue(stored.payload.size > 256 * 1024)
+        assertEquals(chat, restored)
+        assertTrue(restored.turns.none { it.thinking!!.truncated })
         assertTrue(runCatching { AssistantThinking("x".repeat(AssistantThinking.MAX_LENGTH + 1)) }.isFailure)
         assertTrue(runCatching { AssistantPreviewState.encode(chat.copy(turns = chat.turns.map { it.copy(effort = DeepSeekEffort.OFF) })) }.isFailure)
         val oversizedCore = chat.copy(turns = List(20) { chat.turns[it % 10].copy(id = UUID.randomUUID().toString(), thinking = null) })
-        assertTrue(runCatching { AssistantPreviewState.encode(oversizedCore) }.isFailure)
+        assertEquals(oversizedCore, AssistantPreviewState.decode(AssistantPreviewState.encode(oversizedCore)))
     }
 
     @Test

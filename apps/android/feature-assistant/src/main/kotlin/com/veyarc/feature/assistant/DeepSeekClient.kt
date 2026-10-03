@@ -34,7 +34,7 @@ enum class DeepSeekFailure(val message: String) {
     ACCESS_DENIED("DeepSeek denied access. Check your account and API key."),
     INSUFFICIENT_BALANCE("Check your DeepSeek API account balance."),
     INVALID_REQUEST("The request is invalid. Review the message and workflow."),
-    REQUEST_TOO_LARGE("The request exceeds 128 KiB. Shorten the message or chat; nothing was omitted."),
+    REQUEST_TOO_LARGE("This message or workflow is too large to send. Shorten it and try again."),
     RATE_LIMITED("DeepSeek rate limit reached. Try again later."),
     UNAVAILABLE("DeepSeek is unavailable. Try again later."),
     NETWORK("Could not connect to DeepSeek. Check your connection."),
@@ -52,7 +52,7 @@ class DeepSeekException(val reason: DeepSeekFailure) : Exception(reason.message)
 class DeepSeekClient internal constructor(
     private val endpoint: URL,
     private val connectTimeoutMs: Int = 15000,
-    private val readTimeoutMs: Int = 30000,
+    private val readTimeoutMs: Int = 90000,
     private val deadlineMs: Long? = null,
 ) {
     constructor() : this(URL("https://api.deepseek.com/chat/completions"))
@@ -70,7 +70,7 @@ class DeepSeekClient internal constructor(
         .connectTimeout(connectTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
         .readTimeout(readTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
         .writeTimeout(readTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
-        .callTimeout(deadlineMs ?: 120000, TimeUnit.MILLISECONDS)
+        .callTimeout(deadlineMs ?: 0, TimeUnit.MILLISECONDS)
         .followRedirects(false)
         .followSslRedirects(false)
         .retryOnConnectionFailure(false)
@@ -92,11 +92,10 @@ class DeepSeekClient internal constructor(
         if (!AssistantKeyStore.isValidEntry(apiKey)) throw DeepSeekException(DeepSeekFailure.KEY_REQUIRED)
         if (!busy.compareAndSet(false, true)) throw DeepSeekException(DeepSeekFailure.BUSY)
         var call: Call? = null
-        val requestDeadlineMs = deadlineMs ?: if (request.effort == DeepSeekEffort.OFF) 120000 else 300000
         val started = System.nanoTime()
         fun checkActive() {
             cancellation.checkActive()
-            if (TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) >= requestDeadlineMs) throw DeepSeekException(DeepSeekFailure.TIMEOUT)
+            if (deadlineMs != null && TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) >= deadlineMs) throw DeepSeekException(DeepSeekFailure.TIMEOUT)
         }
         try {
             checkActive()
@@ -115,7 +114,7 @@ class DeepSeekClient internal constructor(
                 .header("Accept-Encoding", "identity")
                 .post(body).build()
             val active = transport.newCall(http)
-            active.timeout().timeout(requestDeadlineMs, TimeUnit.MILLISECONDS)
+            active.timeout().timeout(deadlineMs ?: 0, TimeUnit.MILLISECONDS)
             call = active
             cancellation.attach(active)
             val content = active.execute().use { response ->
@@ -187,10 +186,10 @@ class DeepSeekClient internal constructor(
     }
 
     companion object {
-        internal const val MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+        internal const val MAX_RESPONSE_BYTES = 4 * 1024 * 1024
         internal const val MAX_REASONING_BYTES = 2 * 1024 * 1024
 
-        // Thinking adds many SSE envelopes. Final workflow JSON keeps its existing 64 KiB limit.
+        // Thinking adds many SSE envelopes; each final JSON response still has a byte guard.
         internal fun responseLimit(request: DeepSeekRequest) = if (request.effort == DeepSeekEffort.OFF) MAX_RESPONSE_BYTES else 32 * 1024 * 1024
 
         internal fun reasoningBytes(fields: JsonObject, request: DeepSeekRequest): Int {

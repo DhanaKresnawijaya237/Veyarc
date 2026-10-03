@@ -67,7 +67,6 @@ class ChatRepository internal constructor(private val database: VeyarcDatabase, 
     fun load(): List<StoredChat> = synchronized(storageLock) {
         collectGarbage()
         val rows = database.chatDao().list()
-        require(rows.size <= MAX_CHATS && rows.sumOf { it.encryptedByteLength } <= MAX_TOTAL_BYTES)
         rows.map { row ->
             StoredChat(row.conversationId, row.scopeId, row.createdAtMs, row.updatedAtMs, row.requestId, row.status, files.read(row.encryptedFileName, associatedData(row.conversationId)))
         }
@@ -89,11 +88,8 @@ class ChatRepository internal constructor(private val database: VeyarcDatabase, 
                 val dao = database.chatDao()
                 previous = dao.find(chat.id)
                 check(if (create) previous == null else previous != null) { "Chat was removed or changed. Reload history." }
-                val rows = dao.list()
-                check(!create || rows.size < MAX_CHATS) { "Chat history limit reached" }
                 previous?.let { check(it.scopeId == chat.workflowId && it.createdAtMs == chat.createdAtMs) }
                 val length = files.writeNew(name, chat.payload, associatedData(chat.id))
-                check(rows.sumOf { it.encryptedByteLength } - (previous?.encryptedByteLength ?: 0) + length <= MAX_TOTAL_BYTES) { "Chat storage limit reached" }
                 val savedWorkflow = chat.workflowId?.takeIf { database.workflowDao().findWorkflow(it) != null }
                 dao.put(ChatEntity(chat.id, chat.workflowId, savedWorkflow, chat.createdAtMs, chat.updatedAtMs, chat.requestId, chat.status, name, length))
             }
@@ -119,16 +115,15 @@ class ChatRepository internal constructor(private val database: VeyarcDatabase, 
 
     private fun collectGarbage() {
         val referenced = database.chatDao().list().map { it.encryptedFileName }.toSet()
-        files.listCommittedFileNames(200).filterNot(referenced::contains).forEach(files::delete)
-        files.deleteStaleTemporaryFiles(200)
+        files.listCommittedFileNames(Int.MAX_VALUE).filterNot(referenced::contains).forEach(files::delete)
+        files.deleteStaleTemporaryFiles(Int.MAX_VALUE)
     }
 
     fun close() = synchronized(storageLock) { database.close() }
 
     companion object {
-        const val MAX_CHATS = 20
-        const val MAX_PAYLOAD_BYTES = 256 * 1024
-        const val MAX_TOTAL_BYTES = 4L * 1024 * 1024
+        // A single corrupt payload must not allocate unbounded memory. No chat-count or total quota.
+        const val MAX_PAYLOAD_BYTES = 32 * 1024 * 1024
         private val storageLock = Any()
         private fun associatedData(id: String) = "veyarc:chat:conversation:$id:v1".toByteArray(Charsets.UTF_8)
 

@@ -28,10 +28,12 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.Density
 import androidx.test.espresso.Espresso
@@ -149,7 +151,9 @@ class AssistantPreviewUiTest {
             compose.setContent { VeyarcTheme(darkTheme = true) { AssistantPreviewScreen(state) } }
             compose.onNodeWithText("Off").assertIsDisplayed()
             compose.onNodeWithText("DeepSeek Flash").performClick()
+            compose.onNodeWithContentDescription("Open Effort").assertExists()
             compose.onNodeWithText("Effort").performClick()
+            DeepSeekEffort.entries.forEach { compose.onNodeWithContentDescription("Open ${it.label}").assertDoesNotExist() }
             effortOption("Off").assertIsSelected()
             compose.onNodeWithText("Medium").assertDoesNotExist()
             effortOption("High").assertIsEnabled().performClick()
@@ -345,7 +349,8 @@ class AssistantPreviewUiTest {
         compose.onNodeWithContentDescription("Close Chats").performClick()
         val originalId = state.selectedId!!
         compose.onNodeWithContentDescription("New chat").performClick()
-        assertEquals(2, state.history.size)
+        assertEquals(1, state.history.size)
+        assertEquals(originalId, state.selectedId)
         compose.onNodeWithContentDescription("Chat options").performClick()
         compose.onNodeWithText("Chat history").performClick()
         compose.onNodeWithTag("assistant-history-$originalId").performScrollTo().performClick()
@@ -596,12 +601,33 @@ class AssistantPreviewUiTest {
                 state = AssistantPreviewState(
                     scope = kotlinx.coroutines.CoroutineScope(owner + kotlinx.coroutines.Dispatchers.Main),
                     providerCall = {
-                        request = it
-                        result.await()
+                        val chat = state.conversation!!
+                        val current = chat.turns.last()
+                        if (current.prompt.startsWith("Earlier question")) {
+                            com.veyarc.model.WorkflowJson.encodeCanonical(
+                                com.veyarc.feature.assistant.AssistantResponse.serializer(),
+                                com.veyarc.feature.assistant.AssistantResponse(1, current.requestId, chat.id, "draft:${chat.draftId}", com.veyarc.feature.assistant.AssistantOutcome.EXPLANATION, "Earlier reply. ".repeat(30)),
+                            ).toByteArray()
+                        } else {
+                            request = it
+                            result.await()
+                        }
                     },
                 ).apply {
                     open(AssistantPreviewContext())
                     enableProvider()
+                }
+            }
+            // Leave the parent chat scrollable, so a leaked child fling would move it.
+            repeat(8) { index ->
+                compose.runOnIdle {
+                    state.compose("Earlier question $index")
+                    state.send()
+                }
+                compose.waitUntil(10_000) { state.conversation!!.turns.last().outcome != null }
+            }
+            compose.runOnIdle {
+                state.apply {
                     setEffort(DeepSeekEffort.HIGH)
                     compose("Explain this workflow")
                     send()
@@ -614,7 +640,7 @@ class AssistantPreviewUiTest {
                 }
             }
             compose.waitUntil(10_000) { request != null }
-            val turn = state.conversation!!.turns.single()
+            val turn = state.conversation!!.turns.last()
             val toggle = "assistant-thinking-toggle-${turn.id}"
             val panel = "assistant-thinking-text-${turn.id}"
             compose.onNodeWithText("Thinking…").performScrollTo().assertIsDisplayed()
@@ -625,13 +651,28 @@ class AssistantPreviewUiTest {
             compose.onNodeWithTag(toggle).performScrollTo().performClick()
             compose.onNodeWithText(thought).assertIsDisplayed()
             capture("thinking-live")
-            compose.runOnIdle { request!!.reportThinking(AssistantThinking("Checking step order.\n".repeat(1000).take(AssistantThinking.MAX_LENGTH), truncated = true)) }
+            val fullThought = (1..1200).joinToString("\n") { "Checking step order $it." } + "\nLatest thought"
+            compose.runOnIdle { request!!.reportThinking(AssistantThinking(fullThought)) }
             val bounds = compose.onNodeWithTag(panel).performScrollTo().fetchSemanticsNode().boundsInRoot
             val density = InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
             org.junit.Assert.assertTrue("Expanded thinking must stay compact", bounds.height <= 180f * density + 2f)
+            compose.onNodeWithText("Latest thought").assertIsDisplayed()
+            compose.runOnIdle { request!!.reportThinking(AssistantThinking(fullThought + "\nNewest changing line")) }
+            compose.onNodeWithText("Newest changing line").assertIsDisplayed()
+            val outerTop = compose.onNodeWithTag(toggle).fetchSemanticsNode().boundsInRoot.top
+            repeat(3) { compose.onNodeWithTag(panel).performTouchInput { swipeUp(durationMillis = 100) } }
+            assertEquals(outerTop, compose.onNodeWithTag(toggle).fetchSemanticsNode().boundsInRoot.top, 2f)
+            compose.onNodeWithTag(panel).performScrollToIndex(0)
+            repeat(3) { compose.onNodeWithTag(panel).performTouchInput { swipeDown(durationMillis = 100) } }
+            assertEquals(outerTop, compose.onNodeWithTag(toggle).fetchSemanticsNode().boundsInRoot.top, 2f)
+            compose.runOnIdle { request!!.reportThinking(AssistantThinking(fullThought + "\nChanged while reading earlier thoughts")) }
+            compose.onNodeWithText("Checking step order 1.").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Jump to latest thoughts").performClick()
+            compose.onNodeWithText("Changed while reading earlier thoughts").assertIsDisplayed()
             compose.onNodeWithContentDescription("Stop response").assertIsDisplayed().performClick()
             compose.onNodeWithText("Partial thoughts").assertExists()
-            compose.onNodeWithText("Thinking shortened.").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("This older entry was shortened.").assertDoesNotExist()
+            compose.runOnIdle { assertEquals(fullThought + "\nChanged while reading earlier thoughts", state.conversation!!.turns.last().thinking!!.text) }
             capture("thinking-stopped")
             compose.onNodeWithTag(toggle).performScrollTo().performClick()
             compose.onNodeWithTag(panel).assertDoesNotExist()
@@ -695,6 +736,98 @@ class AssistantPreviewUiTest {
             compose.runOnIdle { state.dispose() }
             owner.cancel()
         }
+    }
+
+    @Test
+    fun newChatButtonReusesEmptyChatAndReplyActionsStayNearComposer() {
+        val state = AssistantPreviewState().apply { open(AssistantPreviewContext()) }
+        val emptyId = state.selectedId
+        compose.setContent { VeyarcTheme { AssistantPreviewScreen(state) } }
+        compose.onNodeWithTag("assistant-composer").performTextReplacement("Keep this draft")
+        Espresso.closeSoftKeyboard()
+        repeat(3) { compose.onNodeWithContentDescription("New chat").performClick() }
+        compose.runOnIdle {
+            assertEquals(emptyId, state.selectedId)
+            assertEquals("Keep this draft", state.conversation!!.composer)
+            assertEquals(1, state.conversations.size)
+            state.send()
+            repeat(100) { state.requestId?.let(state::advance) }
+        }
+        val turn = state.conversation!!.turns.single()
+        val actions = compose.onNodeWithTag("assistant-reply-actions-${turn.id}").fetchSemanticsNode().boundsInRoot
+        val composer = compose.onNodeWithTag("assistant-composer-panel").fetchSemanticsNode().boundsInRoot
+        val density = InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
+        capture("compact-reply-actions")
+        org.junit.Assert.assertTrue("Reply actions must sit next to the composer: ${composer.top - actions.bottom} px, actions=$actions composer=$composer", composer.top - actions.bottom in 0f..16f * density)
+        val icon = compose.onNodeWithContentDescription("Copy reply", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        assertEquals(18f * density, icon.width, 2f)
+    }
+
+    @Test
+    fun panelBoundaryFlingsKeepEveryPanelStationary() {
+        val state = AssistantPreviewState().apply {
+            open(AssistantPreviewContext())
+            repeat(80) { index ->
+                compose("Saved chat $index")
+                send()
+                repeat(100) { requestId?.let(::advance) }
+                newChat()
+            }
+        }
+        val largeText = InstrumentationRegistry.getArguments().getString("panelLargeText") == "true"
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, if (largeText) 2f else density.fontScale)) {
+                VeyarcTheme(darkTheme = true) { AssistantPreviewScreen(state) }
+            }
+        }
+        fun checkPanel(title: String, scrollTag: String = "assistant-panel-scroll") {
+            compose.onNodeWithText(title).assertIsDisplayed()
+            compose.waitForIdle()
+            val before = compose.onNodeWithTag("assistant-panel").fetchSemanticsNode().boundsInRoot
+            val header = compose.onNodeWithTag("assistant-panel-header").fetchSemanticsNode().boundsInRoot
+            compose.mainClock.autoAdvance = false
+            try {
+                repeat(4) { index ->
+                    compose.onNodeWithTag(scrollTag).performTouchInput {
+                        if (index < 2) swipeUp(durationMillis = 100) else swipeDown(durationMillis = 100)
+                    }
+                    repeat(45) {
+                        compose.mainClock.advanceTimeByFrame()
+                        val now = compose.onNodeWithTag("assistant-panel").fetchSemanticsNode().boundsInRoot
+                        assertEquals("$title must not bounce or resize", before.top, now.top, 2f)
+                        assertEquals("$title header must stay fixed", header.top, compose.onNodeWithTag("assistant-panel-header").fetchSemanticsNode().boundsInRoot.top, 2f)
+                    }
+                }
+            } finally {
+                compose.mainClock.autoAdvance = true
+            }
+            capture("stable-${title.lowercase().replace(' ', '-')}")
+        }
+        compose.onNodeWithContentDescription("Chat options").performClick()
+        compose.onNodeWithText("Chat history").performClick()
+        checkPanel("Chats", "assistant-history-list")
+        compose.onNodeWithTag("assistant-history-list").performScrollToIndex(80)
+        checkPanel("Chats", "assistant-history-list")
+        compose.onNodeWithContentDescription("Close Chats").performClick()
+        compose.onNodeWithContentDescription("Chat options").performClick()
+        compose.onNodeWithText("More").performClick()
+        compose.onNodeWithText("Workflow context").performClick()
+        checkPanel("Workflow context")
+        compose.onNodeWithContentDescription("Close Workflow context").performClick()
+        compose.onNodeWithContentDescription("Chat options").performClick()
+        compose.onNodeWithText("More").performClick()
+        compose.onNodeWithText("Chat storage").performClick()
+        checkPanel("Chat storage")
+        compose.onNodeWithContentDescription("Close Chat storage").performClick()
+        compose.onNodeWithContentDescription("Add attachment").performClick()
+        checkPanel("Add to chat")
+        compose.onNodeWithContentDescription("Close Add to chat").performClick()
+        compose.onNodeWithText("Sample").performClick()
+        checkPanel("Select model")
+        compose.onNodeWithText("Effort").performScrollTo().performClick()
+        checkPanel("Effort")
+        compose.onNodeWithContentDescription("Close Effort").performClick()
     }
 
     private fun capture(name: String) {

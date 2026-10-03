@@ -50,13 +50,7 @@ class DeepSeekClientTest {
             assertEquals(JsonPrimitive(if (effort == DeepSeekEffort.OFF) "disabled" else "enabled"), body.getValue("thinking").jsonObject.getValue("type"))
             assertEquals(if (effort == DeepSeekEffort.OFF) null else JsonPrimitive(effort.name.lowercase()), body["reasoning_effort"])
             assertEquals(
-                JsonPrimitive(
-                    when (effort) {
-                        DeepSeekEffort.OFF -> 16384
-                        DeepSeekEffort.MAX -> 131072
-                        else -> 65536
-                    },
-                ),
+                JsonPrimitive(DeepSeekRequest.MAX_OUTPUT_TOKENS),
                 body["max_tokens"],
             )
             if (effort == DeepSeekEffort.OFF) {
@@ -99,7 +93,7 @@ class DeepSeekClientTest {
         val json = Json.parseToJsonElement(body).jsonObject
         assertEquals(setOf("model", "messages", "max_tokens", "thinking", "response_format", "stream"), json.keys)
         assertEquals(JsonPrimitive("deepseek-flash"), json["model"])
-        assertEquals(JsonPrimitive(16384), json["max_tokens"])
+        assertEquals(JsonPrimitive(DeepSeekRequest.MAX_OUTPUT_TOKENS), json["max_tokens"])
         assertEquals(JsonPrimitive(false), json["stream"])
         assertEquals(Json.parseToJsonElement("{\"type\":\"disabled\"}"), json["thinking"])
         assertEquals(Json.parseToJsonElement("{\"type\":\"json_object\"}"), json["response_format"])
@@ -120,7 +114,7 @@ class DeepSeekClientTest {
     }
 
     @Test
-    fun bindsCapturedBaseAndSendsOnlyHistoryProseWithoutDroppingOversizedHistory() {
+    fun bindsCapturedBaseAndFitsRecentHistoryProseToTheRequestBudget() {
         val snapshot = AssistantContextSnapshot.capture(
             AssistantDraftContext(
                 "00000000-0000-0000-0000-000000000001", 2, 5, "Workflow", "com.example.app",
@@ -145,9 +139,14 @@ class DeepSeekClientTest {
         failure(DeepSeekFailure.INVALID_REQUEST) { DeepSeekRequest.create("r", "chat", "wrong", "Explain", snapshot) }
         failure(DeepSeekFailure.INVALID_REQUEST) { DeepSeekRequest.create("r", "chat", "draft:d", "", null) }
         failure(DeepSeekFailure.INVALID_REQUEST) { DeepSeekRequest.create("r", "other-chat", "draft:d", "Explain", null, listOf(DeepSeekHistoryTurn("Old", old))) }
-        val large = List(10) { DeepSeekHistoryTurn("p".repeat(4000), response.copy(requestId = "old-$it", text = "界".repeat(16000))) }
-        failure(DeepSeekFailure.REQUEST_TOO_LARGE) { DeepSeekRequest.create("r", "chat", "draft:d", "Explain", null, large) }
-        failure(DeepSeekFailure.INVALID_REQUEST) { DeepSeekRequest.create("r", "chat", "draft:d", "Explain", null, List(40) { DeepSeekHistoryTurn("Old", old) }) }
+        val large = List(50) { DeepSeekHistoryTurn("Prompt $it", response.copy(requestId = "old-$it", text = "界".repeat(16000))) }
+        val windowed = DeepSeekRequest.create("r", "chat", "draft:d", "Explain", null, large)
+        val window = Json.parseToJsonElement(windowed.body.toString(Charsets.UTF_8)).jsonObject.getValue("messages") as JsonArray
+        assertTrue(windowed.body.size <= DeepSeekRequest.MAX_BYTES)
+        assertTrue(window.size < 102)
+        assertFalse(window.toString().contains("Prompt 0"))
+        assertEquals("Prompt 49", window[window.size - 3].jsonObject.getValue("content").jsonPrimitive.content)
+        assertEquals(82, (Json.parseToJsonElement(DeepSeekRequest.create("r", "chat", "draft:d", "Explain", null, List(40) { DeepSeekHistoryTurn("Old", old) }).body.toString(Charsets.UTF_8)).jsonObject["messages"] as JsonArray).size)
     }
 
     @Test
@@ -174,7 +173,7 @@ class DeepSeekClientTest {
             failure(DeepSeekFailure.INVALID_RESPONSE) { DeepSeekClient.decode(envelope(it), request) }
         }
         failure(DeepSeekFailure.INVALID_RESPONSE) { DeepSeekClient.decode(byteArrayOf(0xc3.toByte(), 0x28), request) }
-        failure(DeepSeekFailure.RESPONSE_TOO_LARGE) { DeepSeekClient.decode(envelope("x".repeat(65537)), request) }
+        failure(DeepSeekFailure.RESPONSE_TOO_LARGE) { DeepSeekClient.decode(envelope("x".repeat(AssistantResponseCodec.MAX_BYTES + 1)), request) }
         failure(DeepSeekFailure.RESPONSE_TOO_LARGE) { DeepSeekClient.decode(ByteArray(DeepSeekClient.MAX_RESPONSE_BYTES + 1), request) }
     }
 

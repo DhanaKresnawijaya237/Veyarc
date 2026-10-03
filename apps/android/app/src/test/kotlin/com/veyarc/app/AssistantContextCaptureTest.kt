@@ -76,8 +76,8 @@ class AssistantContextCaptureTest {
     @Test
     fun excessiveBytesBlocksAndDepthAreRejectedWithoutLosingThePrompt() {
         val base = WorkflowDraft.newDefault()
-        val oversized = base.copy(variables = (1..20).associate { "v$it" to VariableDeclaration(VariableType.STRING, StringValue("界".repeat(2000))) })
-        assertTrue(oversized.captureAssistantContext().error!!.contains("32 KiB"))
+        val oversized = base.copy(variables = (1..40).associate { "v$it" to VariableDeclaration(VariableType.STRING, StringValue("界".repeat(3000))) })
+        assertTrue(oversized.captureAssistantContext().error!!.contains("too large"))
         assertTrue(base.copy(steps = (1..201).map { Wait(java.util.UUID.randomUUID().toString(), DurationMillis(1)) }).captureAssistantContext().error!!.contains("200 blocks"))
         var nested: com.veyarc.model.WorkflowStep = Wait(java.util.UUID.randomUUID().toString(), DurationMillis(1))
         repeat(13) { nested = Repeat(java.util.UUID.randomUUID().toString(), 1, listOf(nested)) }

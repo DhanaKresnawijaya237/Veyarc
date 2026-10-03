@@ -33,8 +33,8 @@ data class AssistantResponse(
 )
 
 internal object AssistantResponseCodec {
-    const val MAX_BYTES = 64 * 1024
-    const val MAX_TEXT_LENGTH = 16000
+    const val MAX_BYTES = 2 * 1024 * 1024
+    const val MAX_TEXT_LENGTH = MAX_BYTES
 
     fun decode(bytes: ByteArray, requestId: String, conversationId: String, baseSnapshotId: String): AssistantResponse {
         require(bytes.size in 1..MAX_BYTES)

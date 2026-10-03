@@ -55,8 +55,8 @@ class AssistantResponseTest {
         assertTrue(runCatching { decode(ByteArray(AssistantResponseCodec.MAX_BYTES + 1)) }.isFailure)
         assertTrue(runCatching { decode(byteArrayOf(0xc3.toByte(), 0x28)) }.isFailure)
         assertTrue(runCatching { decode(AssistantResponseCodec.encode(response().copy(text = " "))) }.isFailure)
-        assertTrue(runCatching { decode(AssistantResponseCodec.encode(response().copy(text = "a".repeat(16001)))) }.isFailure)
-        val maximumText = response().copy(text = "界".repeat(16000))
+        assertTrue(runCatching { decode(AssistantResponseCodec.encode(response().copy(text = "a".repeat(AssistantResponseCodec.MAX_TEXT_LENGTH + 1)))) }.isFailure)
+        val maximumText = response().copy(text = "界".repeat(30000))
         assertEquals(maximumText, decode(AssistantResponseCodec.encode(maximumText)))
     }
 

@@ -74,7 +74,7 @@ class DeepSeekStreamTest {
     }
 
     @Test
-    fun thinkingProgressArrivesBeforeTheAnswerAndIsBoundedWithoutBreakingUtf8() {
+    fun thinkingProgressArrivesBeforeTheAnswerAndRetainsLongThinkingWithoutBreakingUtf8() {
         val updates = mutableListOf<AssistantThinking>()
         val selected = DeepSeekRequest.create("r", "c", "draft:d", "Explain", null, streaming = true, effort = DeepSeekEffort.HIGH, onThinking = updates::add)
         val first = event(chunk(role = "assistant", reasoning = "First thought 界 🌍"))
@@ -93,11 +93,11 @@ class DeepSeekStreamTest {
         assertEquals(AssistantThinking("First thought 界 🌍 Then another thought.", finished = true), updates.last())
         assertFalse(updates.any { it.text.contains("contractVersion") })
 
-        val longThinking = "界".repeat(AssistantThinking.MAX_LENGTH - 1) + "🌍 and more"
+        val longThinking = "界".repeat(25000) + "🌍 and more"
         val longBody = event(chunk(role = "assistant", reasoning = longThinking)) + valid()
         assertArrayEquals(content, DeepSeekStream.read(longBody.byteInputStream(), selected, DeepSeekCancellation()))
-        assertEquals("界".repeat(AssistantThinking.MAX_LENGTH - 1), selected.latestThinking!!.text)
-        assertTrue(selected.latestThinking!!.truncated)
+        assertEquals(longThinking, selected.latestThinking!!.text)
+        assertFalse(selected.latestThinking!!.truncated)
         assertTrue(selected.latestThinking!!.finished)
     }
 
@@ -163,8 +163,8 @@ class DeepSeekStreamTest {
     fun boundsEventsAndAccumulatedContent() {
         listOf(
             ":" + "x".repeat(DeepSeekStream.MAX_EVENT_BYTES),
-            event(chunk("x".repeat(65537), role = "assistant")),
-            event(chunk("x".repeat(40000), role = "assistant")) + event(chunk("x".repeat(30000))),
+            event(chunk("x".repeat(DeepSeekStream.MAX_EVENT_BYTES), role = "assistant")),
+            event(chunk("x".repeat(200000), role = "assistant")) + event(chunk("x".repeat(200000))).repeat(10),
         ).forEach {
             failure(DeepSeekFailure.RESPONSE_TOO_LARGE) { DeepSeekStream.read(it.byteInputStream(), request, DeepSeekCancellation()) }
         }
@@ -342,7 +342,7 @@ class DeepSeekStreamTest {
         failure(DeepSeekFailure.INVALID_RESPONSE) { DeepSeekClient(url).complete(request, key) }
         payload = ""
         failure(DeepSeekFailure.TIMEOUT) { DeepSeekClient(url, readTimeoutMs = 1000, deadlineMs = 150).complete(request, key) }
-        payload = (":" + "x".repeat(65534) + "\n\n").repeat(33)
+        payload = (":" + "x".repeat(65534) + "\n\n").repeat(65)
         failure(DeepSeekFailure.RESPONSE_TOO_LARGE) { DeepSeekClient(url).complete(request, key) }
     }
 

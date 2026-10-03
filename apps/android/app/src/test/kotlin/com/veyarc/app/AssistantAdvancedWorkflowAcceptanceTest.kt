@@ -208,7 +208,7 @@ class AssistantAdvancedWorkflowAcceptanceTest {
         val snapshot = source.captureAssistantContext().snapshot!!
         val json = WorkflowJson.encode(document)
         val oversizedBlocks = WorkflowJson.encode(document.copy(steps = steps + List(201) { Wait(id(1000 + it), DurationMillis(1)) }))
-        listOf(json.dropLast(1), json.replace("\"maxIterations\":2", "\"maxIterations\":2,\"maxIterations\":3"), json.replace("\"maxVisits\":2", "\"maxVisits\":\"2\""), oversizedBlocks, json + " ".repeat(32769)).forEach { bad ->
+        listOf(json.dropLast(1), json.replace("\"maxIterations\":2", "\"maxIterations\":2,\"maxIterations\":3"), json.replace("\"maxVisits\":2", "\"maxVisits\":\"2\""), oversizedBlocks, json + " ".repeat(AssistantCandidateValidator.MAX_CANDIDATE_BYTES + 1)).forEach { bad ->
             var compiled = false
             val result = AssistantCandidateValidator.validate(snapshot, bad) {
                 compiled = true

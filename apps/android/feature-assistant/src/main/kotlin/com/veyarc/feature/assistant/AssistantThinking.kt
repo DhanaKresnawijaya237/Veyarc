@@ -10,23 +10,22 @@ data class AssistantThinking(val text: String, val truncated: Boolean = false, v
     }
 
     companion object {
-        const val MAX_LENGTH = 16000
+        // Match the transport guard. Accepted thinking is retained in full.
+        const val MAX_LENGTH = 2 * 1024 * 1024
     }
 }
 
 /** Bound retained text and UI updates without changing the transport's full reasoning byte limit. */
 internal class AssistantThinkingBuffer(private val request: DeepSeekRequest) {
     private val text = StringBuilder()
-    private var truncated = false
     private var finished = false
     private var lastPublishedAt = 0L
 
     fun append(piece: String) {
         if (piece.isEmpty()) return
         require(!finished)
-        val remaining = AssistantThinking.MAX_LENGTH - text.length
-        text.append(piece.take(remaining))
-        truncated = truncated || piece.length > remaining
+        require(text.length + piece.length <= AssistantThinking.MAX_LENGTH)
+        text.append(piece)
         publish()
     }
 
@@ -40,10 +39,10 @@ internal class AssistantThinkingBuffer(private val request: DeepSeekRequest) {
         if (text.isEmpty()) return
         val now = System.nanoTime()
         if (!force && lastPublishedAt != 0L && now - lastPublishedAt < 100_000_000L) return
-        // A cap or token boundary must not display half an emoji.
+        // Don't display half an emoji while its next delta is still pending.
         val value = text.toString().let { if (it.last().isHighSurrogate()) it.dropLast(1) else it }
         if (value.isEmpty()) return
-        val thinking = AssistantThinking(value, truncated || (finished && value.length != text.length), finished)
+        val thinking = AssistantThinking(value, finished = finished)
         if (thinking != request.latestThinking) request.reportThinking(thinking)
         lastPublishedAt = now
     }

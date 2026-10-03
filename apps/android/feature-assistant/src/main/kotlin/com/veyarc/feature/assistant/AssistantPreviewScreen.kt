@@ -10,6 +10,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -32,8 +33,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -87,6 +91,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -94,11 +99,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
@@ -113,8 +123,10 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /** Debug entry is supplied by the app. Network dispatch requires explicit consent; this module has no automation access. */
@@ -150,7 +162,6 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
     if (storageVisible) {
         PreviewDialog("Chat storage", onDismiss = { storageVisible = false }) {
             Text(if (state.persistent) "Encrypted on this device. Deleting chats here does not delete DeepSeek records." else "Temporary sample history.")
-            Text("20 chats · 40 messages per chat · 4,000 characters per message\n256 KiB per chat · 4 MiB total")
             state.storageError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (state.storageError != null && !state.loadFailed) {
                 TextButton(onClick = state::saveAgain, enabled = state.pendingWrites == 0) { Text("Retry saving") }
@@ -190,9 +201,8 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
                 IconButton(onClick = state::close) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to editor") }
                 Text(if (state.isLoading) "Loading encrypted history…" else "No chat selected", style = MaterialTheme.typography.headlineSmall)
                 Text(state.storageError ?: if (state.usesProvider) "Start a chat for this workflow." else "Start a sample chat.")
-                Button(onClick = state::newChat, enabled = state.canChange && state.conversations.size < AssistantPreviewState.MAX_CHATS) { Text("New chat") }
+                Button(onClick = state::newChat, enabled = state.canChange) { Text("New chat") }
                 TextButton(onClick = { storageVisible = true }) { Text("Chat storage") }
-                if (state.conversations.size >= AssistantPreviewState.MAX_CHATS) Text("Chat limit reached. Delete a chat to continue.")
             }
         }
         return
@@ -269,7 +279,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
                             Text(chat.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(if (state.usesProvider) "DeepSeek" else "Sample chat", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        IconButton(onClick = state::newChat, enabled = state.canChange && state.conversations.size < AssistantPreviewState.MAX_CHATS) { Icon(Icons.Outlined.Add, "New chat") }
+                        IconButton(onClick = state::newChat, enabled = state.canChange) { Icon(Icons.Outlined.Add, "New chat") }
                         Box {
                             IconButton(onClick = { menuVisible = true }) { Icon(Icons.Outlined.MoreVert, "Chat options") }
                             DropdownMenu(
@@ -362,7 +372,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
                         contextVisible = true
                     }, modifier = Modifier.weight(1f))
                 }
-                Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
                     Surface(shape = RoundedCornerShape(28.dp), color = chatPanelColor(raised = true)) {
                         Column(Modifier.padding(4.dp).testTag("assistant-composer-panel")) {
                             Row(verticalAlignment = Alignment.Bottom) {
@@ -425,8 +435,6 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
                     val notice = when {
                         state.storageError != null -> "Chat not saved. Open Chat storage."
                         state.inputError != null -> state.inputError
-                        chat.turns.size >= AssistantPreviewState.MAX_TURNS -> "Chat is full. Start a new chat."
-                        chat.composer.length == AssistantPreviewState.MAX_PROMPT_LENGTH -> "4,000 character limit reached."
                         state.usesProvider && !state.providerEnabled && onOpenSettings == null -> "Enable AI in Settings to send."
                         else -> null
                     }
@@ -438,7 +446,8 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
 
     if (contextVisible) {
         PreviewDialog(if (capturedTurn) "Captured workflow context" else "Workflow context", onDismiss = { contextVisible = false }) {
-            Text(if (state.usesProvider) "DeepSeek receives your message, completed chat exchanges, and workflow text." else "Sample only. Nothing is sent.")
+            Text(if (state.usesProvider) "DeepSeek receives your message, recent completed exchanges, and workflow text." else "Sample only. Nothing is sent.")
+            if (state.usesProvider) Text("Older messages stay saved when a long chat exceeds the request budget.")
             Text(if (capturedTurn) "Snapshot used for this message and retries." else "Send uses your current draft, including unsaved edits.")
             contextCapture.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             val snapshot = contextCapture.snapshot
@@ -453,16 +462,16 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
     }
 
     if (historyVisible) {
-        PreviewDialog("Chats", onDismiss = { historyVisible = false }) {
-            Text(state.context.name, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (state.conversations.size >= AssistantPreviewState.MAX_CHATS) Text("Chat limit reached. Delete a chat to continue.")
+        ChatPanel("Chats", onDismiss = { historyVisible = false }, scrollBody = false) {
             val history = state.history
-            listOf(true, false).forEach { pinned ->
-                val entries = history.filter { it.pinned == pinned }
-                if (entries.isNotEmpty()) {
-                    Text(if (pinned) "Pinned" else "Recent", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
-                    Column {
-                        entries.forEach { entry ->
+            LazyColumn(Modifier.fillMaxWidth().testTag("assistant-history-list"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                item { Text(state.context.name, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                listOf(true, false).forEach { pinned ->
+                    val entries = history.filter { it.pinned == pinned }
+                    if (entries.isNotEmpty()) {
+                        item { Text(if (pinned) "Pinned" else "Recent", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp)) }
+                        items(entries.size, key = { entries[it].id }) { index ->
+                            val entry = entries[index]
                             val current = entry.id == state.selectedId
                             Surface(
                                 onClick = {
@@ -544,14 +553,11 @@ private fun ChatMenuItem(
 private fun ConversationBody(state: AssistantPreviewState, onContext: (PreviewTurn) -> Unit, modifier: Modifier = Modifier) {
     val chat = state.conversation ?: return
     val list = rememberLazyListState()
-    var followLatest by remember { mutableStateOf(true) }
+    var followLatest by rememberFollowing(list)
     val scope = rememberCoroutineScope()
-    LaunchedEffect(list) {
-        snapshotFlow { list.isScrollInProgress to list.canScrollForward }.collect { (scrolling, below) ->
-            if (scrolling) followLatest = !below
-        }
-    }
-    LaunchedEffect(chat.turns.lastOrNull(), chat.turns.size) {
+    val last = chat.turns.lastOrNull()
+    LaunchedEffect(chat.turns.size, last?.reply, last?.status, last?.thinking != null) {
+        withFrameNanos { }
         if (followLatest && chat.turns.isNotEmpty()) list.scrollToItem((list.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
     }
     Box(modifier.fillMaxWidth()) {
@@ -567,12 +573,11 @@ private fun ConversationBody(state: AssistantPreviewState, onContext: (PreviewTu
             }
         }
         if (chat.turns.isNotEmpty()) {
-            LazyColumn(state = list, modifier = Modifier.fillMaxSize().testTag("assistant-messages"), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-                item { Box(Modifier.heightIn(min = 12.dp)) }
+            LazyColumn(state = list, modifier = Modifier.fillMaxSize().testTag("assistant-messages"), verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.Bottom)) {
                 items(chat.turns, key = { it.id }) { turn ->
-                    PreviewTurnContent(state, turn, isLast = turn == chat.turns.last(), onContext = { onContext(turn) })
+                    PreviewTurnContent(state, turn, isLast = turn == chat.turns.last(), followLatest = turn == chat.turns.last() && followLatest, onContext = { onContext(turn) })
                 }
-                item { Box(Modifier.heightIn(min = 32.dp)) }
+                item { Box(Modifier.heightIn(min = 2.dp)) }
             }
         }
         if (!followLatest && list.canScrollForward) {
@@ -587,22 +592,46 @@ private fun ConversationBody(state: AssistantPreviewState, onContext: (PreviewTu
     }
 }
 
+/** Only an actual drag changes follow mode; programmatic scrolling must not fight itself. */
 @Composable
-private fun PreviewTurnContent(state: AssistantPreviewState, turn: PreviewTurn, isLast: Boolean, onContext: () -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+private fun rememberFollowing(list: LazyListState): MutableState<Boolean> {
+    val following = remember(list) { mutableStateOf(true) }
+    var hasDragged by remember(list) { mutableStateOf(false) }
+    val dragging by list.interactionSource.collectIsDraggedAsState()
+    LaunchedEffect(dragging) {
+        if (dragging) {
+            hasDragged = true
+            following.value = false
+        } else if (hasDragged) {
+            snapshotFlow { list.isScrollInProgress }.first { !it }
+            following.value = !list.canScrollForward
+        }
+    }
+    return following
+}
+
+/** Consume the child's unused vertical drag/fling, instead of moving its enclosing chat or sheet. */
+private object IsolatedScroll : NestedScrollConnection {
+    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource) = Offset(0f, available.y)
+    override suspend fun onPostFling(consumed: Velocity, available: Velocity) = Velocity(0f, available.y)
+}
+
+@Composable
+private fun PreviewTurnContent(state: AssistantPreviewState, turn: PreviewTurn, isLast: Boolean, followLatest: Boolean, onContext: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Surface(Modifier.align(Alignment.End).widthIn(max = 560.dp), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
             MessageText(turn.prompt, "Your message", Modifier.padding(horizontal = 16.dp, vertical = 12.dp), onContext = if (turn.baseSnapshot != null) onContext else null)
         }
         val reply = remember(turn.reply, turn.baseSnapshot) { readableReply(turn) }
-        ThinkingDisclosure(turn)
+        ThinkingDisclosure(turn, followLatest)
         if (turn.reply.isNotEmpty()) MessageText(reply, if (turn.provider) "DeepSeek reply" else "Sample reply", Modifier.fillMaxWidth().testTag("assistant-reply-${turn.id}"), markdown = true, onContext = if (turn.baseSnapshot != null) onContext else null)
         if (turn.status == PreviewReplyStatus.COMPLETE && reply.isNotBlank()) {
             val clipboard = LocalClipboard.current
             val scope = rememberCoroutineScope()
-            Row {
-                IconButton(onClick = { scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("AI reply", reply))) } }) { Icon(Icons.Outlined.ContentCopy, "Copy reply") }
-                IconButton(onClick = { state.branch(turn.id) }, enabled = state.canBranch(turn)) { Icon(Icons.AutoMirrored.Outlined.CallSplit, "Branch to new chat") }
-                IconButton(onClick = { state.regenerate(turn.id) }, enabled = state.canRegenerate(turn)) { Icon(Icons.Outlined.Refresh, "Resend message") }
+            Row(Modifier.testTag("assistant-reply-actions-${turn.id}")) {
+                IconButton(onClick = { scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("AI reply", reply))) } }) { Icon(Icons.Outlined.ContentCopy, "Copy reply", Modifier.size(18.dp)) }
+                IconButton(onClick = { state.branch(turn.id) }, enabled = state.canBranch(turn)) { Icon(Icons.AutoMirrored.Outlined.CallSplit, "Branch to new chat", Modifier.size(18.dp)) }
+                IconButton(onClick = { state.regenerate(turn.id) }, enabled = state.canRegenerate(turn)) { Icon(Icons.Outlined.Refresh, "Resend message", Modifier.size(18.dp)) }
             }
         }
         turn.responseError?.let { Text(it, Modifier.semantics { liveRegion = LiveRegionMode.Polite }, color = MaterialTheme.colorScheme.error) }
@@ -632,9 +661,24 @@ private fun PreviewTurnContent(state: AssistantPreviewState, turn: PreviewTurn, 
 }
 
 @Composable
-private fun ThinkingDisclosure(turn: PreviewTurn) {
+private fun ThinkingDisclosure(turn: PreviewTurn, followChat: Boolean) {
     val thinking = turn.thinking ?: return
     var expanded by remember(turn.id, turn.requestId) { mutableStateOf(false) }
+    val list = rememberLazyListState()
+    var following by rememberFollowing(list)
+    val scope = rememberCoroutineScope()
+    val tail = remember { BringIntoViewRequester() }
+    val lines = remember(thinking.text) { thinking.text.lines() }
+    LaunchedEffect(thinking.text, expanded, following, followChat) {
+        if (expanded && following && turn.status == PreviewReplyStatus.RESPONDING) {
+            withFrameNanos { }
+            list.scrollToItem(lines.size)
+            // Opening or growing the box can put its tail below the outer chat viewport.
+            // Follow that line only while both views are following; user gestures stay isolated.
+            withFrameNanos { }
+            if (followChat) tail.bringIntoView()
+        }
+    }
     val inProgress = turn.status == PreviewReplyStatus.RESPONDING && !thinking.finished
     val label = when {
         inProgress -> "Thinking…"
@@ -657,13 +701,23 @@ private fun ThinkingDisclosure(turn: PreviewTurn) {
         }
         if (expanded) {
             Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainer) {
-                Column(
-                    Modifier.fillMaxWidth().heightIn(max = 180.dp).testTag("assistant-thinking-text-${turn.id}")
-                        .verticalScroll(rememberScrollState()).padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    if (thinking.text.isNotEmpty()) SelectionContainer { Text(thinking.text, style = MaterialTheme.typography.bodyMedium, color = color) }
-                    if (thinking.truncated) Text(if (thinking.text.isEmpty()) "Thinking not saved (chat full)." else "Thinking shortened.", style = MaterialTheme.typography.labelSmall, color = color)
+                Box(Modifier.fillMaxWidth().heightIn(max = 180.dp).nestedScroll(IsolatedScroll)) {
+                    SelectionContainer {
+                        LazyColumn(state = list, modifier = Modifier.fillMaxWidth().testTag("assistant-thinking-text-${turn.id}"), contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
+                            items(lines.size) { index -> Text(lines[index], style = MaterialTheme.typography.bodyMedium, color = color) }
+                            item {
+                                Box(Modifier.fillMaxWidth().heightIn(min = 2.dp).bringIntoViewRequester(tail)) {
+                                    if (thinking.truncated) Text("This older entry was shortened.", style = MaterialTheme.typography.labelSmall, color = color)
+                                }
+                            }
+                        }
+                    }
+                    if (!following && turn.status == PreviewReplyStatus.RESPONDING) {
+                        IconButton(onClick = {
+                            following = true
+                            scope.launch { list.scrollToItem(lines.size) }
+                        }, modifier = Modifier.align(Alignment.BottomEnd)) { Icon(Icons.Outlined.KeyboardArrowDown, "Jump to latest thoughts") }
+                    }
                 }
             }
         }
@@ -715,7 +769,7 @@ private fun chatPanelColor(raised: Boolean = false): Color {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ChatPanel(title: String, onDismiss: () -> Unit, onBack: (() -> Unit)? = null, content: @Composable () -> Unit) {
+private fun ChatPanel(title: String, onDismiss: () -> Unit, onBack: (() -> Unit)? = null, scrollBody: Boolean = true, content: @Composable () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val dark = colors.surface.luminance() < 0.5f
     val density = LocalDensity.current
@@ -730,21 +784,22 @@ private fun ChatPanel(title: String, onDismiss: () -> Unit, onBack: (() -> Unit)
         ModalBottomSheet(
             onDismissRequest = onDismiss,
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            sheetGesturesEnabled = false,
             dragHandle = null,
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
             containerColor = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
         ) {
             CompositionLocalProvider(LocalDensity provides density) {
-                Column(Modifier.fillMaxWidth()) {
-                    Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).heightIn(min = 56.dp)) {
+                Column(Modifier.fillMaxWidth().testTag("assistant-panel")) {
+                    Box(Modifier.fillMaxWidth().testTag("assistant-panel-header").padding(horizontal = 12.dp, vertical = 4.dp).heightIn(min = 56.dp)) {
                         Text(title, Modifier.align(Alignment.Center).padding(horizontal = 52.dp, vertical = 12.dp), style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         IconButton(onClick = onBack ?: onDismiss, modifier = Modifier.align(Alignment.CenterStart)) {
                             Icon(if (onBack == null) Icons.Outlined.Close else Icons.AutoMirrored.Outlined.ArrowBack, if (onBack == null) "Close $title" else "Back to models")
                         }
                         if (onBack != null) IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterEnd)) { Icon(Icons.Outlined.Close, "Close $title") }
                     }
-                    Column(Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { content() }
+                    Column(Modifier.fillMaxWidth().weight(1f, fill = false).testTag("assistant-panel-scroll").nestedScroll(IsolatedScroll).then(if (scrollBody) Modifier.verticalScroll(rememberScrollState()) else Modifier).padding(start = 12.dp, end = 12.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { content() }
                 }
             }
         }
@@ -910,7 +965,7 @@ private fun ComposerOptions(sheet: String, state: AssistantPreviewState, onSelec
                 Surface(shape = RoundedCornerShape(18.dp), color = chatPanelColor(raised = true)) {
                     Column(Modifier.testTag("assistant-effort-options"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         DeepSeekEffort.entries.forEach { effort ->
-                            PanelOption(effort.label, selected = state.conversation?.effort == effort, enabled = state.usesProvider && state.canChange && !state.isResponding, disabledLabel = null, onClick = {
+                            PanelOption(effort.label, selected = state.conversation?.effort == effort, enabled = state.usesProvider && state.canChange && !state.isResponding, disabledLabel = null, opensPanel = false, onClick = {
                                 state.setEffort(effort)
                                 onDismiss()
                             })
@@ -922,7 +977,7 @@ private fun ComposerOptions(sheet: String, state: AssistantPreviewState, onSelec
 
             else -> {
                 PanelOption(if (state.usesProvider) "DeepSeek Flash" else "Sample chat", subtitle = if (state.usesProvider) "Fast responses" else "Offline preview", selected = true)
-                PanelOption("Effort", value = state.conversation?.effort?.label ?: "Off", onClick = { onSelect("effort") })
+                PanelOption("Effort", value = state.conversation?.effort?.label ?: "Off", opensPanel = true, onClick = { onSelect("effort") })
                 PanelOption("More models", enabled = false)
             }
         }
@@ -938,6 +993,7 @@ private fun PanelOption(
     selected: Boolean = false,
     enabled: Boolean = true,
     disabledLabel: String? = "Soon",
+    opensPanel: Boolean = false,
     onClick: (() -> Unit)? = null,
 ) {
     val modifier = Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(enabled = enabled, onClick = onClick) else Modifier)
@@ -955,7 +1011,7 @@ private fun PanelOption(
             if (!enabled && disabledLabel != null) Text(disabledLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (value != null) Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (selected) Icon(Icons.Outlined.Check, "Selected", Modifier.size(24.dp), tint = Color(0xFF66A8EF))
-            if (onClick != null) Icon(Icons.Outlined.ChevronRight, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (opensPanel) Icon(Icons.Outlined.ChevronRight, "Open $label", Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
