@@ -41,6 +41,37 @@ class DeepSeekClientTest {
     private val key = "fixture-secret-never-real"
 
     @Test
+    fun effortControlsProviderThinkingAndKeepsReasoningSeparateFromValidatedContent() {
+        val thinkingEnvelope = envelope().toString(Charsets.UTF_8).replace("\"role\":\"assistant\"", "\"role\":\"assistant\",\"reasoning_content\":\"Untrusted thought, not workflow JSON\"")
+        DeepSeekEffort.entries.forEach { effort ->
+            val selected = DeepSeekRequest.create("request", "chat", "draft:draft", "Explain", null, effort = effort)
+            val body = Json.parseToJsonElement(selected.body.toString(Charsets.UTF_8)).jsonObject
+            assertEquals(effort, selected.effort)
+            assertEquals(JsonPrimitive(if (effort == DeepSeekEffort.OFF) "disabled" else "enabled"), body.getValue("thinking").jsonObject.getValue("type"))
+            assertEquals(if (effort == DeepSeekEffort.OFF) null else JsonPrimitive(effort.name.lowercase()), body["reasoning_effort"])
+            assertEquals(
+                JsonPrimitive(
+                    when (effort) {
+                        DeepSeekEffort.OFF -> 16384
+                        DeepSeekEffort.MAX -> 131072
+                        else -> 65536
+                    },
+                ),
+                body["max_tokens"],
+            )
+            if (effort == DeepSeekEffort.OFF) {
+                failure(DeepSeekFailure.INVALID_RESPONSE) { DeepSeekClient.decode(thinkingEnvelope.toByteArray(), selected) }
+            } else {
+                assertArrayEquals(content, DeepSeekClient.decode(thinkingEnvelope.toByteArray(), selected))
+                failure(DeepSeekFailure.INVALID_RESPONSE) { DeepSeekClient.decode(thinkingEnvelope.replace("\"Untrusted thought, not workflow JSON\"", "true").toByteArray(), selected) }
+                failure(DeepSeekFailure.RESPONSE_TOO_LARGE) { DeepSeekClient.decode(thinkingEnvelope.replace("Untrusted thought, not workflow JSON", "x".repeat(DeepSeekClient.MAX_REASONING_BYTES + 1)).toByteArray(), selected) }
+                failure(DeepSeekFailure.INVALID_RESPONSE) { DeepSeekClient.decode(thinkingEnvelope.replace("\"stop\"", "\"length\"").toByteArray(), selected) }
+            }
+        }
+        assertEquals(DeepSeekEffort.OFF, DeepSeekRequest.connectionTest().effort)
+    }
+
+    @Test
     fun sendsExactTextContractAndReceivesOriginalContent() = server { server, url ->
         var body = ""
         var authorization: String? = null

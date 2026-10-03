@@ -48,7 +48,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -75,6 +74,7 @@ import java.io.ByteArrayOutputStream
 fun SettingsScreen(
     assistant: com.veyarc.feature.assistant.AssistantPreviewState? = null,
     assistantConnectionRequestId: Int = 0,
+    onAssistantConnectionRequestConsumed: () -> Unit = {},
     repository: WorkflowRepository,
     refreshGeneration: Int,
     themePreference: ThemePreference,
@@ -100,9 +100,12 @@ fun SettingsScreen(
     var confirmClearHistory by remember { mutableStateOf(false) }
     var chooseExportWorkflow by remember { mutableStateOf(false) }
     var pendingExportWorkflow by remember { mutableStateOf<WorkflowSummary?>(null) }
-    var expandedSection by rememberSaveable { mutableStateOf<String?>(if (assistant != null && !assistant.providerEnabled) "assistant" else null) }
+    var expandedSection by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(assistantConnectionRequestId) {
-        if (assistantConnectionRequestId > 0) expandedSection = "assistant"
+        if (assistantConnectionRequestId > 0) {
+            expandedSection = "assistant"
+            onAssistantConnectionRequestConsumed()
+        }
     }
     var confirmShizukuDownload by remember { mutableStateOf(false) }
     var chooseShizukuSource by remember { mutableStateOf(false) }

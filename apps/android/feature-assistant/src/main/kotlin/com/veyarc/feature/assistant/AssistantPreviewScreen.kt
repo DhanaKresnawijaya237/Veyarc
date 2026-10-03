@@ -406,7 +406,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
                                     Surface(onClick = { composerSheet = "model" }, shape = CircleShape, color = chatControlColor(), modifier = Modifier.weight(1f, fill = false)) {
                                         Row(Modifier.heightIn(min = 40.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                             Text(if (state.usesProvider) "DeepSeek Flash" else "Sample", modifier = Modifier.weight(1f, fill = false), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Text("Standard", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                                            Text(chat.effort.label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                                         }
                                     }
                                 }
@@ -517,7 +517,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
             dismissButton = { TextButton(onClick = { deleteVisible = false }) { Text("Cancel") } },
         )
     }
-    composerSheet?.let { sheet -> ComposerOptions(sheet, state.usesProvider, onSelect = { composerSheet = it }, onDismiss = { composerSheet = null }) }
+    composerSheet?.let { sheet -> ComposerOptions(sheet, state, onSelect = { composerSheet = it }, onDismiss = { composerSheet = null }) }
 }
 
 @Composable
@@ -830,7 +830,7 @@ private fun DiffValue(label: String, value: String, added: Boolean, compact: Boo
 }
 
 @Composable
-private fun ComposerOptions(sheet: String, provider: Boolean, onSelect: (String) -> Unit, onDismiss: () -> Unit) {
+private fun ComposerOptions(sheet: String, state: AssistantPreviewState, onSelect: (String) -> Unit, onDismiss: () -> Unit) {
     val title = when (sheet) {
         "attachments" -> "Add to chat"
         "effort" -> "Effort"
@@ -859,16 +859,21 @@ private fun ComposerOptions(sheet: String, provider: Boolean, onSelect: (String)
 
             "effort" -> {
                 Surface(shape = RoundedCornerShape(18.dp), color = chatPanelColor(raised = true)) {
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        PanelOption("Standard", subtitle = "Current setting", selected = true)
-                        listOf("Low", "Medium", "High", "Extra", "Max").forEach { PanelOption(it, enabled = false) }
+                    Column(Modifier.testTag("assistant-effort-options"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        DeepSeekEffort.entries.forEach { effort ->
+                            PanelOption(effort.label, selected = state.conversation?.effort == effort, enabled = state.usesProvider && state.canChange && !state.isResponding, disabledLabel = null, onClick = {
+                                state.setEffort(effort)
+                                onDismiss()
+                            })
+                        }
                     }
                 }
+                Text(if (state.usesProvider) "More thinking takes longer and uses more tokens." else "Available with DeepSeek.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             else -> {
-                PanelOption(if (provider) "DeepSeek Flash" else "Sample chat", subtitle = if (provider) "Fast responses" else "Offline preview", selected = true)
-                PanelOption("Effort", value = "Standard", onClick = { onSelect("effort") })
+                PanelOption(if (state.usesProvider) "DeepSeek Flash" else "Sample chat", subtitle = if (state.usesProvider) "Fast responses" else "Offline preview", selected = true)
+                PanelOption("Effort", value = state.conversation?.effort?.label ?: "Off", onClick = { onSelect("effort") })
                 PanelOption("More models", enabled = false)
             }
         }
@@ -883,6 +888,7 @@ private fun PanelOption(
     icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
     selected: Boolean = false,
     enabled: Boolean = true,
+    disabledLabel: String? = "Soon",
     onClick: (() -> Unit)? = null,
 ) {
     val modifier = Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(enabled = enabled, onClick = onClick) else Modifier)
@@ -897,7 +903,7 @@ private fun PanelOption(
                 Text(label, style = MaterialTheme.typography.bodyLarge)
                 if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            if (!enabled) Text("Soon", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (!enabled && disabledLabel != null) Text(disabledLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (value != null) Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (selected) Icon(Icons.Outlined.Check, "Selected", Modifier.size(24.dp), tint = Color(0xFF66A8EF))
             if (onClick != null) Icon(Icons.Outlined.ChevronRight, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)

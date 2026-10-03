@@ -253,6 +253,7 @@ class MainActivity : ComponentActivity() {
                                         VeyarcDestination.SETTINGS -> SettingsScreen(
                                             assistant = if (assistantPreviewEnabled) editorSession.assistant else null,
                                             assistantConnectionRequestId = assistantSettingsRequest,
+                                            onAssistantConnectionRequestConsumed = { assistantSettingsRequest = 0 },
                                             repository = workflowRepository,
                                             refreshGeneration = resumeGeneration,
                                             themePreference = uiPreferences.theme,

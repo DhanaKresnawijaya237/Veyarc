@@ -55,6 +55,18 @@ class AssistantPreviewNavigationTest {
     val compose = createAndroidComposeRule<MainActivity>()
 
     @Test
+    fun settingsKeepsAiConnectionCollapsedUntilOpened() {
+        compose.onNodeWithContentDescription("Settings", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("AI connection").assertIsDisplayed()
+        compose.onNodeWithText("AI chat help").assertDoesNotExist()
+        compose.onNodeWithText("AI connection").performClick()
+        compose.onNodeWithText("AI chat help").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("Home", useUnmergedTree = true).performClick()
+        compose.onNodeWithContentDescription("Settings", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("AI chat help").assertDoesNotExist()
+    }
+
+    @Test
     fun editorEntryRecreationAndBackKeepTheUnsentMessage() {
         val owner = androidx.lifecycle.ViewModelProvider(compose.activity)[MainEditorSession::class.java]
         compose.onNodeWithContentDescription("Editor", useUnmergedTree = true).performClick()
@@ -107,6 +119,9 @@ class AssistantPreviewNavigationTest {
         compose.onNodeWithText("Get started").assertIsDisplayed()
         compose.onNodeWithText("Apply updates your draft. Undo is in the editor.").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Close").performClick()
+        compose.onNodeWithContentDescription("Home", useUnmergedTree = true).performClick()
+        compose.onNodeWithContentDescription("Settings", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("AI chat help").assertDoesNotExist()
     }
 }
 
@@ -114,6 +129,52 @@ class AssistantPreviewNavigationTest {
 class AssistantPreviewUiTest {
     @get:Rule
     val compose = createComposeRule()
+
+    @Test
+    fun effortSelectionUpdatesTheComposerAndLocksDuringARequest() {
+        fun effortOption(label: String) = compose.onNode(hasText(label) and hasAnyAncestor(hasTestTag("assistant-effort-options")))
+        val owner = kotlinx.coroutines.SupervisorJob()
+        var calls = 0
+        val state = AssistantPreviewState(scope = kotlinx.coroutines.CoroutineScope(owner + kotlinx.coroutines.Dispatchers.Main), providerCall = {
+            calls++
+            kotlinx.coroutines.awaitCancellation()
+        }).apply {
+            open(AssistantPreviewContext())
+            enableProvider()
+        }
+        try {
+            compose.setContent { VeyarcTheme(darkTheme = true) { AssistantPreviewScreen(state) } }
+            compose.onNodeWithText("Off").assertIsDisplayed()
+            compose.onNodeWithText("DeepSeek Flash").performClick()
+            compose.onNodeWithText("Effort").performClick()
+            effortOption("Off").assertIsSelected()
+            compose.onNodeWithText("Medium").assertDoesNotExist()
+            effortOption("High").assertIsEnabled().performClick()
+            compose.onNodeWithText("High").assertIsDisplayed()
+            compose.onNodeWithTag("assistant-composer").performTextReplacement("Explain this workflow")
+            Espresso.closeSoftKeyboard()
+            compose.onNodeWithContentDescription("Send message").performClick()
+            compose.waitUntil(10_000) { calls == 1 }
+            compose.onNodeWithText("DeepSeek Flash").performClick()
+            compose.onNodeWithText("Effort").performClick()
+            effortOption("High").assertIsSelected().assertIsNotEnabled()
+            effortOption("Low").assertIsNotEnabled()
+            compose.onNodeWithContentDescription("Close Effort").performClick()
+            compose.onNodeWithContentDescription("Stop response").performClick()
+            compose.onNodeWithText("DeepSeek Flash").performClick()
+            compose.onNodeWithText("Effort").performClick()
+            effortOption("Max").assertIsEnabled().performClick()
+            compose.runOnIdle {
+                assertEquals(com.veyarc.feature.assistant.DeepSeekEffort.MAX, state.conversation!!.effort)
+                assertEquals(com.veyarc.feature.assistant.DeepSeekEffort.HIGH, state.conversation!!.turns.single().effort)
+                assertEquals(1, calls)
+            }
+            capture("effort-selected")
+        } finally {
+            compose.runOnIdle { state.dispose() }
+            owner.cancel()
+        }
+    }
 
     @Test
     fun currentWindowKeepsTypingAndNavigationReachable() {

@@ -71,6 +71,7 @@ data class PreviewTurn(
     val applyState: ProposalApplyState = ProposalApplyState.NONE,
     val createdAtMs: Long = System.currentTimeMillis(),
     val provider: Boolean = false,
+    val effort: DeepSeekEffort = DeepSeekEffort.OFF,
 )
 
 @Serializable
@@ -86,6 +87,7 @@ data class PreviewConversation(
     val updatedAtMs: Long = createdAtMs,
     val formatVersion: Int = 1,
     val pinned: Boolean = false,
+    val effort: DeepSeekEffort = DeepSeekEffort.OFF,
 )
 
 /** Null storage is reserved for deterministic UI/unit fixtures. The app supplies encrypted storage. */
@@ -296,6 +298,12 @@ class AssistantPreviewState(
         }
     }
 
+    fun setEffort(effort: DeepSeekEffort) {
+        if (!usesProvider || !canChange || isResponding) return
+        update { it.copy(effort = effort) }
+        flush()
+    }
+
     fun newChat() {
         if (!canChange || conversations.size >= MAX_CHATS) return
         stop(PreviewReplyStatus.INTERRUPTED)
@@ -377,6 +385,7 @@ class AssistantPreviewState(
                 reply = "", status = PreviewReplyStatus.RESPONDING, requestId = token, attempt = it.attempt + 1,
                 outcome = null, responseError = null, proposal = null, proposalDismissed = false,
                 localBindingId = if (turn.applyState == ProposalApplyState.NONE) turn.localBindingId else null,
+                effort = requireNotNull(conversation).effort,
             )
         }
         begin(token)
@@ -485,7 +494,7 @@ class AssistantPreviewState(
         }
         val current = requireNotNull(conversation)
         val prompt = current.composer.trim()
-        val turn = PreviewTurn(UUID.randomUUID().toString(), prompt, scenario, baseSnapshot = capture.snapshot, localBindingId = capture.localBindingId, provider = usesProvider)
+        val turn = PreviewTurn(UUID.randomUUID().toString(), prompt, scenario, baseSnapshot = capture.snapshot, localBindingId = capture.localBindingId, provider = usesProvider, effort = current.effort)
         val updated = current.copy(
             title = if (current.turns.isEmpty() && current.title == "New chat") prompt.take(48) else current.title,
             composer = "",
@@ -556,7 +565,7 @@ class AssistantPreviewState(
                 ),
             )
         }
-        return DeepSeekRequest.create(current.requestId, chat.id, current.responseBaseId(chat), current.prompt, current.baseSnapshot, history, streaming = true)
+        return DeepSeekRequest.create(current.requestId, chat.id, current.responseBaseId(chat), current.prompt, current.baseSnapshot, history, streaming = true, effort = current.effort)
     }
 
     fun advance(token: String) {
@@ -647,7 +656,7 @@ class AssistantPreviewState(
     fun retry() {
         if (!canRetry) return
         val token = UUID.randomUUID().toString()
-        updateLast { it.copy(reply = "", status = PreviewReplyStatus.RESPONDING, requestId = token, attempt = it.attempt + 1, outcome = null, responseError = null, proposal = null) }
+        updateLast { it.copy(reply = "", status = PreviewReplyStatus.RESPONDING, requestId = token, attempt = it.attempt + 1, outcome = null, responseError = null, proposal = null, effort = requireNotNull(conversation).effort) }
         begin(token)
     }
 

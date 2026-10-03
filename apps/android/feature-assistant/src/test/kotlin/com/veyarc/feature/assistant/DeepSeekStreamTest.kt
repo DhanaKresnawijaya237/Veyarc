@@ -33,7 +33,7 @@ class DeepSeekStreamTest {
     private val request = DeepSeekRequest.create("r", "c", "draft:d", "Explain", null, streaming = true)
     private val key = "fixture-only-key"
     private val content = AssistantResponseCodec.encode(AssistantResponse(1, "r", "c", "draft:d", AssistantOutcome.EXPLANATION, "Hello 界 🌍"))
-    private fun chunk(text: String? = null, stop: String? = null, role: String? = null) = buildJsonObject {
+    private fun chunk(text: String? = null, stop: String? = null, role: String? = null, reasoning: String? = null) = buildJsonObject {
         put("id", "completion-1")
         put("object", "chat.completion.chunk")
         put("model", "deepseek-flash")
@@ -49,6 +49,7 @@ class DeepSeekStreamTest {
                             buildJsonObject {
                                 role?.let { put("role", it) }
                                 text?.let { put("content", it) }
+                                reasoning?.let { put("reasoning_content", it) }
                             },
                         )
                     },
@@ -58,6 +59,19 @@ class DeepSeekStreamTest {
     }.toString()
     private fun event(value: String) = "data: $value\n\n"
     private fun valid() = event(chunk(content.toString(Charsets.UTF_8), role = "assistant")) + event(chunk(stop = "stop")) + event("[DONE]")
+
+    @Test
+    fun thinkingChunksStaySeparateAndBoundedAndCannotCompleteWithoutFinalJson() {
+        val thinkingRequest = DeepSeekRequest.create("r", "c", "draft:d", "Explain", null, streaming = true, effort = DeepSeekEffort.HIGH)
+        val thought = event(chunk(role = "assistant", reasoning = "Untrusted thinking 界 🌍 {not workflow JSON}"))
+        val final = event(chunk(content.toString(Charsets.UTF_8))) + event(chunk(stop = "stop")) + event("[DONE]")
+        assertArrayEquals(content, DeepSeekStream.read((thought + final).byteInputStream(), thinkingRequest, DeepSeekCancellation()))
+        listOf(thought, thought + event(chunk(stop = "stop")) + event("[DONE]"), thought + final.replace("\"stop\"", "\"length\""), thought.replace("\"Untrusted thinking 界 🌍 {not workflow JSON}\"", "false") + final).forEach {
+            assertTrue(runCatching { DeepSeekStream.read(it.byteInputStream(), thinkingRequest, DeepSeekCancellation()) }.isFailure)
+        }
+        val oversized = event(chunk(role = "assistant", reasoning = "x".repeat(400000))).repeat(6) + final
+        failure(DeepSeekFailure.RESPONSE_TOO_LARGE) { DeepSeekStream.read(oversized.byteInputStream(), thinkingRequest, DeepSeekCancellation()) }
+    }
 
     @Test
     fun parsesFragmentedUtf8CrLfMultilineDataCommentsAndTerminalUsage() {
@@ -181,7 +195,7 @@ class DeepSeekStreamTest {
             val preCancelled = DeepSeekCancellation().apply { cancel() }
             failure(DeepSeekFailure.CANCELLED) { client.complete(request, key, preCancelled) }
             assertEquals(0, calls.get())
-            listOf("", event(chunk("{", role = "assistant")), event(chunk(content.toString(Charsets.UTF_8), role = "assistant")) + event(chunk(stop = "stop"))).forEachIndexed { index, partial ->
+            listOf("", event(chunk("{", role = "assistant")), event(chunk(content.toString(Charsets.UTF_8), role = "assistant")) + event(chunk(stop = "stop")), event(chunk(role = "assistant", reasoning = "Still thinking"))).forEachIndexed { index, partial ->
                 headers = index != 0
                 prefix = partial
                 entered = CountDownLatch(1)
@@ -190,7 +204,8 @@ class DeepSeekStreamTest {
                 val token = DeepSeekCancellation()
                 val pending = worker.submit<DeepSeekFailure> {
                     try {
-                        client.complete(request, key, token)
+                        val selected = if (index == 3) DeepSeekRequest.create("r", "c", "draft:d", "Explain", null, streaming = true, effort = DeepSeekEffort.MAX) else request
+                        client.complete(selected, key, token)
                         error("Accepted cancelled result")
                     } catch (error: DeepSeekException) {
                         error.reason

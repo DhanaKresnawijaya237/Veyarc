@@ -17,6 +17,7 @@ internal object DeepSeekStream {
     fun read(input: InputStream, request: DeepSeekRequest, cancellation: DeepSeekCancellation): ByteArray {
         val content = StringBuilder()
         var contentBytes = 0
+        var reasoningBytes = 0
         var completionId: String? = null
         var assistant = false
         var stopped = false
@@ -69,7 +70,9 @@ internal object DeepSeekStream {
                     require(fields[it] == null || fields[it] == JsonNull)
                 }
             }
-            require(delta["reasoning_content"] == null || delta["reasoning_content"] == JsonNull || delta["reasoning_content"] == JsonPrimitive(""))
+            // Reasoning is separate provider output, never workflow JSON or conversation history.
+            reasoningBytes += DeepSeekClient.reasoningBytes(delta, request)
+            if (reasoningBytes > DeepSeekClient.MAX_REASONING_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
             if (delta["role"] != null && delta["role"] != JsonNull) {
                 require(delta.string("role") == "assistant")
                 assistant = true

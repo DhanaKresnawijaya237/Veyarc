@@ -53,7 +53,7 @@ class DeepSeekClient internal constructor(
     private val endpoint: URL,
     private val connectTimeoutMs: Int = 15000,
     private val readTimeoutMs: Int = 30000,
-    private val deadlineMs: Long = 120000,
+    private val deadlineMs: Long? = null,
 ) {
     constructor() : this(URL("https://api.deepseek.com/chat/completions"))
 
@@ -62,7 +62,7 @@ class DeepSeekClient internal constructor(
             endpoint.toString() == "https://api.deepseek.com/chat/completions" ||
                 (endpoint.protocol == "http" && endpoint.host == "127.0.0.1" && endpoint.userInfo == null),
         )
-        require(connectTimeoutMs > 0 && readTimeoutMs > 0 && deadlineMs > 0)
+        require(connectTimeoutMs > 0 && readTimeoutMs > 0 && (deadlineMs == null || deadlineMs > 0))
     }
 
     private val busy = AtomicBoolean(false)
@@ -70,7 +70,7 @@ class DeepSeekClient internal constructor(
         .connectTimeout(connectTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
         .readTimeout(readTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
         .writeTimeout(readTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
-        .callTimeout(deadlineMs, TimeUnit.MILLISECONDS)
+        .callTimeout(deadlineMs ?: 120000, TimeUnit.MILLISECONDS)
         .followRedirects(false)
         .followSslRedirects(false)
         .retryOnConnectionFailure(false)
@@ -92,10 +92,11 @@ class DeepSeekClient internal constructor(
         if (!AssistantKeyStore.isValidEntry(apiKey)) throw DeepSeekException(DeepSeekFailure.KEY_REQUIRED)
         if (!busy.compareAndSet(false, true)) throw DeepSeekException(DeepSeekFailure.BUSY)
         var call: Call? = null
+        val requestDeadlineMs = deadlineMs ?: if (request.effort == DeepSeekEffort.OFF) 120000 else 300000
         val started = System.nanoTime()
         fun checkActive() {
             cancellation.checkActive()
-            if (TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) >= deadlineMs) throw DeepSeekException(DeepSeekFailure.TIMEOUT)
+            if (TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) >= requestDeadlineMs) throw DeepSeekException(DeepSeekFailure.TIMEOUT)
         }
         try {
             checkActive()
@@ -114,6 +115,7 @@ class DeepSeekClient internal constructor(
                 .header("Accept-Encoding", "identity")
                 .post(body).build()
             val active = transport.newCall(http)
+            active.timeout().timeout(requestDeadlineMs, TimeUnit.MILLISECONDS)
             call = active
             cancellation.attach(active)
             val content = active.execute().use { response ->
@@ -138,7 +140,7 @@ class DeepSeekClient internal constructor(
                     "gzip" -> GZIPInputStream(raw)
                     else -> throw DeepSeekException(DeepSeekFailure.INVALID_RESPONSE)
                 }
-                BoundedResponse(input, ::checkActive).use { bounded ->
+                BoundedResponse(input, ::checkActive, responseLimit(request)).use { bounded ->
                     if (request.streaming) DeepSeekStream.read(bounded, request, cancellation) else decode(bounded.readBytes(), request)
                 }
             }
@@ -163,7 +165,7 @@ class DeepSeekClient internal constructor(
         }
     }
 
-    private class BoundedResponse(input: InputStream, private val checkActive: () -> Unit) : FilterInputStream(input) {
+    private class BoundedResponse(input: InputStream, private val checkActive: () -> Unit, private val maxBytes: Int) : FilterInputStream(input) {
         private var total = 0
         override fun read(): Int {
             checkActive()
@@ -173,22 +175,34 @@ class DeepSeekClient internal constructor(
         }
         override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
             checkActive()
-            val size = `in`.read(buffer, offset, minOf(length, MAX_RESPONSE_BYTES - total + 1))
+            val size = `in`.read(buffer, offset, minOf(length, maxBytes - total + 1))
             count(maxOf(size, 0))
             return size
         }
         private fun count(size: Int) {
             checkActive()
             total += size
-            if (total > MAX_RESPONSE_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
+            if (total > maxBytes) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
         }
     }
 
     companion object {
         internal const val MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+        internal const val MAX_REASONING_BYTES = 2 * 1024 * 1024
+
+        // Thinking adds many SSE envelopes. Final workflow JSON keeps its existing 64 KiB limit.
+        internal fun responseLimit(request: DeepSeekRequest) = if (request.effort == DeepSeekEffort.OFF) MAX_RESPONSE_BYTES else 32 * 1024 * 1024
+
+        internal fun reasoningBytes(fields: JsonObject, request: DeepSeekRequest): Int {
+            if (fields["reasoning_content"] == null || fields["reasoning_content"] == JsonNull) return 0
+            val size = fields.string("reasoning_content").toByteArray(Charsets.UTF_8).size
+            require(request.effort != DeepSeekEffort.OFF || size == 0)
+            if (size > MAX_REASONING_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
+            return size
+        }
 
         internal fun decode(bytes: ByteArray, request: DeepSeekRequest): ByteArray = try {
-            if (bytes.size > MAX_RESPONSE_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
+            if (bytes.size > responseLimit(request)) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
             val envelope = parseObject(bytes)
             require(envelope.string("object") == "chat.completion")
             // The official completion example echoes the alias. Do not guess dated wire-model IDs.
@@ -202,7 +216,7 @@ class DeepSeekClient internal constructor(
                     require(fields[it] == null || fields[it] == JsonNull)
                 }
             }
-            require(message["reasoning_content"] == null || message["reasoning_content"] == JsonNull || message["reasoning_content"] == JsonPrimitive(""))
+            reasoningBytes(message, request)
             val content = message.string("content").toByteArray(Charsets.UTF_8)
             if (content.size > AssistantResponseCodec.MAX_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
             AssistantResponseCodec.decode(content, request.requestId, request.conversationId, request.baseSnapshotId)

@@ -1,12 +1,16 @@
 package com.veyarc.feature.assistant
 
 import com.veyarc.model.WorkflowJson
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.util.UUID
+
+@Serializable
+enum class DeepSeekEffort(val label: String) { OFF("Off"), LOW("Low"), HIGH("High"), MAX("Max") }
 
 /** Only completed, validated provider exchanges from this conversation belong here.
  * The 4E chat bridge must exclude local samples, failures, and interrupted turns. */
@@ -19,6 +23,7 @@ class DeepSeekRequest private constructor(
     internal val conversationId: String,
     internal val baseSnapshotId: String,
     internal val streaming: Boolean,
+    internal val effort: DeepSeekEffort,
 ) {
     companion object {
         const val MAX_BYTES = 128 * 1024
@@ -32,6 +37,7 @@ class DeepSeekRequest private constructor(
             snapshot: AssistantContextSnapshot?,
             history: List<DeepSeekHistoryTurn> = emptyList(),
             streaming: Boolean = false,
+            effort: DeepSeekEffort = DeepSeekEffort.OFF,
         ): DeepSeekRequest = try {
             require(listOf(requestId, conversationId, baseSnapshotId).all { it.isNotBlank() && it.length <= 128 })
             require(prompt.isNotBlank() && prompt.length <= AssistantPreviewState.MAX_PROMPT_LENGTH)
@@ -60,9 +66,14 @@ class DeepSeekRequest private constructor(
                 }
                 add(message("user", current.toString()))
             }
-            val bytes = requestBody(messages, 16384, streaming)
+            val maxTokens = when (effort) {
+                DeepSeekEffort.OFF -> 16384
+                DeepSeekEffort.MAX -> 131072
+                else -> 65536
+            }
+            val bytes = requestBody(messages, maxTokens, streaming, effort)
             if (bytes.size > MAX_BYTES) throw DeepSeekException(DeepSeekFailure.REQUEST_TOO_LARGE)
-            DeepSeekRequest(bytes, requestId, conversationId, baseSnapshotId, streaming)
+            DeepSeekRequest(bytes, requestId, conversationId, baseSnapshotId, streaming, effort)
         } catch (error: DeepSeekException) {
             throw error
         } catch (_: Exception) {
@@ -76,14 +87,15 @@ class DeepSeekRequest private constructor(
                 message("system", "Return only this JSON object, with all IDs unchanged: ${example.toString(Charsets.UTF_8)}"),
                 message("user", "Confirm this API connection."),
             )
-            return DeepSeekRequest(requestBody(messages, 128, false), id, id, "connection-test", false)
+            return DeepSeekRequest(requestBody(messages, 128, false), id, id, "connection-test", false, DeepSeekEffort.OFF)
         }
 
-        private fun requestBody(messages: List<kotlinx.serialization.json.JsonObject>, maxTokens: Int, streaming: Boolean): ByteArray = buildJsonObject {
+        private fun requestBody(messages: List<kotlinx.serialization.json.JsonObject>, maxTokens: Int, streaming: Boolean, effort: DeepSeekEffort = DeepSeekEffort.OFF): ByteArray = buildJsonObject {
             put("model", MODEL)
             put("messages", JsonArray(messages))
             put("max_tokens", maxTokens)
-            put("thinking", buildJsonObject { put("type", "disabled") })
+            put("thinking", buildJsonObject { put("type", if (effort == DeepSeekEffort.OFF) "disabled" else "enabled") })
+            if (effort != DeepSeekEffort.OFF) put("reasoning_effort", effort.name.lowercase())
             put("response_format", buildJsonObject { put("type", "json_object") })
             put("stream", streaming)
         }.toString().toByteArray(Charsets.UTF_8)
