@@ -160,13 +160,8 @@ class WorkflowEditorSession {
         recordingJournalFileName: String? = null,
         latestKnownRevision: Int = bundle.document.revision,
     ) {
-        dismissEditors()
         val opened = WorkflowDraft.fromBundle(bundle, recordingJournalFileName, latestKnownRevision)
-        draft = opened
-        destinationFolderId = null
-        savedDraft = opened
-        prepareRevisionCache(opened.workflowId)
-        clearHistory()
+        openPrepared(opened)
     }
 
     fun open(
@@ -174,13 +169,19 @@ class WorkflowEditorSession {
         recordingJournalFileName: String? = null,
         latestKnownRevision: Int = revision.revision.document.revision,
     ) {
-        dismissEditors()
         val opened = WorkflowDraft.fromRevision(revision, recordingJournalFileName, latestKnownRevision)
+        openPrepared(opened)
+    }
+
+    internal fun openPrepared(opened: WorkflowDraft, validation: DraftBuildResult? = null) {
+        dismissEditors()
         draft = opened
         destinationFolderId = null
         savedDraft = opened
         prepareRevisionCache(opened.workflowId)
         clearHistory()
+        validatedDraft = opened.takeIf { validation != null }
+        validatedResult = validation
     }
 
     fun update(updated: WorkflowDraft) {
@@ -229,6 +230,14 @@ class WorkflowEditorSession {
 
     fun validationFor(draft: WorkflowDraft): DraftBuildResult {
         if (validatedDraft === draft) return requireNotNull(validatedResult)
+        if (validatedDraft?.copy(
+                collapsedStepIds = draft.collapsedStepIds,
+                recordingJournalFileName = draft.recordingJournalFileName,
+            ) == draft
+        ) {
+            validatedDraft = draft
+            return requireNotNull(validatedResult)
+        }
         return draft.buildBundle().also { result ->
             validatedDraft = draft
             validatedResult = result

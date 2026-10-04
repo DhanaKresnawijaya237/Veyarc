@@ -33,8 +33,14 @@ class WorkflowEditorStateTest {
         val first = session.validationFor(draft)
 
         assertSame(first, session.validationFor(draft))
+        session.update(draft.toggleCollapsed(draft.steps.first().id))
+        assertSame(first, session.validationFor(session.draft!!))
         session.update(draft.copy(name = "Changed"))
         assertNotSame(first, session.validationFor(session.draft!!))
+        val changed = session.validationFor(session.draft!!)
+        session.update(session.draft!!.copy(latestKnownRevision = 9))
+        assertNotSame(changed, session.validationFor(session.draft!!))
+        assertEquals(10, session.validationFor(session.draft!!).document!!.revision)
     }
 
     @Test

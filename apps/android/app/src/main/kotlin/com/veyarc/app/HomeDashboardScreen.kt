@@ -65,10 +65,11 @@ fun HomeDashboardScreen(
     refreshGeneration: Int,
     onRecord: () -> Unit,
     onPlayWorkflow: (WorkflowSummary) -> Unit,
+    pageState: HomeDashboardState = remember { HomeDashboardState() },
 ) {
-    var dashboard by remember { mutableStateOf<RunDashboardSummary?>(null) }
-    var workflows by remember { mutableStateOf<List<WorkflowSummary>>(emptyList()) }
-    var latestRecording by remember { mutableStateOf<WorkflowSummary?>(null) }
+    var dashboard by pageState.dashboard
+    var workflows by pageState.workflows
+    var latestRecording by pageState.latestRecording
     var error by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(repository, refreshGeneration) {
@@ -123,7 +124,7 @@ fun HomeDashboardScreen(
         }
 
         val loaded = dashboard
-        if (loaded == null) {
+        if (loaded == null && error == null) {
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth().height(160.dp),
@@ -133,7 +134,7 @@ fun HomeDashboardScreen(
                     CircularProgressIndicator()
                 }
             }
-        } else {
+        } else if (loaded != null) {
             item { DashboardMetrics(loaded) }
             val names = workflows.associate { it.workflowId to it.name }
             item { RunOutcomeChart(loaded.recentRuns, names) }

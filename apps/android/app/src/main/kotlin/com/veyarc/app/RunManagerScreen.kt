@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -102,12 +103,13 @@ internal fun RunManagerScreen(
     refreshGeneration: Int,
     onOpenWorkflowRevision: (StoredRunRecord) -> Unit,
     onSelectionBarChange: (ManagerSelectionBarState?) -> Unit = {},
+    pageState: RunManagerState = remember { RunManagerState() },
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var runs by remember { mutableStateOf<List<ManagedRun>>(emptyList()) }
-    var workflows by remember { mutableStateOf<List<WorkflowSummary>>(emptyList()) }
-    var folders by remember { mutableStateOf<List<FolderSummary>>(emptyList()) }
+    var runs by pageState.runs
+    var workflows by pageState.workflows
+    var folders by pageState.folders
     var folderOrder by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var selectedView by rememberSaveable { mutableStateOf(RUNS_ALL_VIEW) }
     var selectedRunId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -162,6 +164,7 @@ internal fun RunManagerScreen(
             runs = loadedRuns
             workflows = loadedWorkflows
             folders = loadedFolders
+            pageState.loaded.value = true
             val availableKeys = listOf(RUNS_ALL_VIEW, RUNS_BY_WORKFLOW_VIEW, RUNS_UNFILED_VIEW) + loadedFolders.map { it.viewKey() }
             folderOrder = reconcileFolderOrder(savedOrder, availableKeys)
             selectedIds = terminalRunIds(selectedIds.toSet(), loadedRuns).toList()
@@ -175,9 +178,14 @@ internal fun RunManagerScreen(
     }
 
     LaunchedEffect(repository, selectedRunId) {
+        selectedRunDetails = null
         selectedRunDetails = selectedRunId?.let { runId ->
             runCatching { withContext(Dispatchers.IO) { repository.loadRunDetails(runId) } }
-                .onFailure { message = "Run details could not be loaded." }
+                .onFailure { failure ->
+                    if (failure is kotlinx.coroutines.CancellationException) throw failure
+                    message = "Run details could not be loaded."
+                    selectedRunId = null
+                }
                 .getOrNull()
         }
     }
@@ -229,6 +237,16 @@ internal fun RunManagerScreen(
                 { onOpenWorkflowRevision(run) }
             },
         )
+        return
+    }
+    if (selectedRunId != null) {
+        androidx.activity.compose.BackHandler { selectedRunId = null }
+        androidx.compose.foundation.layout.Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                androidx.compose.material3.CircularProgressIndicator()
+                Text("Loading run…")
+            }
+        }
         return
     }
 
@@ -369,9 +387,13 @@ internal fun RunManagerScreen(
             }
         }
 
-        if (isBusy) item { LinearProgressIndicator(modifier = Modifier.fillMaxWidth()) }
+        item(key = "load-progress") {
+            Box(Modifier.fillMaxWidth().height(4.dp)) {
+                if (isBusy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+        }
         message?.let { item { Text(it, color = MaterialTheme.colorScheme.primary) } }
-        if (!isBusy && visible.isEmpty()) item { Card { Text("No runs match these filters.", modifier = Modifier.padding(18.dp)) } }
+        if (pageState.loaded.value && !isBusy && visible.isEmpty()) item { Card { Text("No runs match these filters.", modifier = Modifier.padding(18.dp)) } }
 
         if (selectedView == RUNS_BY_WORKFLOW_VIEW) {
             visible.groupBy { it.record.workflowId }.forEach { (_, workflowRuns) ->

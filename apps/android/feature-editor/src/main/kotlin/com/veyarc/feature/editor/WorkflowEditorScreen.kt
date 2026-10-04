@@ -46,8 +46,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CutCornerShape
@@ -117,12 +120,13 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LocalPinnableContainer
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -180,6 +184,8 @@ fun WorkflowEditorScreen(
     val scope = rememberCoroutineScope()
     var isBusy by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
+    var isOpening by remember { mutableStateOf(false) }
+    var initialLoadFinished by remember(initialBundle, initialStoredWorkflowId, initialStoredRevision) { mutableStateOf(false) }
     var geometryTarget by session::geometryTarget
     var conditionTarget by session::conditionTarget
     var pendingTemplateCrop by session::pendingTemplateCrop
@@ -224,30 +230,18 @@ fun WorkflowEditorScreen(
     fun applyReplacement(request: DraftReplacement) {
         clearTemplatePreviewCache()
         when (request) {
-            is DraftReplacement.BundleRevision -> {
+            is DraftReplacement.Revision -> {
                 val currentRevision = session.draft
-                    ?.takeIf { it.workflowId == request.bundle.document.id }
-                    ?.latestKnownRevision
-                session.open(
-                    request.bundle,
-                    request.journalFileName,
-                    maxOf(request.latestKnownRevision, currentRevision ?: 0),
-                )
-                statusMessage = "Workflow opened. Saving edits creates the next revision."
-                if (request.consumeInitialBundle) onInitialBundleConsumed()
-            }
-
-            is DraftReplacement.StoredRevision -> {
-                val document = request.data.revision.document
-                val currentRevision = session.draft
-                    ?.takeIf { it.workflowId == document.id }
-                    ?.latestKnownRevision
-                session.open(
-                    request.data,
-                    request.journalFileName,
-                    maxOf(request.latestKnownRevision, currentRevision ?: 0),
-                )
-                statusMessage = "Workflow opened. Saving edits creates the next revision."
+                    ?.takeIf { it.workflowId == request.draft.workflowId }
+                    ?.latestKnownRevision ?: 0
+                val opened = if (currentRevision > (request.draft.latestKnownRevision ?: 0)) {
+                    request.draft.copy(latestKnownRevision = currentRevision)
+                } else {
+                    request.draft
+                }
+                session.openPrepared(opened, request.validation.takeIf { opened === request.draft })
+                session.cacheRevisionSummaries(opened.workflowId, request.revisions.takeIf { opened === request.draft }.orEmpty())
+                statusMessage = "Workflow opened."
                 if (request.consumeInitialBundle) onInitialBundleConsumed()
             }
 
@@ -262,30 +256,59 @@ fun WorkflowEditorScreen(
 
     fun cancelReplacement(request: DraftReplacement) {
         when (request) {
-            is DraftReplacement.BundleRevision -> if (request.consumeInitialBundle) onInitialBundleConsumed()
-            is DraftReplacement.StoredRevision -> if (request.consumeInitialBundle) onInitialBundleConsumed()
+            is DraftReplacement.Revision -> if (request.consumeInitialBundle) onInitialBundleConsumed()
             is DraftReplacement.New -> onNewWorkflowRequestConsumed()
         }
         pendingReplacement = null
+    }
+
+    suspend fun prepareRevision(
+        revisions: List<RevisionSummary>,
+        consumeInitial: Boolean,
+        createDraft: () -> WorkflowDraft,
+    ): DraftReplacement.Revision = withContext(Dispatchers.Default) {
+        val prepared = createDraft()
+        DraftReplacement.Revision(prepared, prepared.buildBundle(), revisions, consumeInitial)
+    }
+
+    suspend fun loadStoredRevision(
+        workflowId: String,
+        revision: Int,
+        journalFileName: String?,
+        consumeInitial: Boolean,
+    ): DraftReplacement.Revision {
+        val (data, revisions) = withContext(Dispatchers.IO) {
+            repository.loadRevisionForEditor(workflowId, revision) to repository.listRevisions(workflowId)
+        }
+        val latest = maxOf(revision, revisions.maxOfOrNull(RevisionSummary::revision) ?: revision)
+        return prepareRevision(revisions, consumeInitial) { WorkflowDraft.fromRevision(data, journalFileName, latest) }
     }
 
     LaunchedEffect(initialBundle, initialRecordingJournalFileName) {
         val bundle = initialBundle ?: return@LaunchedEffect
         val current = session.draft
         if (current?.workflowId == bundle.document.id && current.lastSavedRevision == bundle.document.revision) {
+            initialLoadFinished = true
             onInitialBundleConsumed()
             return@LaunchedEffect
         }
-        val latestRevision = withContext(Dispatchers.IO) {
-            repository.listRevisions(bundle.document.id).maxOfOrNull(RevisionSummary::revision)
-        } ?: bundle.document.revision
-        val request = DraftReplacement.BundleRevision(
-            bundle,
-            initialRecordingJournalFileName,
-            latestRevision,
-            consumeInitialBundle = true,
-        )
-        if (session.isDirty) pendingReplacement = request else applyReplacement(request)
+        isBusy = true
+        isOpening = true
+        try {
+            val revisions = withContext(Dispatchers.IO) { repository.listRevisions(bundle.document.id) }
+            val latest = maxOf(bundle.document.revision, revisions.maxOfOrNull(RevisionSummary::revision) ?: 0)
+            val request = prepareRevision(revisions, true) { WorkflowDraft.fromBundle(bundle, initialRecordingJournalFileName, latest) }
+            if (session.isDirty) pendingReplacement = request else applyReplacement(request)
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            statusMessage = "Could not open workflow: ${error.userMessage()}"
+            onInitialBundleConsumed()
+        } finally {
+            isBusy = false
+            isOpening = false
+            initialLoadFinished = true
+        }
     }
 
     LaunchedEffect(initialStoredWorkflowId, initialStoredRevision) {
@@ -293,28 +316,25 @@ fun WorkflowEditorScreen(
         val revision = initialStoredRevision?.takeIf { it > 0 } ?: return@LaunchedEffect
         val current = session.draft
         if (current?.workflowId == workflowId && current.lastSavedRevision == revision) {
+            initialLoadFinished = true
             onInitialBundleConsumed()
             return@LaunchedEffect
         }
         isBusy = true
-        runCatching {
-            withContext(Dispatchers.IO) { repository.loadRevisionForEditor(workflowId, revision) }
-        }.onSuccess { data ->
-            val latestRevision = withContext(Dispatchers.IO) {
-                repository.listRevisions(workflowId).maxOfOrNull(RevisionSummary::revision)
-            } ?: revision
-            val request = DraftReplacement.StoredRevision(
-                data = data,
-                journalFileName = initialRecordingJournalFileName,
-                latestKnownRevision = latestRevision,
-                consumeInitialBundle = true,
-            )
+        isOpening = true
+        try {
+            val request = loadStoredRevision(workflowId, revision, initialRecordingJournalFileName, true)
             if (session.isDirty) pendingReplacement = request else applyReplacement(request)
-        }.onFailure { error ->
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Exception) {
             statusMessage = "Could not open workflow: ${error.userMessage()}"
             onInitialBundleConsumed()
+        } finally {
+            isBusy = false
+            isOpening = false
+            initialLoadFinished = true
         }
-        isBusy = false
     }
 
     LaunchedEffect(newWorkflowRequestId) {
@@ -338,25 +358,22 @@ fun WorkflowEditorScreen(
 
     fun openRevision(revision: Int) {
         val current = session.draft ?: return
-        if (current.lastSavedRevision == revision) return
+        if (isBusy || current.lastSavedRevision == revision) return
         scope.launch {
             isBusy = true
+            isOpening = true
             statusMessage = null
-            runCatching {
-                withContext(Dispatchers.IO) { repository.loadRevisionForEditor(current.workflowId, revision) }
-            }.onSuccess { data ->
-                val request = DraftReplacement.StoredRevision(
-                    data,
-                    journalFileName = null,
-                    latestKnownRevision = session.revisionSummaries.maxOfOrNull(RevisionSummary::revision)
-                        ?: data.revision.document.revision,
-                    consumeInitialBundle = false,
-                )
+            try {
+                val request = loadStoredRevision(current.workflowId, revision, null, false)
                 if (session.isDirty) pendingReplacement = request else applyReplacement(request)
-            }.onFailure { error ->
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
                 statusMessage = "Could not open revision: ${error.userMessage()}"
+            } finally {
+                isBusy = false
+                isOpening = false
             }
-            isBusy = false
         }
     }
 
@@ -369,7 +386,7 @@ fun WorkflowEditorScreen(
             statusMessage = "The draft changed. Review it before saving."
             return
         }
-        val build = draft.buildBundle()
+        val build = session.validationFor(draft)
         val document = build.document
         if (document == null) {
             statusMessage = build.issues.firstOrNull()?.message ?: "Workflow is not valid."
@@ -553,14 +570,30 @@ fun WorkflowEditorScreen(
     }
 
     val draft = session.draft
-    val validation = draft?.let(session::validationFor)
-    if (draft == null) {
+    val awaitingInitial = !initialLoadFinished && (
+        (
+            initialStoredWorkflowId != null && initialStoredRevision != null &&
+                (draft?.workflowId != initialStoredWorkflowId || draft.lastSavedRevision != initialStoredRevision)
+            ) ||
+            (initialBundle != null && (draft?.workflowId != initialBundle.document.id || draft.lastSavedRevision != initialBundle.document.revision))
+        )
+    val loading = isOpening || awaitingInitial
+    val validation = draft?.takeUnless { loading }?.let(session::validationFor)
+    if (loading) {
+        Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                CircularProgressIndicator()
+                Text("Opening workflow…")
+            }
+        }
+    } else if (draft == null) {
         EmptyWorkflowEditorScreen(
             onCreate = {
                 session.create(viewportFor(context))
                 statusMessage = null
             },
             onOpenWorkflowManager = onOpenWorkflowManager,
+            statusMessage = statusMessage,
             onAskAi = onAskAi?.let { openChat ->
                 {
                     session.createForAssistant(viewportFor(context))
@@ -754,17 +787,10 @@ private data class PendingOrientationSave(
 )
 
 private sealed interface DraftReplacement {
-    data class BundleRevision(
-        val bundle: WorkflowBundle,
-        val journalFileName: String?,
-        val latestKnownRevision: Int,
-        val consumeInitialBundle: Boolean,
-    ) : DraftReplacement
-
-    data class StoredRevision(
-        val data: WorkflowRevisionEditorData,
-        val journalFileName: String?,
-        val latestKnownRevision: Int,
+    data class Revision(
+        val draft: WorkflowDraft,
+        val validation: DraftBuildResult,
+        val revisions: List<RevisionSummary>,
         val consumeInitialBundle: Boolean,
     ) : DraftReplacement
 
@@ -801,6 +827,7 @@ private fun UnsavedDraftDialog(
 @Composable
 private fun EmptyWorkflowEditorScreen(
     onCreate: () -> Unit,
+    statusMessage: String? = null,
     onOpenWorkflowManager: () -> Unit,
     onAskAi: (() -> Unit)?,
     modifier: Modifier = Modifier,
@@ -814,6 +841,7 @@ private fun EmptyWorkflowEditorScreen(
                 .heightIn(min = 48.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            statusMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Text("Workflow Editor", style = MaterialTheme.typography.headlineSmall)
         }
         Column(
@@ -1087,6 +1115,10 @@ internal class StepDragCoordinator {
         if (source != null) updateTarget(draft)
     }
 
+    fun removeStep(path: StepListPath, stepId: String) {
+        stepBounds.remove(StepLocation(path, stepId))
+    }
+
     fun removePipeline(path: StepListPath) {
         pipelineBounds.remove(path)
         stepBounds.keys.filter { it.path == path }.forEach(stepBounds::remove)
@@ -1119,10 +1151,17 @@ internal class StepDragCoordinator {
         val candidates = draft.stepsAt(destinationPath).filterNot { step ->
             destinationPath == active.path && step.id == active.stepId
         }
-        val index = candidates.count { step ->
-            val center = stepBounds[StepLocation(destinationPath, step.id)]?.centerInWindow
-            center != null && center < pointerWindowY
+        // Offscreen lazy items have no bounds. Keep their actual indices when locating an insertion.
+        val measured = candidates.mapIndexedNotNull { index, step ->
+            stepBounds[StepLocation(destinationPath, step.id)]?.let { index to it.centerInWindow }
         }
+        val index = measured.firstOrNull { (_, center) -> center >= pointerWindowY }?.first
+            ?: measured.lastOrNull()?.let { it.first + 1 }
+            ?: if (destinationPath == active.path) {
+                draft.stepsAt(active.path).indexOfFirst { it.id == active.stepId }
+            } else {
+                candidates.size
+            }
         target = StepDropTarget(destinationPath, index.coerceIn(0, candidates.size))
     }
 }
@@ -1152,8 +1191,28 @@ private fun WorkflowDraftCanvas(
     scrollHeader: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val scrollState = rememberScrollState()
+    val scrollState = key(draft.workflowId) { rememberLazyListState() }
     val stepDragCoordinator = remember(draft.workflowId) { StepDragCoordinator() }
+    val root = remember { StepListPath() }
+    DisposableEffect(stepDragCoordinator) {
+        onDispose {
+            stepDragCoordinator.end()
+            stepDragCoordinator.removePipeline(root)
+        }
+    }
+    LaunchedEffect(stepDragCoordinator.source?.stepId, stepDragCoordinator.pointerWindowY) {
+        while (stepDragCoordinator.source != null) {
+            val bounds = stepDragCoordinator.pipelineBounds[root] ?: break
+            val margin = bounds.height * 0.16f
+            val scrollDelta = when {
+                stepDragCoordinator.pointerWindowY < bounds.top + margin -> -20f
+                stepDragCoordinator.pointerWindowY > bounds.bottom - margin -> 20f
+                else -> break
+            }
+            withFrameNanos { }
+            if (scrollState.scrollBy(scrollDelta) == 0f) break
+        }
+    }
     val horizontalPadding = 16.dp
     val verticalPadding = 12.dp
     val itemSpacing = 12.dp
@@ -1174,83 +1233,102 @@ private fun WorkflowDraftCanvas(
                 modifier = Modifier.padding(horizontal = horizontalPadding, vertical = verticalPadding),
             )
         }
-        Column(
-            modifier = Modifier.weight(1f).verticalScroll(scrollState).padding(
+        LazyColumn(
+            state = scrollState,
+            modifier = Modifier.weight(1f).onGloballyPositioned {
+                stepDragCoordinator.updatePipeline(root, it.boundsInWindow(), draft)
+            }.testTag("workflow-block-list"),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
                 start = horizontalPadding,
                 end = horizontalPadding,
                 bottom = verticalPadding,
             ),
             verticalArrangement = Arrangement.spacedBy(itemSpacing),
         ) {
-            if (scrollHeader) {
-                WorkflowTitleEditor(
-                    draft = draft,
-                    onDraftChange = onDraftChange,
-                    onAskAi = onAskAi,
-                    modifier = Modifier.padding(top = verticalPadding),
-                )
-                EditorToolbar(
-                    draft = draft,
-                    session = session,
-                    validation = validation,
-                    validationState = validationState,
-                    isBusy = isBusy,
-                    onDraftChange = onDraftChange,
-                    onSave = onSave,
-                    onRun = onRun,
-                    onValidate = onValidate,
-                    revisions = revisions,
-                    onOpenRevision = onOpenRevision,
-                )
-            }
-            AllowedApplications(
-                packages = draft.allowedPackagesText,
-                onPickApplication = onPickApplication,
-                onRemoveApplication = { packageName ->
-                    onDraftChange(
-                        draft.copy(
-                            allowedPackagesText = draft.allowedPackagesText.packageNames()
-                                .filterNot { it == packageName }
-                                .joinToString(", "),
-                        ),
+            item(key = "editor-header", contentType = "header") {
+                Column(verticalArrangement = Arrangement.spacedBy(itemSpacing)) {
+                    if (scrollHeader) {
+                        WorkflowTitleEditor(
+                            draft = draft,
+                            onDraftChange = onDraftChange,
+                            onAskAi = onAskAi,
+                            modifier = Modifier.padding(top = verticalPadding),
+                        )
+                        EditorToolbar(
+                            draft = draft,
+                            session = session,
+                            validation = validation,
+                            validationState = validationState,
+                            isBusy = isBusy,
+                            onDraftChange = onDraftChange,
+                            onSave = onSave,
+                            onRun = onRun,
+                            onValidate = onValidate,
+                            revisions = revisions,
+                            onOpenRevision = onOpenRevision,
+                        )
+                    }
+                    AllowedApplications(
+                        packages = draft.allowedPackagesText,
+                        onPickApplication = onPickApplication,
+                        onRemoveApplication = { packageName ->
+                            onDraftChange(
+                                draft.copy(
+                                    allowedPackagesText = draft.allowedPackagesText.packageNames()
+                                        .filterNot { it == packageName }
+                                        .joinToString(", "),
+                                ),
+                            )
+                        },
                     )
-                },
-            )
-            draft.recordingJournalFileName?.let { journalFileName ->
-                Text(
-                    "Imported from encrypted recording: $journalFileName",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    draft.recordingJournalFileName?.let { journalFileName ->
+                        Text(
+                            "Imported from encrypted recording: $journalFileName",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TemplateAssetSection(
+                        assets = draft.assetDescriptors,
+                        assetNames = draft.assetNames,
+                        referencedAssetIds = draft.referencedAssetIds(),
+                        onAddTemplate = onAddTemplate,
+                        onRemoveTemplate = { assetId ->
+                            clearTemplatePreviewCache()
+                            onDraftChange(draft.removeAsset(assetId))
+                        },
+                        onRenameTemplate = { assetId, name -> onDraftChange(draft.renameAsset(assetId, name)) },
+                    )
+                    HorizontalDivider()
+                    Text("Execution", style = MaterialTheme.typography.titleLarge)
+                    Text("Start", style = MaterialTheme.typography.titleMedium)
+                }
+            }
+            if (draft.steps.isEmpty()) {
+                item(key = "empty-blocks") { Text("No blocks yet.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
+            itemsIndexed(draft.steps, key = { _, step -> step.id }, contentType = { _, step -> step::class }) { index, step ->
+                StepEditorItem(
+                    draft = draft,
+                    path = root,
+                    index = index,
+                    step = step,
+                    validation = validation,
+                    selection = selection,
+                    showInlineInspector = showInlineInspector,
+                    onSelectionChange = onSelectionChange,
+                    onDraftChange = onDraftChange,
+                    onEditGeometry = onEditGeometry,
+                    onEditCondition = onEditCondition,
+                    dragCoordinator = stepDragCoordinator,
                 )
             }
-            TemplateAssetSection(
-                assets = draft.assetDescriptors,
-                assetNames = draft.assetNames,
-                referencedAssetIds = draft.referencedAssetIds(),
-                onAddTemplate = onAddTemplate,
-                onRemoveTemplate = { assetId ->
-                    clearTemplatePreviewCache()
-                    onDraftChange(draft.removeAsset(assetId))
-                },
-                onRenameTemplate = { assetId, name -> onDraftChange(draft.renameAsset(assetId, name)) },
-            )
-            HorizontalDivider()
-            Text("Execution", style = MaterialTheme.typography.titleLarge)
-            StepListEditor(
-                draft = draft,
-                path = StepListPath(),
-                heading = "Start",
-                validation = validation,
-                selection = selection,
-                showInlineInspector = showInlineInspector,
-                onSelectionChange = onSelectionChange,
-                onDraftChange = onDraftChange,
-                onEditGeometry = onEditGeometry,
-                onEditCondition = onEditCondition,
-                scrollState = scrollState,
-                dragCoordinator = stepDragCoordinator,
-            )
-            statusMessage?.let { message -> Text(message, color = MaterialTheme.colorScheme.primary) }
+            item(key = "add-block", contentType = "footer") {
+                StepListFooter(draft, root, onDraftChange, stepDragCoordinator)
+            }
+            item(key = "editor-status", contentType = "footer") {
+                statusMessage?.let { message -> Text(message, color = MaterialTheme.colorScheme.primary) }
+            }
         }
     }
 }
@@ -1668,19 +1746,154 @@ private fun StepListEditor(
     onDraftChange: (WorkflowDraft) -> Unit,
     onEditGeometry: (StepListPath, Int) -> Unit,
     onEditCondition: (StepListPath, Int) -> Unit,
-    scrollState: androidx.compose.foundation.ScrollState,
     dragCoordinator: StepDragCoordinator,
 ) {
-    val clipboard = LocalBlockClipboardActions.current
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    val view = LocalView.current
+    DisposableEffect(path) {
+        onDispose { dragCoordinator.removePipeline(path) }
+    }
+    Column(
+        modifier = Modifier.onGloballyPositioned { coordinates ->
+            dragCoordinator.updatePipeline(path, coordinates.boundsInWindow(), draft)
+        },
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(heading, style = MaterialTheme.typography.titleMedium)
+        val steps = draft.stepsAt(path)
+        if (steps.isEmpty()) Text("No blocks in this branch yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        steps.forEachIndexed { index, step ->
+            key(step.id) {
+                StepEditorItem(
+                    draft, path, index, step, validation, selection, showInlineInspector,
+                    onSelectionChange, onDraftChange, onEditGeometry, onEditCondition, dragCoordinator,
+                )
+            }
+        }
+        StepListFooter(draft, path, onDraftChange, dragCoordinator)
+    }
+}
+
+@Composable
+private fun StepEditorItem(
+    draft: WorkflowDraft,
+    path: StepListPath,
+    index: Int,
+    step: WorkflowStep,
+    validation: DraftBuildResult,
+    selection: BlockSelection?,
+    showInlineInspector: Boolean,
+    onSelectionChange: (BlockSelection) -> Unit,
+    onDraftChange: (WorkflowDraft) -> Unit,
+    onEditGeometry: (StepListPath, Int) -> Unit,
+    onEditCondition: (StepListPath, Int) -> Unit,
+    dragCoordinator: StepDragCoordinator,
+) {
     val steps = draft.stepsAt(path)
     val activeDrag = dragCoordinator.source
     val dropTarget = dragCoordinator.target
     val sourceIndex = if (activeDrag?.path == path) steps.indexOfFirst { it.id == activeDrag.stepId } else -1
     val targetIndex = if (dropTarget?.path == path) dropTarget.index else -1
-    val spacingPx = with(density) { 8.dp.toPx() }
-    val shiftDistance = (activeDrag?.height ?: 0) + spacingPx
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val shiftDistance = (activeDrag?.height ?: 0) + with(density) { (if (path.segments.isEmpty()) 12.dp else 8.dp).toPx() }
+    val container = LocalPinnableContainer.current
+    val holdsDrag = activeDrag?.stepId == step.id || activeDrag?.path?.segments?.any { it.parentId == step.id } == true
+    DisposableEffect(container, holdsDrag) {
+        val handle = if (holdsDrag) container?.pin() else null
+        onDispose { handle?.release() }
+    }
+    DisposableEffect(path, step.id) {
+        onDispose { dragCoordinator.removeStep(path, step.id) }
+    }
+    val issuePrefix = draft.modelPath(path, index)
+    val neighborShift = when {
+        activeDrag == null -> 0f
+
+        activeDrag.path == path && dropTarget?.path == path &&
+            sourceIndex < targetIndex && index in (sourceIndex + 1)..targetIndex -> -shiftDistance
+
+        activeDrag.path == path && dropTarget?.path == path &&
+            sourceIndex > targetIndex && index in targetIndex until sourceIndex -> shiftDistance
+
+        activeDrag.path == path && dropTarget?.path != path && index > sourceIndex -> -shiftDistance
+
+        activeDrag.path != path && dropTarget?.path == path && index >= targetIndex -> shiftDistance
+
+        else -> 0f
+    }
+    val animatedShift by animateFloatAsState(neighborShift, tween(100), label = "block insertion")
+    Box(Modifier.testTag("workflow-block-${step.id}")) {
+        StepCard(
+            draft = draft,
+            path = path,
+            index = index,
+            step = step,
+            validation = validation,
+            issues = validation.issues.filter { issue ->
+                issue.path == issuePrefix || issue.path.startsWith("$issuePrefix/")
+            },
+            selection = selection,
+            showInlineInspector = showInlineInspector,
+            onSelectionChange = onSelectionChange,
+            onDraftChange = onDraftChange,
+            onEditGeometry = onEditGeometry,
+            onEditCondition = onEditCondition,
+            dragCoordinator = dragCoordinator,
+            translationY = when {
+                step.id == activeDrag?.stepId -> dragCoordinator.dragOffsetY
+                activeDrag != null -> animatedShift
+                else -> 0f
+            },
+            dragging = step.id == activeDrag?.stepId,
+            onMeasured = { dragCoordinator.updateStep(path, step.id, it, draft) },
+            onDragStart = { initialPointerY ->
+                onSelectionChange(BlockSelection(path, step.id))
+                dragCoordinator.start(path, step.id, initialPointerY, draft)
+            },
+            onDrag = { delta ->
+                dragCoordinator.drag(delta, draft)
+            },
+            onDragFinished = { commit ->
+                val source = dragCoordinator.source
+                val target = dragCoordinator.target
+                if (commit && source != null && target != null) {
+                    val from = draft.stepsAt(source.path).indexOfFirst { it.id == source.stepId }
+                    if (from >= 0) {
+                        val moved = draft.moveStepTo(source.path, from, target.path, target.index)
+                        if (moved != draft) {
+                            onDraftChange(moved)
+                            onSelectionChange(BlockSelection(target.path, source.stepId))
+                        }
+                    }
+                }
+                dragCoordinator.end()
+            },
+            onInsertAfter = { kind ->
+                onDraftChange(
+                    draft.insertStep(
+                        path,
+                        index + 1,
+                        kind,
+                        draft.allowedPackagesText.firstPackageOrDefault(),
+                    ),
+                )
+            },
+        )
+    }
+}
+
+@Composable
+private fun StepListFooter(
+    draft: WorkflowDraft,
+    path: StepListPath,
+    onDraftChange: (WorkflowDraft) -> Unit,
+    dragCoordinator: StepDragCoordinator,
+) {
+    val clipboard = LocalBlockClipboardActions.current
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val steps = draft.stepsAt(path)
+    val activeDrag = dragCoordinator.source
+    val dropTarget = dragCoordinator.target
+    val targetIndex = if (dropTarget?.path == path) dropTarget.index else -1
+    val shiftDistance = (activeDrag?.height ?: 0) + with(density) { (if (path.segments.isEmpty()) 12.dp else 8.dp).toPx() }
     val bottomGap by animateDpAsState(
         targetValue = if (
             activeDrag != null &&
@@ -1696,117 +1909,7 @@ private fun StepListEditor(
         animationSpec = tween(100),
         label = "nested block insertion gap",
     )
-
-    DisposableEffect(path) {
-        onDispose { dragCoordinator.removePipeline(path) }
-    }
-
-    if (path.segments.isEmpty()) {
-        LaunchedEffect(activeDrag?.stepId, dragCoordinator.pointerWindowY) {
-            while (dragCoordinator.source != null) {
-                val scrollDelta = when {
-                    dragCoordinator.pointerWindowY < view.height * 0.16f -> -20f
-                    dragCoordinator.pointerWindowY > view.height * 0.84f -> 20f
-                    else -> break
-                }
-                withFrameNanos { }
-                val consumed = scrollState.scrollBy(scrollDelta)
-                if (consumed == 0f) break
-            }
-        }
-    }
-
-    Column(
-        modifier = Modifier.onGloballyPositioned { coordinates ->
-            dragCoordinator.updatePipeline(path, coordinates.boundsInWindow(), draft)
-        },
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text(heading, style = MaterialTheme.typography.titleMedium)
-        if (steps.isEmpty()) {
-            Text(
-                "No blocks in this branch yet.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        steps.forEachIndexed { index, step ->
-            val issuePrefix = draft.modelPath(path, index)
-            val neighborShift = when {
-                activeDrag == null -> 0f
-
-                activeDrag.path == path && dropTarget?.path == path &&
-                    sourceIndex < targetIndex && index in (sourceIndex + 1)..targetIndex -> -shiftDistance
-
-                activeDrag.path == path && dropTarget?.path == path &&
-                    sourceIndex > targetIndex && index in targetIndex until sourceIndex -> shiftDistance
-
-                activeDrag.path == path && dropTarget?.path != path && index > sourceIndex -> -shiftDistance
-
-                activeDrag.path != path && dropTarget?.path == path && index >= targetIndex -> shiftDistance
-
-                else -> 0f
-            }
-            val animatedShift by animateFloatAsState(neighborShift, tween(100), label = "block insertion")
-            key(step.id) {
-                StepCard(
-                    draft = draft,
-                    path = path,
-                    index = index,
-                    step = step,
-                    validation = validation,
-                    issues = validation.issues.filter { issue ->
-                        issue.path == issuePrefix || issue.path.startsWith("$issuePrefix/")
-                    },
-                    selection = selection,
-                    showInlineInspector = showInlineInspector,
-                    onSelectionChange = onSelectionChange,
-                    onDraftChange = onDraftChange,
-                    onEditGeometry = onEditGeometry,
-                    onEditCondition = onEditCondition,
-                    scrollState = scrollState,
-                    dragCoordinator = dragCoordinator,
-                    translationY = when {
-                        step.id == activeDrag?.stepId -> dragCoordinator.dragOffsetY
-                        activeDrag != null -> animatedShift
-                        else -> 0f
-                    },
-                    dragging = step.id == activeDrag?.stepId,
-                    onMeasured = { dragCoordinator.updateStep(path, step.id, it, draft) },
-                    onDragStart = { initialPointerY ->
-                        onSelectionChange(BlockSelection(path, step.id))
-                        dragCoordinator.start(path, step.id, initialPointerY, draft)
-                    },
-                    onDrag = { delta ->
-                        dragCoordinator.drag(delta, draft)
-                    },
-                    onDragFinished = { commit ->
-                        val source = dragCoordinator.source
-                        val target = dragCoordinator.target
-                        if (commit && source != null && target != null) {
-                            val from = draft.stepsAt(source.path).indexOfFirst { it.id == source.stepId }
-                            if (from >= 0) {
-                                val moved = draft.moveStepTo(source.path, from, target.path, target.index)
-                                if (moved != draft) {
-                                    onDraftChange(moved)
-                                    onSelectionChange(BlockSelection(target.path, source.stepId))
-                                }
-                            }
-                        }
-                        dragCoordinator.end()
-                    },
-                    onInsertAfter = { kind ->
-                        onDraftChange(
-                            draft.insertStep(
-                                path,
-                                index + 1,
-                                kind,
-                                draft.allowedPackagesText.firstPackageOrDefault(),
-                            ),
-                        )
-                    },
-                )
-            }
-        }
+    Column(Modifier.fillMaxWidth()) {
         if (bottomGap > 0.dp) Spacer(Modifier.height(bottomGap))
         AddBlockMenu(
             compact = true,
@@ -1832,7 +1935,6 @@ private fun StepCard(
     onDraftChange: (WorkflowDraft) -> Unit,
     onEditGeometry: (StepListPath, Int) -> Unit,
     onEditCondition: (StepListPath, Int) -> Unit,
-    scrollState: androidx.compose.foundation.ScrollState,
     dragCoordinator: StepDragCoordinator,
     translationY: Float,
     dragging: Boolean,
@@ -2000,7 +2102,6 @@ private fun StepCard(
                         onDraftChange = onDraftChange,
                         onEditGeometry = onEditGeometry,
                         onEditCondition = onEditCondition,
-                        scrollState = scrollState,
                         dragCoordinator = dragCoordinator,
                     )
                 }
@@ -2170,7 +2271,6 @@ private fun NestedStepLists(
     onDraftChange: (WorkflowDraft) -> Unit,
     onEditGeometry: (StepListPath, Int) -> Unit,
     onEditCondition: (StepListPath, Int) -> Unit,
-    scrollState: androidx.compose.foundation.ScrollState,
     dragCoordinator: StepDragCoordinator,
 ) {
     when (step) {
@@ -2185,7 +2285,6 @@ private fun NestedStepLists(
             onDraftChange = onDraftChange,
             onEditGeometry = onEditGeometry,
             onEditCondition = onEditCondition,
-            scrollState = scrollState,
             dragCoordinator = dragCoordinator,
         )
 
@@ -2200,7 +2299,6 @@ private fun NestedStepLists(
             onDraftChange = onDraftChange,
             onEditGeometry = onEditGeometry,
             onEditCondition = onEditCondition,
-            scrollState = scrollState,
             dragCoordinator = dragCoordinator,
         )
 
@@ -2216,7 +2314,6 @@ private fun NestedStepLists(
                 onDraftChange = onDraftChange,
                 onEditGeometry = onEditGeometry,
                 onEditCondition = onEditCondition,
-                scrollState = scrollState,
                 dragCoordinator = dragCoordinator,
             )
             BranchTray(
@@ -2230,7 +2327,6 @@ private fun NestedStepLists(
                 onDraftChange = onDraftChange,
                 onEditGeometry = onEditGeometry,
                 onEditCondition = onEditCondition,
-                scrollState = scrollState,
                 dragCoordinator = dragCoordinator,
             )
         }
@@ -2251,7 +2347,6 @@ private fun BranchTray(
     onDraftChange: (WorkflowDraft) -> Unit,
     onEditGeometry: (StepListPath, Int) -> Unit,
     onEditCondition: (StepListPath, Int) -> Unit,
-    scrollState: androidx.compose.foundation.ScrollState,
     dragCoordinator: StepDragCoordinator,
 ) {
     Box(
@@ -2272,7 +2367,6 @@ private fun BranchTray(
                 onDraftChange = onDraftChange,
                 onEditGeometry = onEditGeometry,
                 onEditCondition = onEditCondition,
-                scrollState = scrollState,
                 dragCoordinator = dragCoordinator,
             )
         }

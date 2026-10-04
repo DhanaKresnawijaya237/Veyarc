@@ -47,6 +47,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -83,6 +84,7 @@ fun SettingsScreen(
     onThemePreferenceChange: (ThemePreference) -> Unit,
     onOpenDiagnostics: () -> Unit,
     modifier: Modifier = Modifier,
+    storageState: SettingsStorageState = remember { SettingsStorageState() },
 ) {
     val context = LocalContext.current
     val assistantKeys = remember(context) { com.veyarc.data.storage.AssistantKeyStore(context.applicationContext) }
@@ -94,10 +96,11 @@ fun SettingsScreen(
     var notificationsEnabled by remember { mutableStateOf(true) }
     var latchEnabled by remember { mutableStateOf(ReplayFloatingController.isEnabled(context)) }
     var latchPlayTarget by remember { mutableStateOf(ReplayFloatingController.playTarget(context)) }
-    var workflows by remember { mutableStateOf(emptyList<WorkflowSummary>()) }
-    var runCount by remember { mutableStateOf(0L) }
-    var workflowFolderCount by remember { mutableStateOf(0) }
-    var runFolderCount by remember { mutableStateOf(0) }
+    var workflows by storageState.workflows
+    var runCount by storageState.runCount
+    var workflowFolderCount by storageState.workflowFolderCount
+    var runFolderCount by storageState.runFolderCount
+    var storageOperation by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
     var confirmClearHistory by remember { mutableStateOf(false) }
     var chooseExportWorkflow by remember { mutableStateOf(false) }
@@ -129,25 +132,32 @@ fun SettingsScreen(
 
     fun refreshStorage() {
         scope.launch {
-            val snapshot = withContext(Dispatchers.IO) {
-                val storedWorkflows = repository.listWorkflowSummaries()
-                StorageSnapshot(
-                    workflows = storedWorkflows,
-                    runCount = repository.countRuns(),
-                    workflowFolderCount = repository.listWorkflowFolders().size,
-                    runFolderCount = repository.listRunFolders().size,
-                )
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val storedWorkflows = repository.listWorkflowSummaries()
+                    StorageSnapshot(
+                        workflows = storedWorkflows,
+                        runCount = repository.countRuns(),
+                        workflowFolderCount = repository.listWorkflowFolders().size,
+                        runFolderCount = repository.listRunFolders().size,
+                    )
+                }
+            }.onSuccess { snapshot ->
+                workflows = snapshot.workflows
+                runCount = snapshot.runCount
+                workflowFolderCount = snapshot.workflowFolderCount
+                runFolderCount = snapshot.runFolderCount
+            }.onFailure { error ->
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                message = "Local data could not be loaded."
             }
-            workflows = snapshot.workflows
-            runCount = snapshot.runCount
-            workflowFolderCount = snapshot.workflowFolderCount
-            runFolderCount = snapshot.runFolderCount
         }
     }
 
     val importBundle = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
+            storageOperation = "Importing workflow…"
             runCatching {
                 withContext(Dispatchers.IO) {
                     val bytes = requireNotNull(context.contentResolver.openInputStream(uri)) { "Could not open the selected file" }
@@ -157,7 +167,11 @@ fun SettingsScreen(
             }.onSuccess {
                 message = "Workflow imported."
                 refreshStorage()
-            }.onFailure { error -> message = "Import failed: ${error.message ?: error.javaClass.simpleName}" }
+            }.onFailure { error ->
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                message = "Import failed: ${error.message ?: error.javaClass.simpleName}"
+            }
+            storageOperation = null
         }
     }
     val exportBundle = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
@@ -167,6 +181,7 @@ fun SettingsScreen(
             return@rememberLauncherForActivityResult
         }
         scope.launch {
+            storageOperation = "Exporting workflow…"
             runCatching {
                 withContext(Dispatchers.IO) {
                     val bytes = repository.exportRevision(workflow.workflowId, workflow.latestRevision)
@@ -174,7 +189,11 @@ fun SettingsScreen(
                         .use { it.write(bytes) }
                 }
             }.onSuccess { message = "${workflow.name} exported." }
-                .onFailure { error -> message = "Export failed: ${error.message ?: error.javaClass.simpleName}" }
+                .onFailure { error ->
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    message = "Export failed: ${error.message ?: error.javaClass.simpleName}"
+                }
+            storageOperation = null
             pendingExportWorkflow = null
         }
     }
@@ -347,14 +366,18 @@ fun SettingsScreen(
                     "Stored on this device. Revisions and journals are encrypted.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                OutlinedButton(onClick = { importBundle.launch(arrayOf("application/zip", "application/octet-stream")) }) {
+                storageOperation?.let { operation ->
+                    androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Text(operation, style = MaterialTheme.typography.bodySmall)
+                }
+                OutlinedButton(enabled = storageOperation == null, onClick = { importBundle.launch(arrayOf("application/zip", "application/octet-stream")) }) {
                     Text("Import workflow")
                 }
                 OutlinedButton(
-                    enabled = workflows.isNotEmpty(),
+                    enabled = workflows.isNotEmpty() && storageOperation == null,
                     onClick = { chooseExportWorkflow = true },
                 ) { Text("Export workflow") }
-                TextButton(enabled = runCount > 0, onClick = { confirmClearHistory = true }) {
+                TextButton(enabled = runCount > 0 && storageOperation == null, onClick = { confirmClearHistory = true }) {
                     Text("Clear finished run history")
                 }
             }
@@ -471,14 +494,20 @@ fun SettingsScreen(
         )
     }
     openGuide?.let { (title, assetName) ->
-        val guide = remember(assetName) {
-            runCatching { if (assetName == "ai-chat-guide.md") AI_CHAT_HELP else context.assets.open(assetName).bufferedReader().use { it.readText() } }
-                .getOrElse { "This guide could not be loaded: ${it.message ?: it.javaClass.simpleName}" }
+        val guide by produceState<String?>(initialValue = if (assetName == "ai-chat-guide.md") AI_CHAT_HELP else null, key1 = assetName) {
+            if (value == null) {
+                value = withContext(Dispatchers.IO) {
+                    runCatching { context.assets.open(assetName).bufferedReader().use { it.readText() } }
+                        .getOrElse { "This guide could not be loaded." }
+                }
+            }
         }
+        val guideLines = remember(guide) { guide?.lines()?.filter(String::isNotBlank).orEmpty() }
         val guideList = rememberLazyListState()
         val guideContent: @Composable () -> Unit = {
             LazyColumn(state = guideList, overscrollEffect = null, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(guide.lines().filter(String::isNotBlank)) { line ->
+                if (guide == null) item { androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth()) }
+                items(guideLines) { line ->
                     when {
                         line.startsWith("# ") -> Unit
 

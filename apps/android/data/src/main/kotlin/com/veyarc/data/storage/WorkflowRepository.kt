@@ -866,7 +866,7 @@ class WorkflowRepository internal constructor(
         require(limit in 1..MAX_HISTORY_LIMIT) {
             "Run history limit must be between 1 and $MAX_HISTORY_LIMIT"
         }
-        return database.workflowDao().listAllRunRecords(limit).map(::toStoredRunSummary)
+        return database.workflowDao().listRunSummaries(limit).map(::toStoredRunSummary)
     }
 
     fun loadRunDetails(runId: String): StoredRunRecord = database.workflowDao().findRunRecord(runId)
@@ -882,7 +882,7 @@ class WorkflowRepository internal constructor(
             RunDashboardSummary(
                 statusCounts = dao.countRunsByStatus().associate { runStatus(it.status) to it.count },
                 averageFinishedRunDurationMs = dao.averageFinishedRunDurationMs()?.toLong(),
-                recentRuns = dao.listAllRunRecords(recentLimit).map(::toStoredRunSummary),
+                recentRuns = dao.listRunSummaries(recentLimit).map(::toStoredRunSummary),
             )
         }
     }
@@ -952,7 +952,7 @@ class WorkflowRepository internal constructor(
         name = record.name,
     )
 
-    private fun toStoredRunSummary(record: RunRecordEntity): StoredRunRecord = StoredRunRecord(
+    private fun toStoredRunSummary(record: RunSummaryRow): StoredRunRecord = StoredRunRecord(
         runId = record.runId,
         workflowId = record.workflowId,
         revision = record.revision,
@@ -963,7 +963,7 @@ class WorkflowRepository internal constructor(
         completedSteps = record.completedSteps,
         totalSteps = record.totalSteps,
         eventHistory = emptyList(),
-        hasStoredDetails = record.eventHistoryJson != null,
+        hasStoredDetails = record.hasStoredDetails,
         folderId = record.folderId,
         name = record.name,
     )

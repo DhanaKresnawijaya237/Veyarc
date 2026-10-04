@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -105,11 +106,12 @@ internal fun WorkflowManagerScreen(
     onEditWorkflow: (WorkflowSummary) -> Unit,
     onPlayWorkflow: (WorkflowSummary) -> Unit,
     onSelectionBarChange: (ManagerSelectionBarState?) -> Unit = {},
+    pageState: WorkflowManagerState = remember { WorkflowManagerState() },
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var workflows by remember { mutableStateOf<List<ManagedWorkflow>>(emptyList()) }
-    var folders by remember { mutableStateOf<List<FolderSummary>>(emptyList()) }
+    var workflows by pageState.workflows
+    var folders by pageState.folders
     var folderOrder by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var selectedView by rememberSaveable { mutableStateOf(ALL_VIEW) }
     var query by rememberSaveable { mutableStateOf("") }
@@ -153,6 +155,7 @@ internal fun WorkflowManagerScreen(
         }.onSuccess { (loadedWorkflows, loadedFolders, savedOrder) ->
             workflows = loadedWorkflows
             folders = loadedFolders
+            pageState.loaded.value = true
             val availableKeys = listOf(ALL_VIEW, FAVORITES_VIEW, UNFILED_VIEW) + loadedFolders.map(FolderSummary::folderId)
             folderOrder = reconcileFolderOrder(savedOrder, availableKeys)
             selectedIds = selectedIds.filter { id -> loadedWorkflows.any { it.summary.workflowId == id } }
@@ -368,10 +371,14 @@ internal fun WorkflowManagerScreen(
             }
         }
 
-        if (isBusy) item { LinearProgressIndicator(modifier = Modifier.fillMaxWidth()) }
+        item(key = "load-progress") {
+            Box(Modifier.fillMaxWidth().height(4.dp)) {
+                if (isBusy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+        }
         error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.primary) } }
 
-        if (!isBusy && visible.isEmpty()) {
+        if (pageState.loaded.value && !isBusy && visible.isEmpty()) {
             item { EmptyWorkflowManagerCard(if (workflows.isEmpty()) "No workflows yet." else "No workflows match these filters.") }
         }
 

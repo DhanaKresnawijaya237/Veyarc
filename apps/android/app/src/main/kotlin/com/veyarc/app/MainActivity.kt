@@ -77,6 +77,9 @@ class MainActivity : ComponentActivity() {
     private val editorSession: MainEditorSession by lazy {
         ViewModelProvider(this)[MainEditorSession::class.java]
     }
+    private val pageState: MainPageState by lazy {
+        ViewModelProvider(this)[MainPageState::class.java]
+    }
     private val catalogScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var assistantSettingsRequest by mutableIntStateOf(0)
 
@@ -191,6 +194,7 @@ class MainActivity : ComponentActivity() {
                                 ) { destination ->
                                     when (destination) {
                                         VeyarcDestination.HOME -> HomeDashboardScreen(
+                                            pageState = pageState.home,
                                             repository = workflowRepository,
                                             refreshGeneration = resumeGeneration,
                                             onRecord = {
@@ -201,6 +205,7 @@ class MainActivity : ComponentActivity() {
                                         )
 
                                         VeyarcDestination.WORKFLOWS -> WorkflowManagerScreen(
+                                            pageState = pageState.workflows,
                                             repository = workflowRepository,
                                             refreshGeneration = resumeGeneration,
                                             onEditWorkflow = ::editWorkflow,
@@ -244,6 +249,7 @@ class MainActivity : ComponentActivity() {
                                         }
 
                                         VeyarcDestination.RUNS -> RunManagerScreen(
+                                            pageState = pageState.runs,
                                             repository = workflowRepository,
                                             refreshGeneration = resumeGeneration,
                                             onOpenWorkflowRevision = ::editRunWorkflowRevision,
@@ -251,6 +257,7 @@ class MainActivity : ComponentActivity() {
                                         )
 
                                         VeyarcDestination.SETTINGS -> SettingsScreen(
+                                            storageState = pageState.settings,
                                             assistant = if (assistantPreviewEnabled) editorSession.assistant else null,
                                             assistantConnectionRequestId = assistantSettingsRequest,
                                             onAssistantConnectionRequestConsumed = { assistantSettingsRequest = 0 },

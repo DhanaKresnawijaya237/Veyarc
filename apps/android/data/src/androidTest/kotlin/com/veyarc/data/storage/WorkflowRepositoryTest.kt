@@ -28,6 +28,32 @@ import javax.crypto.spec.SecretKeySpec
 @RunWith(AndroidJUnit4::class)
 class WorkflowRepositoryTest {
     @Test
+    fun runSummaryQueryLeavesLargeEventPayloadsInTheDatabase() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val queries = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val database = Room.inMemoryDatabaseBuilder(context, VeyarcDatabase::class.java)
+            .setQueryCallback({ sql, _ -> queries.add(sql) }, java.util.concurrent.Executor { it.run() })
+            .build()
+        try {
+            database.workflowDao().insertRunRecord(
+                RunRecordEntity(
+                    RUN_ID, WORKFLOW_ID, 1, StoredRunStatus.COMPLETED.name, 100L, 200L, null,
+                    completedSteps = 10, totalSteps = 10, eventHistoryJson = "x".repeat(1_000_000), name = "Large log",
+                ),
+            )
+            val summary = database.workflowDao().listRunSummaries(100).single()
+            assertEquals("Large log", summary.name)
+            assertTrue(summary.hasStoredDetails)
+            val query = queries.last { it.contains("FROM run_records ORDER BY startedAtMs", ignoreCase = true) }
+            assertFalse(query.contains("SELECT *", ignoreCase = true))
+            assertTrue(query.contains("eventHistoryJson IS NOT NULL AS hasStoredDetails", ignoreCase = true))
+            assertEquals(1_000_000, database.workflowDao().findRunRecord(RUN_ID)!!.eventHistoryJson!!.length)
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
     fun legacyRevisionMigratesLazilyAndExportsPortableBundle() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val database = Room.inMemoryDatabaseBuilder(context, VeyarcDatabase::class.java)
