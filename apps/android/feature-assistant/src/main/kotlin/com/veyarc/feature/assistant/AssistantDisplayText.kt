@@ -12,7 +12,7 @@ import kotlinx.serialization.json.jsonPrimitive
 /** Display labels never participate in validation, request binding, or applying a candidate. */
 internal fun readableReply(turn: PreviewTurn): String {
     if (Regex("\\b(ids?|hash(es)?|uuid|technical|json)\\b", RegexOption.IGNORE_CASE).containsMatchIn(turn.prompt)) return turn.reply
-    val names = displayNames(turn.baseSnapshot) + mapOf(turn.id to "this message", turn.requestId to "this request")
+    val names = displayNames(turn.baseSnapshot) + turn.proposal?.imageAdditions.orEmpty().associate { it.assetId to it.name } + turn.attachments.associate { it.id to it.name } + mapOf(turn.id to "this message", turn.requestId to "this request")
     val prefixes = names.entries.filter { it.key.matches(Regex("[0-9a-f-]{36,64}")) }.groupBy { it.key.take(8) }
         .filterValues { it.size == 1 }.mapValues { it.value.single().value }
     return (names + prefixes).entries.sortedByDescending { it.key.length }.fold(turn.reply) { text, (id, label) ->
@@ -22,7 +22,7 @@ internal fun readableReply(turn: PreviewTurn): String {
 }
 
 internal fun readableChanges(base: AssistantContextSnapshot, proposal: AssistantProposalCheck): List<AssistantValueChange> {
-    val names = displayNames(base) + candidateNames(proposal.candidateJson)
+    val names = displayNames(base) + candidateNames(proposal.candidateJson) + proposal.imageAdditions.associate { it.assetId to it.name }
     return AssistantProposalReview.changes(base, proposal).map { change ->
         val label = names.entries.fold(change.label) { text, (id, name) -> text.replace("block $id", name).replace("Block $id", name) }
             .split(" / ").joinToString(" · ") { friendlyField(it) }

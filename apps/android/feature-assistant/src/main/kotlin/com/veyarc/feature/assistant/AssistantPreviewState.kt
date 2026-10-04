@@ -15,6 +15,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -74,6 +75,7 @@ data class PreviewTurn(
     val effort: DeepSeekEffort = DeepSeekEffort.OFF,
     val thinking: AssistantThinking? = null,
     val model: DeepSeekModel = DeepSeekModel.FLASH,
+    val attachments: List<AssistantAttachment> = emptyList(),
 )
 
 @Serializable
@@ -91,6 +93,7 @@ data class PreviewConversation(
     val pinned: Boolean = false,
     val effort: DeepSeekEffort = DeepSeekEffort.OFF,
     val model: DeepSeekModel = DeepSeekModel.FLASH,
+    val composerAttachments: List<AssistantAttachment> = emptyList(),
 )
 
 /** Null storage is reserved for deterministic UI/unit fixtures. The app supplies encrypted storage. */
@@ -101,8 +104,11 @@ class AssistantPreviewState(
     private val applyCandidate: ((String, AssistantContextSnapshot, String) -> Boolean)? = null,
     private val providerCall: (suspend (DeepSeekRequest) -> ByteArray)? = null,
     private val onModelChanged: ((DeepSeekModel) -> Unit)? = null,
+    val attachments: AssistantAttachmentImporter? = null,
+    private val applyImageCandidate: (suspend (String, AssistantContextSnapshot, String, List<AssistantImageAddition>, List<AssistantAttachment>) -> Boolean)? = null,
     private var contextSource: (() -> AssistantContextCapture)? = null,
 ) {
+    private val attachmentWork = kotlinx.coroutines.sync.Mutex()
     var isOpen by mutableStateOf(false)
         private set
     var context by mutableStateOf(AssistantPreviewContext())
@@ -136,21 +142,27 @@ class AssistantPreviewState(
     val usesProvider: Boolean get() = providerCall != null
     val isResponding: Boolean get() = requestId != null || pendingRequestId != null || testingConnection
     private var providerJob: Job? = null
+    private var imageApplyJob: Job? = null
+    var isApplyingImages by mutableStateOf(false)
+        private set
     private var pendingRequestId: String? = null
     private var applyGeneration = 0
     private var draftSave: Job? = null
+    var importingAttachments by mutableStateOf(false)
+        private set
     private var blockingWrites by mutableStateOf(0)
     private val savedIds = mutableSetOf<String>()
 
     // One ordered writer prevents an older composer save from replacing a newer sent turn.
     private val writes = Channel<suspend () -> Unit>(64)
     val persistent: Boolean get() = repository != null
-    val canChange: Boolean get() = !isLoading && blockingWrites == 0 && storageError == null
+    val canChange: Boolean get() = !isLoading && blockingWrites == 0 && storageError == null && !isApplyingImages
     val conversation: PreviewConversation? get() = conversations.firstOrNull { it.id == selectedId }
     val history: List<PreviewConversation> get() = conversations.filter { it.workflowId == context.workflowId }
         .sortedWith(compareByDescending<PreviewConversation> { it.pinned }.thenByDescending { it.updatedAtMs })
     val canSend: Boolean get() = isOpen && (!usesProvider || providerEnabled) && canChange && !isResponding && conversation?.let {
-        it.composer.isNotBlank() && it.composer.length <= MAX_PROMPT_LENGTH
+        !importingAttachments && (it.composer.isNotBlank() || it.composerAttachments.isNotEmpty()) && it.composer.length <= MAX_PROMPT_LENGTH &&
+            (it.model == DeepSeekModel.FLASH || it.composerAttachments.none { attachment -> attachment.needsVision })
     } == true
 
     init {
@@ -198,6 +210,7 @@ class AssistantPreviewState(
     }
 
     fun dispose() {
+        imageApplyJob?.cancel()
         providerEnabled = false
         testingConnection = false
         applyGeneration++
@@ -229,10 +242,10 @@ class AssistantPreviewState(
             store.load().map { stored ->
                 val chat = decode(stored)
                 val recovered = chat.copy(
-                    turns = chat.turns.map {
+                    turns = chat.turns.mapIndexed { index, it ->
                         when {
                             it.status == PreviewReplyStatus.RESPONDING -> it.copy(status = PreviewReplyStatus.INTERRUPTED)
-                            it.proposal?.candidateJson != null -> it.copy(proposal = AssistantCandidateValidator.validate(it.baseSnapshot, it.proposal.candidateJson, compileCandidate))
+                            it.proposal?.candidateJson != null -> it.copy(proposal = AssistantCandidateValidator.validate(it.baseSnapshot, it.proposal.candidateJson, compileCandidate, it.proposal.imageAdditions, chat.turns.take(index + 1).flatMap { turn -> turn.attachments }))
                             else -> it
                         }
                     },
@@ -242,6 +255,7 @@ class AssistantPreviewState(
             }
         }
         conversations = loaded
+        pruneAttachments()
         savedIds.clear()
         savedIds.addAll(loaded.map { it.id })
         selectedId = history.maxByOrNull { it.updatedAtMs }?.id
@@ -307,7 +321,84 @@ class AssistantPreviewState(
         }
     }
 
+    fun importAttachments(uris: List<android.net.Uri>, chatId: String, onFinished: (() -> Unit)? = null) {
+        val importer = attachments
+        if (importer == null || importingAttachments || !canChange || selectedId != chatId) {
+            onFinished?.invoke()
+            return
+        }
+        importingAttachments = true
+        inputError = null
+        requireNotNull(scope).launch {
+            try {
+                attachmentWork.lock()
+                try {
+                    val imported = kotlinx.coroutines.runInterruptible(Dispatchers.IO) { uris.map(importer::import) }
+                    if (selectedId == chatId && canChange && isOpen) {
+                        update { it.copy(composerAttachments = it.composerAttachments + imported) }
+                        flush()
+                    }
+                } finally {
+                    attachmentWork.unlock()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                inputError = error.message?.take(200) ?: "This attachment could not be added."
+            } finally {
+                importingAttachments = false
+                onFinished?.invoke()
+            }
+        }
+    }
+
+    fun attachmentError(message: String) {
+        inputError = message
+    }
+
+    fun removeAttachment(id: String) {
+        if (!canChange || importingAttachments) return
+        update { it.copy(composerAttachments = it.composerAttachments.filterNot { attachment -> attachment.id == id }) }
+        flush()
+    }
+
+    fun replaceAttachment(id: String, replacement: AssistantAttachment, chatId: String): Boolean {
+        if (!canChange || importingAttachments || selectedId != chatId || conversation?.composerAttachments?.none { it.id == id } != false) return false
+        replacement.validate()
+        update { it.copy(composerAttachments = it.composerAttachments.map { attachment -> if (attachment.id == id) replacement else attachment }) }
+        flush()
+        return true
+    }
+
+    internal suspend fun editAttachment(id: String, chatId: String, create: () -> AssistantAttachment): Boolean {
+        if (!canChange || importingAttachments || selectedId != chatId) return false
+        importingAttachments = true
+        try {
+            return attachmentWork.withLock {
+                val replacement = kotlinx.coroutines.runInterruptible(Dispatchers.IO, create)
+                importingAttachments = false
+                replaceAttachment(id, replacement, chatId)
+            }
+        } finally {
+            importingAttachments = false
+        }
+    }
+
+    private suspend fun pruneAttachments() {
+        val importer = attachments ?: return
+        attachmentWork.lock()
+        try {
+            val referenced = attachmentIds()
+            withContext(Dispatchers.IO) { importer.store.prune(referenced) }
+        } finally {
+            attachmentWork.unlock()
+        }
+    }
+
+    private fun attachmentIds(): Set<String> = conversations.flatMap { it.composerAttachments + it.turns.flatMap { turn -> turn.attachments } }.mapTo(mutableSetOf()) { it.id }
+
     fun setEffort(effort: DeepSeekEffort) {
+        inputError = null
         if (!usesProvider || !canChange || isResponding) return
         update { it.copy(effort = effort) }
         flush()
@@ -318,6 +409,7 @@ class AssistantPreviewState(
     }
 
     fun setModel(model: DeepSeekModel) {
+        inputError = null
         if (!usesProvider || !canChange || isResponding) return
         defaultModel = model
         update { it.copy(model = model) }
@@ -374,6 +466,7 @@ class AssistantPreviewState(
             id = UUID.randomUUID().toString(),
             title = "${source.title.take(68)} · Branch",
             composer = "",
+            composerAttachments = emptyList(),
             turns = source.turns.take(index + 1).map {
                 it.copy(id = UUID.randomUUID().toString(), localBindingId = null, applyState = ProposalApplyState.NONE)
             },
@@ -438,6 +531,7 @@ class AssistantPreviewState(
             enqueue {
                 withContext(Dispatchers.IO) { repository.delete(targets) }
                 removed()
+                pruneAttachments()
             }
         }
     }
@@ -447,6 +541,7 @@ class AssistantPreviewState(
         val workflowId = context.workflowId
         if (workflowOnly && (workflowId == null || loadFailed)) return
         draftSave?.cancel()
+        imageApplyJob?.cancel()
         applyGeneration++
         testingConnection = false
         requestId = null
@@ -469,6 +564,7 @@ class AssistantPreviewState(
                     if (workflowOnly) repository.clear(requireNotNull(workflowId)) else repository.clear()
                 }
                 cleared()
+                pruneAttachments()
             }
         }
     }
@@ -478,6 +574,7 @@ class AssistantPreviewState(
     fun canApply(turn: PreviewTurn): Boolean {
         if (!canChange || !isOpen || applyCandidate == null || isResponding) return false
         if (turn.status != PreviewReplyStatus.COMPLETE || turn.proposalDismissed || turn.applyState != ProposalApplyState.NONE || turn.proposal?.isValid != true || turn.localBindingId == null) return false
+        if (turn.proposal.imageAdditions.isNotEmpty() && applyImageCandidate == null) return false
         if (runCatching { AssistantProposalReview.changes(requireNotNull(turn.baseSnapshot), requireNotNull(turn.proposal)).isEmpty() }.getOrDefault(true)) return false
         val current = previewContext()
         return current.error == null && current.snapshot == turn.baseSnapshot && current.localBindingId == turn.localBindingId
@@ -492,6 +589,24 @@ class AssistantPreviewState(
         update { it.copy(turns = it.turns.map { item -> if (item.id == turnId) item.copy(applyState = ProposalApplyState.RESERVED) else item }) }
         // Persist consumption before touching the draft. A restored RESERVED turn never retries.
         persist(requireNotNull(conversation)) {
+            if (turn.proposal!!.imageAdditions.isNotEmpty()) {
+                isApplyingImages = true
+                imageApplyJob = requireNotNull(scope).launch {
+                    try {
+                        val applied = generation == applyGeneration && isOpen && selectedId == chat.id &&
+                            applyImageCandidate!!.invoke(turn.localBindingId!!, turn.baseSnapshot!!, turn.proposal.candidateJson!!, turn.proposal.imageAdditions, imagesThrough(chat, turn.id))
+                        finishApply(chat.id, turnId, applied)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        finishApply(chat.id, turnId, false)
+                    } finally {
+                        isApplyingImages = false
+                        imageApplyJob = null
+                    }
+                }
+                return@persist
+            }
             val applied = generation == applyGeneration && isOpen && selectedId == chat.id &&
                 runCatching { applyCandidate!!.invoke(turn.localBindingId!!, turn.baseSnapshot!!, turn.proposal!!.candidateJson!!) }.getOrDefault(false)
             conversations = conversations.map { item ->
@@ -509,6 +624,17 @@ class AssistantPreviewState(
             conversations.firstOrNull { it.id == chat.id }?.let { persist(it) }
         }
     }
+
+    private fun finishApply(chatId: String, turnId: String, applied: Boolean) {
+        conversations = conversations.map { chat ->
+            if (chat.id == chatId) chat.copy(turns = chat.turns.map { turn -> if (turn.id == turnId) turn.copy(applyState = if (applied) ProposalApplyState.APPLIED else ProposalApplyState.REJECTED) else turn }, updatedAtMs = maxOf(chat.updatedAtMs, System.currentTimeMillis())) else chat
+        }
+        conversations.firstOrNull { it.id == chatId }?.let { persist(it) }
+    }
+
+    private fun imagesThrough(chat: PreviewConversation, turnId: String): List<AssistantAttachment> = chat.turns.take(chat.turns.indexOfFirst { it.id == turnId } + 1).flatMap { it.attachments }.distinctBy { it.id }
+
+    internal fun proposalImages(turn: PreviewTurn): List<AssistantAttachment> = conversation?.let { imagesThrough(it, turn.id) }.orEmpty()
 
     fun dismissProposal(turnId: String) {
         if (!canChange) return
@@ -530,11 +656,12 @@ class AssistantPreviewState(
             return
         }
         val current = requireNotNull(conversation)
-        val prompt = current.composer.trim()
-        val turn = PreviewTurn(UUID.randomUUID().toString(), prompt, scenario, baseSnapshot = capture.snapshot, localBindingId = capture.localBindingId, provider = usesProvider, effort = current.effort, model = current.model)
+        val prompt = current.composer.trim().ifEmpty { "Look at the attached ${if (current.composerAttachments.all { it.kind == AttachmentKind.IMAGE }) "images" else "files"}." }
+        val turn = PreviewTurn(UUID.randomUUID().toString(), prompt, scenario, baseSnapshot = capture.snapshot, localBindingId = capture.localBindingId, provider = usesProvider, effort = current.effort, model = current.model, attachments = current.composerAttachments)
         val updated = current.copy(
             title = if (current.turns.isEmpty() && current.title == "New chat") prompt.take(48) else current.title,
             composer = "",
+            composerAttachments = emptyList(),
             turns = current.turns + turn,
             context = context,
         )
@@ -568,10 +695,35 @@ class AssistantPreviewState(
         providerJob = requireNotNull(scope).launch {
             var request: DeepSeekRequest? = null
             try {
-                request = providerRequest(chat) { thinking ->
+                val contents = if (chat.turns.all { it.attachments.isEmpty() }) {
+                    emptyMap()
+                } else {
+                    kotlinx.coroutines.runInterruptible(Dispatchers.IO) {
+                        val prepared = mutableMapOf<String, AttachmentContent>()
+                        var size = 0L
+                        var images = 0
+                        for (turn in chat.turns.asReversed()) {
+                            for (attachment in turn.attachments) {
+                                if (attachment.id in prepared) continue
+                                val content = requireNotNull(attachments) { "Attachments are unavailable." }.content(attachment)
+                                size += content.images.sumOf { it.size.toLong() } + (content.text?.toByteArray()?.size ?: 0)
+                                images += content.images.size
+                                if (size > 34 * 1024 * 1024 || images > DeepSeekRequest.MAX_IMAGES) {
+                                    require(turn.id != chat.turns.last().id) { "These attachments exceed DeepSeek's request size or 600-image limit. Send fewer files together." }
+                                    break
+                                }
+                                prepared[attachment.id] = content
+                            }
+                            if (size > 34 * 1024 * 1024 || images > DeepSeekRequest.MAX_IMAGES) break
+                        }
+                        prepared
+                    }
+                }
+                val notifyThinking: (AssistantThinking) -> Unit = { thinking ->
                     // Network callbacks run on IO. State belongs to the ViewModel's main scope.
                     scope.launch { receiveThinking(token, thinking) }
                 }
+                request = if (contents.isEmpty()) providerRequest(chat, contents, notifyThinking) else withContext(Dispatchers.Default) { providerRequest(chat, contents, notifyThinking) }
                 val bytes = providerCall(request)
                 request.latestThinking?.let { receiveThinking(token, it) }
                 receive(token, bytes)
@@ -582,7 +734,7 @@ class AssistantPreviewState(
             } catch (error: Exception) {
                 if (requestId == token) {
                     request?.latestThinking?.let { receiveThinking(token, it) }
-                    updateLast { it.copy(status = PreviewReplyStatus.ERROR, responseError = (error as? DeepSeekException)?.reason?.message ?: "The AI request failed. Your prompt is kept; retry is explicit.") }
+                    updateLast { it.copy(status = PreviewReplyStatus.ERROR, responseError = (error as? DeepSeekException)?.reason?.message ?: (error as? IllegalArgumentException)?.message?.take(200) ?: "The AI request failed. Your prompt is kept; retry is explicit.") }
                     requestId = null
                     flush()
                 }
@@ -590,11 +742,12 @@ class AssistantPreviewState(
         }
     }
 
-    internal fun providerRequest(chat: PreviewConversation, onThinking: ((AssistantThinking) -> Unit)? = null): DeepSeekRequest {
+    internal fun providerRequest(chat: PreviewConversation, contents: Map<String, AttachmentContent> = emptyMap(), onThinking: ((AssistantThinking) -> Unit)? = null): DeepSeekRequest {
         val current = chat.turns.last()
         val history = chat.turns.dropLast(1).filter {
             it.provider && it.status == PreviewReplyStatus.COMPLETE && it.outcome != null &&
-                (it.outcome != AssistantOutcome.PROPOSAL || it.proposal?.isValid == true)
+                (it.outcome != AssistantOutcome.PROPOSAL || it.proposal?.isValid == true) && it.attachments.all { attachment -> attachment.id in contents } &&
+                (current.model == DeepSeekModel.FLASH || it.attachments.none { attachment -> attachment.needsVision })
         }.map { turn ->
             DeepSeekHistoryTurn(
                 turn.prompt,
@@ -607,9 +760,10 @@ class AssistantPreviewState(
                     turn.reply,
                     turn.proposal?.candidateJson?.let { WorkflowJson.format.parseToJsonElement(it).jsonObject },
                 ),
+                turn.attachments.map { contents.getValue(it.id) },
             )
         }
-        return DeepSeekRequest.create(current.requestId, chat.id, current.responseBaseId(chat), current.prompt, current.baseSnapshot, history, streaming = true, effort = current.effort, onThinking = onThinking, model = current.model)
+        return DeepSeekRequest.create(current.requestId, chat.id, current.responseBaseId(chat), current.prompt, current.baseSnapshot, history, streaming = true, effort = current.effort, onThinking = onThinking, model = current.model, attachments = current.attachments.map { contents.getValue(it.id) })
     }
 
     private fun receiveThinking(token: String, thinking: AssistantThinking) {
@@ -678,7 +832,7 @@ class AssistantPreviewState(
         if (response == null) {
             updateLast { it.copy(status = PreviewReplyStatus.ERROR, outcome = null, responseError = "Response rejected: invalid format, size, or request context. Your prompt is kept; retry is explicit.") }
         } else {
-            val proposal = response.candidate?.let { AssistantCandidateValidator.validate(turn.baseSnapshot, AssistantWireWorkflow.restoreLocalFields(turn.baseSnapshot, it).toString(), compileCandidate) }
+            val proposal = response.candidate?.let { AssistantCandidateValidator.validate(turn.baseSnapshot, AssistantWireWorkflow.restoreLocalFields(turn.baseSnapshot, it).toString(), compileCandidate, response.imageAdditions, imagesThrough(chat, turn.id)) }
             updateLast { it.copy(reply = response.text, status = PreviewReplyStatus.COMPLETE, outcome = response.outcome, responseError = null, proposal = proposal) }
         }
         requestId = null
@@ -686,6 +840,7 @@ class AssistantPreviewState(
     }
 
     fun stop(status: PreviewReplyStatus = PreviewReplyStatus.STOPPED) {
+        imageApplyJob?.cancel()
         applyGeneration++
         if (testingConnection) connectionTestStatus = "Connection test interrupted. Retry only when ready; charges may still apply."
         testingConnection = false
@@ -797,7 +952,9 @@ class AssistantPreviewState(
             require(chat.context.name.length <= 1000 && chat.createdAtMs >= 0 && chat.updatedAtMs >= chat.createdAtMs)
             require(chat.draftId.length in 1..128 && chat.context.workflowId == chat.workflowId)
             require(chat.turns.map { it.id }.distinct().size == chat.turns.size)
+            chat.composerAttachments.forEach(AssistantAttachment::validate)
             chat.turns.forEachIndexed { index, turn ->
+                turn.attachments.forEach(AssistantAttachment::validate)
                 turn.baseSnapshot?.let { snapshot ->
                     require(snapshot.workflowId == chat.workflowId)
                     snapshot.validate()
@@ -809,6 +966,8 @@ class AssistantPreviewState(
                 require(turn.localBindingId == null || turn.localBindingId.length in 1..128)
                 require(turn.applyState == ProposalApplyState.NONE || (turn.proposal != null && turn.baseSnapshot != null && turn.localBindingId != null && !turn.proposalDismissed))
                 turn.proposal?.let { proposal ->
+                    require(proposal.imageAdditions.size <= 64)
+                    proposal.imageAdditions.forEach(AssistantImageAddition::validate)
                     require(proposal.isValid || (proposal.candidateJson == null && proposal.issues.isNotEmpty()))
                     require(proposal.issues.size <= 20 && proposal.issues.all { it.length <= 300 })
                     require((proposal.candidateJson?.toByteArray(Charsets.UTF_8)?.size ?: 0) <= AssistantCandidateValidator.MAX_CANDIDATE_BYTES)

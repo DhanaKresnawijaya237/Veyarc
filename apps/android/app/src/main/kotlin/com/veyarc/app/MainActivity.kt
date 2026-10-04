@@ -536,12 +536,15 @@ class MainEditorSession(application: Application) : AndroidViewModel(application
     private val assistantDraft = AssistantDraftBridge(state)
     private val assistantKeys = com.veyarc.data.storage.AssistantKeyStore(application)
     private val deepSeek by lazy { com.veyarc.feature.assistant.DeepSeekClient() }
+    private val assistantAttachments = com.veyarc.feature.assistant.AssistantAttachmentImporter(application)
     val assistant = AssistantPreviewState(
         chatRepository,
         viewModelScope,
         compileCandidate = ::assistantCompilationIssues,
         applyCandidate = assistantDraft::apply,
         contextSource = assistantDraft::capture,
+        attachments = assistantAttachments,
+        applyImageCandidate = { binding, base, candidate, additions, sources -> assistantDraft.applyImages(binding, base, candidate, additions, sources, assistantAttachments.store) },
         providerCall = { request ->
             val key = withContext(Dispatchers.IO) {
                 runCatching { assistantKeys.readForRequest() }.getOrNull()
