@@ -3,4 +3,11 @@
     xmlns:tools="http://schemas.android.com/tools">
     <!-- Release stays offline. The debug app explicitly overrides this for opt-in AI. -->
     <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
+    <application>
+        <provider android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.assistant-camera"
+            android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/assistant_camera_paths" />
+        </provider>
+    </application>
 </manifest>

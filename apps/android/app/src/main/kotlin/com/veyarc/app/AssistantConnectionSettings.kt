@@ -161,8 +161,8 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
     }
     if (privacyVisible) {
         AssistantPanel("Privacy and costs", onDismiss = { privacyVisible = false }) {
-            Text("• Sends chat and workflow text to DeepSeek.")
-            Text("• No images, recordings or run history.")
+            Text("• Sends chat, workflow text and files you attach.")
+            Text("• Recordings and run history stay on this device.")
             Text("• Your API account pays. No cap; Stop may still cost.")
             Text("• Avoid secrets. Retention/training guarantees are unverified.")
             Text("• Deleting locally doesn't erase DeepSeek records.")
@@ -182,7 +182,7 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
             title = { Text(if (isTest) "Test connection?" else "Enable DeepSeek?") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(if (isTest) "• Sends a paid test. No chat or workflow data." else "• Sends messages and workflow text. No photos or recordings.")
+                    Text(if (isTest) "• Sends a paid test. No chat or workflow data." else "• Sends chat, workflow text and files you attach.")
                     Text("• Your API account pays. No cap; Stop may still cost.")
                     Text("• Avoid secrets. Provider retention and training guarantees are unverified.")
                     Text(if (isTest) "• Tests the connection, not workflow quality." else "• Review changes. Save separately. AI turns off on restart.")

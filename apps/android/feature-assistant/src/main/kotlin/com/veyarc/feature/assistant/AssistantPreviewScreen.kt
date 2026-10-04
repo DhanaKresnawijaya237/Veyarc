@@ -84,6 +84,7 @@ import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalBottomSheetProperties
@@ -109,6 +110,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
@@ -255,6 +257,9 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
     var renameVisible by remember { mutableStateOf(false) }
     var deleteVisible by remember { mutableStateOf(false) }
     var composerSheet by remember { mutableStateOf<String?>(null) }
+    val pickAttachment = rememberAttachmentPicker(state)
+    var attachmentPreviewId by rememberSaveable { mutableStateOf<String?>(null) }
+    val attachmentPreview = state.conversation?.composerAttachments?.firstOrNull { it.id == attachmentPreviewId }
     val androidContext = LocalContext.current
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
@@ -409,6 +414,12 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
                     Surface(shape = RoundedCornerShape(28.dp), color = chatPanelColor(raised = true)) {
                         Column(Modifier.padding(4.dp).testTag("assistant-composer-panel")) {
+                            AttachmentStrip(chat.composerAttachments, state.attachments, {
+                                attachmentPreviewId = it.id
+                                keyboard?.hide()
+                                focus.clearFocus()
+                            }, if (state.canChange && !state.importingAttachments) state::removeAttachment else null, compact = shortWindow)
+                            if (state.importingAttachments) LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 12.dp).testTag("attachment-import-progress"))
                             Row(verticalAlignment = Alignment.Bottom) {
                                 if (tightWindow) {
                                     IconButton(onClick = ::leave) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to editor") }
@@ -467,6 +478,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
                         }) { Text("Enable AI in Settings") }
                     }
                     val notice = when {
+                        chat.model == DeepSeekModel.PRO && chat.composerAttachments.any { it.needsVision } -> "Choose DeepSeek V4.1 Flash to send images or PDFs."
                         state.storageError != null -> "Chat not saved. Open Chat storage."
                         state.inputError != null -> state.inputError
                         state.usesProvider && !state.providerEnabled && onOpenSettings == null -> "Enable AI in Settings to send."
@@ -487,7 +499,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
             val snapshot = contextCapture.snapshot
             if (snapshot == null && contextCapture.error == null) Text("No workflow attached.")
             if (snapshot != null) {
-                Text("No image files, recordings, or run history are attached.")
+                Text("Only files you add to the message are sent. Recordings and run history stay on this device.")
                 var expanded by remember(snapshot.snapshotId) { mutableStateOf(false) }
                 TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide shared data" else "Show shared data") }
                 if (expanded) SelectionContainer { Text(snapshot.json, modifier = Modifier.testTag("assistant-context-json"), style = MaterialTheme.typography.bodySmall) }
@@ -527,7 +539,15 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
             dismissButton = { TextButton(onClick = { deleteVisible = false }) { Text("Cancel") } },
         )
     }
-    composerSheet?.let { sheet -> ComposerOptions(sheet, state, onSelect = { composerSheet = it }, onDismiss = { composerSheet = null }) }
+    attachmentPreview?.let { AttachmentPreview(it, state, editable = true, onDismiss = { attachmentPreviewId = null }) }
+    composerSheet?.let { sheet ->
+        ComposerOptions(sheet, state, onSelect = { composerSheet = it }, onDismiss = { composerSheet = null }, onAttachment = {
+            keyboard?.hide()
+            focus.clearFocus()
+            composerSheet = null
+            pickAttachment(it)
+        })
+    }
 }
 
 @Composable
@@ -618,7 +638,11 @@ private object IsolatedScroll : NestedScrollConnection {
 
 @Composable
 private fun PreviewTurnContent(state: AssistantPreviewState, turn: PreviewTurn, isLast: Boolean, followLatest: Boolean, onContext: () -> Unit) {
+    var attachmentPreviewId by rememberSaveable(turn.id) { mutableStateOf<String?>(null) }
+    val attachmentPreview = turn.attachments.firstOrNull { it.id == attachmentPreviewId }
+    attachmentPreview?.let { AttachmentPreview(it, state, editable = false, onDismiss = { attachmentPreviewId = null }) }
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (turn.attachments.isNotEmpty()) AttachmentStrip(turn.attachments, state.attachments, { attachmentPreviewId = it.id })
         Surface(Modifier.align(Alignment.End).widthIn(max = 560.dp), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
             MessageText(turn.prompt, "Your message", Modifier.padding(horizontal = 16.dp, vertical = 12.dp), onContext = if (turn.baseSnapshot != null) onContext else null)
         }
@@ -899,13 +923,14 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
     }
     val reviewLabel = when (turn.applyState) {
         ProposalApplyState.NONE -> status.label
-        ProposalApplyState.RESERVED -> "Apply attempt recorded"
+        ProposalApplyState.RESERVED -> if (state.isApplyingImages) "Adding images…" else "Apply attempt recorded"
         ProposalApplyState.APPLIED -> "Applied to draft"
         ProposalApplyState.REJECTED -> "Apply was blocked"
     }
     if (allChangesVisible) {
         AssistantPanel("All changes", onDismiss = { allChangesVisible = false }) {
             Text("${values.size} changes · $reviewLabel", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            ProposalImageStrip(state, turn)
             SelectionContainer { ProposalChanges(values, modifier = Modifier.testTag("assistant-all-changes")) }
         }
     }
@@ -932,7 +957,7 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
             if (expanded) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     when (turn.applyState) {
-                        ProposalApplyState.RESERVED -> Text("Check your draft in the editor before continuing.")
+                        ProposalApplyState.RESERVED -> if (state.isApplyingImages) LinearProgressIndicator(Modifier.fillMaxWidth()) else Text("Check your draft in the editor before continuing.")
 
                         ProposalApplyState.APPLIED -> Text("Undo in the editor. Save when ready.")
 
@@ -962,6 +987,7 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
                             }
                         }
                     } else {
+                        ProposalImageStrip(state, turn)
                         Box(Modifier.fillMaxWidth().then(if (compact) Modifier.heightIn(max = 220.dp).clipToBounds() else Modifier).testTag("assistant-changes-preview")) {
                             SelectionContainer { ProposalChanges(if (compact) values.take(previewCount) else values, compact) }
                         }
@@ -1004,7 +1030,7 @@ private fun DiffValue(label: String, value: String, added: Boolean, compact: Boo
 }
 
 @Composable
-private fun ComposerOptions(sheet: String, state: AssistantPreviewState, onSelect: (String) -> Unit, onDismiss: () -> Unit) {
+private fun ComposerOptions(sheet: String, state: AssistantPreviewState, onSelect: (String) -> Unit, onDismiss: () -> Unit, onAttachment: (String) -> Unit) {
     val title = when (sheet) {
         "attachments" -> "Add to chat"
         "effort" -> "Effort"
@@ -1016,19 +1042,19 @@ private fun ComposerOptions(sheet: String, state: AssistantPreviewState, onSelec
                 BoxWithConstraints(Modifier.fillMaxWidth()) {
                     if (maxWidth < 300.dp || LocalDensity.current.fontScale > 1.5f) {
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            PanelOption("Camera", icon = Icons.Outlined.CameraAlt, enabled = false)
-                            PanelOption("Photos", icon = Icons.Outlined.Image, enabled = false)
-                            PanelOption("Files", icon = Icons.Outlined.UploadFile, enabled = false)
+                            PanelOption("Camera", icon = Icons.Outlined.CameraAlt, enabled = state.attachments != null && state.canChange && !state.importingAttachments, disabledLabel = null, onClick = { onAttachment("Camera") })
+                            PanelOption("Photos", icon = Icons.Outlined.Image, enabled = state.attachments != null && state.canChange && !state.importingAttachments, disabledLabel = null, onClick = { onAttachment("Photos") })
+                            PanelOption("Files", icon = Icons.Outlined.UploadFile, enabled = state.attachments != null && state.canChange && !state.importingAttachments, disabledLabel = null, onClick = { onAttachment("Files") })
                         }
                     } else {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            AttachmentTile("Camera", Icons.Outlined.CameraAlt, Modifier.weight(1f))
-                            AttachmentTile("Photos", Icons.Outlined.Image, Modifier.weight(1f))
-                            AttachmentTile("Files", Icons.Outlined.UploadFile, Modifier.weight(1f))
+                            AttachmentTile("Camera", Icons.Outlined.CameraAlt, Modifier.weight(1f), state.attachments != null && state.canChange && !state.importingAttachments) { onAttachment("Camera") }
+                            AttachmentTile("Photos", Icons.Outlined.Image, Modifier.weight(1f), state.attachments != null && state.canChange && !state.importingAttachments) { onAttachment("Photos") }
+                            AttachmentTile("Files", Icons.Outlined.UploadFile, Modifier.weight(1f), state.attachments != null && state.canChange && !state.importingAttachments) { onAttachment("Files") }
                         }
                     }
                 }
-                Text("Attachments coming soon", Modifier.fillMaxWidth(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Images, PDF, DOCX and text", Modifier.fillMaxWidth(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             "effort" -> {
@@ -1095,8 +1121,8 @@ private fun PanelOption(
 }
 
 @Composable
-private fun AttachmentTile(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier) {
-    Surface(shape = RoundedCornerShape(18.dp), color = chatPanelColor(raised = true), modifier = modifier.semantics(mergeDescendants = true) { disabled() }) {
+private fun AttachmentTile(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier, enabled: Boolean, onClick: () -> Unit) {
+    Surface(onClick = onClick, enabled = enabled, shape = RoundedCornerShape(18.dp), color = chatPanelColor(raised = true), modifier = modifier) {
         Column(Modifier.heightIn(min = 108.dp).padding(vertical = 16.dp, horizontal = 8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Surface(shape = CircleShape, color = chatControlColor()) {
                 Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(24.dp)) }
