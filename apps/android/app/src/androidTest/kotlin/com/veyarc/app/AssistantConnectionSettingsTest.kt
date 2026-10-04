@@ -45,6 +45,43 @@ class AssistantConnectionSettingsTest {
     @get:Rule val compose = createComposeRule()
 
     @Test
+    fun providerCanCollapseAndDefaultsDoNotChangeAnExistingChat() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val directory = File(context.cacheDir, "key-defaults-${UUID.randomUUID()}")
+        val store = AssistantKeyStore(object : ContextWrapper(context) {
+            override fun getNoBackupFilesDir() = directory
+        })
+        val owner = kotlinx.coroutines.SupervisorJob()
+        val assistant = com.veyarc.feature.assistant.AssistantPreviewState(scope = kotlinx.coroutines.CoroutineScope(owner + kotlinx.coroutines.Dispatchers.Main), providerCall = { error("Defaults never send a request") })
+        try {
+            compose.runOnUiThread { assistant.open(com.veyarc.feature.assistant.AssistantPreviewContext()) }
+            compose.setContent { VeyarcTheme { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(store, assistant) } } }
+            awaitText("Default model")
+            compose.onNodeWithText("Default model").performClick()
+            compose.onNodeWithText("DeepSeek V4 Pro").performClick()
+            compose.onNodeWithText("Default effort").performClick()
+            compose.onNodeWithText("High").performClick()
+            compose.runOnIdle {
+                org.junit.Assert.assertEquals(com.veyarc.feature.assistant.DeepSeekModel.PRO, assistant.defaultModel)
+                org.junit.Assert.assertEquals(com.veyarc.feature.assistant.DeepSeekEffort.HIGH, assistant.defaultEffort)
+                org.junit.Assert.assertEquals(com.veyarc.feature.assistant.DeepSeekModel.FLASH, assistant.selectedModel)
+                org.junit.Assert.assertEquals(com.veyarc.feature.assistant.DeepSeekEffort.OFF, assistant.conversation!!.effort)
+            }
+            compose.onNodeWithContentDescription("Collapse DeepSeek").performClick()
+            compose.onNodeWithText("Default model").assertDoesNotExist()
+            compose.onNodeWithText("Default effort").assertDoesNotExist()
+            compose.onNodeWithText("Privacy and costs").assertExists()
+            compose.onNodeWithContentDescription("Expand DeepSeek").performClick()
+            compose.onNodeWithText("Default effort").assertExists()
+            compose.onNodeWithContentDescription("Test connection").assertIsNotEnabled()
+        } finally {
+            compose.runOnUiThread { assistant.dispose() }
+            owner.cancel()
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun localKeySetupNeverEnablesAiAndDiscardsUnsavedEntry() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val directory = File(context.cacheDir, "key-ui-${UUID.randomUUID()}")
@@ -69,7 +106,7 @@ class AssistantConnectionSettingsTest {
             }
             awaitText("Add API key")
             compose.onNodeWithText("Enable AI").assertIsNotEnabled()
-            compose.onNodeWithText("Test connection").assertIsNotEnabled()
+            compose.onNodeWithContentDescription("Test connection").assertIsNotEnabled()
             compose.onNodeWithText("Add API key").performScrollTo().performClick()
             compose.runOnIdle { assertTrue(window!!.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0) }
             compose.onNodeWithTag("assistant-key-entry").assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Password))
@@ -154,10 +191,10 @@ class AssistantConnectionSettingsTest {
                 assertTrue(assistant.providerEnabled)
                 org.junit.Assert.assertEquals(0, calls)
             }
-            compose.onNodeWithText("Test connection").performScrollTo().performClick()
+            compose.onNodeWithContentDescription("Test connection").performScrollTo().performClick()
             compose.onNodeWithText("Cancel").performClick()
             compose.runOnIdle { org.junit.Assert.assertEquals(0, calls) }
-            compose.onNodeWithText("Test connection").performScrollTo().performClick()
+            compose.onNodeWithContentDescription("Test connection").performScrollTo().performClick()
             compose.onNodeWithText("Send test request").performClick()
             compose.waitUntil(10_000) { calls == 1 }
             compose.onNodeWithText("Replace API key").performScrollTo().performClick()
@@ -170,7 +207,7 @@ class AssistantConnectionSettingsTest {
                 org.junit.Assert.assertEquals(1, calls)
             }
             awaitText("Key saved")
-            compose.onNodeWithText("Test connection").assertIsNotEnabled()
+            compose.onNodeWithContentDescription("Test connection").assertIsNotEnabled()
             org.junit.Assert.assertEquals("fixture-new-opt-in-key", store.readForRequest())
         } finally {
             compose.runOnIdle { assistant.dispose() }

@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.view.WindowManager
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -18,9 +19,13 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.NetworkCheck
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,6 +44,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,6 +54,8 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -58,6 +66,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.veyarc.data.storage.AssistantKeyStore
 import com.veyarc.feature.assistant.AssistantPanel
+import com.veyarc.feature.assistant.DeepSeekEffort
 import com.veyarc.feature.assistant.DeepSeekModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -76,6 +85,8 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
     var testing by remember { mutableStateOf(false) }
     var privacyVisible by remember { mutableStateOf(false) }
     var modelVisible by remember { mutableStateOf(false) }
+    var effortVisible by remember { mutableStateOf(false) }
+    var providerExpanded by rememberSaveable { mutableStateOf(true) }
     LaunchedEffect(store) {
         try {
             hasKey = withContext(Dispatchers.IO) { store.hasKey() }
@@ -88,7 +99,7 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
     val enabled = assistant?.providerEnabled == true
     val canEnable = !busy && hasKey && assistant?.usesProvider == true
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().clickable(role = Role.Button) { providerExpanded = !providerExpanded }.padding(vertical = 8.dp).testTag("deepseek-provider-section"), verticalAlignment = Alignment.CenterVertically) {
             Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.primaryContainer) {
                 Icon(painterResource(R.drawable.ic_deepseek), null, Modifier.padding(12.dp).size(32.dp).testTag("deepseek-logo"), tint = Color.Unspecified)
             }
@@ -96,42 +107,55 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
                 Text("DeepSeek", style = MaterialTheme.typography.titleMedium)
                 Text("Your API key", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            Icon(if (providerExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, if (providerExpanded) "Collapse DeepSeek" else "Expand DeepSeek")
         }
-        HorizontalDivider()
-        TextButton(onClick = { modelVisible = true }, modifier = Modifier.fillMaxWidth(), enabled = assistant?.usesProvider == true) {
-            Text("Model", Modifier.weight(1f))
-            Text((assistant?.selectedModel ?: DeepSeekModel.FLASH).shortLabel, Modifier.padding(end = 8.dp))
-        }
-        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.Key, null)
-            Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                Text("API key", style = MaterialTheme.typography.bodyMedium)
-                Text(if (hasKey) "Key saved" else "No API key", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        AnimatedVisibility(providerExpanded) {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                HorizontalDivider()
+                TextButton(onClick = { modelVisible = true }, modifier = Modifier.fillMaxWidth(), enabled = assistant?.usesProvider == true) {
+                    Text("Default model", Modifier.weight(1f))
+                    Text((assistant?.defaultModel ?: DeepSeekModel.FLASH).shortLabel, Modifier.padding(end = 8.dp))
+                }
+                TextButton(onClick = { effortVisible = true }, modifier = Modifier.fillMaxWidth(), enabled = assistant?.usesProvider == true) {
+                    Text("Default effort", Modifier.weight(1f))
+                    Text((assistant?.defaultEffort ?: DeepSeekEffort.OFF).label, Modifier.padding(end = 8.dp))
+                }
+                Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.Key, null)
+                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                        Text("API key", style = MaterialTheme.typography.bodyMedium)
+                        Text(if (hasKey) "Key saved" else "No API key", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    TextButton(onClick = { editing = true }, enabled = !busy) { Text(if (hasKey || error != null) "Replace API key" else "Add API key") }
+                    if (hasKey || error != null) IconButton(onClick = { removing = true }, enabled = !busy) { Icon(Icons.Outlined.DeleteOutline, "Remove API key") }
+                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                Row(
+                    Modifier.fillMaxWidth().clickable(enabled = enabled || canEnable) {
+                        if (enabled) assistant?.disableProvider() else enabling = true
+                    }.padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(if (enabled) "Disable AI" else "Enable AI", style = MaterialTheme.typography.bodyLarge)
+                        Text(if (enabled) "Enabled until app restart" else "AI disabled", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    IconButton(onClick = {
+                        if (assistant?.testingConnection == true) assistant.stop() else testing = true
+                    }, enabled = assistant?.testingConnection == true || (!busy && hasKey && enabled && assistant?.isResponding == false)) {
+                        if (assistant?.testingConnection == true) {
+                            CircularProgressIndicator(Modifier.size(22.dp).semantics { contentDescription = "Stop connection test" }, strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Outlined.NetworkCheck, "Test connection")
+                        }
+                    }
+                    Switch(checked = enabled, enabled = enabled || canEnable, onCheckedChange = {
+                        if (it) enabling = true else assistant?.disableProvider()
+                    })
+                }
+                assistant?.connectionTestStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
-            TextButton(onClick = { editing = true }, enabled = !busy) { Text(if (hasKey || error != null) "Replace API key" else "Add API key") }
-            if (hasKey || error != null) IconButton(onClick = { removing = true }, enabled = !busy) { Icon(Icons.Outlined.DeleteOutline, "Remove API key") }
         }
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        Row(
-            Modifier.fillMaxWidth().clickable(enabled = enabled || canEnable) {
-                if (enabled) assistant?.disableProvider() else enabling = true
-            }.padding(vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(if (enabled) "Disable AI" else "Enable AI", style = MaterialTheme.typography.bodyLarge)
-                Text(if (enabled) "Enabled until app restart" else "AI disabled", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Switch(checked = enabled, enabled = enabled || canEnable, onCheckedChange = {
-                if (it) enabling = true else assistant?.disableProvider()
-            })
-        }
-        OutlinedButton(onClick = { testing = true }, modifier = Modifier.fillMaxWidth(), enabled = !busy && hasKey && enabled && assistant?.isResponding == false) { Text("Test connection") }
-        if (assistant?.testingConnection == true) {
-            Text("Testing connection…", style = MaterialTheme.typography.bodySmall)
-            TextButton(onClick = { assistant.stop() }) { Text("Stop connection test") }
-        }
-        assistant?.connectionTestStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         HorizontalDivider(Modifier.padding(top = 8.dp))
         TextButton(onClick = { privacyVisible = true }, modifier = Modifier.fillMaxWidth()) {
             Text("Privacy and costs", Modifier.weight(1f))
@@ -143,18 +167,35 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
         }
     }
     if (modelVisible && assistant != null) {
-        AssistantPanel("Select model", onDismiss = { modelVisible = false }) {
+        AssistantPanel("Default model", onDismiss = { modelVisible = false }) {
             DeepSeekModel.entries.forEach { model ->
-                val selected = assistant.selectedModel == model
+                val selected = assistant.defaultModel == model
                 Row(
-                    Modifier.fillMaxWidth().selectable(selected = selected, enabled = assistant.canChange && !assistant.isResponding, role = Role.RadioButton, onClick = {
-                        assistant.setModel(model)
+                    Modifier.fillMaxWidth().selectable(selected = selected, role = Role.RadioButton, onClick = {
+                        assistant.chooseDefaultModel(model)
                         modelVisible = false
                     }).padding(vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     RadioButton(selected = selected, onClick = null)
                     Text(model.label, Modifier.padding(start = 12.dp))
+                }
+            }
+        }
+    }
+    if (effortVisible && assistant != null) {
+        AssistantPanel("Default effort", onDismiss = { effortVisible = false }) {
+            DeepSeekEffort.entries.forEach { effort ->
+                val selected = assistant.defaultEffort == effort
+                Row(
+                    Modifier.fillMaxWidth().selectable(selected = selected, role = Role.RadioButton, onClick = {
+                        assistant.chooseDefaultEffort(effort)
+                        effortVisible = false
+                    }).padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(selected = selected, onClick = null)
+                    Text(effort.label, Modifier.padding(start = 12.dp))
                 }
             }
         }

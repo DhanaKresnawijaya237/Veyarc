@@ -553,11 +553,14 @@ class MainEditorSession(application: Application) : AndroidViewModel(application
             deepSeek.await(request, key)
         },
         onModelChanged = { model -> viewModelScope.launch { AppPreferences.setAssistantModel(application, model) } },
+        onDefaultEffortChanged = { effort -> viewModelScope.launch { AppPreferences.setAssistantEffort(application, effort) } },
     )
 
     init {
         viewModelScope.launch {
-            assistant.restoreModelPreference(AppPreferences.observe(application).first().assistantModel)
+            val preferences = AppPreferences.observe(application).first()
+            assistant.restoreModelPreference(preferences.assistantModel)
+            assistant.restoreEffortPreference(preferences.assistantEffort)
         }
     }
 

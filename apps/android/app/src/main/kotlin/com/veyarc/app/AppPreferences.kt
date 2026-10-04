@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.veyarc.feature.assistant.DeepSeekEffort
 import com.veyarc.feature.assistant.DeepSeekModel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -21,6 +22,7 @@ enum class ThemePreference {
 data class AppUiPreferences(
     val theme: ThemePreference = ThemePreference.SYSTEM,
     val assistantModel: DeepSeekModel = DeepSeekModel.FLASH,
+    val assistantEffort: DeepSeekEffort = DeepSeekEffort.OFF,
 )
 
 private val Context.uiPreferencesStore by preferencesDataStore(name = "veyarc_ui")
@@ -28,6 +30,7 @@ private val Context.uiPreferencesStore by preferencesDataStore(name = "veyarc_ui
 object AppPreferences {
     private val themeKey = stringPreferencesKey("theme")
     private val assistantModelKey = stringPreferencesKey("assistant_model")
+    private val assistantEffortKey = stringPreferencesKey("assistant_effort")
     private val workflowFolderOrderKey = stringPreferencesKey("workflow_folder_order")
     private val runFolderOrderKey = stringPreferencesKey("run_folder_order")
 
@@ -39,6 +42,7 @@ object AppPreferences {
                     ?.let { saved -> ThemePreference.entries.firstOrNull { it.name == saved } }
                     ?: ThemePreference.SYSTEM,
                 assistantModel = DeepSeekModel.entries.firstOrNull { it.name == preferences[assistantModelKey] } ?: DeepSeekModel.FLASH,
+                assistantEffort = DeepSeekEffort.entries.firstOrNull { it.name == preferences[assistantEffortKey] } ?: DeepSeekEffort.OFF,
             )
         }
 
@@ -48,6 +52,10 @@ object AppPreferences {
 
     suspend fun setAssistantModel(context: Context, model: DeepSeekModel) {
         context.applicationContext.uiPreferencesStore.edit { it[assistantModelKey] = model.name }
+    }
+
+    suspend fun setAssistantEffort(context: Context, effort: DeepSeekEffort) {
+        context.applicationContext.uiPreferencesStore.edit { it[assistantEffortKey] = effort.name }
     }
 
     suspend fun workflowFolderOrder(context: Context): List<String> = folderOrder(context, workflowFolderOrderKey)

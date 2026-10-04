@@ -106,6 +106,7 @@ class AssistantPreviewState(
     private val onModelChanged: ((DeepSeekModel) -> Unit)? = null,
     val attachments: AssistantAttachmentImporter? = null,
     private val applyImageCandidate: (suspend (String, AssistantContextSnapshot, String, List<AssistantImageAddition>, List<AssistantAttachment>) -> Boolean)? = null,
+    private val onDefaultEffortChanged: ((DeepSeekEffort) -> Unit)? = null,
     private var contextSource: (() -> AssistantContextCapture)? = null,
 ) {
     private val attachmentWork = kotlinx.coroutines.sync.Mutex()
@@ -137,6 +138,8 @@ class AssistantPreviewState(
     var testingConnection by mutableStateOf(false)
         private set
     var defaultModel by mutableStateOf(DeepSeekModel.FLASH)
+        private set
+    var defaultEffort by mutableStateOf(DeepSeekEffort.OFF)
         private set
     val selectedModel: DeepSeekModel get() = conversation?.model ?: defaultModel
     val usesProvider: Boolean get() = providerCall != null
@@ -189,7 +192,7 @@ class AssistantPreviewState(
         val generation = applyGeneration
         testingConnection = true
         connectionTestStatus = null
-        val model = selectedModel
+        val model = defaultModel
         providerJob = requireNotNull(scope).launch {
             try {
                 val request = DeepSeekRequest.connectionTest(model)
@@ -408,12 +411,30 @@ class AssistantPreviewState(
         defaultModel = model
     }
 
+    fun restoreEffortPreference(effort: DeepSeekEffort) {
+        defaultEffort = effort
+    }
+
+    fun chooseDefaultModel(model: DeepSeekModel) {
+        if (!usesProvider) return
+        defaultModel = model
+        onModelChanged?.invoke(model)
+    }
+
+    fun chooseDefaultEffort(effort: DeepSeekEffort) {
+        if (!usesProvider) return
+        defaultEffort = effort
+        onDefaultEffortChanged?.invoke(effort)
+    }
+
     fun setModel(model: DeepSeekModel) {
         inputError = null
         if (!usesProvider || !canChange || isResponding) return
-        defaultModel = model
+        if (conversation == null) {
+            chooseDefaultModel(model)
+            return
+        }
         update { it.copy(model = model) }
-        onModelChanged?.invoke(model)
         flush()
     }
 
@@ -424,7 +445,7 @@ class AssistantPreviewState(
     }
 
     private fun createChat() {
-        val chat = PreviewConversation(UUID.randomUUID().toString(), context.workflowId, context = context, model = defaultModel)
+        val chat = PreviewConversation(UUID.randomUUID().toString(), context.workflowId, context = context, model = defaultModel, effort = defaultEffort)
         conversations = conversations + chat
         selectedId = chat.id
         persist(chat)

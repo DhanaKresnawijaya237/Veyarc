@@ -23,6 +23,40 @@ import java.util.UUID
 
 class AssistantProviderStateTest {
     @Test
+    fun defaultsApplyOnlyToNewChatsAndComposerChoicesStayInTheirChat() = runBlocking {
+        var modelSaved: DeepSeekModel? = null
+        var effortSaved: DeepSeekEffort? = null
+        val state = AssistantPreviewState(scope = this, providerCall = { error("No request expected") }, onModelChanged = { modelSaved = it }, onDefaultEffortChanged = { effortSaved = it })
+        state.restoreModelPreference(DeepSeekModel.PRO)
+        state.restoreEffortPreference(DeepSeekEffort.HIGH)
+        state.open(AssistantPreviewContext())
+        assertEquals(DeepSeekModel.PRO, state.selectedModel)
+        assertEquals(DeepSeekEffort.HIGH, state.conversation!!.effort)
+        val first = state.selectedId!!
+        state.chooseDefaultModel(DeepSeekModel.FLASH)
+        state.chooseDefaultEffort(DeepSeekEffort.LOW)
+        assertEquals(DeepSeekModel.FLASH, modelSaved)
+        assertEquals(DeepSeekEffort.LOW, effortSaved)
+        assertEquals(DeepSeekModel.PRO, state.selectedModel)
+        assertEquals(DeepSeekEffort.HIGH, state.conversation!!.effort)
+        state.enableProvider()
+        state.compose("Explain")
+        state.send()
+        state.stop()
+        state.newChat()
+        assertEquals(DeepSeekModel.FLASH, state.selectedModel)
+        assertEquals(DeepSeekEffort.LOW, state.conversation!!.effort)
+        state.setModel(DeepSeekModel.PRO)
+        state.setEffort(DeepSeekEffort.MAX)
+        assertEquals(DeepSeekModel.FLASH, state.defaultModel)
+        assertEquals(DeepSeekEffort.LOW, state.defaultEffort)
+        state.select(first)
+        assertEquals(DeepSeekModel.PRO, state.selectedModel)
+        assertEquals(DeepSeekEffort.HIGH, state.conversation!!.effort)
+        state.dispose()
+    }
+
+    @Test
     fun optInDispatchAndRetryKeepOnePromptAndRejectLateResults() = runBlocking {
         val calls = mutableListOf<Pair<DeepSeekRequest, CompletableDeferred<ByteArray>>>()
         val state = AssistantPreviewState(scope = this, providerCall = { request ->
@@ -98,7 +132,7 @@ class AssistantProviderStateTest {
         state.setModel(DeepSeekModel.PRO)
         state.newChat()
         assertEquals(DeepSeekEffort.OFF, state.conversation!!.effort)
-        assertEquals(DeepSeekModel.PRO, state.selectedModel)
+        assertEquals(DeepSeekModel.FLASH, state.selectedModel)
         state.select(selectedId)
         assertEquals(DeepSeekEffort.MAX, state.conversation!!.effort)
         assertEquals(DeepSeekModel.FLASH, state.selectedModel)
