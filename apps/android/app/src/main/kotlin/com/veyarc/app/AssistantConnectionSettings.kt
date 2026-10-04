@@ -17,7 +17,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material3.AlertDialog
@@ -102,7 +101,6 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
         TextButton(onClick = { modelVisible = true }, modifier = Modifier.fillMaxWidth(), enabled = assistant?.usesProvider == true) {
             Text("Model", Modifier.weight(1f))
             Text((assistant?.selectedModel ?: DeepSeekModel.FLASH).shortLabel, Modifier.padding(end = 8.dp))
-            Icon(Icons.Outlined.ChevronRight, null)
         }
         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.Key, null)
@@ -137,12 +135,10 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
         HorizontalDivider(Modifier.padding(top = 8.dp))
         TextButton(onClick = { privacyVisible = true }, modifier = Modifier.fillMaxWidth()) {
             Text("Privacy and costs", Modifier.weight(1f))
-            Icon(Icons.Outlined.ChevronRight, null)
         }
         if (onHelp != null) {
             TextButton(onClick = onHelp, modifier = Modifier.fillMaxWidth()) {
                 Text("AI chat help", Modifier.weight(1f))
-                Icon(Icons.Outlined.ChevronRight, null)
             }
         }
     }
@@ -190,7 +186,6 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
                     Text("• Your API account pays. No cap; Stop may still cost.")
                     Text("• Avoid secrets. Provider retention and training guarantees are unverified.")
                     Text(if (isTest) "• Tests the connection, not workflow quality." else "• Review changes. Save separately. AI turns off on restart.")
-                    TextButton(onClick = { privacyVisible = true }) { Text("Details") }
                 }
             },
             confirmButton = {

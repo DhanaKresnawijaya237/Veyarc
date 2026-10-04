@@ -4,7 +4,6 @@ import android.app.Activity
 import android.content.ClipData
 import android.content.ContextWrapper
 import android.content.Intent
-import android.text.format.DateUtils
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
@@ -20,6 +19,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.displayCutout
@@ -100,9 +100,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
@@ -117,6 +119,8 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
@@ -422,9 +426,9 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
                                             Box(contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Add, "Add attachment", Modifier.size(22.dp)) }
                                         }
                                     }
-                                    Surface(onClick = { composerSheet = "model" }, shape = CircleShape, color = chatControlColor(), modifier = Modifier.weight(1f, fill = false)) {
+                                    Surface(onClick = { composerSheet = "model" }, shape = CircleShape, color = chatControlColor(), modifier = Modifier.weight(1f, fill = false).testTag("assistant-model-picker")) {
                                         Row(Modifier.heightIn(min = 40.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            Text(if (state.usesProvider) state.selectedModel.shortLabel else "Sample", modifier = Modifier.weight(1f, fill = false), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(if (state.usesProvider) state.selectedModel.label else "Sample", modifier = Modifier.weight(1f, fill = false), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             Text(chat.effort.label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                                         }
                                     }
@@ -470,42 +474,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
     }
 
     if (historyVisible) {
-        val historyList = rememberLazyListState()
-        AssistantPanel("Chats", onDismiss = { historyVisible = false }, scrollBody = false, bodyState = historyList) {
-            val history = state.history
-            LazyColumn(Modifier.fillMaxWidth().testTag("assistant-history-list"), state = historyList, overscrollEffect = null, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                item { Text(state.context.name, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) }
-                listOf(true, false).forEach { pinned ->
-                    val entries = history.filter { it.pinned == pinned }
-                    if (entries.isNotEmpty()) {
-                        item { Text(if (pinned) "Pinned" else "Recent", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp)) }
-                        items(entries.size, key = { entries[it].id }) { index ->
-                            val entry = entries[index]
-                            val current = entry.id == state.selectedId
-                            Surface(
-                                onClick = {
-                                    state.select(entry.id)
-                                    historyVisible = false
-                                },
-                                enabled = state.canChange,
-                                color = if (current) chatPanelColor(raised = true) else Color.Transparent,
-                                shape = RoundedCornerShape(16.dp),
-                                modifier = Modifier.fillMaxWidth().semantics { selected = current }.testTag("assistant-history-${entry.id}"),
-                            ) {
-                                Row(Modifier.heightIn(min = 76.dp).padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Icon(if (entry.pinned) Icons.Outlined.PushPin else Icons.Outlined.ChatBubbleOutline, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        Text(entry.title, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                        Text(DateUtils.getRelativeTimeSpanString(entry.updatedAtMs, System.currentTimeMillis(), DateUtils.DAY_IN_MILLIS).toString(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    if (current) Icon(Icons.Outlined.Check, "Current chat", Modifier.size(20.dp))
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        AssistantHistoryPanel(state, onDismiss = { historyVisible = false })
     }
     if (renameVisible) {
         var title by remember(chat.id) { mutableStateOf(chat.title) }
@@ -540,7 +509,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
 }
 
 @Composable
-private fun ChatMenuItem(
+internal fun ChatMenuItem(
     label: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     enabled: Boolean = true,
@@ -771,20 +740,25 @@ private fun PreviewDialog(title: String, onDismiss: () -> Unit, content: @Compos
 }
 
 @Composable
-private fun chatPanelColor(raised: Boolean = false): Color {
+internal fun chatPanelColor(raised: Boolean = false): Color {
     val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     return if (dark) Color(if (raised) 0xFF222222 else 0xFF141414) else Color(if (raised) 0xFFF0EFEB else 0xFFFAF9F6)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AssistantPanel(title: String, onDismiss: () -> Unit, onBack: (() -> Unit)? = null, scrollBody: Boolean = true, bodyState: ScrollableState? = null, content: @Composable () -> Unit) {
+fun AssistantPanel(title: String, onDismiss: () -> Unit, onBack: (() -> Unit)? = null, scrollBody: Boolean = true, bodyState: ScrollableState? = null, backDescription: String = "Back to models", subtitle: String? = null, headerActions: (@Composable RowScope.() -> Unit)? = null, content: @Composable () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val dark = colors.surface.luminance() < 0.5f
     val density = LocalDensity.current
     val scroll = rememberScrollState()
     val scrolling = bodyState ?: scroll
     val routing = remember(scrolling) { PanelScrollConnection() }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
+    val dismiss by rememberUpdatedState(onDismiss)
+    var headerHeight by remember { mutableIntStateOf(0) }
+    var closing by remember { mutableStateOf(false) }
     MaterialTheme(
         colorScheme = colors.copy(
             surface = chatPanelColor(),
@@ -796,8 +770,8 @@ fun AssistantPanel(title: String, onDismiss: () -> Unit, onBack: (() -> Unit)? =
         ModalBottomSheet(
             modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
             onDismissRequest = onDismiss,
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-            sheetGesturesEnabled = true,
+            sheetState = sheetState,
+            sheetGesturesEnabled = !closing,
             // Keep the sheet's measured height independent of its changing drag offset.
             contentWindowInsets = { WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom) },
             dragHandle = null,
@@ -806,22 +780,58 @@ fun AssistantPanel(title: String, onDismiss: () -> Unit, onBack: (() -> Unit)? =
             tonalElevation = 0.dp,
         ) {
             CompositionLocalProvider(LocalDensity provides density) {
-                Column(Modifier.fillMaxWidth().testTag("assistant-panel")) {
-                    Box(Modifier.fillMaxWidth().testTag("assistant-panel-header").padding(horizontal = 12.dp, vertical = 4.dp).heightIn(min = 56.dp)) {
-                        Text(title, Modifier.align(Alignment.Center).padding(horizontal = 52.dp, vertical = 12.dp), style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        IconButton(onClick = onBack ?: onDismiss, modifier = Modifier.align(Alignment.CenterStart)) {
-                            Icon(if (onBack == null) Icons.Outlined.Close else Icons.AutoMirrored.Outlined.ArrowBack, if (onBack == null) "Close $title" else "Back to models")
+                Column(
+                    Modifier.fillMaxWidth().testTag("assistant-panel").pointerInput(sheetState, routing) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                            routing.pullSheet = !scrolling.canScrollBackward
+                            val fromHeader = down.position.y <= headerHeight
+                            val tracker = VelocityTracker()
+
+                            // Sheet-local pointer positions move with the sheet; measure velocity in the window.
+                            fun windowPosition(position: Offset) = position + Offset(0f, sheetState.requireOffset())
+                            val start = windowPosition(down.position)
+                            tracker.addPosition(down.uptimeMillis, start)
+                            var last = start
+                            var released = false
+                            do {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                last = windowPosition(change.position)
+                                tracker.addPosition(change.uptimeMillis, last)
+                                released = !change.pressed
+                            } while (!released)
+                            val distance = last - start
+                            val clearPull = distance.y > viewConfiguration.touchSlop && distance.y > kotlin.math.abs(distance.x)
+                            val dismissPull = distance.y >= 56.dp.toPx() || tracker.calculateVelocity().y >= 125.dp.toPx()
+                            if (released && !closing && (fromHeader || routing.pullSheet) && clearPull && dismissPull) {
+                                closing = true
+                                scope.launch {
+                                    // Finish after the native drag/fling callbacks, so they cannot cancel closing.
+                                    withFrameNanos { }
+                                    sheetState.hide()
+                                    if (!sheetState.isVisible) dismiss()
+                                }
+                            }
                         }
-                        if (onBack != null) IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterEnd)) { Icon(Icons.Outlined.Close, "Close $title") }
+                    },
+                ) {
+                    Box(Modifier.fillMaxWidth().onSizeChanged { headerHeight = it.height }.testTag("assistant-panel-header").padding(horizontal = 12.dp, vertical = 4.dp).heightIn(min = 56.dp)) {
+                        Column(Modifier.align(Alignment.Center).padding(horizontal = if (headerActions == null) 52.dp else 96.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        IconButton(onClick = onBack ?: onDismiss, modifier = Modifier.align(Alignment.CenterStart)) {
+                            Icon(if (onBack == null) Icons.Outlined.Close else Icons.AutoMirrored.Outlined.ArrowBack, if (onBack == null) "Close $title" else backDescription)
+                        }
+                        if (headerActions != null) {
+                            Row(Modifier.align(Alignment.CenterEnd), content = headerActions)
+                        } else if (onBack != null) {
+                            IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterEnd)) { Icon(Icons.Outlined.Close, "Close $title") }
+                        }
                     }
                     Column(
                         Modifier.fillMaxWidth().weight(1f, fill = false).testTag("assistant-panel-scroll")
-                            .pointerInput(routing) {
-                                awaitEachGesture {
-                                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                                    routing.pullSheet = !scrolling.canScrollBackward
-                                }
-                            }
                             .nestedScroll(routing).then(if (scrollBody) Modifier.verticalScroll(scroll, overscrollEffect = null) else Modifier).padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) { content() }

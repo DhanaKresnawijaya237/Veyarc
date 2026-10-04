@@ -57,6 +57,7 @@ import com.veyarc.feature.assistant.DeepSeekRequest
 import com.veyarc.feature.assistant.PreviewScenario
 import kotlinx.coroutines.flow.first
 import org.junit.Assert.assertEquals
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -192,9 +193,20 @@ class AssistantPreviewUiTest {
     @get:Rule
     val compose = createComposeRule()
 
+    @Before
+    fun useRequestedLayout() {
+        if (InstrumentationRegistry.getArguments().getString("layoutLabel")?.contains("landscape") == true) {
+            InstrumentationRegistry.getInstrumentation().uiAutomation.setRotation(UiAutomation.ROTATION_FREEZE_90)
+            compose.waitUntil(10_000) {
+                InstrumentationRegistry.getInstrumentation().targetContext.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+            }
+        }
+    }
+
     @Test
     fun effortSelectionUpdatesTheComposerAndLocksDuringARequest() {
         fun effortOption(label: String) = compose.onNode(hasText(label) and hasAnyAncestor(hasTestTag("assistant-effort-options")))
+        fun modelOption(label: String) = compose.onNode(hasText(label) and hasAnyAncestor(hasTestTag("assistant-panel")))
         val owner = kotlinx.coroutines.SupervisorJob()
         var calls = 0
         val state = AssistantPreviewState(scope = kotlinx.coroutines.CoroutineScope(owner + kotlinx.coroutines.Dispatchers.Main), providerCall = {
@@ -207,9 +219,10 @@ class AssistantPreviewUiTest {
         try {
             compose.setContent { VeyarcTheme(darkTheme = true) { AssistantPreviewScreen(state) } }
             compose.onNodeWithText("Off").assertIsDisplayed()
-            compose.onNodeWithText("V4.1 Flash").performClick()
-            compose.onNodeWithText("DeepSeek V4 Pro").assertIsEnabled().performClick()
-            compose.onNodeWithText("V4 Pro").performClick()
+            compose.onNodeWithText("DeepSeek V4.1 Flash").assertIsDisplayed()
+            compose.onNodeWithTag("assistant-model-picker").performClick()
+            modelOption("DeepSeek V4 Pro").assertIsEnabled().performClick()
+            compose.onNodeWithTag("assistant-model-picker").performClick()
             compose.onNodeWithContentDescription("Open Effort").assertExists()
             compose.onNodeWithText("Effort").performClick()
             DeepSeekEffort.entries.forEach { compose.onNodeWithContentDescription("Open ${it.label}").assertDoesNotExist() }
@@ -221,15 +234,15 @@ class AssistantPreviewUiTest {
             Espresso.closeSoftKeyboard()
             compose.onNodeWithContentDescription("Send message").performClick()
             compose.waitUntil(10_000) { calls == 1 }
-            compose.onNodeWithText("V4 Pro").performClick()
-            compose.onNodeWithText("DeepSeek V4.1 Flash").assertIsNotEnabled()
-            compose.onNodeWithText("DeepSeek V4 Pro").assertIsSelected().assertIsNotEnabled()
+            compose.onNodeWithTag("assistant-model-picker").performClick()
+            modelOption("DeepSeek V4.1 Flash").assertIsNotEnabled()
+            modelOption("DeepSeek V4 Pro").assertIsSelected().assertIsNotEnabled()
             compose.onNodeWithText("Effort").performClick()
             effortOption("High").assertIsSelected().assertIsNotEnabled()
             effortOption("Low").assertIsNotEnabled()
             compose.onNodeWithContentDescription("Close Effort").performClick()
             compose.onNodeWithContentDescription("Stop response").performClick()
-            compose.onNodeWithText("V4 Pro").performClick()
+            compose.onNodeWithTag("assistant-model-picker").performClick()
             compose.onNodeWithText("Effort").performClick()
             effortOption("Max").assertIsEnabled().performClick()
             compose.runOnIdle {
@@ -238,9 +251,9 @@ class AssistantPreviewUiTest {
                 assertEquals(DeepSeekModel.PRO, state.conversation!!.turns.single().model)
                 assertEquals(1, calls)
             }
-            compose.onNodeWithText("V4 Pro").performClick()
-            compose.onNodeWithText("DeepSeek V4.1 Flash").performClick()
-            compose.onNodeWithText("V4.1 Flash").assertIsDisplayed()
+            compose.onNodeWithTag("assistant-model-picker").performClick()
+            modelOption("DeepSeek V4.1 Flash").performClick()
+            compose.onNodeWithText("DeepSeek V4.1 Flash").assertIsDisplayed()
             compose.runOnIdle { assertEquals(DeepSeekModel.FLASH, state.selectedModel) }
             capture("effort-selected")
         } finally {
@@ -828,6 +841,103 @@ class AssistantPreviewUiTest {
         org.junit.Assert.assertTrue("Reply actions must sit next to the composer: ${composer.top - actions.bottom} px, actions=$actions composer=$composer", composer.top - actions.bottom in 0f..16f * density)
         val icon = compose.onNodeWithContentDescription("Copy reply", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         assertEquals(18f * density, icon.width, 2f)
+    }
+
+    @Test
+    fun historyFilterSearchLongPressAndAnimatedSelectionUseTheChosenChats() {
+        val state = AssistantPreviewState().apply {
+            open(AssistantPreviewContext())
+            listOf("Morning", "Lunch", "Evening").forEach { title ->
+                compose(title)
+                send()
+                repeat(100) { requestId?.let(::advance) }
+                rename(title)
+                if (title != "Evening") newChat()
+            }
+        }
+        val morning = state.history.single { it.title == "Morning" }.id
+        val lunch = state.history.single { it.title == "Lunch" }.id
+        val evening = state.selectedId
+        compose.setContent { VeyarcTheme(darkTheme = true) { AssistantPreviewScreen(state) } }
+        compose.onNodeWithContentDescription("Chat options").performClick()
+        compose.onNodeWithText("Chat history").performClick()
+        compose.onNodeWithTag("assistant-history-$morning").performTouchInput { longClick() }
+        compose.onNodeWithText("Rename", substring = false).performClick()
+        compose.onNodeWithText("Chat title").performTextReplacement("Early morning")
+        Espresso.closeSoftKeyboard()
+        compose.onNodeWithText("Rename", substring = false).performClick()
+        compose.onNodeWithTag("assistant-history-$morning").performTouchInput { longClick() }
+        capture("history-long-press")
+        compose.onNodeWithText("Pin", substring = false).performClick()
+        compose.onNodeWithContentDescription("Filter chats").performClick()
+        capture("history-filter")
+        compose.onNodeWithText("Pinned", substring = false).performClick()
+        compose.onNodeWithTag("assistant-history-$morning").assertExists()
+        compose.onNodeWithTag("assistant-history-$lunch").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Filter chats").performClick()
+        compose.onNodeWithText("All", substring = false).performClick()
+        compose.onNodeWithTag("assistant-history-search").performTextReplacement("lunch")
+        Espresso.closeSoftKeyboard()
+        compose.onNodeWithTag("assistant-history-$lunch").assertExists()
+        compose.onNodeWithTag("assistant-history-$morning").assertDoesNotExist()
+        compose.onNodeWithTag("assistant-history-search").performTextReplacement("")
+        Espresso.closeSoftKeyboard()
+        val titleBefore = compose.onNodeWithText("Early morning", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot.left
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithContentDescription("Select chats").performClick()
+        compose.mainClock.advanceTimeBy(100)
+        val titleDuring = compose.onNodeWithText("Early morning", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot.left
+        compose.mainClock.advanceTimeBy(600)
+        val titleAfter = compose.onNodeWithText("Early morning", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot.left
+        compose.mainClock.autoAdvance = true
+        org.junit.Assert.assertTrue("Selection controls must slide in rather than jump: $titleBefore, $titleDuring, $titleAfter", titleDuring > titleBefore && titleDuring < titleAfter)
+        compose.onNodeWithTag("assistant-history-check-$morning", useUnmergedTree = true).assertExists()
+        Espresso.pressBack()
+        compose.onNodeWithText("Chats", substring = false).assertIsDisplayed()
+        compose.onNodeWithContentDescription("Select chats").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("assistant-history-$morning").performClick()
+        compose.onNodeWithTag("assistant-history-$lunch").performClick()
+        compose.onNodeWithText("2 selected").assertIsDisplayed()
+        capture("history-selection")
+        compose.onNodeWithContentDescription("Delete selected chats").performClick()
+        compose.onNodeWithText("Cancel", substring = false).performClick()
+        compose.runOnIdle { assertEquals(3, state.history.size) }
+        compose.onNodeWithContentDescription("Delete selected chats").performClick()
+        compose.onNodeWithText("Delete", substring = false).performClick()
+        compose.runOnIdle {
+            assertEquals(evening, state.selectedId)
+            assertEquals(listOf(evening), state.history.map { it.id })
+        }
+    }
+
+    @Test
+    fun fastPanelPullsDismissFromTheHeaderAndScrollableBody() {
+        val state = AssistantPreviewState().apply {
+            open(AssistantPreviewContext())
+            repeat(12) { index ->
+                compose("Chat $index")
+                send()
+                repeat(100) { requestId?.let(::advance) }
+                newChat()
+            }
+        }
+        compose.setContent { VeyarcTheme(darkTheme = true) { AssistantPreviewScreen(state) } }
+        repeat(6) { attempt ->
+            compose.onNodeWithContentDescription("Chat options").performClick()
+            compose.waitForIdle()
+            if (attempt >= 4) compose.mainClock.autoAdvance = false
+            compose.onNodeWithText("Chat history").performClick()
+            if (attempt >= 4) compose.mainClock.advanceTimeBy(120)
+            val target = if (attempt % 2 == 0) "assistant-panel-header" else "assistant-history-list"
+            compose.onNodeWithTag(target).performTouchInput {
+                swipe(start = Offset(center.x, 24f), end = Offset(center.x, 330f), durationMillis = if (attempt < 2) 80 else 160)
+            }
+            compose.mainClock.autoAdvance = true
+            compose.onNodeWithTag("assistant-panel").assertDoesNotExist()
+        }
+        compose.onNodeWithContentDescription("Add attachment").performClick()
+        compose.onNodeWithTag("assistant-panel-header").performTouchInput { swipeDown(durationMillis = 80) }
+        compose.onNodeWithTag("assistant-panel").assertDoesNotExist()
     }
 
     @Test

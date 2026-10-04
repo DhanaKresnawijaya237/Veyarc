@@ -101,10 +101,16 @@ class ChatRepository internal constructor(private val database: VeyarcDatabase, 
         previous?.let { runCatching { files.delete(it.encryptedFileName) } }
     }
 
-    fun delete(id: String) = synchronized(storageLock) {
-        val row = database.chatDao().find(id)
-        database.chatDao().delete(id)
-        row?.let { runCatching { files.delete(it.encryptedFileName) } }
+    fun delete(id: String) = delete(setOf(id))
+
+    fun delete(ids: Set<String>) = synchronized(storageLock) {
+        val rows = database.runInTransaction<List<ChatEntity>> {
+            val dao = database.chatDao()
+            val found = ids.mapNotNull(dao::find)
+            ids.forEach(dao::delete)
+            found
+        }
+        rows.forEach { runCatching { files.delete(it.encryptedFileName) } }
         runCatching { collectGarbage() }
     }
 

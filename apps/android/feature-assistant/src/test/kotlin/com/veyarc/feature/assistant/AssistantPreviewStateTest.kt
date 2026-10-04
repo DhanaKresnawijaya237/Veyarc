@@ -36,6 +36,38 @@ class AssistantPreviewStateTest {
     }
 
     @Test
+    fun historyActionsUseTheirTargetAndBatchDeletionStaysWithinTheWorkflow() {
+        val state = AssistantPreviewState()
+        state.open(AssistantPreviewContext("other"))
+        val other = state.selectedId!!
+        state.open(AssistantPreviewContext("current"))
+        state.compose("First")
+        state.send()
+        finish(state)
+        val first = state.selectedId!!
+        state.newChat()
+        state.compose("Keep this draft")
+        val current = state.selectedId!!
+        state.rename("Renamed", first)
+        state.togglePin(first)
+        state.rename("Forbidden", other)
+        state.togglePin(other)
+        assertEquals(current, state.selectedId)
+        assertEquals("Keep this draft", state.conversation!!.composer)
+        assertTrue(state.history.first { it.id == first }.pinned)
+        assertEquals("Renamed", state.history.first { it.id == first }.title)
+        assertEquals("New chat", state.conversations.first { it.id == other }.title)
+        assertFalse(state.conversations.first { it.id == other }.pinned)
+        state.deleteChats(setOf(first, other, "unknown"))
+        assertEquals(current, state.selectedId)
+        assertEquals(1, state.history.size)
+        assertTrue(state.conversations.any { it.id == other })
+        state.deleteChats(setOf(current))
+        assertNull(state.selectedId)
+        assertEquals(listOf(other), state.conversations.map { it.id })
+    }
+
+    @Test
     fun historyIsScopedAndClosingKeepsTheComposerWithoutResuming() {
         val state = AssistantPreviewState()
         val firstContext = AssistantPreviewContext("workflow-a", "Morning", 2)

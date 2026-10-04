@@ -343,16 +343,22 @@ class AssistantPreviewState(
         selectedId = id
     }
 
-    fun rename(title: String) {
+    fun rename(title: String, id: String? = selectedId) {
         if (!canChange || title.isBlank() || title.length > 80) return
-        update { it.copy(title = title.trim()) }
-        flush()
+        changeHistory(id) { it.copy(title = title.trim()) }
     }
 
-    fun togglePin() {
+    fun togglePin(id: String? = selectedId) {
         if (!canChange) return
-        update { it.copy(pinned = !it.pinned) }
-        flush()
+        changeHistory(id) { it.copy(pinned = !it.pinned) }
+    }
+
+    private fun changeHistory(id: String?, transform: (PreviewConversation) -> PreviewConversation) {
+        val chat = history.firstOrNull { it.id == id } ?: return
+        val changed = transform(chat).copy(updatedAtMs = maxOf(chat.updatedAtMs, System.currentTimeMillis()))
+        conversations = conversations.map { if (it.id == id) changed else it }
+        if (id == selectedId) draftSave?.cancel()
+        persist(changed)
     }
 
     fun canBranch(turn: PreviewTurn): Boolean = isOpen && canChange && !isResponding &&
@@ -412,19 +418,24 @@ class AssistantPreviewState(
     }
 
     fun deleteCurrent() {
+        selectedId?.let { deleteChats(setOf(it)) }
+    }
+
+    fun deleteChats(ids: Set<String>) {
         if (!canChange) return
-        stop(PreviewReplyStatus.INTERRUPTED)
-        val id = selectedId ?: return
+        val targets = history.map { it.id }.filter(ids::contains).toSet()
+        if (targets.isEmpty()) return
+        if (selectedId in targets) stop(PreviewReplyStatus.INTERRUPTED)
         fun removed() {
-            conversations = conversations.filterNot { it.id == id }
-            savedIds.remove(id)
-            selectedId = history.firstOrNull()?.id
+            conversations = conversations.filterNot { it.id in targets }
+            savedIds.removeAll(targets)
+            if (selectedId in targets) selectedId = history.firstOrNull()?.id
         }
         if (repository == null) {
             removed()
         } else {
             enqueue {
-                withContext(Dispatchers.IO) { repository.delete(id) }
+                withContext(Dispatchers.IO) { repository.delete(targets) }
                 removed()
             }
         }
