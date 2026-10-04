@@ -49,6 +49,7 @@ dependencies {
     implementation(project(":core-model"))
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.androidx.activity.compose)
+    implementation("androidx.exifinterface:exifinterface:1.4.2")
     implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.compose.material3)
