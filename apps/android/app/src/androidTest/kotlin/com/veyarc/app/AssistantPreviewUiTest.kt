@@ -441,6 +441,29 @@ class AssistantPreviewUiTest {
     }
 
     @Test
+    fun branchingKeepsLatestReplyVisibleOnTheFirstLayout() {
+        val state = AssistantPreviewState().apply {
+            open(AssistantPreviewContext())
+            repeat(8) { index ->
+                compose("Explain workflow $index")
+                send()
+                repeat(100) { requestId?.let(::advance) }
+            }
+        }
+        compose.setContent { VeyarcTheme(darkTheme = true) { AssistantPreviewScreen(state) } }
+        compose.onNodeWithTag("assistant-reply-actions-${state.conversation!!.turns.last().id}").assertIsDisplayed()
+        compose.mainClock.autoAdvance = false
+        compose.onNode(
+            androidx.compose.ui.test.hasContentDescription("Branch to new chat") and
+                hasAnyAncestor(hasTestTag("assistant-reply-actions-${state.conversation!!.turns.last().id}")),
+        ).performClick()
+        compose.mainClock.advanceTimeByFrame()
+        compose.waitForIdle()
+        compose.onNodeWithTag("assistant-reply-actions-${state.conversation!!.turns.last().id}").assertIsDisplayed()
+        compose.mainClock.autoAdvance = true
+    }
+
+    @Test
     fun replyBarBranchesAndFutureControlsStayHonest() {
         val state = AssistantPreviewState().apply {
             open(AssistantPreviewContext())

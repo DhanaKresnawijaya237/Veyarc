@@ -571,7 +571,9 @@ internal fun ChatMenuItem(
 @Composable
 private fun ConversationBody(state: AssistantPreviewState, onContext: (PreviewTurn) -> Unit, modifier: Modifier = Modifier) {
     val chat = state.conversation ?: return
-    val list = rememberLazyListState()
+    // The body is keyed by chat ID. Start at its footer so a fork never flashes the
+    // first exchange while waiting for the follow-latest effect's next frame.
+    val list = rememberLazyListState(initialFirstVisibleItemIndex = chat.turns.size)
     var followLatest by rememberFollowing(list)
     val scope = rememberCoroutineScope()
     val last = chat.turns.lastOrNull()
