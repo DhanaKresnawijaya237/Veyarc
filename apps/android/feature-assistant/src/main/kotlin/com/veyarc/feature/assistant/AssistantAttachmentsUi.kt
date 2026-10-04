@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -153,7 +154,7 @@ internal fun AttachmentStrip(attachments: List<AssistantAttachment>, importer: A
         items(attachments, key = { it.id }) { attachment ->
             Box(Modifier.animateItem()) {
                 Box {
-                    Surface(onClick = { onOpen(attachment) }, shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.testTag("attachment-${attachment.id}")) {
+                    Surface(onClick = { onOpen(attachment) }, shape = RoundedCornerShape(14.dp), color = if (attachment.kind == AttachmentKind.IMAGE) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainerHighest, modifier = Modifier.testTag("attachment-${attachment.id}")) {
                         if (attachment.kind == AttachmentKind.IMAGE) {
                             val image by produceState<Bitmap?>(null, attachment.id) {
                                 value = withContext(Dispatchers.IO) { runCatching { importer?.preview(attachment) }.getOrNull() }
@@ -168,7 +169,7 @@ internal fun AttachmentStrip(attachments: List<AssistantAttachment>, importer: A
                         } else {
                             Row(Modifier.width(if (compact) 240.dp else 216.dp).height(if (compact) 72.dp else 80.dp).padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Icon(if (attachment.kind == AttachmentKind.PDF) Icons.Outlined.PictureAsPdf else Icons.Outlined.Description, null, Modifier.size(28.dp), tint = MaterialTheme.colorScheme.primary)
-                                Column(Modifier.weight(1f).padding(end = if (onRemove != null) 16.dp else 0.dp)) {
+                                Column(Modifier.weight(1f).padding(end = if (onRemove != null) 20.dp else 0.dp)) {
                                     Text(attachment.name, style = MaterialTheme.typography.bodyMedium, maxLines = if (compact) 1 else 2, overflow = TextOverflow.Ellipsis)
                                     Text(if (attachment.kind == AttachmentKind.PDF) "PDF · ${attachment.pageCount} pages" else "${if (attachment.isMarkdown) "Markdown" else attachment.name.substringAfterLast('.', "Text").uppercase()} · ${(attachment.byteCount + 1023) / 1024} KB", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
@@ -176,8 +177,11 @@ internal fun AttachmentStrip(attachments: List<AssistantAttachment>, importer: A
                         }
                     }
                     if (onRemove != null) {
-                        Surface(onClick = { onRemove(attachment.id) }, shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHighest, modifier = Modifier.align(Alignment.TopEnd).size(30.dp)) {
-                            Box(contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Close, "Remove ${attachment.name}", Modifier.size(17.dp)) }
+                        // Inset the badge while keeping its full touch target clear of the image's center.
+                        IconButton(onClick = { onRemove(attachment.id) }, modifier = Modifier.align(Alignment.TopEnd).size(48.dp).offset(x = 12.dp, y = (-12).dp)) {
+                            Surface(shape = CircleShape, color = MaterialTheme.colorScheme.scrim.copy(alpha = 0.8f), contentColor = Color.White, modifier = Modifier.size(24.dp).offset(x = (-6).dp, y = 6.dp)) {
+                                Box(contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Close, "Remove ${attachment.name}", Modifier.size(16.dp)) }
+                            }
                         }
                     }
                 }

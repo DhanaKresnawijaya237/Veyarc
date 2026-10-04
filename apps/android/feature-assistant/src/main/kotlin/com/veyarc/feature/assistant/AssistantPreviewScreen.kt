@@ -54,8 +54,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.CallSplit
-import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Check
@@ -76,11 +76,13 @@ import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -203,25 +205,28 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
     if (clearVisible) {
         AlertDialog(
             onDismissRequest = { clearVisible = false },
-            title = { Text("Clear chat history?") },
+            title = { Text("Clear chat history") },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = chatPanelColor(raised = true),
             text = {
-                Column(Modifier.selectableGroup()) {
+                Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(true to "This workflow", false to "All chats").forEach { (workflowOnly, label) ->
                         val enabled = !workflowOnly || (state.context.workflowId != null && !state.loadFailed)
-                        Row(
-                            Modifier.fillMaxWidth().selectable(selected = clearWorkflowOnly == workflowOnly, enabled = enabled, role = Role.RadioButton, onClick = { clearWorkflowOnly = workflowOnly }).padding(vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            RadioButton(selected = clearWorkflowOnly == workflowOnly, onClick = null, enabled = enabled)
-                            Text(label, color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+                        Surface(shape = RoundedCornerShape(14.dp), color = if (clearWorkflowOnly == workflowOnly) MaterialTheme.colorScheme.surfaceContainerHighest else MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.fillMaxWidth().selectable(selected = clearWorkflowOnly == workflowOnly, enabled = enabled, role = Role.RadioButton, onClick = { clearWorkflowOnly = workflowOnly }, interactionSource = null, indication = null)) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                RadioButton(selected = clearWorkflowOnly == workflowOnly, onClick = null, enabled = enabled)
+                                Text(label, color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
-                    Text("Removes messages and drafts. Keeps workflows.", style = MaterialTheme.typography.bodySmall)
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
+                FilledTonalButton(colors = ButtonDefaults.filledTonalButtonColors(containerColor = MaterialTheme.colorScheme.errorContainer, contentColor = MaterialTheme.colorScheme.onErrorContainer), onClick = {
                     state.clearHistory(workflowOnly = clearWorkflowOnly)
                     clearVisible = false
                 }) { Text("Clear history") }
@@ -314,10 +319,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
                 if (!tightWindow) {
                     Row(Modifier.fillMaxWidth().testTag("assistant-header"), verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = ::leave) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to editor") }
-                        Column(Modifier.weight(1f)) {
-                            Text(chat.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(if (state.usesProvider) "DeepSeek" else "Sample chat", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
+                        Text(chat.title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         IconButton(onClick = state::newChat, enabled = state.canChange) { Icon(Icons.Outlined.Add, "New chat") }
                         Box {
                             IconButton(onClick = {
@@ -420,9 +422,6 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
                             }, if (state.canChange && !state.importingAttachments) state::removeAttachment else null, compact = shortWindow)
                             if (state.importingAttachments) LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 12.dp).testTag("attachment-import-progress"))
                             Row(verticalAlignment = Alignment.Bottom) {
-                                if (tightWindow) {
-                                    IconButton(onClick = ::leave) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to editor") }
-                                }
                                 TextField(
                                     value = chat.composer,
                                     onValueChange = state::compose,
@@ -431,7 +430,13 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
                                     supportingText = if (tightWindow && state.inputError != null) ({ Text(state.inputError!!) }) else null,
                                     placeholder = { Text("Message") },
                                     modifier = Modifier.weight(1f).testTag("assistant-composer"),
-                                    maxLines = if (shortWindow) 2 else 4,
+                                    maxLines = if (tightWindow) {
+                                        1
+                                    } else if (shortWindow) {
+                                        2
+                                    } else {
+                                        4
+                                    },
                                     colors = TextFieldDefaults.colors(
                                         focusedContainerColor = Color.Transparent,
                                         unfocusedContainerColor = Color.Transparent,
@@ -441,30 +446,25 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
                                         disabledIndicatorColor = Color.Transparent,
                                     ),
                                 )
-                                FilledIconButton(
-                                    modifier = Modifier.padding(bottom = 4.dp),
-                                    onClick = {
-                                        if (state.isResponding) state.stop() else state.send()
-                                    },
-                                    enabled = state.isResponding || state.canSend,
-                                ) {
-                                    if (state.isResponding) Icon(Icons.Outlined.StopCircle, "Stop response") else Icon(Icons.AutoMirrored.Outlined.Send, "Send message")
-                                }
                             }
-                            if (!tightWindow) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-                                        Surface(onClick = { composerSheet = "attachments" }, shape = CircleShape, color = chatControlColor(), modifier = Modifier.size(40.dp)) {
-                                            Box(contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Add, "Add attachment", Modifier.size(22.dp)) }
-                                        }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (tightWindow) {
+                                    IconButton(onClick = ::leave) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to editor") }
+                                }
+                                Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                                    Surface(onClick = { composerSheet = "attachments" }, shape = CircleShape, color = chatControlColor(), modifier = Modifier.size(40.dp)) {
+                                        Box(contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Add, "Add attachment", Modifier.size(22.dp)) }
                                     }
-                                    Surface(onClick = { composerSheet = "model" }, shape = CircleShape, color = chatControlColor(), modifier = Modifier.weight(1f, fill = false).testTag("assistant-model-picker")) {
+                                }
+                                Box(Modifier.weight(1f)) {
+                                    Surface(onClick = { composerSheet = "model" }, shape = CircleShape, color = chatControlColor(), modifier = Modifier.testTag("assistant-model-picker")) {
                                         Row(Modifier.heightIn(min = 40.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                             Text(if (state.usesProvider) state.selectedModel.label else "Sample", modifier = Modifier.weight(1f, fill = false), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             Text(chat.effort.label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                                         }
                                     }
                                 }
+                                ComposerSendButton(state)
                             }
                         }
                     }
@@ -788,8 +788,8 @@ private fun PreviewDialog(title: String, onDismiss: () -> Unit, content: @Compos
 
 @Composable
 internal fun chatPanelColor(raised: Boolean = false): Color {
-    val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-    return if (dark) Color(if (raised) 0xFF222222 else 0xFF141414) else Color(if (raised) 0xFFF0EFEB else 0xFFFAF9F6)
+    val colors = MaterialTheme.colorScheme
+    return if (raised) colors.surfaceContainerHigh else colors.surfaceContainerLow
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -808,10 +808,9 @@ fun AssistantPanel(title: String, onDismiss: () -> Unit, onBack: (() -> Unit)? =
     var closing by remember { mutableStateOf(false) }
     MaterialTheme(
         colorScheme = colors.copy(
-            surface = chatPanelColor(),
+            surface = colors.surfaceContainerLow,
             onSurface = if (dark) Color(0xFFF2F1EE) else Color(0xFF20201E),
             onSurfaceVariant = if (dark) Color(0xFFA3A39B) else Color(0xFF6D6D66),
-            primary = if (dark) Color(0xFFF2F1EE) else Color(0xFF20201E),
         ),
     ) {
         ModalBottomSheet(
@@ -823,7 +822,7 @@ fun AssistantPanel(title: String, onDismiss: () -> Unit, onBack: (() -> Unit)? =
             contentWindowInsets = { WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom) },
             dragHandle = null,
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            containerColor = MaterialTheme.colorScheme.surface,
+            containerColor = colors.surfaceContainerLow,
             tonalElevation = 0.dp,
             properties = ModalBottomSheetProperties(isAppearanceLightStatusBars = !dark, isAppearanceLightNavigationBars = !dark),
         ) {
@@ -1134,4 +1133,15 @@ private fun AttachmentTile(label: String, icon: androidx.compose.ui.graphics.vec
 }
 
 @Composable
-private fun chatControlColor(): Color = if (MaterialTheme.colorScheme.surface.luminance() < 0.5f) Color(0xFF333333) else Color(0xFFE4E3DF)
+private fun ComposerSendButton(state: AssistantPreviewState) {
+    FilledIconButton(
+        onClick = { if (state.isResponding) state.stop() else state.send() },
+        enabled = state.isResponding || state.canSend,
+        modifier = Modifier.testTag("assistant-send"),
+    ) {
+        if (state.isResponding) Icon(Icons.Outlined.StopCircle, "Stop response") else Icon(Icons.Outlined.ArrowUpward, "Send message")
+    }
+}
+
+@Composable
+private fun chatControlColor(): Color = MaterialTheme.colorScheme.surfaceContainerHighest
