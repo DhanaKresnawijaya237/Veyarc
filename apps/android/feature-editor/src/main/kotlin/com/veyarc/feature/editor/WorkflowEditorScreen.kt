@@ -28,6 +28,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -65,12 +66,13 @@ import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Apps
-import androidx.compose.material.icons.outlined.ArrowDropDown
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Loop
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Save
@@ -88,6 +90,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalRippleConfiguration
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -103,6 +106,7 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -123,10 +127,14 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LocalPinnableContainer
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -832,29 +840,55 @@ private fun EmptyWorkflowEditorScreen(
     onAskAi: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier.fillMaxSize()) {
-        Row(
-            modifier =
-            Modifier
-                .fillMaxWidth()
-                .padding(start = 20.dp, top = 20.dp, end = 20.dp)
-                .heightIn(min = 48.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            statusMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            Text("Workflow Editor", style = MaterialTheme.typography.headlineSmall)
-        }
-        Column(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Button(onClick = onCreate) { Text("New workflow") }
-            OutlinedButton(onClick = onOpenWorkflowManager) {
-                Text("Choose workflow")
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val compact = maxHeight < 420.dp
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, top = if (compact) 8.dp else 20.dp, end = 20.dp)
+                    .heightIn(min = 48.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Workflow Editor", style = MaterialTheme.typography.headlineSmall)
             }
-            if (onAskAi != null) {
-                OutlinedButton(onClick = onAskAi) { Text("Create with AI") }
-                Text("Review AI proposals before applying or saving.", style = MaterialTheme.typography.bodySmall)
+            Column(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Spacer(Modifier.height(12.dp))
+                Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                    Column(Modifier.fillMaxWidth().padding(if (compact) 16.dp else 24.dp), verticalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 16.dp)) {
+                        if (!compact) Icon(Icons.Outlined.Tune, null, Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
+                        Text("Build your next workflow", style = MaterialTheme.typography.titleLarge)
+                        Text("Start fresh or open a saved workflow.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        FlowRow(Modifier.fillMaxWidth(), maxItemsInEachRow = if (compact) 2 else 1, horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Button(onClick = onCreate, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                                Icon(Icons.Outlined.Add, null, Modifier.size(20.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("New workflow")
+                            }
+                            OutlinedButton(onClick = onOpenWorkflowManager, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                                Icon(Icons.Outlined.FolderOpen, null, Modifier.size(20.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Choose workflow")
+                            }
+                        }
+                    }
+                }
+                if (onAskAi != null) {
+                    Surface(onClick = onAskAi, shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                        Row(Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            Icon(Icons.Outlined.ChatBubbleOutline, null, tint = MaterialTheme.colorScheme.primary)
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("Create with AI", style = MaterialTheme.typography.titleMedium)
+                                Text("Describe what you want to automate.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+                statusMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         }
     }
@@ -1016,7 +1050,7 @@ private fun WorkflowTitleEditor(
         BasicTextField(
             value = draft.name,
             onValueChange = { onDraftChange(draft.copy(name = it)) },
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).testTag("workflow-title"),
             singleLine = true,
             textStyle = MaterialTheme.typography.headlineSmall.copy(color = MaterialTheme.colorScheme.onSurface),
             decorationBox = { field ->
@@ -1027,7 +1061,11 @@ private fun WorkflowTitleEditor(
             },
         )
         if (onAskAi != null) {
-            IconButton(onClick = onAskAi) { Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = "Ask AI") }
+            Surface(onClick = onAskAi, shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = "Ask AI", tint = MaterialTheme.colorScheme.primary)
+                }
+            }
         }
     }
 }
@@ -1216,31 +1254,21 @@ private fun WorkflowDraftCanvas(
     val horizontalPadding = 16.dp
     val verticalPadding = 12.dp
     val itemSpacing = 12.dp
-    Column(modifier = modifier) {
-        if (!scrollHeader) {
-            EditorToolbar(
-                draft = draft,
-                session = session,
-                validation = validation,
-                validationState = validationState,
-                isBusy = isBusy,
-                onDraftChange = onDraftChange,
-                onSave = onSave,
-                onRun = onRun,
-                onValidate = onValidate,
-                revisions = revisions,
-                onOpenRevision = onOpenRevision,
-                modifier = Modifier.padding(horizontal = horizontalPadding, vertical = verticalPadding),
-            )
-        }
+    val density = LocalDensity.current
+    var toolbarHeight by remember(density) { mutableIntStateOf(with(density) { 140.dp.roundToPx() }) }
+    Box(modifier = modifier) {
         LazyColumn(
             state = scrollState,
-            modifier = Modifier.weight(1f).onGloballyPositioned {
-                stepDragCoordinator.updatePipeline(root, it.boundsInWindow(), draft)
+            modifier = Modifier.fillMaxSize().onGloballyPositioned {
+                val bounds = it.boundsInWindow()
+                // The floating toolbar covers the top of the list; drag scrolling uses the visible area.
+                val visible = if (scrollHeader) bounds else bounds.copy(top = minOf(bounds.bottom, bounds.top + toolbarHeight))
+                stepDragCoordinator.updatePipeline(root, visible, draft)
             }.testTag("workflow-block-list"),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(
                 start = horizontalPadding,
                 end = horizontalPadding,
+                top = if (scrollHeader) 0.dp else with(density) { toolbarHeight.toDp() },
                 bottom = verticalPadding,
             ),
             verticalArrangement = Arrangement.spacedBy(itemSpacing),
@@ -1299,9 +1327,10 @@ private fun WorkflowDraftCanvas(
                         },
                         onRenameTemplate = { assetId, name -> onDraftChange(draft.renameAsset(assetId, name)) },
                     )
-                    HorizontalDivider()
-                    Text("Execution", style = MaterialTheme.typography.titleLarge)
-                    Text("Start", style = MaterialTheme.typography.titleMedium)
+                    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Execution", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                        Text("${draft.steps.size} blocks", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
             if (draft.steps.isEmpty()) {
@@ -1330,6 +1359,23 @@ private fun WorkflowDraftCanvas(
                 statusMessage?.let { message -> Text(message, color = MaterialTheme.colorScheme.primary) }
             }
         }
+        if (!scrollHeader) {
+            EditorToolbar(
+                draft = draft,
+                session = session,
+                validation = validation,
+                validationState = validationState,
+                isBusy = isBusy,
+                onDraftChange = onDraftChange,
+                onSave = onSave,
+                onRun = onRun,
+                onValidate = onValidate,
+                revisions = revisions,
+                onOpenRevision = onOpenRevision,
+                modifier = Modifier.align(Alignment.TopCenter).onSizeChanged { toolbarHeight = it.height }
+                    .padding(horizontal = horizontalPadding, vertical = verticalPadding),
+            )
+        }
     }
 }
 
@@ -1350,116 +1396,119 @@ private fun EditorToolbar(
 ) {
     var validationDetailsVisible by remember { mutableStateOf(false) }
     val clipboard = LocalBlockClipboardActions.current
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Surface(
-                modifier = Modifier.height(48.dp),
-                onClick = {
-                    val viewport = draft.viewport
-                    val orientation = if (viewport.recordedOrientation == DisplayOrientation.PORTRAIT) {
-                        DisplayOrientation.LANDSCAPE
-                    } else {
-                        DisplayOrientation.PORTRAIT
-                    }
-                    onDraftChange(
-                        draft.copy(
-                            viewport = viewport.copy(
-                                recordedWidthPx = viewport.recordedHeightPx,
-                                recordedHeightPx = viewport.recordedWidthPx,
-                                recordedOrientation = orientation,
-                            ),
-                        ),
-                    )
-                },
-                enabled = !isBusy,
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.secondaryContainer,
+    Surface(modifier = modifier.testTag("workflow-toolbar"), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.92f), tonalElevation = 0.dp) {
+        Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                Surface(
+                    modifier = Modifier.height(48.dp),
+                    onClick = {
+                        val viewport = draft.viewport
+                        val orientation = if (viewport.recordedOrientation == DisplayOrientation.PORTRAIT) {
+                            DisplayOrientation.LANDSCAPE
+                        } else {
+                            DisplayOrientation.PORTRAIT
+                        }
+                        onDraftChange(
+                            draft.copy(
+                                viewport = viewport.copy(
+                                    recordedWidthPx = viewport.recordedHeightPx,
+                                    recordedHeightPx = viewport.recordedWidthPx,
+                                    recordedOrientation = orientation,
+                                ),
+                            ),
+                        )
+                    },
+                    enabled = !isBusy,
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Icon(
+                            Icons.Outlined.ScreenRotation,
+                            contentDescription = "Switch workflow orientation",
+                            modifier = Modifier.size(24.dp),
+                        )
+                        Text(
+                            if (draft.viewport.recordedOrientation == DisplayOrientation.PORTRAIT) "Portrait" else "Landscape",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                    }
+                }
+                RevisionSelector(
+                    currentRevision = draft.lastSavedRevision,
+                    dirty = session.isDirty,
+                    revisions = revisions,
+                    onOpenRevision = onOpenRevision,
+                    modifier = Modifier.weight(1f).height(48.dp),
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
+                    IconButton(onClick = session::undo, enabled = session.canUndo && !isBusy) {
+                        Icon(Icons.AutoMirrored.Outlined.Undo, contentDescription = "Undo")
+                    }
+                    IconButton(onClick = session::redo, enabled = session.canRedo && !isBusy) {
+                        Icon(Icons.AutoMirrored.Outlined.Redo, contentDescription = "Redo")
+                    }
+                    IconButton(onClick = { clipboard?.onToggleSelectionMode?.invoke() }, enabled = !isBusy) {
+                        Icon(
+                            Icons.Outlined.SelectAll,
+                            contentDescription = if (clipboard?.selectionMode == true) "Leave block selection" else "Select blocks to copy",
+                            tint = if (clipboard?.selectionMode == true) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                    IconButton(
+                        onClick = { clipboard?.onCopy?.invoke() },
+                        enabled = !isBusy && clipboard?.canCopy == true,
+                    ) { Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy selected blocks") }
+                }
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .combinedClickable(
+                            enabled = !isBusy,
+                            onClick = onValidate,
+                            onLongClick = {
+                                if (validation.issues.isNotEmpty()) validationDetailsVisible = true
+                            },
+                        ),
+                    contentAlignment = Alignment.Center,
                 ) {
                     Icon(
-                        Icons.Outlined.ScreenRotation,
-                        contentDescription = "Switch workflow orientation",
-                        modifier = Modifier.size(24.dp),
-                    )
-                    Text(
-                        if (draft.viewport.recordedOrientation == DisplayOrientation.PORTRAIT) "Portrait" else "Landscape",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        Icons.Outlined.CheckCircle,
+                        contentDescription = "Validate workflow. Long press for failure details",
+                        tint = when (validationState) {
+                            true -> MaterialTheme.colorScheme.primary
+                            false -> MaterialTheme.colorScheme.error
+                            null -> MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                     )
                 }
-            }
-            RevisionSelector(
-                currentRevision = draft.lastSavedRevision,
-                dirty = session.isDirty,
-                revisions = revisions,
-                onOpenRevision = onOpenRevision,
-                modifier = Modifier.weight(1f).height(48.dp),
-            )
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = session::undo, enabled = session.canUndo && !isBusy) {
-                Icon(Icons.AutoMirrored.Outlined.Undo, contentDescription = "Undo")
-            }
-            IconButton(onClick = session::redo, enabled = session.canRedo && !isBusy) {
-                Icon(Icons.AutoMirrored.Outlined.Redo, contentDescription = "Redo")
-            }
-            IconButton(onClick = { clipboard?.onToggleSelectionMode?.invoke() }, enabled = !isBusy) {
-                Icon(
-                    Icons.Outlined.SelectAll,
-                    contentDescription = if (clipboard?.selectionMode == true) "Leave block selection" else "Select blocks to copy",
-                    tint = if (clipboard?.selectionMode == true) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                )
-            }
-            IconButton(
-                onClick = { clipboard?.onCopy?.invoke() },
-                enabled = !isBusy && clipboard?.canCopy == true,
-            ) { Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy selected blocks") }
-            Spacer(Modifier.weight(1f))
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .combinedClickable(
-                        enabled = !isBusy,
-                        onClick = onValidate,
-                        onLongClick = {
-                            if (validation.issues.isNotEmpty()) validationDetailsVisible = true
-                        },
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Outlined.CheckCircle,
-                    contentDescription = "Validate workflow. Long press for failure details",
-                    tint = when (validationState) {
-                        true -> MaterialTheme.colorScheme.primary
-                        false -> MaterialTheme.colorScheme.error
-                        null -> MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
-            }
-            IconButton(
-                onClick = onRun,
-                enabled = !isBusy && validation.document != null,
-            ) { Icon(Icons.Outlined.PlayArrow, contentDescription = "Run workflow") }
-            IconButton(
-                onClick = onSave,
-                enabled = !isBusy && validation.document != null && (session.isDirty || session.requiresRevisionSave),
-            ) {
-                if (isBusy) {
-                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                } else {
-                    Icon(Icons.Outlined.Save, contentDescription = "Save revision ${draft.nextRevision}")
+                IconButton(
+                    onClick = onRun,
+                    enabled = !isBusy && validation.document != null,
+                ) { Icon(Icons.Outlined.PlayArrow, contentDescription = "Run workflow") }
+                IconButton(
+                    onClick = onSave,
+                    enabled = !isBusy && validation.document != null && (session.isDirty || session.requiresRevisionSave),
+                ) {
+                    if (isBusy) {
+                        CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Outlined.Save, contentDescription = "Save revision ${draft.nextRevision}")
+                    }
                 }
             }
         }
@@ -1502,21 +1551,16 @@ private fun RevisionSelector(
     var expanded by remember { mutableStateOf(false) }
     Box(modifier) {
         Surface(
-            modifier = Modifier.fillMaxSize(),
+            onClick = { expanded = !expanded },
+            enabled = revisions.isNotEmpty(),
+            modifier = Modifier.fillMaxSize().semantics { contentDescription = "Choose workflow revision" },
             shape = RoundedCornerShape(10.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
         ) {
-            Row(modifier = Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
                 Text(
                     currentRevision?.let { "Revision $it" + if (dirty) " •" else "" } ?: "Unsaved",
-                    modifier = Modifier.weight(1f).padding(start = 12.dp, top = 8.dp, bottom = 8.dp),
                 )
-                IconButton(
-                    onClick = { expanded = !expanded },
-                    enabled = revisions.isNotEmpty(),
-                ) {
-                    Icon(Icons.Outlined.ArrowDropDown, contentDescription = "Choose workflow revision")
-                }
             }
         }
         if (expanded) {
@@ -1543,21 +1587,10 @@ private fun AllowedApplications(
     val context = LocalContext.current
     val packageNames = remember(packages) { packages.packageNames() }
     var expanded by rememberSaveable { mutableStateOf(true) }
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("Allowed apps", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-            IconButton(onClick = onPickApplication) {
-                Icon(Icons.Outlined.Add, contentDescription = "Add allowed app")
-            }
-        }
-        AnimatedVisibility(
-            visible = expanded,
-            enter = fadeIn(tween(120)) + expandVertically(tween(120)),
-            exit = fadeOut(tween(100)) + shrinkVertically(tween(100)),
-        ) {
+    EditorSetupSection("Allowed apps", Icons.Outlined.Apps, expanded, { expanded = !expanded }, onPickApplication, "Add allowed app") {
+        if (packageNames.isEmpty()) {
+            Text("No apps added.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(18.dp),
@@ -1646,56 +1679,36 @@ private fun TemplateAssetSection(
 ) {
     var expanded by remember { mutableStateOf(true) }
     var renameTarget by remember { mutableStateOf<com.veyarc.model.AssetId?>(null) }
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("Image templates", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-            IconButton(onClick = onAddTemplate) {
-                Icon(Icons.Outlined.Add, contentDescription = "Add image template")
-            }
-        }
-        AnimatedVisibility(
-            visible = expanded,
-            enter = fadeIn(tween(120)) + expandVertically(tween(120)),
-            exit = fadeOut(tween(100)) + shrinkVertically(tween(100)),
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    "Templates are encrypted with Android Keystore before they enter the workflow bundle.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (assets.isEmpty()) {
-                    Text("No templates added yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                } else {
-                    assets.forEachIndexed { index, asset ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth().clickable { renameTarget = asset.assetId },
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    assetNames[asset.assetId.value] ?: "Template ${index + 1}",
-                                    color = if (asset.assetId.value in referencedAssetIds) {
-                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.82f)
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurface
-                                    },
-                                )
-                                Text(
-                                    listOfNotNull(
-                                        asset.mimeType,
-                                        asset.widthPx?.let { width -> asset.heightPx?.let { height -> "$width×$height" } },
-                                    ).joinToString(" · "),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            IconButton(onClick = { onRemoveTemplate(asset.assetId) }) {
-                                Icon(Icons.Outlined.Delete, contentDescription = "Remove image template")
-                            }
+    EditorSetupSection("Image templates", Icons.Outlined.Image, expanded, { expanded = !expanded }, onAddTemplate, "Add image template") {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (assets.isEmpty()) {
+                Text("No templates added.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                assets.forEachIndexed { index, asset ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { renameTarget = asset.assetId },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                assetNames[asset.assetId.value] ?: "Template ${index + 1}",
+                                color = if (asset.assetId.value in referencedAssetIds) {
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.82f)
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                            )
+                            Text(
+                                listOfNotNull(
+                                    asset.mimeType,
+                                    asset.widthPx?.let { width -> asset.heightPx?.let { height -> "$width×$height" } },
+                                ).joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        IconButton(onClick = { onRemoveTemplate(asset.assetId) }) {
+                            Icon(Icons.Outlined.Delete, contentDescription = "Remove image template")
                         }
                     }
                 }
@@ -1731,6 +1744,32 @@ private fun TemplateAssetSection(
             },
             dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("Cancel") } },
         )
+    }
+}
+
+@Composable
+private fun EditorSetupSection(
+    title: String,
+    icon: ImageVector,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onAdd: () -> Unit,
+    addDescription: String,
+    content: @Composable () -> Unit,
+) {
+    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.weight(1f).heightIn(min = 48.dp).clickable(interactionSource = null, indication = null, onClick = onToggle), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Icon(icon, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                }
+                IconButton(onClick = onAdd) { Icon(Icons.Outlined.Add, addDescription, tint = MaterialTheme.colorScheme.primary) }
+            }
+            AnimatedVisibility(expanded, enter = fadeIn(tween(120)) + expandVertically(tween(120)), exit = fadeOut(tween(100)) + shrinkVertically(tween(100))) {
+                Box(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 12.dp)) { content() }
+            }
+        }
     }
 }
 
@@ -1820,63 +1859,65 @@ private fun StepEditorItem(
         else -> 0f
     }
     val animatedShift by animateFloatAsState(neighborShift, tween(100), label = "block insertion")
-    Box(Modifier.testTag("workflow-block-${step.id}")) {
-        StepCard(
-            draft = draft,
-            path = path,
-            index = index,
-            step = step,
-            validation = validation,
-            issues = validation.issues.filter { issue ->
-                issue.path == issuePrefix || issue.path.startsWith("$issuePrefix/")
-            },
-            selection = selection,
-            showInlineInspector = showInlineInspector,
-            onSelectionChange = onSelectionChange,
-            onDraftChange = onDraftChange,
-            onEditGeometry = onEditGeometry,
-            onEditCondition = onEditCondition,
-            dragCoordinator = dragCoordinator,
-            translationY = when {
-                step.id == activeDrag?.stepId -> dragCoordinator.dragOffsetY
-                activeDrag != null -> animatedShift
-                else -> 0f
-            },
-            dragging = step.id == activeDrag?.stepId,
-            onMeasured = { dragCoordinator.updateStep(path, step.id, it, draft) },
-            onDragStart = { initialPointerY ->
-                onSelectionChange(BlockSelection(path, step.id))
-                dragCoordinator.start(path, step.id, initialPointerY, draft)
-            },
-            onDrag = { delta ->
-                dragCoordinator.drag(delta, draft)
-            },
-            onDragFinished = { commit ->
-                val source = dragCoordinator.source
-                val target = dragCoordinator.target
-                if (commit && source != null && target != null) {
-                    val from = draft.stepsAt(source.path).indexOfFirst { it.id == source.stepId }
-                    if (from >= 0) {
-                        val moved = draft.moveStepTo(source.path, from, target.path, target.index)
-                        if (moved != draft) {
-                            onDraftChange(moved)
-                            onSelectionChange(BlockSelection(target.path, source.stepId))
+    CompositionLocalProvider(LocalRippleConfiguration provides null) {
+        Box(Modifier.testTag("workflow-block-${step.id}")) {
+            StepCard(
+                draft = draft,
+                path = path,
+                index = index,
+                step = step,
+                validation = validation,
+                issues = validation.issues.filter { issue ->
+                    issue.path == issuePrefix || issue.path.startsWith("$issuePrefix/")
+                },
+                selection = selection,
+                showInlineInspector = showInlineInspector,
+                onSelectionChange = onSelectionChange,
+                onDraftChange = onDraftChange,
+                onEditGeometry = onEditGeometry,
+                onEditCondition = onEditCondition,
+                dragCoordinator = dragCoordinator,
+                translationY = when {
+                    step.id == activeDrag?.stepId -> dragCoordinator.dragOffsetY
+                    activeDrag != null -> animatedShift
+                    else -> 0f
+                },
+                dragging = step.id == activeDrag?.stepId,
+                onMeasured = { dragCoordinator.updateStep(path, step.id, it, draft) },
+                onDragStart = { initialPointerY ->
+                    onSelectionChange(BlockSelection(path, step.id))
+                    dragCoordinator.start(path, step.id, initialPointerY, draft)
+                },
+                onDrag = { delta ->
+                    dragCoordinator.drag(delta, draft)
+                },
+                onDragFinished = { commit ->
+                    val source = dragCoordinator.source
+                    val target = dragCoordinator.target
+                    if (commit && source != null && target != null) {
+                        val from = draft.stepsAt(source.path).indexOfFirst { it.id == source.stepId }
+                        if (from >= 0) {
+                            val moved = draft.moveStepTo(source.path, from, target.path, target.index)
+                            if (moved != draft) {
+                                onDraftChange(moved)
+                                onSelectionChange(BlockSelection(target.path, source.stepId))
+                            }
                         }
                     }
-                }
-                dragCoordinator.end()
-            },
-            onInsertAfter = { kind ->
-                onDraftChange(
-                    draft.insertStep(
-                        path,
-                        index + 1,
-                        kind,
-                        draft.allowedPackagesText.firstPackageOrDefault(),
-                    ),
-                )
-            },
-        )
+                    dragCoordinator.end()
+                },
+                onInsertAfter = { kind ->
+                    onDraftChange(
+                        draft.insertStep(
+                            path,
+                            index + 1,
+                            kind,
+                            draft.allowedPackagesText.firstPackageOrDefault(),
+                        ),
+                    )
+                },
+            )
+        }
     }
 }
 
@@ -2005,7 +2046,6 @@ private fun StepCard(
         ) {
             Column(
                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Row(
                     modifier = Modifier
@@ -2075,35 +2115,37 @@ private fun StepCard(
                         }
                     }
                 }
-                if (expanded) {
-                    EditableStepSummary(draft, path, index, step, onDraftChange)
-                    issues.forEach { issue ->
-                        Text(issue.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                    }
-                    if (showInlineInspector) {
-                        StepEditorFields(
+                AnimatedVisibility(expanded, enter = expandVertically(tween(140)) + fadeIn(tween(90)), exit = shrinkVertically(tween(120)) + fadeOut(tween(70))) {
+                    Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        EditableStepSummary(draft, path, index, step, onDraftChange)
+                        issues.forEach { issue ->
+                            Text(issue.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                        }
+                        if (showInlineInspector) {
+                            StepEditorFields(
+                                draft = draft,
+                                path = path,
+                                index = index,
+                                step = step,
+                                onDraftChange = onDraftChange,
+                                onEditGeometry = onEditGeometry,
+                                onEditCondition = onEditCondition,
+                            )
+                        }
+                        NestedStepLists(
                             draft = draft,
                             path = path,
-                            index = index,
                             step = step,
+                            validation = validation,
+                            selection = selection,
+                            showInlineInspector = showInlineInspector,
+                            onSelectionChange = onSelectionChange,
                             onDraftChange = onDraftChange,
                             onEditGeometry = onEditGeometry,
                             onEditCondition = onEditCondition,
+                            dragCoordinator = dragCoordinator,
                         )
                     }
-                    NestedStepLists(
-                        draft = draft,
-                        path = path,
-                        step = step,
-                        validation = validation,
-                        selection = selection,
-                        showInlineInspector = showInlineInspector,
-                        onSelectionChange = onSelectionChange,
-                        onDraftChange = onDraftChange,
-                        onEditGeometry = onEditGeometry,
-                        onEditCondition = onEditCondition,
-                        dragCoordinator = dragCoordinator,
-                    )
                 }
             }
         }
