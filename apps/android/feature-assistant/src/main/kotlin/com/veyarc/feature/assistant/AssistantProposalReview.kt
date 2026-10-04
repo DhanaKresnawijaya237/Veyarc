@@ -27,7 +27,8 @@ object AssistantProposalReview {
 
     fun changes(base: AssistantContextSnapshot, proposal: AssistantProposalCheck): List<AssistantValueChange> {
         require(proposal.isValid)
-        val before = WorkflowJson.format.parseToJsonElement(WorkflowJson.encode(AssistantCandidateValidator.baseDocument(base))).jsonObject
+        val draft = AssistantCandidateValidator.baseDraft(base)
+        val before = WorkflowJson.format.parseToJsonElement(WorkflowJson.encodeCanonical(AssistantDraftContext.serializer(), draft.copy(name = draft.name.trim()))).jsonObject
         val after = WorkflowJson.format.parseToJsonElement(requireNotNull(proposal.candidateJson)).jsonObject
         return buildList {
             values("Workflow name", before["name"], after["name"], this)

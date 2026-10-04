@@ -19,6 +19,25 @@ class AssistantDraftBridgeTest {
     private fun editor() = WorkflowEditorSession().apply { open(WorkflowDraft.newDefault().buildBundle().bundle!!, "private-journal") }
 
     @Test
+    fun unfinishedNameAndStepsCanBeRepairedInOneReviewedUndoableChange() {
+        val editor = editor()
+        val valid = editor.draft!!.buildBundle().document!!
+        val unfinished = editor.draft!!.copy(name = "", steps = emptyList())
+        editor.update(unfinished)
+        assertTrue(editor.draft!!.buildBundle().document == null)
+        val bridge = AssistantDraftBridge(editor)
+        val capture = bridge.capture()
+        val candidate = valid.copy(name = "Wait a minute", steps = listOf(com.veyarc.model.Wait(java.util.UUID.randomUUID().toString(), com.veyarc.model.DurationMillis(60_000))))
+        assertTrue(bridge.apply(capture.localBindingId!!, capture.snapshot!!, WorkflowJson.encode(candidate)))
+        assertEquals(candidate.name, editor.draft!!.name)
+        assertEquals(candidate.steps, editor.draft!!.steps)
+        assertEquals(unfinished.lastSavedRevision, editor.draft!!.lastSavedRevision)
+        assertEquals(unfinished.allowedPackagesText, editor.draft!!.allowedPackagesText)
+        editor.undo()
+        assertEquals(unfinished, editor.draft)
+    }
+
+    @Test
     fun branchingNeverCopiesApplyAuthorityAndRegenerationRequiresFreshReview() {
         val editor = editor()
         val before = editor.draft

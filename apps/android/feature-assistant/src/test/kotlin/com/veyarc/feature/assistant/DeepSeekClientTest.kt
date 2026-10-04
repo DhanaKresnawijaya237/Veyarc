@@ -128,7 +128,7 @@ class DeepSeekClientTest {
         assertEquals(JsonPrimitive(64), nameSchema.getValue("maxLength"))
         val current = Json.parseToJsonElement(messages.last().jsonObject.getValue("content").jsonPrimitive.content).jsonObject
         assertEquals(JsonNull, current["snapshot"])
-        assertEquals(JsonPrimitive(false), current["proposalAllowed"])
+        assertFalse(current.containsKey("proposalAllowed"))
     }
 
     @Test
@@ -150,7 +150,7 @@ class DeepSeekClientTest {
         assertEquals("Explanation", messages[2].jsonObject.getValue("content").jsonPrimitive.content)
         val current = Json.parseToJsonElement(messages.last().jsonObject.getValue("content").jsonPrimitive.content).jsonObject
         assertEquals(JsonPrimitive(6), current["expectedRevision"])
-        assertEquals(JsonPrimitive(true), current["proposalAllowed"])
+        assertFalse(current.containsKey("proposalAllowed"))
         assertEquals(AssistantWireWorkflow.snapshot(snapshot), current["snapshot"])
         val limits = current.getValue("snapshot").jsonObject.getValue("runLimits").jsonObject
         assertEquals(setOf("maxLoopIterations", "maxNestingDepth", "maxPathPoints"), limits.keys)

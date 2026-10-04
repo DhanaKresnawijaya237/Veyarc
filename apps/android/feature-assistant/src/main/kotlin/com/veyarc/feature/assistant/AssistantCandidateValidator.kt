@@ -38,9 +38,12 @@ object AssistantCandidateValidator {
         if (snapshot == null) return invalid("A valid captured workflow is required. Supply the missing workflow details first.")
         if (compileIssues == null) return invalid("Local compiler validation is unavailable.")
         val base = try {
-            baseDocument(snapshot)
+            baseDraft(snapshot).also {
+                expectedRevision(it)
+                allowedPackages(it)
+            }
         } catch (_: Exception) {
-            return invalid("The captured draft is invalid. Correct it in the editor and send a new request.")
+            return invalid("The workflow context could not be read. Reopen the workflow and try again.")
         }
         val candidate = try {
             require(candidateJson.toByteArray(Charsets.UTF_8).size <= MAX_CANDIDATE_BYTES)
@@ -73,12 +76,12 @@ object AssistantCandidateValidator {
             return invalid("The proposed image must come from a photo you attached, with a unique name and a valid crop.")
         }
         val locked = buildList {
-            if (candidate.id != base.id) add("workflow identity")
+            if (candidate.id != base.workflowId) add("workflow identity")
             if (candidate.schemaVersion != base.schemaVersion) add("schema version")
-            if (candidate.revision != base.revision) add("revision")
+            if (candidate.revision != expectedRevision(base)) add("revision")
             if (candidate.viewport != base.viewport) add("viewport and orientation")
             if (candidate.runLimits != base.runLimits) add("run limits")
-            if (candidate.allowedPackages.sortedBy { it.value } != base.allowedPackages.sortedBy { it.value }) add("allowed packages")
+            if (candidate.allowedPackages.sortedBy { it.value } != allowedPackages(base).sortedBy { it.value }) add("allowed packages")
             if (candidate.assets.sortedBy { it.assetId.value } != (base.assets + imageReferences).sortedBy { it.assetId.value }) add("image catalog")
         }
         if (locked.isNotEmpty()) return invalid("Candidate changed locked fields: ${locked.joinToString()}. Change these in the editor first.")
@@ -106,18 +109,20 @@ object AssistantCandidateValidator {
         }
     }
 
-    internal fun baseDocument(snapshot: AssistantContextSnapshot): WorkflowDocument {
+    internal fun baseDraft(snapshot: AssistantContextSnapshot): AssistantDraftContext {
         snapshot.validate()
-        val draft = WorkflowJson.decodeStrict(AssistantDraftContext.serializer(), snapshot.json)
-        require(draft.name.isNotBlank() && draft.name.length <= 128)
-        val revision = Math.addExact(maxOf(draft.lastSavedRevision ?: 0, draft.latestKnownRevision ?: 0), 1)
-        val document = WorkflowDocument(
-            draft.schemaVersion, draft.workflowId, revision, draft.name.trim(),
-            draft.allowedPackagesText.split(',', '\n', ' ', '\t').map(String::trim).filter(String::isNotEmpty).distinct().map(::PackageName),
+        return WorkflowJson.decodeStrict(AssistantDraftContext.serializer(), snapshot.json)
+    }
+
+    internal fun expectedRevision(draft: AssistantDraftContext): Int = Math.addExact(maxOf(draft.lastSavedRevision ?: 0, draft.latestKnownRevision ?: 0), 1)
+    private fun allowedPackages(draft: AssistantDraftContext): List<PackageName> = draft.allowedPackagesText.split(',', '\n', ' ', '\t').map(String::trim).filter(String::isNotEmpty).distinct().map(::PackageName)
+
+    internal fun baseDocument(snapshot: AssistantContextSnapshot): WorkflowDocument {
+        val draft = baseDraft(snapshot)
+        return WorkflowDocument(
+            draft.schemaVersion, draft.workflowId, expectedRevision(draft), draft.name.trim(), allowedPackages(draft),
             draft.viewport, draft.runLimits, draft.variables, draft.assets, draft.steps,
         )
-        require(WorkflowValidator.validate(document).isEmpty())
-        return document
     }
 
     private fun checkPrimitiveTypes(input: JsonElement, decoded: JsonElement) {

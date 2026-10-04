@@ -60,7 +60,7 @@ class AssistantCandidateValidationTest {
     }
 
     @Test
-    fun rejectsLockedFieldsInvalidBaseAndMissingCompiler() {
+    fun protectsLockedFieldsAndCompilerWhileAllowingNameRepairs() {
         listOf(
             base.copy(id = id()),
             base.copy(schemaVersion = 2),
@@ -70,7 +70,7 @@ class AssistantCandidateValidationTest {
             base.copy(viewport = base.viewport.copy(recordedWidthPx = base.viewport.recordedWidthPx + 1)),
             base.copy(assets = listOf(AssetReference(AssetId("new_image"), AssetKind.IMAGE_TEMPLATE))),
         ).forEach { assertFalse("Locked candidate accepted: $it", validate(it).isValid) }
-        assertFalse(validate(base, draft.copy(name = "")).isValid)
+        assertTrue(validate(base, draft.copy(name = "")).isValid)
         assertFalse(validate(base, draft.copy(allowedPackagesText = "not a package")).isValid)
         assertFalse(AssistantCandidateValidator.validate(null, WorkflowJson.encode(base), ::assistantCompilationIssues).isValid)
         assertFalse(AssistantCandidateValidator.validate(draft.captureAssistantContext().snapshot, WorkflowJson.encode(base), null).isValid)

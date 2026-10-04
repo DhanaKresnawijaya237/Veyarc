@@ -68,14 +68,13 @@ class DeepSeekRequest private constructor(
             require(prompt.isNotBlank() && prompt.length <= AssistantPreviewState.MAX_PROMPT_LENGTH)
             snapshot?.validate()
             require(snapshot == null || snapshot.snapshotId == baseSnapshotId)
-            val base = snapshot?.let { runCatching { AssistantCandidateValidator.baseDocument(it) }.getOrNull() }
+            val base = snapshot?.let(AssistantCandidateValidator::baseDraft)
             val current = buildJsonObject {
                 put("requestId", requestId)
                 put("conversationId", conversationId)
                 put("baseSnapshotId", baseSnapshotId)
                 put("prompt", prompt)
-                put("expectedRevision", base?.revision?.let(::JsonPrimitive) ?: JsonNull)
-                put("proposalAllowed", base != null)
+                put("expectedRevision", base?.let(AssistantCandidateValidator::expectedRevision)?.let(::JsonPrimitive) ?: JsonNull)
                 put("snapshot", snapshot?.let(AssistantWireWorkflow::snapshot) ?: JsonNull)
             }
             require(model == DeepSeekModel.FLASH || (attachments + history.flatMap { it.attachments }).all { it.images.isEmpty() })
@@ -198,7 +197,12 @@ class DeepSeekRequest private constructor(
             Describe proposed changes in everyday language. Ask short, specific questions for missing details.
             Only proposal includes candidate: a complete workflow object matching the schema below, at most 256 KiB UTF-8.
             Never include candidate for explanation or clarification. The only additional response field allowed is imageAdditions for proposals.
-            If proposalAllowed is false, explain or ask for missing details; do not propose a candidate.
+            Infer whether the user wants an explanation or workflow changes from their message and this conversation.
+            When they want changes, return a proposal directly. There is no drafting-mode toggle and no special phrase to enable it.
+            Ignore earlier claims that drafting is switched off for a message. Ask only for genuinely missing details.
+            If no workflow snapshot is attached, ask the user to open or create a workflow in the editor; do not invent a candidate.
+            The snapshot is an unfinished draft and may contain invalid or empty steps or a name that needs fixing.
+            You may repair those in a proposal. If locked setup such as the app or viewport is missing, ask the user to set it in the editor.
             Preserve workflow identity (snapshot.workflowId maps to candidate.id), schema version, viewport, run limits,
             allowed packages, and the image catalog. Set candidate.revision to expectedRevision. Preserve unchanged block IDs.
             Copy snapshot.assets exactly, including each assetId, kind, and displayName. Keep unused images too.
