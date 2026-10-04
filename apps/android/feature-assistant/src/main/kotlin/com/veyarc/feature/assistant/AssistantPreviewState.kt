@@ -678,7 +678,7 @@ class AssistantPreviewState(
         if (response == null) {
             updateLast { it.copy(status = PreviewReplyStatus.ERROR, outcome = null, responseError = "Response rejected: invalid format, size, or request context. Your prompt is kept; retry is explicit.") }
         } else {
-            val proposal = response.candidate?.let { AssistantCandidateValidator.validate(turn.baseSnapshot, it.toString(), compileCandidate) }
+            val proposal = response.candidate?.let { AssistantCandidateValidator.validate(turn.baseSnapshot, AssistantWireWorkflow.restoreLocalFields(turn.baseSnapshot, it).toString(), compileCandidate) }
             updateLast { it.copy(reply = response.text, status = PreviewReplyStatus.COMPLETE, outcome = response.outcome, responseError = null, proposal = proposal) }
         }
         requestId = null

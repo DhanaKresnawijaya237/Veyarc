@@ -151,7 +151,18 @@ class DeepSeekClientTest {
         val current = Json.parseToJsonElement(messages.last().jsonObject.getValue("content").jsonPrimitive.content).jsonObject
         assertEquals(JsonPrimitive(6), current["expectedRevision"])
         assertEquals(JsonPrimitive(true), current["proposalAllowed"])
-        assertEquals(Json.parseToJsonElement(snapshot.json), current["snapshot"])
+        assertEquals(AssistantWireWorkflow.snapshot(snapshot), current["snapshot"])
+        val limits = current.getValue("snapshot").jsonObject.getValue("runLimits").jsonObject
+        assertEquals(setOf("maxLoopIterations", "maxNestingDepth", "maxPathPoints"), limits.keys)
+        val instructions = messages.first().jsonObject.getValue("content").jsonPrimitive.content
+        assertTrue(instructions.contains("There is no blanket per-step duration"))
+        assertFalse(instructions.contains("maxStepDurationMs"))
+        assertFalse(instructions.contains("maxRuntimeMs"))
+        assertFalse(instructions.contains("maxTotalSteps"))
+        val base = AssistantCandidateValidator.baseDocument(snapshot)
+        val candidate = com.veyarc.model.WorkflowJson.format.encodeToJsonElement(com.veyarc.model.WorkflowDocument.serializer(), base).jsonObject
+        val wireCandidate = JsonObject(candidate + ("runLimits" to limits))
+        assertEquals(candidate, AssistantWireWorkflow.restoreLocalFields(snapshot, wireCandidate))
         val image = (current.getValue("snapshot").jsonObject.getValue("assets") as JsonArray).single().jsonObject
         assertEquals(JsonPrimitive("Sign in button"), image.getValue("displayName"))
         failure(DeepSeekFailure.INVALID_REQUEST) { DeepSeekRequest.create("r", "chat", "wrong", "Explain", snapshot) }
