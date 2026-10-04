@@ -9,6 +9,7 @@ import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -30,11 +32,13 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -53,6 +57,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -353,10 +358,12 @@ internal fun RunManagerScreen(
                         selectionMode = !selectionMode
                         if (!selectionMode) selectedIds = emptyList()
                     }) {
-                        Icon(
-                            if (selectionMode) Icons.Filled.Close else Icons.Filled.CheckBox,
-                            contentDescription = if (selectionMode) "Leave selection mode" else "Select items",
-                        )
+                        androidx.compose.animation.AnimatedContent(selectionMode, label = "run selection toggle") { selecting ->
+                            Icon(
+                                if (selecting) Icons.Filled.Close else Icons.Filled.CheckBox,
+                                contentDescription = if (selecting) "Leave selection mode" else "Select items",
+                            )
+                        }
                     }
                 }
             }
@@ -376,12 +383,7 @@ internal fun RunManagerScreen(
                         selected = managed.record.runId in selectedIds,
                         isBusy = isBusy,
                         onOpen = { selectedRunId = managed.record.runId },
-                        onLongPress = {
-                            if (managed.record.status != StoredRunStatus.RUNNING) {
-                                selectionMode = true
-                                selectedIds = (selectedIds + managed.record.runId).distinct()
-                            }
-                        },
+                        onDelete = { pendingRunDelete = listOf(managed.record) },
                         onSelectedChange = { checked ->
                             selectedIds = if (checked) (selectedIds + managed.record.runId).distinct() else selectedIds - managed.record.runId
                         },
@@ -396,12 +398,7 @@ internal fun RunManagerScreen(
                     selected = managed.record.runId in selectedIds,
                     isBusy = isBusy,
                     onOpen = { selectedRunId = managed.record.runId },
-                    onLongPress = {
-                        if (managed.record.status != StoredRunStatus.RUNNING) {
-                            selectionMode = true
-                            selectedIds = (selectedIds + managed.record.runId).distinct()
-                        }
-                    },
+                    onDelete = { pendingRunDelete = listOf(managed.record) },
                     onSelectedChange = { checked ->
                         selectedIds = if (checked) (selectedIds + managed.record.runId).distinct() else selectedIds - managed.record.runId
                     },
@@ -648,42 +645,47 @@ private fun RunCard(
     selected: Boolean,
     isBusy: Boolean,
     onOpen: () -> Unit,
-    onLongPress: () -> Unit,
+    onDelete: () -> Unit,
     onSelectedChange: (Boolean) -> Unit,
 ) {
     val active = run.record.status == StoredRunStatus.RUNNING
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        modifier = Modifier.fillMaxWidth().combinedClickable(
-            enabled = !isBusy,
-            onClick = { if (selectionMode && !active) onSelectedChange(!selected) else onOpen() },
-            onLongClick = onLongPress,
-        ),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
+    var menuOpen by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxWidth().testTag("run-card-${run.record.runId}")) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+            modifier = Modifier.fillMaxWidth().combinedClickable(
+                enabled = !isBusy,
+                onClick = { if (selectionMode && !active) onSelectedChange(!selected) else onOpen() },
+                onLongClick = { if (!selectionMode) menuOpen = true },
+            ),
         ) {
-            if (selectionMode) {
-                Checkbox(
-                    checked = selected,
-                    onCheckedChange = onSelectedChange,
-                    enabled = !active && !isBusy,
-                )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ManagerSelectionCheckbox(selectionMode, selected, !active && !isBusy, onSelectedChange)
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(run.record.name ?: run.workflowName, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        "${run.record.status.label()} · revision ${run.record.revision} · ${run.record.durationText()}",
+                        color = if (run.record.status == StoredRunStatus.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        formatRunTimestamp(run.record.startedAtMs),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(run.record.name ?: run.workflowName, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    "${run.record.status.label()} · revision ${run.record.revision} · ${run.record.durationText()}",
-                    color = if (run.record.status == StoredRunStatus.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    formatRunTimestamp(run.record.startedAtMs),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+        }
+        Box(Modifier.align(Alignment.TopEnd)) {
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }, shape = RoundedCornerShape(16.dp), containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 0.dp) {
+                DropdownMenuItem(text = { Text("Delete") }, leadingIcon = { Icon(Icons.Filled.Delete, null) }, colors = MenuDefaults.itemColors(textColor = MaterialTheme.colorScheme.error, leadingIconColor = MaterialTheme.colorScheme.error), enabled = !active && !isBusy, onClick = {
+                    menuOpen = false
+                    onDelete()
+                })
             }
         }
     }

@@ -139,12 +139,13 @@ class AssistantPreviewState(
     private var pendingRequestId: String? = null
     private var applyGeneration = 0
     private var draftSave: Job? = null
+    private var blockingWrites by mutableStateOf(0)
     private val savedIds = mutableSetOf<String>()
 
     // One ordered writer prevents an older composer save from replacing a newer sent turn.
     private val writes = Channel<suspend () -> Unit>(64)
     val persistent: Boolean get() = repository != null
-    val canChange: Boolean get() = !isLoading && pendingWrites == 0 && storageError == null
+    val canChange: Boolean get() = !isLoading && blockingWrites == 0 && storageError == null
     val conversation: PreviewConversation? get() = conversations.firstOrNull { it.id == selectedId }
     val history: List<PreviewConversation> get() = conversations.filter { it.workflowId == context.workflowId }
         .sortedWith(compareByDescending<PreviewConversation> { it.pinned }.thenByDescending { it.updatedAtMs })
@@ -301,7 +302,7 @@ class AssistantPreviewState(
         if (repository != null && storageError == null) {
             draftSave = scope!!.launch {
                 delay(500)
-                conversation?.let { persist(it) }
+                conversation?.let { persist(it, blocksChanges = false) }
             }
         }
     }
@@ -441,8 +442,10 @@ class AssistantPreviewState(
         }
     }
 
-    fun clearHistory() {
+    fun clearHistory(workflowOnly: Boolean = false) {
         if (isLoading || pendingWrites != 0) return
+        val workflowId = context.workflowId
+        if (workflowOnly && (workflowId == null || loadFailed)) return
         draftSave?.cancel()
         applyGeneration++
         testingConnection = false
@@ -451,9 +454,10 @@ class AssistantPreviewState(
         providerJob?.cancel()
         providerJob = null
         fun cleared() {
-            conversations = emptyList()
-            selectedId = null
-            savedIds.clear()
+            val removed = conversations.filter { !workflowOnly || it.workflowId == workflowId }.map { it.id }.toSet()
+            conversations = conversations.filterNot { it.id in removed }
+            if (!workflowOnly || selectedId in removed) selectedId = null
+            if (workflowOnly) savedIds.removeAll(removed) else savedIds.clear()
             storageError = null
             loadFailed = false
         }
@@ -461,7 +465,9 @@ class AssistantPreviewState(
             cleared()
         } else {
             enqueue {
-                withContext(Dispatchers.IO) { repository.clear() }
+                withContext(Dispatchers.IO) {
+                    if (workflowOnly) repository.clear(requireNotNull(workflowId)) else repository.clear()
+                }
                 cleared()
             }
         }
@@ -710,12 +716,12 @@ class AssistantPreviewState(
         if (!isLoading && storageError == null) conversation?.let { persist(it) }
     }
 
-    private fun persist(chat: PreviewConversation, onSaved: () -> Unit = {}) {
+    private fun persist(chat: PreviewConversation, blocksChanges: Boolean = true, onSaved: () -> Unit = {}) {
         if (repository == null) {
             onSaved()
             return
         }
-        enqueue {
+        enqueue(blocksChanges) {
             val create = chat.id !in savedIds
             withContext(Dispatchers.IO) { repository.save(encode(chat), create) }
             savedIds.add(chat.id)
@@ -723,8 +729,9 @@ class AssistantPreviewState(
         }
     }
 
-    private fun enqueue(operation: suspend () -> Unit) {
+    private fun enqueue(blocksChanges: Boolean = true, operation: suspend () -> Unit) {
         pendingWrites++
+        if (blocksChanges) blockingWrites++
         check(
             writes.trySend {
                 try {
@@ -745,6 +752,7 @@ class AssistantPreviewState(
                     isLoading = false
                 } finally {
                     pendingWrites--
+                    if (blocksChanges) blockingWrites--
                 }
             }.isSuccess,
         ) { "Chat write queue is full" }

@@ -53,6 +53,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -67,6 +70,9 @@ import java.util.Date
 @Composable
 internal fun AssistantHistoryPanel(state: AssistantPreviewState, onDismiss: () -> Unit) {
     val list = rememberLazyListState()
+    val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
+    var bodyHeight by remember(configuration.screenWidthDp, configuration.screenHeightDp, density) { mutableStateOf(0.dp) }
     var query by remember { mutableStateOf("") }
     var pinnedOnly by remember { mutableStateOf(false) }
     var filtering by remember { mutableStateOf(false) }
@@ -128,7 +134,12 @@ internal fun AssistantHistoryPanel(state: AssistantPreviewState, onDismiss: () -
         },
     ) {
         BackHandler(selecting) { cancelSelection() }
-        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(
+            Modifier.fillMaxWidth().heightIn(min = bodyHeight).onSizeChanged {
+                if (!pinnedOnly && query.isBlank()) bodyHeight = maxOf(bodyHeight, with(density) { it.height.toDp() })
+            },
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },

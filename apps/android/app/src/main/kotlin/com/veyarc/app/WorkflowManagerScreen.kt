@@ -9,6 +9,7 @@ import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckBox
@@ -28,16 +30,17 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -56,6 +59,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.veyarc.automation.android.ReplayControllerWorkflow
@@ -353,10 +357,12 @@ internal fun WorkflowManagerScreen(
                         selectionMode = !selectionMode
                         if (!selectionMode) selectedIds = emptyList()
                     }) {
-                        Icon(
-                            if (selectionMode) Icons.Filled.Close else Icons.Filled.CheckBox,
-                            contentDescription = if (selectionMode) "Leave selection mode" else "Select items",
-                        )
+                        androidx.compose.animation.AnimatedContent(selectionMode, label = "workflow selection toggle") { selecting ->
+                            Icon(
+                                if (selecting) Icons.Filled.Close else Icons.Filled.CheckBox,
+                                contentDescription = if (selecting) "Leave selection mode" else "Select items",
+                            )
+                        }
                     }
                 }
             }
@@ -381,10 +387,6 @@ internal fun WorkflowManagerScreen(
                     } else {
                         selectedIds - workflow.summary.workflowId
                     }
-                },
-                onLongPress = {
-                    selectionMode = true
-                    selectedIds = (selectedIds + workflow.summary.workflowId).distinct()
                 },
                 onFavorite = { toggleFavorite(workflow) },
                 onEdit = { onEditWorkflow(workflow.summary) },
@@ -625,7 +627,6 @@ private fun WorkflowManagerCard(
     selected: Boolean,
     enabled: Boolean,
     onSelectedChange: (Boolean) -> Unit,
-    onLongPress: () -> Unit,
     onFavorite: () -> Unit,
     onEdit: () -> Unit,
     onPlay: () -> Unit,
@@ -633,59 +634,56 @@ private fun WorkflowManagerCard(
     onDelete: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        modifier =
-        Modifier
-            .fillMaxWidth()
-            .combinedClickable(
-                enabled = enabled,
-                onClick = { if (selectionMode) onSelectedChange(!selected) else onEdit() },
-                onLongClick = onLongPress,
-            ),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
+    Box(Modifier.fillMaxWidth().testTag("workflow-card-${workflow.summary.workflowId}")) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+            modifier =
+            Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    enabled = enabled,
+                    onClick = { if (selectionMode) onSelectedChange(!selected) else onEdit() },
+                    onLongClick = { if (!selectionMode) menuOpen = true },
+                ),
         ) {
-            if (selectionMode) {
-                Checkbox(checked = selected, onCheckedChange = onSelectedChange, enabled = enabled)
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(workflow.summary.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    "Revision ${workflow.summary.latestRevision} · ${workflow.orientation?.displayName() ?: "Unknown"} · ${workflow.activity.runCount} runs",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            IconButton(onClick = onFavorite, enabled = enabled) {
-                Icon(
-                    if (workflow.summary.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                    contentDescription = if (workflow.summary.isFavorite) "Remove from favorites" else "Add to favorites",
-                    tint = if (workflow.summary.isFavorite) Color(0xFFE53935) else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            IconButton(onClick = onPlay, enabled = enabled) {
-                Icon(Icons.Filled.PlayArrow, contentDescription = "Play ${workflow.summary.name}")
-            }
-            Column {
-                IconButton(onClick = { menuOpen = true }, enabled = enabled) {
-                    Icon(Icons.Filled.MoreVert, contentDescription = "More workflow actions")
-                }
-                if (menuOpen) {
-                    VeyarcChoicePicker(
-                        title = workflow.summary.name,
-                        options = listOf(VeyarcChoice("history", "Revision history"), VeyarcChoice("delete", "Delete", destructive = true)),
-                        onDismiss = { menuOpen = false },
-                        onSelect = { choice ->
-                            menuOpen = false
-                            if (choice.id == "history") onRevisions() else onDelete()
-                        },
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ManagerSelectionCheckbox(selectionMode, selected, enabled, onSelectedChange)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(workflow.summary.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        "Revision ${workflow.summary.latestRevision} · ${workflow.orientation?.displayName() ?: "Unknown"} · ${workflow.activity.runCount} runs",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
+                IconButton(onClick = onFavorite, enabled = enabled) {
+                    Icon(
+                        if (workflow.summary.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                        contentDescription = if (workflow.summary.isFavorite) "Remove from favorites" else "Add to favorites",
+                        tint = if (workflow.summary.isFavorite) Color(0xFFE53935) else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        Box(Modifier.align(Alignment.TopEnd)) {
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }, shape = RoundedCornerShape(16.dp), containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 0.dp) {
+                DropdownMenuItem(text = { Text("Run") }, leadingIcon = { Icon(Icons.Filled.PlayArrow, null) }, enabled = enabled, onClick = {
+                    menuOpen = false
+                    onPlay()
+                })
+                DropdownMenuItem(text = { Text("Revision history") }, leadingIcon = { Icon(Icons.Filled.History, null) }, enabled = enabled, onClick = {
+                    menuOpen = false
+                    onRevisions()
+                })
+                DropdownMenuItem(text = { Text("Delete") }, leadingIcon = { Icon(Icons.Filled.Delete, null) }, colors = MenuDefaults.itemColors(textColor = MaterialTheme.colorScheme.error, leadingIconColor = MaterialTheme.colorScheme.error), enabled = enabled, onClick = {
+                    menuOpen = false
+                    onDelete()
+                })
             }
         }
     }

@@ -119,6 +119,10 @@ class ChatRepository internal constructor(private val database: VeyarcDatabase, 
         runCatching { collectGarbage() }
     }
 
+    fun clear(workflowId: String) = synchronized(storageLock) {
+        delete(database.chatDao().list().filter { it.scopeId == workflowId }.map { it.conversationId }.toSet())
+    }
+
     private fun collectGarbage() {
         val referenced = database.chatDao().list().map { it.encryptedFileName }.toSet()
         files.listCommittedFileNames(Int.MAX_VALUE).filterNot(referenced::contains).forEach(files::delete)

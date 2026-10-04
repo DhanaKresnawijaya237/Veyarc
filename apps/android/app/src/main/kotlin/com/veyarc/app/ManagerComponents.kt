@@ -5,9 +5,11 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
@@ -50,6 +52,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -169,10 +172,12 @@ internal fun CompactManagerHeader(
                 enabled = !searchActive,
                 modifier = Modifier.graphicsLayer { alpha = headingAlpha },
             ) {
-                Icon(
-                    if (selectionMode) Icons.Filled.Close else Icons.Filled.CheckBox,
-                    contentDescription = if (selectionMode) "Leave selection mode" else "Select items",
-                )
+                AnimatedContent(selectionMode, label = "manager selection toggle") { selecting ->
+                    Icon(
+                        if (selecting) Icons.Filled.Close else Icons.Filled.CheckBox,
+                        contentDescription = if (selecting) "Leave selection mode" else "Select items",
+                    )
+                }
             }
         }
         if (!selectionMode || searchActive) {
@@ -234,6 +239,13 @@ internal data class ManagerSelectionBarState(
     val onDelete: () -> Unit,
     val onDetails: (() -> Unit)?,
 )
+
+@Composable
+internal fun ManagerSelectionCheckbox(visible: Boolean, selected: Boolean, enabled: Boolean, onSelectedChange: (Boolean) -> Unit) {
+    AnimatedVisibility(visible, enter = expandHorizontally(tween(220), expandFrom = Alignment.Start) + fadeIn(tween(150)), exit = shrinkHorizontally(tween(220), shrinkTowards = Alignment.Start) + fadeOut(tween(100))) {
+        Checkbox(checked = selected, onCheckedChange = onSelectedChange, enabled = enabled)
+    }
+}
 
 @Composable
 internal fun ManagerSelectionBar(state: ManagerSelectionBarState) {

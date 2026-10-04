@@ -45,6 +45,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -84,8 +86,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ModalBottomSheetProperties
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -129,6 +133,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.liveRegion
@@ -171,6 +176,7 @@ fun AssistantPreviewHost(
 fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> Unit)? = null) {
     var storageVisible by remember { mutableStateOf(false) }
     var clearVisible by remember { mutableStateOf(false) }
+    var clearWorkflowOnly by remember(state.context.workflowId) { mutableStateOf(state.context.workflowId != null) }
     if (storageVisible) {
         PreviewDialog("Chat storage", onDismiss = { storageVisible = false }) {
             Text(if (state.persistent) "Encrypted on this device. Deleting chats here does not delete DeepSeek records." else "Temporary sample history.")
@@ -187,18 +193,34 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
             }
             TextButton(onClick = {
                 storageVisible = false
+                clearWorkflowOnly = state.context.workflowId != null && !state.loadFailed
                 clearVisible = true
-            }, enabled = !state.isLoading && state.pendingWrites == 0) { Text("Clear all chat history") }
+            }, enabled = !state.isLoading && state.pendingWrites == 0) { Text("Clear chat history") }
         }
     }
     if (clearVisible) {
         AlertDialog(
             onDismissRequest = { clearVisible = false },
-            title = { Text("Clear all chat history?") },
-            text = { Text("Deletes all chats and unsent messages. Keeps your workflows.") },
+            title = { Text("Clear chat history?") },
+            text = {
+                Column(Modifier.selectableGroup()) {
+                    listOf(true to "This workflow", false to "All chats").forEach { (workflowOnly, label) ->
+                        val enabled = !workflowOnly || (state.context.workflowId != null && !state.loadFailed)
+                        Row(
+                            Modifier.fillMaxWidth().selectable(selected = clearWorkflowOnly == workflowOnly, enabled = enabled, role = Role.RadioButton, onClick = { clearWorkflowOnly = workflowOnly }).padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            RadioButton(selected = clearWorkflowOnly == workflowOnly, onClick = null, enabled = enabled)
+                            Text(label, color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    Text("Removes messages and drafts. Keeps workflows.", style = MaterialTheme.typography.bodySmall)
+                }
+            },
             confirmButton = {
                 TextButton(onClick = {
-                    state.clearHistory()
+                    state.clearHistory(workflowOnly = clearWorkflowOnly)
                     clearVisible = false
                 }) { Text("Clear history") }
             },
@@ -778,6 +800,7 @@ fun AssistantPanel(title: String, onDismiss: () -> Unit, onBack: (() -> Unit)? =
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
             containerColor = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp,
+            properties = ModalBottomSheetProperties(isAppearanceLightStatusBars = !dark, isAppearanceLightNavigationBars = !dark),
         ) {
             CompositionLocalProvider(LocalDensity provides density) {
                 Column(

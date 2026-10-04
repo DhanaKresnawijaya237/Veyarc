@@ -9,6 +9,30 @@ import org.junit.Test
 
 class AssistantPreviewStateTest {
     @Test
+    fun clearingOneWorkflowKeepsOtherWorkflowsAndUnboundChats() {
+        val state = AssistantPreviewState()
+        state.open(AssistantPreviewContext())
+        val unbound = state.selectedId!!
+        state.clearHistory(workflowOnly = true)
+        assertEquals(unbound, state.selectedId)
+        state.open(AssistantPreviewContext("other"))
+        state.compose("Other workflow draft")
+        val other = state.conversation!!
+        state.open(AssistantPreviewContext("current"))
+        state.compose("This workflow draft")
+        state.clearHistory(workflowOnly = true)
+        assertNull(state.selectedId)
+        assertTrue(state.history.isEmpty())
+        assertEquals(other, state.conversations.single { it.id == other.id })
+        assertTrue(state.conversations.any { it.id == unbound })
+        state.open(AssistantPreviewContext("other"))
+        assertEquals("Other workflow draft", state.conversation!!.composer)
+        state.clearHistory()
+        assertTrue(state.conversations.isEmpty())
+        assertNull(state.selectedId)
+    }
+
+    @Test
     fun stopRetryAndLateTicksNeverDuplicateThePrompt() {
         val state = AssistantPreviewState()
         state.open(AssistantPreviewContext("workflow-a"))

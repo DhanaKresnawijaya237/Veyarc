@@ -55,7 +55,9 @@ import com.veyarc.feature.assistant.DeepSeekEffort
 import com.veyarc.feature.assistant.DeepSeekModel
 import com.veyarc.feature.assistant.DeepSeekRequest
 import com.veyarc.feature.assistant.PreviewScenario
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Rule
@@ -201,6 +203,130 @@ class AssistantPreviewUiTest {
                 InstrumentationRegistry.getInstrumentation().targetContext.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
             }
         }
+    }
+
+    @Test
+    fun slowTypingAutosavesWithoutBlinkingTheComposerControls() {
+        val repository = com.veyarc.data.storage.ChatRepository(InstrumentationRegistry.getInstrumentation().targetContext)
+        val owner = kotlinx.coroutines.SupervisorJob()
+        val scope = kotlinx.coroutines.CoroutineScope(owner + kotlinx.coroutines.Dispatchers.Main)
+        lateinit var state: AssistantPreviewState
+        var initialized = false
+        var observer: kotlinx.coroutines.Job? = null
+        val saves = mutableListOf<Triple<Int, Boolean, Boolean>>()
+        try {
+            compose.runOnIdle {
+                state = AssistantPreviewState(repository, scope, providerCall = { error("Typing must not send a request") })
+                initialized = true
+            }
+            compose.waitUntil(10_000) { state.canChange }
+            compose.runOnIdle {
+                state.open(AssistantPreviewContext(java.util.UUID.randomUUID().toString()))
+                state.enableProvider()
+            }
+            compose.waitUntil(10_000) { state.canChange }
+            compose.setContent { VeyarcTheme(darkTheme = true) { AssistantPreviewScreen(state) } }
+            compose.onNodeWithTag("assistant-composer").performTextInput("Slow")
+            compose.runOnIdle {
+                observer = scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                    androidx.compose.runtime.snapshotFlow { Triple(state.pendingWrites, state.canChange, state.canSend) }.collect { saves += it }
+                }
+            }
+            repeat(3) { index ->
+                val text = "Slow $index"
+                compose.onNodeWithTag("assistant-composer").performTextReplacement(text)
+                compose.waitUntil(10_000) {
+                    state.pendingWrites == 0 && repository.load().single { it.id == state.selectedId }.payload.toString(Charsets.UTF_8).contains("\"composer\":\"$text\"")
+                }
+                compose.onNodeWithContentDescription("Send message").assertIsEnabled()
+                compose.onNodeWithContentDescription("New chat").assertIsEnabled()
+                compose.onNodeWithContentDescription("Add attachment").assertIsDisplayed()
+            }
+            compose.runOnIdle {
+                observer?.cancel()
+                org.junit.Assert.assertTrue("Observe real background writes", saves.any { it.first > 0 })
+                org.junit.Assert.assertTrue("Autosaving must leave the controls available: $saves", saves.all { it.second && it.third })
+            }
+        } finally {
+            compose.runOnIdle {
+                observer?.cancel()
+                if (initialized) state.dispose()
+            }
+            owner.cancel()
+            if (initialized) state.selectedId?.let(repository::delete)
+            repository.close()
+        }
+    }
+
+    @Test
+    @androidx.test.filters.SdkSuppress(minSdkVersion = 30)
+    fun systemBarAppearanceMatchesTheThemeDuringSheetDrags() {
+        val state = AssistantPreviewState().apply { open(AssistantPreviewContext()) }
+        var dark by mutableStateOf(true)
+        compose.setContent { VeyarcTheme(darkTheme = dark) { AssistantPreviewScreen(state) } }
+        fun checkBars(expectSheet: Boolean) {
+            compose.runOnIdle {
+                val roots = android.view.inspector.WindowInspector.getGlobalWindowViews().filter { it.isShown }
+                org.junit.Assert.assertTrue("Check the activity and sheet windows", roots.size >= if (expectSheet) 2 else 1)
+                roots.forEach { root ->
+                    val appearance = requireNotNull(root.windowInsetsController).systemBarsAppearance
+                    assertEquals("Status icons must match the app theme", !dark, appearance and android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS != 0)
+                    assertEquals("Navigation icons must match the app theme", !dark, appearance and android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS != 0)
+                }
+            }
+        }
+        listOf(true, false).forEach { theme ->
+            compose.runOnIdle { dark = theme }
+            checkBars(false)
+            compose.onNodeWithContentDescription("Add attachment").performClick()
+            checkBars(true)
+            val density = InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
+            compose.onNodeWithTag("assistant-panel-header").performTouchInput {
+                down(center)
+                moveBy(Offset(0f, 28f * density), delayMillis = 300)
+            }
+            checkBars(true)
+            compose.onNodeWithTag("assistant-panel-header").performTouchInput {
+                advanceEventTime(500)
+                up()
+            }
+            checkBars(true)
+            compose.onNodeWithTag("assistant-panel-header").performTouchInput { swipeDown(durationMillis = 80) }
+            compose.onNodeWithTag("assistant-panel").assertDoesNotExist()
+            checkBars(false)
+        }
+    }
+
+    @Test
+    fun clearHistoryOffersWorkflowAndAllChatScopes() {
+        val state = AssistantPreviewState().apply {
+            open(AssistantPreviewContext("other-workflow"))
+            compose("Keep this draft")
+            open(AssistantPreviewContext("current-workflow"))
+            compose("Clear this draft")
+        }
+        compose.setContent { VeyarcTheme(darkTheme = true) { AssistantPreviewScreen(state) } }
+        fun openClear() {
+            if (runCatching { compose.onNodeWithContentDescription("Chat options").assertExists() }.isSuccess) {
+                compose.onNodeWithContentDescription("Chat options").performClick()
+                compose.onNodeWithText("More", substring = false).performClick()
+            }
+            compose.onNodeWithText("Chat storage", substring = false).performClick()
+            compose.onNodeWithText("Clear chat history", substring = false).performClick()
+        }
+        openClear()
+        compose.onNodeWithText("This workflow", substring = false).assertIsSelected()
+        compose.onNodeWithText("All chats", substring = false).assertIsNotSelected()
+        compose.onNodeWithText("Clear history", substring = false).performClick()
+        compose.runOnIdle {
+            assertEquals("Keep this draft", state.conversations.single().composer)
+            assertEquals("other-workflow", state.conversations.single().workflowId)
+        }
+        openClear()
+        compose.onNodeWithText("All chats", substring = false).performClick()
+        compose.onNodeWithText("All chats", substring = false).assertIsSelected()
+        compose.onNodeWithText("Clear history", substring = false).performClick()
+        compose.runOnIdle { org.junit.Assert.assertTrue(state.conversations.isEmpty()) }
     }
 
     @Test
@@ -869,13 +995,16 @@ class AssistantPreviewUiTest {
         compose.onNodeWithTag("assistant-history-$morning").performTouchInput { longClick() }
         capture("history-long-press")
         compose.onNodeWithText("Pin", substring = false).performClick()
+        val historyBounds = compose.onNodeWithTag("assistant-panel").fetchSemanticsNode().boundsInRoot
         compose.onNodeWithContentDescription("Filter chats").performClick()
         capture("history-filter")
         compose.onNodeWithText("Pinned", substring = false).performClick()
+        assertEquals("Pinned must keep the All page size", historyBounds, compose.onNodeWithTag("assistant-panel").fetchSemanticsNode().boundsInRoot)
         compose.onNodeWithTag("assistant-history-$morning").assertExists()
         compose.onNodeWithTag("assistant-history-$lunch").assertDoesNotExist()
         compose.onNodeWithContentDescription("Filter chats").performClick()
         compose.onNodeWithText("All", substring = false).performClick()
+        assertEquals("Returning to All must keep the page size", historyBounds, compose.onNodeWithTag("assistant-panel").fetchSemanticsNode().boundsInRoot)
         compose.onNodeWithTag("assistant-history-search").performTextReplacement("lunch")
         Espresso.closeSoftKeyboard()
         compose.onNodeWithTag("assistant-history-$lunch").assertExists()
