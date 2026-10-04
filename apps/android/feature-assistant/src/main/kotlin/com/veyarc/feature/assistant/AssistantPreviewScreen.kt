@@ -320,12 +320,14 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
                         }
                         IconButton(onClick = state::newChat, enabled = state.canChange) { Icon(Icons.Outlined.Add, "New chat") }
                         Box {
-                            IconButton(onClick = { menuVisible = true }) { Icon(Icons.Outlined.MoreVert, "Chat options") }
+                            IconButton(onClick = {
+                                moreMenuVisible = false
+                                menuVisible = true
+                            }) { Icon(Icons.Outlined.MoreVert, "Chat options") }
                             DropdownMenu(
                                 expanded = menuVisible,
                                 onDismissRequest = {
                                     menuVisible = false
-                                    moreMenuVisible = false
                                 },
                                 modifier = Modifier.width(272.dp).testTag("assistant-chat-menu"),
                                 shape = RoundedCornerShape(24.dp),
@@ -346,12 +348,10 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
                                     ChatMenuItem("Back", Icons.AutoMirrored.Outlined.ArrowBack) { moreMenuVisible = false }
                                     ChatMenuItem("Workflow context", Icons.Outlined.ContentCopy) {
                                         menuVisible = false
-                                        moreMenuVisible = false
                                         showContext()
                                     }
                                     ChatMenuItem("Chat storage", Icons.Outlined.History) {
                                         menuVisible = false
-                                        moreMenuVisible = false
                                         storageVisible = true
                                     }
                                     if (!state.usesProvider) {
@@ -362,7 +362,6 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
                                                 onClick = {
                                                     state.scenario = scenario
                                                     menuVisible = false
-                                                    moreMenuVisible = false
                                                 },
                                             )
                                         }
@@ -642,7 +641,7 @@ private fun PreviewTurnContent(state: AssistantPreviewState, turn: PreviewTurn, 
     val attachmentPreview = turn.attachments.firstOrNull { it.id == attachmentPreviewId }
     attachmentPreview?.let { AttachmentPreview(it, state, editable = false, onDismiss = { attachmentPreviewId = null }) }
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (turn.attachments.isNotEmpty()) AttachmentStrip(turn.attachments, state.attachments, { attachmentPreviewId = it.id })
+        if (turn.attachments.isNotEmpty()) AttachmentStrip(turn.attachments, state.attachments, { attachmentPreviewId = it.id }, alignEnd = true)
         Surface(Modifier.align(Alignment.End).widthIn(max = 560.dp), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
             MessageText(turn.prompt, "Your message", Modifier.padding(horizontal = 16.dp, vertical = 12.dp), onContext = if (turn.baseSnapshot != null) onContext else null)
         }

@@ -22,7 +22,7 @@ import java.util.zip.ZipInputStream
 import kotlin.math.roundToInt
 
 @Serializable
-enum class AttachmentKind { IMAGE, PDF, TEXT }
+enum class AttachmentKind { IMAGE, PDF, TEXT, MARKDOWN }
 
 @Serializable
 data class AssistantAttachment(
@@ -35,7 +35,10 @@ data class AssistantAttachment(
     val height: Int = 0,
     val pageCount: Int = 0,
 ) {
-    val needsVision: Boolean get() = kind != AttachmentKind.TEXT
+    val needsVision: Boolean get() = kind == AttachmentKind.IMAGE || kind == AttachmentKind.PDF
+
+    // Older chats stored Markdown as plain text. Keep their preview without rewriting history.
+    val isMarkdown: Boolean get() = kind == AttachmentKind.MARKDOWN || (kind == AttachmentKind.TEXT && name.substringAfterLast('.', "").lowercase() in setOf("md", "markdown"))
     fun validate() {
         require(UUID.fromString(id).toString() == id && name.length in 1..255)
         require(byteCount in 1..ChatAttachmentStore.MAX_BYTES)
@@ -44,6 +47,7 @@ data class AssistantAttachment(
                 AttachmentKind.IMAGE -> mimeType == "image/png" && width in 1..8192 && height in 1..8192
                 AttachmentKind.PDF -> mimeType == "application/pdf" && pageCount in 1..600
                 AttachmentKind.TEXT -> mimeType == "text/plain"
+                AttachmentKind.MARKDOWN -> mimeType == "text/markdown"
             },
         )
     }
@@ -109,7 +113,8 @@ class AssistantAttachmentImporter(private val context: Context, val store: ChatA
         require(text.isNotBlank()) { "This document has no readable text." }
         val content = text.toByteArray(Charsets.UTF_8)
         require(content.size <= MAX_TEXT_BYTES) { "This document contains too much text to send in one message." }
-        return AssistantAttachment(store.save(content), name, AttachmentKind.TEXT, "text/plain", content.size)
+        val markdown = extension in setOf("md", "markdown") || type in setOf("text/markdown", "text/x-markdown")
+        return AssistantAttachment(store.save(content), name, if (markdown) AttachmentKind.MARKDOWN else AttachmentKind.TEXT, if (markdown) "text/markdown" else "text/plain", content.size)
     }
 
     fun saveImage(name: String, bitmap: Bitmap): AssistantAttachment {
@@ -156,7 +161,7 @@ class AssistantAttachmentImporter(private val context: Context, val store: ChatA
         return when (attachment.kind) {
             AttachmentKind.IMAGE -> AttachmentContent(attachment, images = listOf(bytes))
 
-            AttachmentKind.TEXT -> AttachmentContent(attachment, text = decodeText(bytes))
+            AttachmentKind.TEXT, AttachmentKind.MARKDOWN -> AttachmentContent(attachment, text = decodeText(bytes))
 
             AttachmentKind.PDF -> withPdf(bytes) { renderer ->
                 val images = mutableListOf<ByteArray>()
@@ -237,7 +242,7 @@ class AssistantAttachmentImporter(private val context: Context, val store: ChatA
         }
         const val MAX_IMAGE_PIXELS = 4_194_304L
         const val MAX_TEXT_BYTES = 1024 * 1024
-        val TEXT_EXTENSIONS = setOf("txt", "md", "csv", "json", "xml", "yaml", "yml", "log", "html", "htm", "kt", "java", "py", "js", "ts", "css")
+        val TEXT_EXTENSIONS = setOf("txt", "md", "markdown", "csv", "json", "xml", "yaml", "yml", "log", "html", "htm", "kt", "java", "py", "js", "ts", "css")
         val FILE_MIME_TYPES = arrayOf("image/*", "application/pdf", "text/*", "application/json", "application/xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
         internal fun decodeText(bytes: ByteArray): String {

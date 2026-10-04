@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -79,6 +80,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -143,9 +147,9 @@ internal fun rememberAttachmentPicker(state: AssistantPreviewState): (String) ->
 }
 
 @Composable
-internal fun AttachmentStrip(attachments: List<AssistantAttachment>, importer: AssistantAttachmentImporter?, onOpen: (AssistantAttachment) -> Unit, onRemove: ((String) -> Unit)? = null, compact: Boolean = false) {
+internal fun AttachmentStrip(attachments: List<AssistantAttachment>, importer: AssistantAttachmentImporter?, onOpen: (AssistantAttachment) -> Unit, onRemove: ((String) -> Unit)? = null, compact: Boolean = false, alignEnd: Boolean = false) {
     // Lazy item animation retains removed cards for their fade and moves the remaining cards.
-    LazyRow(Modifier.fillMaxWidth().animateContentSize(spring()).testTag("assistant-attachments"), contentPadding = PaddingValues(horizontal = 10.dp, vertical = if (attachments.isEmpty()) 0.dp else 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    LazyRow(Modifier.fillMaxWidth().animateContentSize(spring()).testTag("assistant-attachments"), contentPadding = PaddingValues(horizontal = 10.dp, vertical = if (attachments.isEmpty()) 0.dp else 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp, if (alignEnd) Alignment.End else Alignment.Start)) {
         items(attachments, key = { it.id }) { attachment ->
             Box(Modifier.animateItem()) {
                 Box {
@@ -154,7 +158,7 @@ internal fun AttachmentStrip(attachments: List<AssistantAttachment>, importer: A
                             val image by produceState<Bitmap?>(null, attachment.id) {
                                 value = withContext(Dispatchers.IO) { runCatching { importer?.preview(attachment) }.getOrNull() }
                             }
-                            Box(Modifier.size(if (compact) 48.dp else 80.dp), contentAlignment = Alignment.Center) {
+                            Box(Modifier.size(if (compact) 72.dp else 80.dp), contentAlignment = Alignment.Center) {
                                 if (image != null) {
                                     Image(image!!.asImageBitmap(), attachment.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                                 } else {
@@ -162,11 +166,11 @@ internal fun AttachmentStrip(attachments: List<AssistantAttachment>, importer: A
                                 }
                             }
                         } else {
-                            Row(Modifier.width(216.dp).height(if (compact) 48.dp else 80.dp).padding(if (compact) 6.dp else 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Row(Modifier.width(if (compact) 240.dp else 216.dp).height(if (compact) 72.dp else 80.dp).padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Icon(if (attachment.kind == AttachmentKind.PDF) Icons.Outlined.PictureAsPdf else Icons.Outlined.Description, null, Modifier.size(28.dp), tint = MaterialTheme.colorScheme.primary)
                                 Column(Modifier.weight(1f).padding(end = if (onRemove != null) 16.dp else 0.dp)) {
                                     Text(attachment.name, style = MaterialTheme.typography.bodyMedium, maxLines = if (compact) 1 else 2, overflow = TextOverflow.Ellipsis)
-                                    Text(if (attachment.kind == AttachmentKind.PDF) "PDF · ${attachment.pageCount} pages" else "${attachment.name.substringAfterLast('.', "Text").uppercase()} · ${(attachment.byteCount + 1023) / 1024} KB", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(if (attachment.kind == AttachmentKind.PDF) "PDF · ${attachment.pageCount} pages" else "${if (attachment.isMarkdown) "Markdown" else attachment.name.substringAfterLast('.', "Text").uppercase()} · ${(attachment.byteCount + 1023) / 1024} KB", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         }
@@ -230,8 +234,14 @@ internal fun AttachmentPreview(attachment: AssistantAttachment, state: Assistant
                         }
                         when {
                             failed -> Text("This file could not be opened.", Modifier.padding(20.dp))
+
                             text == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                            else -> SelectionContainer { LazyColumn(contentPadding = PaddingValues(20.dp)) { items(text!!.lines()) { Text(it, style = MaterialTheme.typography.bodyMedium) } } }
+
+                            else -> if (attachment.isMarkdown) {
+                                SelectionContainer { MarkdownAttachmentPreview(text!!) }
+                            } else {
+                                SelectionContainer { LazyColumn(contentPadding = PaddingValues(20.dp)) { items(text!!.lines()) { Text(it, style = MaterialTheme.typography.bodyMedium) } } }
+                            }
                         }
                     }
                 }
@@ -362,8 +372,12 @@ private fun ImageAttachmentPreview(attachment: AssistantAttachment, importer: As
         }
         if (mode == "draw") {
             Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(Color(0xFFFF5A5F), Color(0xFFFFD43B), Color(0xFF4DABF7), Color.White).forEach { swatch ->
-                    Surface(onClick = { colorValue = swatch.toArgb() }, color = swatch, shape = CircleShape, border = if (color == swatch) androidx.compose.foundation.BorderStroke(3.dp, Color.Gray) else null, modifier = Modifier.size(32.dp)) {}
+                LazyRow(Modifier.weight(1f).testTag("annotation-colors"), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    items(listOf("Red" to Color(0xFFFF5A5F), "Orange" to Color(0xFFFF922B), "Yellow" to Color(0xFFFFD43B), "Green" to Color(0xFF51CF66), "Blue" to Color(0xFF4DABF7), "Purple" to Color(0xFFB197FC), "White" to Color.White, "Black" to Color.Black)) { (name, swatch) ->
+                        Box(Modifier.size(48.dp).selectable(selected = color.toArgb() == swatch.toArgb(), role = Role.RadioButton, onClick = { colorValue = swatch.toArgb() }).semantics { contentDescription = "$name ink" }, contentAlignment = Alignment.Center) {
+                            Surface(color = swatch, shape = CircleShape, border = androidx.compose.foundation.BorderStroke(if (color.toArgb() == swatch.toArgb()) 3.dp else 1.dp, if (color.toArgb() == swatch.toArgb()) Color.White else Color.Gray), modifier = Modifier.size(30.dp)) {}
+                        }
+                    }
                 }
                 IconButton(onClick = { marker = !marker }) { Icon(if (marker) Icons.Outlined.Brush else Icons.Outlined.Edit, if (marker) "Use pen" else "Use marker", tint = Color.White) }
                 IconButton(onClick = { strokes = strokes.dropLast(1) }, enabled = strokes.isNotEmpty()) { Icon(Icons.AutoMirrored.Outlined.Undo, "Undo annotation", tint = Color.White) }
@@ -427,15 +441,18 @@ private fun fittedImage(size: Size, bitmap: Bitmap): Rect {
 private fun ImageEditCanvas(bitmap: Bitmap, crop: NormalizedRect, cropping: Boolean, strokes: List<AnnotationStroke>, color: Color, marker: Boolean, onCrop: (NormalizedRect) -> Unit, onStrokes: (List<AnnotationStroke>) -> Unit) {
     val currentCrop by rememberUpdatedState(crop)
     val currentStrokes by rememberUpdatedState(strokes)
+    val currentColor by rememberUpdatedState(color)
+    val currentMarker by rememberUpdatedState(marker)
     val cropCallback by rememberUpdatedState(onCrop)
     val strokesCallback by rememberUpdatedState(onStrokes)
     Box(Modifier.fillMaxSize().padding(20.dp)) {
         Image(bitmap.asImageBitmap(), "Edit image", Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
         Canvas(
-            Modifier.fillMaxSize().testTag("attachment-image-editor").pointerInput(bitmap, cropping, color, marker) {
+            Modifier.fillMaxSize().testTag("attachment-image-editor").pointerInput(bitmap, cropping) {
                 var handle = -1
                 var anchor = Offset.Zero
                 var startedInside = false
+                var drawingStrokes = emptyList<AnnotationStroke>()
                 detectDragGestures(onDragStart = { point ->
                     val bounds = fittedImage(Size(size.width.toFloat(), size.height.toFloat()), bitmap)
                     startedInside = bounds.contains(point)
@@ -447,7 +464,8 @@ private fun ImageEditCanvas(bitmap: Bitmap, crop: NormalizedRect, cropping: Bool
                         handle = corners.indices.minBy { index -> hypot((corners[index].x - normalized.x) * bounds.width, (corners[index].y - normalized.y) * bounds.height) }
                         if (hypot((corners[handle].x - normalized.x) * bounds.width, (corners[handle].y - normalized.y) * bounds.height) > 64.dp.toPx()) handle = -1
                     } else if (bounds.contains(point)) {
-                        strokesCallback(currentStrokes + AnnotationStroke(listOf(normalized), color, marker))
+                        drawingStrokes = currentStrokes + AnnotationStroke(listOf(normalized), currentColor, currentMarker)
+                        strokesCallback(drawingStrokes)
                     }
                 }) { change, _ ->
                     change.consume()
@@ -488,8 +506,10 @@ private fun ImageEditCanvas(bitmap: Bitmap, crop: NormalizedRect, cropping: Bool
                             }
                         }
                         cropCallback(NormalizedRect(left, top, minOf(right - left, 1.0 - left), minOf(bottom - top, 1.0 - top)))
-                    } else if (startedInside && currentStrokes.isNotEmpty()) {
-                        strokesCallback(currentStrokes.dropLast(1) + currentStrokes.last().copy(points = currentStrokes.last().points + point))
+                    } else if (startedInside && drawingStrokes.isNotEmpty()) {
+                        // Drag start and its first update can arrive before the next Compose frame.
+                        drawingStrokes = drawingStrokes.dropLast(1) + drawingStrokes.last().copy(points = drawingStrokes.last().points + point)
+                        strokesCallback(drawingStrokes)
                     }
                     anchor = point
                 }

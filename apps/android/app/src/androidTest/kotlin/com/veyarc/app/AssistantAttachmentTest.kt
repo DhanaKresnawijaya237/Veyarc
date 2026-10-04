@@ -6,14 +6,18 @@ import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.center
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -62,6 +66,36 @@ class AssistantAttachmentTest {
     @get:Rule val compose = createComposeRule()
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
+    @Test
+    fun markdownFilesHaveAFormattedPreviewAndRetainTheirTextForSending() {
+        val file = File.createTempFile("attachment-notes-", ".md", context.cacheDir)
+        val source = "# Workflow notes\n\n**Read this first**\n\n- Wait a minute\n- Open the editor\n\n```kotlin\nval wait = 60\n```"
+        file.writeText(source)
+        val importer = AssistantAttachmentImporter(context)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val state = AssistantPreviewState(scope = scope, attachments = importer)
+        try {
+            compose.runOnUiThread { state.open(AssistantPreviewContext()) }
+            compose.setContent { VeyarcTheme { AssistantPreviewScreen(state) } }
+            compose.runOnUiThread { state.importAttachments(listOf(Uri.fromFile(file)), state.selectedId!!) }
+            compose.waitUntil(10000) { !state.importingAttachments && state.conversation!!.composerAttachments.size == 1 }
+            val attachment = state.conversation!!.composerAttachments.single()
+            assertEquals(com.veyarc.feature.assistant.AttachmentKind.MARKDOWN, attachment.kind)
+            assertFalse(attachment.needsVision)
+            assertEquals(source, importer.content(attachment).text)
+            compose.onNodeWithTag("attachment-${attachment.id}").performClick()
+            compose.waitUntil(10000) { runCatching { compose.onNodeWithTag("markdown-file-preview").assertExists() }.isSuccess }
+            compose.onNodeWithText("Workflow notes").assertExists()
+            compose.onNodeWithText("Read this first").assertExists()
+            compose.onNodeWithText("# Workflow notes").assertDoesNotExist()
+            compose.onNodeWithContentDescription("Close preview").performClick()
+        } finally {
+            compose.runOnUiThread { state.dispose() }
+            scope.cancel()
+            file.delete()
+        }
+    }
+
     private fun imageFile(): File {
         val file = File.createTempFile("attachment-test-", ".png", context.cacheDir)
         val bitmap = Bitmap.createBitmap(100, 200, Bitmap.Config.ARGB_8888)
@@ -89,7 +123,11 @@ class AssistantAttachmentTest {
         compose.onNodeWithText("Crop").performClick()
         compose.onNodeWithText("Rotate").performClick()
         compose.onNodeWithContentDescription("Annotate").performClick()
-        compose.onNodeWithTag("attachment-image-editor").performTouchInput { swipe(center - Offset(25f, 0f), center + Offset(25f, 0f), 400) }
+        compose.onNodeWithContentDescription("Red ink").performClick()
+        compose.onNodeWithTag("attachment-image-editor").performTouchInput { swipe(center - Offset(70f, 20f), center + Offset(70f, -20f), 400) }
+        compose.onNodeWithTag("annotation-colors").performScrollToNode(hasContentDescription("Blue ink"))
+        compose.onNodeWithContentDescription("Blue ink").performClick().assertIsSelected()
+        compose.onNodeWithTag("attachment-image-editor").performTouchInput { swipe(center - Offset(70f, -20f), center + Offset(70f, 20f), 400) }
         compose.onNodeWithContentDescription("Undo annotation").assertIsEnabled()
         restoration.emulateSavedInstanceStateRestore()
         compose.onNodeWithTag("attachment-preview").assertExists()
@@ -101,6 +139,12 @@ class AssistantAttachmentTest {
         assertEquals(100, edited.height)
         assertArrayEquals(bytes, importer.store.read(original.id))
         assertFalse(bytes.contentEquals(importer.store.read(edited.id)))
+        val rendered = importer.bitmap(edited)
+        val pixels = IntArray(rendered.width * rendered.height)
+        rendered.getPixels(pixels, 0, rendered.width, 0, 0, rendered.width, rendered.height)
+        rendered.recycle()
+        assertTrue("The first stroke must remain red", pixels.count { Color.red(it) > 180 && Color.green(it) < 170 && Color.blue(it) < 170 } >= 5)
+        assertTrue("Switching color must make the next stroke blue", pixels.count { Color.red(it) < 180 && Color.blue(it) > 200 && Color.blue(it) > Color.red(it) + 40 } >= 5)
         compose.runOnUiThread {
             state.compose("Explain this image")
             state.send()
@@ -109,6 +153,8 @@ class AssistantAttachmentTest {
         assertTrue(state.conversation!!.composerAttachments.isEmpty())
         val turn = state.conversation!!.turns.single()
         assertEquals(listOf(edited), turn.attachments)
+        val cardBounds = compose.onNodeWithTag("attachment-${edited.id}").fetchSemanticsNode().boundsInRoot
+        assertTrue("A single sent attachment must sit on the right", cardBounds.center.x > compose.onRoot().fetchSemanticsNode().boundsInRoot.center.x)
         compose.runOnUiThread { state.branch(turn.id) }
         assertEquals(listOf(edited), state.conversation!!.turns.single().attachments)
         compose.runOnUiThread { state.dispose() }

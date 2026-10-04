@@ -21,6 +21,16 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 class AssistantAttachmentContractTest {
+    @Test
+    fun markdownRemainsTextForTransportAndOldChatsUseMarkdownPreview() {
+        val markdown = AssistantAttachment(UUID.randomUUID().toString(), "notes.md", AttachmentKind.MARKDOWN, "text/markdown", 5)
+        markdown.validate()
+        assertTrue(markdown.isMarkdown)
+        assertFalse(markdown.needsVision)
+        assertTrue(markdown.copy(kind = AttachmentKind.TEXT, mimeType = "text/plain").isMarkdown)
+        val request = DeepSeekRequest.create("r", "c", "draft:d", "Read", null, model = DeepSeekModel.PRO, attachments = listOf(AttachmentContent(markdown, text = "# Hi")))
+        assertTrue(request.body.toString(Charsets.UTF_8).contains("# Hi"))
+    }
     private val image = AssistantAttachment(UUID.randomUUID().toString(), "Screenshot.png", AttachmentKind.IMAGE, "image/png", 3, 100, 200)
     private val base = AssistantContextSnapshot.capture(
         AssistantDraftContext(
