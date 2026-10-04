@@ -63,7 +63,7 @@ private fun Node.children(): List<Node> = generateSequence(firstChild) { it.next
 
 /** Native text only. HTML stays literal and images show alt text without fetching remote content. */
 @Composable
-internal fun AssistantMarkdown(source: String, modifier: Modifier = Modifier) {
+fun AssistantMarkdown(source: String, modifier: Modifier = Modifier) {
     val document = remember(source) { markdownParser.parse(source) }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         document.children().forEach { MarkdownBlock(it) }
