@@ -71,7 +71,7 @@ internal fun EditorSheetDialog(
 ) {
     val contentScrollState = rememberScrollState()
     val configuration = LocalConfiguration.current
-    val sheetColor = MaterialTheme.colorScheme.surface
+    val sheetColor = MaterialTheme.colorScheme.surfaceContainerLow
     val landscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val useCompactPage = compact && !landscape
     if (!useCompactPage) {
@@ -96,7 +96,7 @@ internal fun EditorSheetDialog(
             },
             shape = RoundedCornerShape(24.dp),
             containerColor = sheetColor,
-            tonalElevation = 6.dp,
+            tonalElevation = 0.dp,
         ) {
             if (contentScrollable) {
                 AdaptiveLargeEditorSheetContent(
@@ -151,7 +151,7 @@ internal fun EditorSheetDialog(
                     .pointerInput(Unit) { detectTapGestures { } },
                 shape = RoundedCornerShape(24.dp),
                 color = sheetColor,
-                tonalElevation = 6.dp,
+                tonalElevation = 0.dp,
                 shadowElevation = 8.dp,
             ) {
                 Box(

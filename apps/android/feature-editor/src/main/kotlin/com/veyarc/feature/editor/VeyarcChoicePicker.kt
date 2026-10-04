@@ -158,7 +158,8 @@ fun VeyarcChoicePicker(
                         .heightIn(max = maxHeight)
                         .animateContentSize(tween(160)),
                     shape = RoundedCornerShape(24.dp),
-                    tonalElevation = 8.dp,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    tonalElevation = 0.dp,
                     shadowElevation = 12.dp,
                 ) {
                     Column(

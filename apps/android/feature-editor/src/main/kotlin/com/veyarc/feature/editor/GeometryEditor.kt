@@ -225,8 +225,8 @@ internal fun TemplatePickerSheet(
         sheetGesturesEnabled = sheetGesturesEnabled,
         dragHandle = { CompactEditorSheetDragHandle() },
         shape = RoundedCornerShape(24.dp),
-        containerColor = MaterialTheme.colorScheme.surface,
-        tonalElevation = 6.dp,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        tonalElevation = 0.dp,
     ) {
         Column(
             Modifier

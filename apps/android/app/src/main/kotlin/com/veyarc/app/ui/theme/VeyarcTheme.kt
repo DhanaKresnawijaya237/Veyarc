@@ -4,12 +4,14 @@ import android.app.Activity
 import android.content.ContextWrapper
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalTonalElevationEnabled
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
@@ -27,10 +29,17 @@ private val DarkColors =
         onSecondary = Color(0xFF242D61),
         secondaryContainer = Color(0xFF3B4479),
         onSecondaryContainer = Color(0xFFDEE0FF),
-        background = Color(0xFF100E14),
+        background = Color(0xFF111014),
         onBackground = Color(0xFFE8E0EB),
-        surface = Color(0xFF100E14),
+        surface = Color(0xFF111014),
         onSurface = Color(0xFFE8E0EB),
+        surfaceDim = Color(0xFF111014),
+        surfaceBright = Color(0xFF37353D),
+        surfaceContainerLowest = Color(0xFF0D0C10),
+        surfaceContainerLow = Color(0xFF19181D),
+        surfaceContainer = Color(0xFF1F1E24),
+        surfaceContainerHigh = Color(0xFF27262D),
+        surfaceContainerHighest = Color(0xFF323038),
         surfaceVariant = Color(0xFF4A454D),
         onSurfaceVariant = Color(0xFFCDC4CE),
         outline = Color(0xFF968E98),
@@ -48,10 +57,17 @@ private val LightColors =
         onSecondary = Color.White,
         secondaryContainer = Color(0xFFDEE0FF),
         onSecondaryContainer = Color(0xFF101A4A),
-        background = Color(0xFFFFF7FF),
+        background = Color(0xFFFAF9FC),
         onBackground = Color(0xFF1E1A20),
-        surface = Color(0xFFFFF7FF),
+        surface = Color(0xFFFAF9FC),
         onSurface = Color(0xFF1E1A20),
+        surfaceDim = Color(0xFFDCDCE2),
+        surfaceBright = Color(0xFFFAF9FC),
+        surfaceContainerLowest = Color.White,
+        surfaceContainerLow = Color(0xFFF4F3F7),
+        surfaceContainer = Color(0xFFEEEEF2),
+        surfaceContainerHigh = Color(0xFFE8E7ED),
+        surfaceContainerHighest = Color(0xFFE2E1E8),
         surfaceVariant = Color(0xFFEAE0EA),
         onSurfaceVariant = Color(0xFF4A454D),
         outline = Color(0xFF7B747D),
@@ -92,10 +108,13 @@ fun VeyarcTheme(
             }
         }
     }
-    MaterialTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
-        typography = VeyarcTypography,
-        shapes = VeyarcShapes,
-        content = content,
-    )
+    // Use shared surface colors so sheets and menus keep the same tint at every elevation.
+    CompositionLocalProvider(LocalTonalElevationEnabled provides false) {
+        MaterialTheme(
+            colorScheme = if (darkTheme) DarkColors else LightColors,
+            typography = VeyarcTypography,
+            shapes = VeyarcShapes,
+            content = content,
+        )
+    }
 }
