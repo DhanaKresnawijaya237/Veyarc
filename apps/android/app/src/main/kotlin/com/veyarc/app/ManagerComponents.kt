@@ -52,7 +52,6 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -97,6 +96,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.veyarc.data.storage.FolderSummary
+import com.veyarc.feature.assistant.RoundedSelectionCheckbox
 
 @Composable
 internal fun CompactManagerHeader(
@@ -243,7 +243,7 @@ internal data class ManagerSelectionBarState(
 @Composable
 internal fun ManagerSelectionCheckbox(visible: Boolean, selected: Boolean, enabled: Boolean, onSelectedChange: (Boolean) -> Unit) {
     AnimatedVisibility(visible, enter = expandHorizontally(tween(220), expandFrom = Alignment.Start) + fadeIn(tween(150)), exit = shrinkHorizontally(tween(220), shrinkTowards = Alignment.Start) + fadeOut(tween(100))) {
-        Checkbox(checked = selected, onCheckedChange = onSelectedChange, enabled = enabled)
+        RoundedSelectionCheckbox(checked = selected, onCheckedChange = onSelectedChange, enabled = enabled)
     }
 }
 

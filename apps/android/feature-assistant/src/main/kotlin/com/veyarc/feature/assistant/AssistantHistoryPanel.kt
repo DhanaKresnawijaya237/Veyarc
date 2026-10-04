@@ -33,8 +33,6 @@ import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -177,11 +175,12 @@ internal fun AssistantHistoryPanel(state: AssistantPreviewState, onDismiss: () -
                         ) {
                             Row(Modifier.heightIn(min = 64.dp).padding(horizontal = 10.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                                 AnimatedVisibility(selecting, enter = expandHorizontally(tween(220), expandFrom = Alignment.Start) + fadeIn(tween(150)), exit = shrinkHorizontally(tween(220), shrinkTowards = Alignment.Start) + fadeOut(tween(100))) {
-                                    Checkbox(
+                                    RoundedSelectionCheckbox(
                                         entry.id in selected,
                                         onCheckedChange = null,
                                         modifier = Modifier.padding(end = 12.dp).testTag("assistant-history-check-${entry.id}"),
-                                        colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.onSurface, checkmarkColor = MaterialTheme.colorScheme.surface, uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant),
+                                        checkedColor = MaterialTheme.colorScheme.onSurface,
+                                        checkmarkColor = MaterialTheme.colorScheme.surface,
                                     )
                                 }
                                 Icon(if (entry.pinned) Icons.Outlined.PushPin else Icons.Outlined.RadioButtonUnchecked, null, Modifier.padding(end = 12.dp).size(if (entry.pinned) 16.dp else 8.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
