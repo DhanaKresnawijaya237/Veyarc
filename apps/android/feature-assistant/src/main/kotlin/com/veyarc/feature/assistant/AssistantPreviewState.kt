@@ -200,7 +200,7 @@ class AssistantPreviewState(
                 if (testingConnection && providerEnabled && generation == applyGeneration) {
                     val response = AssistantResponseCodec.decode(bytes, request.requestId, request.conversationId, request.baseSnapshotId)
                     require(response.outcome == AssistantOutcome.EXPLANATION && response.text.length <= 512)
-                    connectionTestStatus = "Connection succeeded. Workflow quality has not been tested."
+                    connectionTestStatus = "Connected."
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled

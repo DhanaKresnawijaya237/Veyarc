@@ -269,9 +269,6 @@ class MainActivity : ComponentActivity() {
                                                     AppPreferences.setTheme(this@MainActivity, preference)
                                                 }
                                             },
-                                            onOpenDiagnostics = {
-                                                fullScreenDestination = FullScreenDestination.ACCESSIBILITY
-                                            },
                                         )
                                     }
                                 }

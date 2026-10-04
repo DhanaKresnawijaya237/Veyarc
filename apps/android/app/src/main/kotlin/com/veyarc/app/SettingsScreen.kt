@@ -15,6 +15,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -25,20 +26,34 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.DarkMode
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.LightMode
+import androidx.compose.material.icons.outlined.RestartAlt
+import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.SettingsBrightness
+import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -54,13 +69,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.veyarc.automation.android.AccessibilityGestureDispatcher
 import com.veyarc.automation.android.EdgeLatchPlayTarget
-import com.veyarc.automation.android.MediaProjectionCaptureRuntime
 import com.veyarc.automation.android.ReplayFloatingController
 import com.veyarc.automation.android.ShizukuTouchProbe
 import com.veyarc.data.storage.WorkflowRepository
@@ -82,7 +99,6 @@ fun SettingsScreen(
     refreshGeneration: Int,
     themePreference: ThemePreference,
     onThemePreferenceChange: (ThemePreference) -> Unit,
-    onOpenDiagnostics: () -> Unit,
     modifier: Modifier = Modifier,
     storageState: SettingsStorageState = remember { SettingsStorageState() },
 ) {
@@ -288,10 +304,6 @@ fun SettingsScreen(
                         }.onFailure { message = "Android notification settings are unavailable on this device." }
                     },
                 )
-                Text("Quick Settings tile: emergency stop.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                HorizontalDivider()
-                StatusRow("Screen capture", if (MediaProjectionCaptureRuntime.isActive) "Active" else "Inactive", MediaProjectionCaptureRuntime.isActive)
-                Text("Android asks for capture permission before each visual run.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         item {
@@ -301,15 +313,19 @@ fun SettingsScreen(
                 expanded = expandedSection == "appearance",
                 onToggle = { expandedSection = if (expandedSection == "appearance") null else "appearance" },
             ) {
-                Column {
+                Row(Modifier.fillMaxWidth().selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ThemePreference.entries.forEach { option ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            RadioButton(selected = themePreference == option, onClick = { onThemePreferenceChange(option) })
-                            Text(option.name.lowercase().replaceFirstChar(Char::uppercase))
-                        }
+                        SettingsChoiceTile(
+                            label = option.name.lowercase().replaceFirstChar(Char::uppercase),
+                            icon = when (option) {
+                                ThemePreference.SYSTEM -> Icons.Outlined.SettingsBrightness
+                                ThemePreference.LIGHT -> Icons.Outlined.LightMode
+                                ThemePreference.DARK -> Icons.Outlined.DarkMode
+                            },
+                            selected = themePreference == option,
+                            onClick = { onThemePreferenceChange(option) },
+                            modifier = Modifier.weight(1f),
+                        )
                     }
                 }
             }
@@ -322,6 +338,9 @@ fun SettingsScreen(
                 expanded = expandedSection == "latch",
                 onToggle = { expandedSection = if (expandedSection == "latch") null else "latch" },
                 trailing = {
+                    IconButton(onClick = { ReplayFloatingController.resetPosition(context) }) {
+                        Icon(Icons.Outlined.RestartAlt, "Reset latch position")
+                    }
                     Switch(
                         checked = latchEnabled,
                         onCheckedChange = { enabled -> ReplayFloatingController.setEnabled(context, enabled) },
@@ -329,29 +348,28 @@ fun SettingsScreen(
                 },
             ) {
                 Text("Play button", style = MaterialTheme.typography.titleMedium)
-                EdgeLatchPlayTarget.entries.forEach { option ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().clickable {
-                            latchPlayTarget = option
-                            ReplayFloatingController.setPlayTarget(context, option)
-                        },
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(
+                Row(Modifier.fillMaxWidth().selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    EdgeLatchPlayTarget.entries.forEach { option ->
+                        SettingsChoiceTile(
+                            label = when (option) {
+                                EdgeLatchPlayTarget.MOST_RECENTLY_PLAYED -> "Last played"
+                                EdgeLatchPlayTarget.LAST_SAVED -> "Last saved"
+                                EdgeLatchPlayTarget.LATEST_FAVORITED -> "Favorite"
+                            },
+                            icon = when (option) {
+                                EdgeLatchPlayTarget.MOST_RECENTLY_PLAYED -> Icons.Outlined.History
+                                EdgeLatchPlayTarget.LAST_SAVED -> Icons.Outlined.Save
+                                EdgeLatchPlayTarget.LATEST_FAVORITED -> Icons.Outlined.StarOutline
+                            },
                             selected = latchPlayTarget == option,
                             onClick = {
                                 latchPlayTarget = option
                                 ReplayFloatingController.setPlayTarget(context, option)
                             },
+                            modifier = Modifier.weight(1f),
                         )
-                        Text(option.label)
                     }
                 }
-                OutlinedButton(onClick = { ReplayFloatingController.resetPosition(context) }) { Text("Reset latch position") }
-                Text(
-                    "Stop anytime from notifications or the Quick Settings tile.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
         item {
@@ -370,14 +388,17 @@ fun SettingsScreen(
                     androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
                     Text(operation, style = MaterialTheme.typography.bodySmall)
                 }
-                OutlinedButton(enabled = storageOperation == null, onClick = { importBundle.launch(arrayOf("application/zip", "application/octet-stream")) }) {
-                    Text("Import workflow")
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(modifier = Modifier.weight(1f), enabled = storageOperation == null, onClick = { importBundle.launch(arrayOf("application/zip", "application/octet-stream")) }) {
+                        Text("Import workflow", textAlign = TextAlign.Center)
+                    }
+                    OutlinedButton(
+                        modifier = Modifier.weight(1f),
+                        enabled = workflows.isNotEmpty() && storageOperation == null,
+                        onClick = { chooseExportWorkflow = true },
+                    ) { Text("Export workflow", textAlign = TextAlign.Center) }
                 }
-                OutlinedButton(
-                    enabled = workflows.isNotEmpty() && storageOperation == null,
-                    onClick = { chooseExportWorkflow = true },
-                ) { Text("Export workflow") }
-                TextButton(enabled = runCount > 0 && storageOperation == null, onClick = { confirmClearHistory = true }) {
+                TextButton(modifier = Modifier.align(Alignment.CenterHorizontally), enabled = runCount > 0 && storageOperation == null, onClick = { confirmClearHistory = true }) {
                     Text("Clear finished run history")
                 }
             }
@@ -385,16 +406,15 @@ fun SettingsScreen(
         item {
             val packageInfo = remember { context.packageManager.getPackageInfo(context.packageName, 0) }
             SettingsCard(
-                title = "Diagnostics",
+                title = "About",
                 summary = "Veyarc ${packageInfo.versionName}",
-                expanded = expandedSection == "diagnostics",
-                onToggle = { expandedSection = if (expandedSection == "diagnostics") null else "diagnostics" },
+                expanded = expandedSection == "about",
+                onToggle = { expandedSection = if (expandedSection == "about") null else "about" },
             ) {
                 @Suppress("DEPRECATION")
                 StatusRow("Veyarc", "${packageInfo.versionName} (${packageInfo.versionCode})")
                 StatusRow("Android", "${Build.VERSION.RELEASE} • API ${Build.VERSION.SDK_INT}")
                 StatusRow("Device", "${Build.MANUFACTURER} ${Build.MODEL}")
-                Button(onClick = onOpenDiagnostics) { Text("Open diagnostics") }
                 OutlinedButton(onClick = { openGuide = "Android guide" to "android-beta-guide.md" }) {
                     Text("Android guide")
                 }
@@ -593,8 +613,12 @@ private fun StatusRow(
     active: Boolean? = null,
     onClick: (() -> Unit)? = null,
 ) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, modifier = if (onClick == null) Modifier else Modifier.clickable(onClick = onClick))
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        if (onClick == null) {
+            Text(label)
+        } else {
+            TextButton(onClick = onClick, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) { Text(label) }
+        }
         Text(
             value,
             color = when (active) {
@@ -603,6 +627,22 @@ private fun StatusRow(
                 null -> MaterialTheme.colorScheme.onSurfaceVariant
             },
         )
+    }
+}
+
+@Composable
+private fun SettingsChoiceTile(label: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = modifier.selectable(selected = selected, role = Role.RadioButton, onClick = onClick),
+        shape = RoundedCornerShape(18.dp),
+        color = if (selected) colors.primaryContainer else colors.surfaceContainerLow,
+        border = BorderStroke(1.dp, if (selected) colors.primary else colors.outlineVariant),
+    ) {
+        Column(Modifier.padding(horizontal = 6.dp, vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(if (selected) Icons.Outlined.CheckCircle else icon, null, Modifier.size(28.dp), tint = if (selected) colors.primary else colors.onSurfaceVariant)
+            Text(label, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
+        }
     }
 }
 

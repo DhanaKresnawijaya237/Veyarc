@@ -5,6 +5,11 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.view.WindowManager
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -105,11 +110,14 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
             }
             Column(Modifier.weight(1f).padding(start = 12.dp)) {
                 Text("DeepSeek", style = MaterialTheme.typography.titleMedium)
-                Text("Your API key", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Icon(if (providerExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, if (providerExpanded) "Collapse DeepSeek" else "Expand DeepSeek")
         }
-        AnimatedVisibility(providerExpanded) {
+        AnimatedVisibility(
+            providerExpanded,
+            enter = expandVertically(tween(140)) + fadeIn(tween(100)),
+            exit = shrinkVertically(tween(120)) + fadeOut(tween(80)),
+        ) {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 HorizontalDivider()
                 TextButton(onClick = { modelVisible = true }, modifier = Modifier.fillMaxWidth(), enabled = assistant?.usesProvider == true) {

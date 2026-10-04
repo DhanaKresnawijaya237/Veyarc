@@ -307,7 +307,7 @@ class AssistantProviderStateTest {
         calls[1].second.complete(reply(calls[1].first, "Connected"))
         yield()
         assertFalse(state.testingConnection)
-        assertTrue(state.connectionTestStatus!!.startsWith("Connection succeeded"))
+        assertEquals("Connected.", state.connectionTestStatus)
         state.dispose()
     }
 

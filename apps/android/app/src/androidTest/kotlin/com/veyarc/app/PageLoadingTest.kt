@@ -61,7 +61,6 @@ class PageLoadingTest {
                             refreshGeneration = 0,
                             themePreference = ThemePreference.DARK,
                             onThemePreferenceChange = {},
-                            onOpenDiagnostics = {},
                             storageState = pages.settings,
                         )
                     }
