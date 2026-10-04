@@ -17,7 +17,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 
 @Serializable
-data class AssistantProposalCheck(val candidateJson: String? = null, val issues: List<String> = emptyList()) {
+data class AssistantProposalCheck(val candidateJson: String? = null, val issues: List<String> = emptyList(), val imageAdditions: List<AssistantImageAddition> = emptyList()) {
     val isValid: Boolean get() = candidateJson != null && issues.isEmpty()
 }
 
@@ -26,10 +26,14 @@ object AssistantCandidateValidator {
     const val MAX_CANDIDATE_BYTES = AssistantContextSnapshot.MAX_BYTES
     const val CAPABILITY_NOTICE = "Device capabilities have not been checked. Passing local validation does not mean this device can run the workflow."
 
+    fun validate(snapshot: AssistantContextSnapshot?, candidateJson: String, compileIssues: ((WorkflowDocument) -> List<String>)?): AssistantProposalCheck = validate(snapshot, candidateJson, compileIssues, emptyList(), emptyList())
+
     fun validate(
         snapshot: AssistantContextSnapshot?,
         candidateJson: String,
         compileIssues: ((WorkflowDocument) -> List<String>)?,
+        imageAdditions: List<AssistantImageAddition>,
+        availableImages: List<AssistantAttachment>,
     ): AssistantProposalCheck {
         if (snapshot == null) return invalid("A valid captured workflow is required. Supply the missing workflow details first.")
         if (compileIssues == null) return invalid("Local compiler validation is unavailable.")
@@ -49,6 +53,25 @@ object AssistantCandidateValidator {
         } catch (_: Exception) {
             return invalid("The proposed workflow has an invalid format or is too large to review safely.")
         }
+        val imageReferences = try {
+            require(imageAdditions.size <= 64 && imageAdditions.map { it.assetId }.distinct().size == imageAdditions.size)
+            imageAdditions.forEach { addition ->
+                addition.validate()
+                val source = requireNotNull(availableImages.firstOrNull { it.id == addition.sourceAttachmentId && it.kind == AttachmentKind.IMAGE })
+                source.validate()
+                if (addition.purpose == AssistantImagePurpose.TARGET) {
+                    val width = kotlin.math.ceil((addition.crop.x + addition.crop.width) * source.width).toLong() - kotlin.math.floor(addition.crop.x * source.width).toLong()
+                    val height = kotlin.math.ceil((addition.crop.y + addition.crop.height) * source.height).toLong() - kotlin.math.floor(addition.crop.y * source.height).toLong()
+                    require(width * height <= com.veyarc.data.storage.DecodedTemplate.MAX_TEMPLATE_PIXELS)
+                }
+                require(base.assets.none { it.assetId.value == addition.assetId })
+                require(base.assets.none { it.displayName?.equals(addition.name, ignoreCase = true) == true })
+            }
+            require(imageAdditions.map { it.name.lowercase() }.distinct().size == imageAdditions.size)
+            imageAdditions.map(AssistantImageAddition::reference)
+        } catch (_: Exception) {
+            return invalid("The proposed image must come from a photo you attached, with a unique name and a valid crop.")
+        }
         val locked = buildList {
             if (candidate.id != base.id) add("workflow identity")
             if (candidate.schemaVersion != base.schemaVersion) add("schema version")
@@ -56,7 +79,7 @@ object AssistantCandidateValidator {
             if (candidate.viewport != base.viewport) add("viewport and orientation")
             if (candidate.runLimits != base.runLimits) add("run limits")
             if (candidate.allowedPackages.sortedBy { it.value } != base.allowedPackages.sortedBy { it.value }) add("allowed packages")
-            if (candidate.assets.sortedBy { it.assetId.value } != base.assets.sortedBy { it.assetId.value }) add("image catalog")
+            if (candidate.assets.sortedBy { it.assetId.value } != (base.assets + imageReferences).sortedBy { it.assetId.value }) add("image catalog")
         }
         if (locked.isNotEmpty()) return invalid("Candidate changed locked fields: ${locked.joinToString()}. Change these in the editor first.")
         val modelIssues = WorkflowValidator.validate(candidate)
@@ -76,7 +99,7 @@ object AssistantCandidateValidator {
                 diagnostics(errors)
             } else {
                 val canonical = WorkflowJson.encode(candidate)
-                if (canonical.toByteArray(Charsets.UTF_8).size > MAX_CANDIDATE_BYTES) invalid("The proposed workflow is too large to review safely.") else AssistantProposalCheck(candidateJson = canonical)
+                if (canonical.toByteArray(Charsets.UTF_8).size > MAX_CANDIDATE_BYTES) invalid("The proposed workflow is too large to review safely.") else AssistantProposalCheck(candidateJson = canonical, imageAdditions = imageAdditions)
             }
         } catch (_: Exception) {
             invalid("Candidate exceeds the local compilation budget or could not be compiled.")

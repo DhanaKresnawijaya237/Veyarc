@@ -3,6 +3,7 @@ package com.veyarc.feature.assistant
 import com.veyarc.model.WorkflowJson
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import java.nio.ByteBuffer
@@ -30,6 +31,7 @@ data class AssistantResponse(
     val outcome: AssistantOutcome,
     val text: String,
     val candidate: JsonObject? = null,
+    val imageAdditions: List<AssistantImageAddition> = emptyList(),
 )
 
 internal object AssistantResponseCodec {
@@ -44,12 +46,20 @@ internal object AssistantResponseCodec {
         rejectDuplicateKeys(json)
         val fields = WorkflowJson.format.parseToJsonElement(json) as? JsonObject ?: error("Expected response object")
         fields.forEach { (key, value) ->
-            require(if (key == "candidate") value is JsonObject else value is JsonPrimitive && value.isString == (key != "contractVersion"))
+            require(
+                when (key) {
+                    "candidate" -> value is JsonObject
+                    "imageAdditions" -> value is JsonArray
+                    else -> value is JsonPrimitive && value.isString == (key != "contractVersion")
+                },
+            )
         }
         val response = WorkflowJson.decodeStrict(AssistantResponse.serializer(), json)
         require(response.contractVersion == 1)
         require(response.requestId == requestId && response.conversationId == conversationId && response.baseSnapshotId == baseSnapshotId)
         require((response.outcome == AssistantOutcome.PROPOSAL) == (response.candidate != null))
+        require(response.imageAdditions.size <= 64 && (response.imageAdditions.isEmpty() || response.outcome == AssistantOutcome.PROPOSAL))
+        response.imageAdditions.forEach(AssistantImageAddition::validate)
         require(response.text.isNotBlank() && response.text.length <= MAX_TEXT_LENGTH)
         return response
     }

@@ -32,6 +32,10 @@ object AssistantProposalReview {
         return buildList {
             values("Workflow name", before["name"], after["name"], this)
             values("Variables", before["variables"], after["variables"], this)
+            proposal.imageAdditions.forEach { addition ->
+                val crop = addition.crop
+                add(AssistantValueChange(if (addition.purpose == AssistantImagePurpose.BACKGROUND) "Background image" else "Cropped image", null, "${addition.name} · ${if (addition.purpose == AssistantImagePurpose.BACKGROUND) "Full image" else "Crop ${(crop.width * 100).toInt()}% × ${(crop.height * 100).toInt()}%"}"))
+            }
             val old = blocks(before.getValue("steps") as JsonArray)
             val new = blocks(after.getValue("steps") as JsonArray)
             val common = old.keys intersect new.keys
