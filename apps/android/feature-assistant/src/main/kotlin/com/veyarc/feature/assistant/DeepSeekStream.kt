@@ -10,7 +10,7 @@ import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 
-/** Buffer generated JSON privately. Only a validated stop + DONE response leaves this reader. */
+/** Stream display prose separately. Only a validated stop + DONE envelope leaves this reader. */
 internal object DeepSeekStream {
     const val MAX_EVENT_BYTES = 512 * 1024
 
@@ -19,6 +19,7 @@ internal object DeepSeekStream {
         var contentBytes = 0
         var reasoningBytes = 0
         val thinking = AssistantThinkingBuffer(request)
+        val reply = AssistantReplyBuffer(request)
         var completionId: String? = null
         var assistant = false
         var stopped = false
@@ -91,6 +92,10 @@ internal object DeepSeekStream {
                 if (contentBytes > AssistantResponseCodec.MAX_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
                 if (piece.isNotEmpty()) thinking.finish()
                 content.append(piece)
+                if (piece.isNotEmpty()) {
+                    require(assistant)
+                    reply.append(piece)
+                }
             }
             when (choice.getValue("finish_reason")) {
                 JsonNull -> Unit
@@ -127,6 +132,7 @@ internal object DeepSeekStream {
             }
         } finally {
             thinking.publish(force = true)
+            reply.publish(force = true)
         }
     }
 }

@@ -30,6 +30,34 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 class DeepSeekStreamTest {
+    @Test
+    fun replyProgressDecodesSplitEscapesAndIgnoresNestedTextAndBindingFields() {
+        val updates = mutableListOf<String>()
+        val selected = DeepSeekRequest.create("r", "c", "draft:d", "Explain", null, streaming = true, onReply = updates::add)
+        val prefix = "{\"candidate\":{\"text\":\"private candidate\"},\"requestId\":\"private-id\",\"te\\u0078t\":\"Hello\\n\\\"world\\\" \\uD83C\\uDF0D"
+        val reader = AssistantReplyBuffer(selected)
+        prefix.forEach { reader.append(it.toString()) }
+        reader.publish(force = true)
+        assertEquals("Hello\n\"world\" 🌍", updates.last())
+        assertTrue(updates.none { "private" in it || it.last().isHighSurrogate() })
+        reader.append("\\t界\"}")
+        assertEquals("Hello\n\"world\" 🌍\t界", updates.last())
+
+        val first = event(chunk("{\"text\":\"Visible before completion", role = "assistant"))
+        val remainder = "\",\"contractVersion\":1,\"requestId\":\"r\",\"conversationId\":\"c\",\"baseSnapshotId\":\"draft:d\",\"outcome\":\"explanation\"}"
+        val body = first + event(chunk(remainder)) + event(chunk(stop = "stop")) + event("[DONE]")
+        val input = object : ByteArrayInputStream(body.toByteArray()) {
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                if (pos == first.toByteArray().size) assertEquals("Visible before completion", selected.latestReply)
+                return super.read(buffer, offset, minOf(length, 1))
+            }
+        }
+        val response = DeepSeekStream.read(input, selected, DeepSeekCancellation())
+        assertEquals("Visible before completion", AssistantResponseCodec.decode(response, "r", "c", "draft:d").text)
+        failure(DeepSeekFailure.INVALID_RESPONSE) { DeepSeekStream.read(first.byteInputStream(), selected, DeepSeekCancellation()) }
+        assertEquals("Visible before completion", selected.latestReply)
+    }
+
     private val request = DeepSeekRequest.create("r", "c", "draft:d", "Explain", null, streaming = true)
     private val key = "fixture-only-key"
     private val content = AssistantResponseCodec.encode(AssistantResponse(1, "r", "c", "draft:d", AssistantOutcome.EXPLANATION, "Hello 界 🌍"))

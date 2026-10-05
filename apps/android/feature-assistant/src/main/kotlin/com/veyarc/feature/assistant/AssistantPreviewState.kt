@@ -744,9 +744,11 @@ class AssistantPreviewState(
                     // Network callbacks run on IO. State belongs to the ViewModel's main scope.
                     scope.launch { receiveThinking(token, thinking) }
                 }
-                request = if (contents.isEmpty()) providerRequest(chat, contents, notifyThinking) else withContext(Dispatchers.Default) { providerRequest(chat, contents, notifyThinking) }
+                val notifyReply: (String) -> Unit = { text -> scope.launch { receiveReply(token, text) } }
+                request = if (contents.isEmpty()) providerRequest(chat, contents, notifyThinking, notifyReply) else withContext(Dispatchers.Default) { providerRequest(chat, contents, notifyThinking, notifyReply) }
                 val bytes = providerCall(request)
                 request.latestThinking?.let { receiveThinking(token, it) }
+                receiveReply(token, request.latestReply)
                 receive(token, bytes)
             } catch (cancelled: CancellationException) {
                 // Owner cancellation cannot publish a result. A persisted unfinished turn recovers interrupted.
@@ -755,6 +757,7 @@ class AssistantPreviewState(
             } catch (error: Exception) {
                 if (requestId == token) {
                     request?.latestThinking?.let { receiveThinking(token, it) }
+                    request?.latestReply?.let { receiveReply(token, it) }
                     updateLast { it.copy(status = PreviewReplyStatus.ERROR, responseError = (error as? DeepSeekException)?.reason?.message ?: (error as? IllegalArgumentException)?.message?.take(200) ?: "The AI request failed. Your prompt is kept; retry is explicit.") }
                     requestId = null
                     flush()
@@ -763,7 +766,7 @@ class AssistantPreviewState(
         }
     }
 
-    internal fun providerRequest(chat: PreviewConversation, contents: Map<String, AttachmentContent> = emptyMap(), onThinking: ((AssistantThinking) -> Unit)? = null): DeepSeekRequest {
+    internal fun providerRequest(chat: PreviewConversation, contents: Map<String, AttachmentContent> = emptyMap(), onThinking: ((AssistantThinking) -> Unit)? = null, onReply: ((String) -> Unit)? = null): DeepSeekRequest {
         val current = chat.turns.last()
         val history = chat.turns.dropLast(1).filter {
             it.provider && it.status == PreviewReplyStatus.COMPLETE && it.outcome != null &&
@@ -784,7 +787,7 @@ class AssistantPreviewState(
                 turn.attachments.map { contents.getValue(it.id) },
             )
         }
-        return DeepSeekRequest.create(current.requestId, chat.id, current.responseBaseId(chat), current.prompt, current.baseSnapshot, history, streaming = true, effort = current.effort, onThinking = onThinking, model = current.model, attachments = current.attachments.map { contents.getValue(it.id) })
+        return DeepSeekRequest.create(current.requestId, chat.id, current.responseBaseId(chat), current.prompt, current.baseSnapshot, history, streaming = true, effort = current.effort, onThinking = onThinking, model = current.model, attachments = current.attachments.map { contents.getValue(it.id) }, onReply = onReply)
     }
 
     private fun receiveThinking(token: String, thinking: AssistantThinking) {
@@ -792,6 +795,13 @@ class AssistantPreviewState(
         val turn = conversation?.turns?.lastOrNull() ?: return
         if (turn.requestId != token || turn.status != PreviewReplyStatus.RESPONDING || !turn.provider || turn.effort == DeepSeekEffort.OFF) return
         updateLast { it.copy(thinking = thinking) }
+    }
+
+    private fun receiveReply(token: String, text: String) {
+        if (requestId != token) return
+        val turn = conversation?.turns?.lastOrNull() ?: return
+        if (turn.requestId != token || turn.status != PreviewReplyStatus.RESPONDING || !turn.provider) return
+        updateLast { it.copy(reply = text) }
     }
 
     fun advance(token: String) {

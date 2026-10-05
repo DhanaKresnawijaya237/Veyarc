@@ -33,7 +33,19 @@ class DeepSeekRequest private constructor(
     internal val effort: DeepSeekEffort,
     internal val model: DeepSeekModel,
     private val onThinking: ((AssistantThinking) -> Unit)? = null,
+    private val onReply: ((String) -> Unit)? = null,
 ) {
+    @Volatile
+    internal var latestReply: String = ""
+        private set
+
+    /** Display-only progress. Only the complete, validated envelope can supply a proposal. */
+    fun reportReply(text: String) {
+        require(text.length <= AssistantResponseCodec.MAX_TEXT_LENGTH)
+        latestReply = text
+        onReply?.invoke(text)
+    }
+
     @Volatile
     internal var latestThinking: AssistantThinking? = null
         private set
@@ -63,6 +75,7 @@ class DeepSeekRequest private constructor(
             onThinking: ((AssistantThinking) -> Unit)? = null,
             model: DeepSeekModel = DeepSeekModel.FLASH,
             attachments: List<AttachmentContent> = emptyList(),
+            onReply: ((String) -> Unit)? = null,
         ): DeepSeekRequest = try {
             require(listOf(requestId, conversationId, baseSnapshotId).all { it.isNotBlank() && it.length <= 128 })
             require(prompt.isNotBlank() && prompt.length <= AssistantPreviewState.MAX_PROMPT_LENGTH)
@@ -104,7 +117,7 @@ class DeepSeekRequest private constructor(
             }
             val bytes = requestBody(listOf(system) + selected + user, MAX_OUTPUT_TOKENS, streaming, effort, model)
             if (bytes.size > budget) throw DeepSeekException(DeepSeekFailure.REQUEST_TOO_LARGE)
-            DeepSeekRequest(bytes, requestId, conversationId, baseSnapshotId, streaming, effort, model, onThinking)
+            DeepSeekRequest(bytes, requestId, conversationId, baseSnapshotId, streaming, effort, model, onThinking, onReply)
         } catch (error: DeepSeekException) {
             throw error
         } catch (_: Exception) {
