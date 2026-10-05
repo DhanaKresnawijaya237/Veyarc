@@ -50,10 +50,10 @@ import com.veyarc.feature.assistant.AssistantPreviewContext
 import com.veyarc.feature.assistant.AssistantPreviewHost
 import com.veyarc.feature.assistant.AssistantPreviewScreen
 import com.veyarc.feature.assistant.AssistantPreviewState
+import com.veyarc.feature.assistant.AssistantRequest
 import com.veyarc.feature.assistant.AssistantThinking
 import com.veyarc.feature.assistant.DeepSeekEffort
 import com.veyarc.feature.assistant.DeepSeekModel
-import com.veyarc.feature.assistant.DeepSeekRequest
 import com.veyarc.feature.assistant.PreviewScenario
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
@@ -822,7 +822,7 @@ class AssistantPreviewUiTest {
     fun replyTextAppearsBeforeCompletionAndFollowsItsGrowingTail() {
         val owner = kotlinx.coroutines.SupervisorJob()
         val result = kotlinx.coroutines.CompletableDeferred<ByteArray>()
-        var request: DeepSeekRequest? = null
+        var request: AssistantRequest? = null
         lateinit var state: AssistantPreviewState
         try {
             compose.runOnIdle {
@@ -862,7 +862,7 @@ class AssistantPreviewUiTest {
     fun thinkingStreamsSeparatelyAndStaysCompactWhenExpanded() {
         val owner = kotlinx.coroutines.SupervisorJob()
         val result = kotlinx.coroutines.CompletableDeferred<ByteArray>()
-        var request: DeepSeekRequest? = null
+        var request: AssistantRequest? = null
         lateinit var state: AssistantPreviewState
         val largeText = InstrumentationRegistry.getArguments().getString("thinkingLargeText") == "true"
         val thought = "I’ll check the order of the steps before suggesting a change."

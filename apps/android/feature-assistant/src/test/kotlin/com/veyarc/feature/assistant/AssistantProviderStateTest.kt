@@ -58,7 +58,7 @@ class AssistantProviderStateTest {
 
     @Test
     fun optInDispatchAndRetryKeepOnePromptAndRejectLateResults() = runBlocking {
-        val calls = mutableListOf<Pair<DeepSeekRequest, CompletableDeferred<ByteArray>>>()
+        val calls = mutableListOf<Pair<AssistantRequest, CompletableDeferred<ByteArray>>>()
         val state = AssistantPreviewState(scope = this, providerCall = { request ->
             val result = CompletableDeferred<ByteArray>()
             calls += request to result
@@ -80,8 +80,8 @@ class AssistantProviderStateTest {
         state.send()
         yield()
         assertEquals(1, calls.size)
-        assertEquals(DeepSeekEffort.HIGH, calls[0].first.effort)
-        assertEquals(DeepSeekModel.PRO, calls[0].first.model)
+        assertTrue(calls[0].first.thinkingEnabled)
+        assertEquals(DeepSeekModel.PRO.apiId, calls[0].first.modelId)
         withContext(Dispatchers.IO) { calls[0].first.reportThinking(AssistantThinking("Live first thought")) }
         yield()
         assertEquals("Live first thought", state.conversation!!.turns.single().thinking!!.text)
@@ -113,8 +113,8 @@ class AssistantProviderStateTest {
         yield()
         assertNull(state.conversation!!.turns.single().thinking)
         assertEquals("", state.conversation!!.turns.single().reply)
-        assertEquals(DeepSeekEffort.MAX, calls[1].first.effort)
-        assertEquals(DeepSeekModel.FLASH, calls[1].first.model)
+        assertTrue(calls[1].first.thinkingEnabled)
+        assertEquals(DeepSeekModel.FLASH.apiId, calls[1].first.modelId)
         assertEquals(DeepSeekEffort.MAX, state.conversation!!.turns.single().effort)
         assertEquals(original.baseSnapshot, state.conversation!!.turns.single().baseSnapshot)
         assertNotEquals(original.requestId, state.requestId)
@@ -148,7 +148,7 @@ class AssistantProviderStateTest {
         state.setModel(DeepSeekModel.PRO)
         state.regenerate(state.conversation!!.turns.single().id)
         yield()
-        assertEquals(DeepSeekModel.PRO, calls[2].first.model)
+        assertEquals(DeepSeekModel.PRO.apiId, calls[2].first.modelId)
         calls[2].second.complete(reply(calls[2].first, "Regenerated"))
         yield()
         state.disableProvider()
@@ -285,7 +285,7 @@ class AssistantProviderStateTest {
 
     @Test
     fun connectionTestHasNoChatOrSchemaAndOldCancellationCannotFinishNewTest() = runBlocking {
-        val calls = mutableListOf<Pair<DeepSeekRequest, CompletableDeferred<ByteArray>>>()
+        val calls = mutableListOf<Pair<AssistantRequest, CompletableDeferred<ByteArray>>>()
         val state = AssistantPreviewState(scope = this, providerCall = { request ->
             val result = CompletableDeferred<ByteArray>()
             calls += request to result
@@ -320,7 +320,7 @@ class AssistantProviderStateTest {
         state.dispose()
     }
 
-    private fun reply(request: DeepSeekRequest, text: String) = AssistantResponseCodec.encode(
+    private fun reply(request: AssistantRequest, text: String) = AssistantResponseCodec.encode(
         AssistantResponse(1, request.requestId, request.conversationId, request.baseSnapshotId, AssistantOutcome.EXPLANATION, text),
     )
 }

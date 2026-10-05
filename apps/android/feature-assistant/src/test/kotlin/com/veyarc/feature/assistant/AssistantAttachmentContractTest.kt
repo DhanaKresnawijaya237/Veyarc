@@ -50,7 +50,7 @@ class AssistantAttachmentContractTest {
             base.snapshotId,
             "Use these",
             base,
-            listOf(DeepSeekHistoryTurn("Earlier image", AssistantResponse(1, "old", "chat", base.snapshotId, AssistantOutcome.EXPLANATION, "Earlier reply"), listOf(imageContent))),
+            listOf(AssistantHistoryTurn("Earlier image", AssistantResponse(1, "old", "chat", base.snapshotId, AssistantOutcome.EXPLANATION, "Earlier reply"), listOf(imageContent))),
             attachments = listOf(imageContent, AttachmentContent(document, text = "hello")),
         )
         val messages = WorkflowJson.format.parseToJsonElement(request.body.toString(Charsets.UTF_8)).jsonObject.getValue("messages") as JsonArray

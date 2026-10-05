@@ -79,7 +79,7 @@ class DeepSeekClient internal constructor(
         .build()
 
     /** Owner cancellation closes the same attempt used by explicit Stop/key-change cancellation. */
-    suspend fun await(request: DeepSeekRequest, apiKey: String, cancellation: DeepSeekCancellation = DeepSeekCancellation()): ByteArray = suspendCancellableCoroutine { continuation ->
+    suspend fun await(request: AssistantRequest, apiKey: String, cancellation: DeepSeekCancellation = DeepSeekCancellation()): ByteArray = suspendCancellableCoroutine { continuation ->
         continuation.invokeOnCancellation { cancellation.cancel() }
         // The blocking worker always releases its connection in complete()'s finally block.
         CoroutineScope(Dispatchers.IO).launch {
@@ -88,7 +88,7 @@ class DeepSeekClient internal constructor(
     }
 
     /** Returns original content bytes, ready for the existing state/validator boundary. No repairs. */
-    fun complete(request: DeepSeekRequest, apiKey: String, cancellation: DeepSeekCancellation = DeepSeekCancellation()): ByteArray {
+    fun complete(request: AssistantRequest, apiKey: String, cancellation: DeepSeekCancellation = DeepSeekCancellation()): ByteArray {
         if (!AssistantKeyStore.isValidEntry(apiKey)) throw DeepSeekException(DeepSeekFailure.KEY_REQUIRED)
         if (!busy.compareAndSet(false, true)) throw DeepSeekException(DeepSeekFailure.BUSY)
         var call: Call? = null
@@ -190,22 +190,22 @@ class DeepSeekClient internal constructor(
         internal const val MAX_REASONING_BYTES = 2 * 1024 * 1024
 
         // Thinking adds many SSE envelopes; each final JSON response still has a byte guard.
-        internal fun responseLimit(request: DeepSeekRequest) = if (request.effort == DeepSeekEffort.OFF) MAX_RESPONSE_BYTES else 32 * 1024 * 1024
+        internal fun responseLimit(request: AssistantRequest) = if (!request.thinkingEnabled) MAX_RESPONSE_BYTES else 32 * 1024 * 1024
 
-        internal fun reasoningBytes(fields: JsonObject, request: DeepSeekRequest): Int {
+        internal fun reasoningBytes(fields: JsonObject, request: AssistantRequest): Int {
             if (fields["reasoning_content"] == null || fields["reasoning_content"] == JsonNull) return 0
             val size = fields.string("reasoning_content").toByteArray(Charsets.UTF_8).size
-            require(request.effort != DeepSeekEffort.OFF || size == 0)
+            require(request.thinkingEnabled || size == 0)
             if (size > MAX_REASONING_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
             return size
         }
 
-        internal fun decode(bytes: ByteArray, request: DeepSeekRequest): ByteArray = try {
+        internal fun decode(bytes: ByteArray, request: AssistantRequest): ByteArray = try {
             if (bytes.size > responseLimit(request)) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
             val envelope = parseObject(bytes)
             require(envelope.string("object") == "chat.completion")
             // The official completion example echoes the alias. Do not guess dated wire-model IDs.
-            require(envelope.string("model") == request.model.apiId)
+            require(envelope.string("model") == request.modelId)
             val choice = (envelope["choices"] as JsonArray).single() as JsonObject
             require(choice["index"] == JsonPrimitive(0) && choice.string("finish_reason") == "stop")
             val message = choice["message"] as JsonObject

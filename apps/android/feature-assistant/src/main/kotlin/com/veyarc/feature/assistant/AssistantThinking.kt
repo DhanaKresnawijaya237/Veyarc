@@ -16,7 +16,7 @@ data class AssistantThinking(val text: String, val truncated: Boolean = false, v
 }
 
 /** Bound retained text and UI updates without changing the transport's full reasoning byte limit. */
-internal class AssistantThinkingBuffer(private val request: DeepSeekRequest) {
+internal class AssistantThinkingBuffer(private val request: AssistantRequest) {
     private val text = StringBuilder()
     private var finished = false
     private var lastPublishedAt = 0L

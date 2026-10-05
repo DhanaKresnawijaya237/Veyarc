@@ -64,7 +64,7 @@ class DeepSeekClientTest {
         DeepSeekEffort.entries.forEach { effort ->
             val selected = DeepSeekRequest.create("request", "chat", "draft:draft", "Explain", null, effort = effort)
             val body = Json.parseToJsonElement(selected.body.toString(Charsets.UTF_8)).jsonObject
-            assertEquals(effort, selected.effort)
+            assertEquals(effort != DeepSeekEffort.OFF, selected.thinkingEnabled)
             assertEquals(JsonPrimitive(if (effort == DeepSeekEffort.OFF) "disabled" else "enabled"), body.getValue("thinking").jsonObject.getValue("type"))
             assertEquals(if (effort == DeepSeekEffort.OFF) null else JsonPrimitive(effort.name.lowercase()), body["reasoning_effort"])
             assertEquals(
@@ -81,7 +81,7 @@ class DeepSeekClientTest {
                 failure(DeepSeekFailure.INVALID_RESPONSE) { DeepSeekClient.decode(thinkingEnvelope.replace("\"stop\"", "\"length\"").toByteArray(), selected) }
             }
         }
-        assertEquals(DeepSeekEffort.OFF, DeepSeekRequest.connectionTest().effort)
+        assertFalse(DeepSeekRequest.connectionTest().thinkingEnabled)
     }
 
     @Test
@@ -142,7 +142,7 @@ class DeepSeekClientTest {
             ),
         )
         val old = response.copy(requestId = "previous", outcome = AssistantOutcome.PROPOSAL, candidate = buildJsonObject { put("secret-old-candidate", true) })
-        val next = DeepSeekRequest.create("request", "chat", snapshot.snapshotId, "Explain", snapshot, listOf(DeepSeekHistoryTurn("Old prompt", old)))
+        val next = DeepSeekRequest.create("request", "chat", snapshot.snapshotId, "Explain", snapshot, listOf(AssistantHistoryTurn("Old prompt", old)))
         val body = next.body.toString(Charsets.UTF_8)
         assertFalse(body.contains("secret-old-candidate"))
         val messages = Json.parseToJsonElement(body).jsonObject["messages"] as JsonArray
@@ -167,15 +167,15 @@ class DeepSeekClientTest {
         assertEquals(JsonPrimitive("Sign in button"), image.getValue("displayName"))
         failure(DeepSeekFailure.INVALID_REQUEST) { DeepSeekRequest.create("r", "chat", "wrong", "Explain", snapshot) }
         failure(DeepSeekFailure.INVALID_REQUEST) { DeepSeekRequest.create("r", "chat", "draft:d", "", null) }
-        failure(DeepSeekFailure.INVALID_REQUEST) { DeepSeekRequest.create("r", "other-chat", "draft:d", "Explain", null, listOf(DeepSeekHistoryTurn("Old", old))) }
-        val large = List(50) { DeepSeekHistoryTurn("Prompt $it", response.copy(requestId = "old-$it", text = "界".repeat(16000))) }
+        failure(DeepSeekFailure.INVALID_REQUEST) { DeepSeekRequest.create("r", "other-chat", "draft:d", "Explain", null, listOf(AssistantHistoryTurn("Old", old))) }
+        val large = List(50) { AssistantHistoryTurn("Prompt $it", response.copy(requestId = "old-$it", text = "界".repeat(16000))) }
         val windowed = DeepSeekRequest.create("r", "chat", "draft:d", "Explain", null, large)
         val window = Json.parseToJsonElement(windowed.body.toString(Charsets.UTF_8)).jsonObject.getValue("messages") as JsonArray
         assertTrue(windowed.body.size <= DeepSeekRequest.MAX_BYTES)
         assertTrue(window.size < 102)
         assertFalse(window.toString().contains("Prompt 0"))
         assertEquals("Prompt 49", window[window.size - 3].jsonObject.getValue("content").jsonPrimitive.content)
-        assertEquals(82, (Json.parseToJsonElement(DeepSeekRequest.create("r", "chat", "draft:d", "Explain", null, List(40) { DeepSeekHistoryTurn("Old", old) }).body.toString(Charsets.UTF_8)).jsonObject["messages"] as JsonArray).size)
+        assertEquals(82, (Json.parseToJsonElement(DeepSeekRequest.create("r", "chat", "draft:d", "Explain", null, List(40) { AssistantHistoryTurn("Old", old) }).body.toString(Charsets.UTF_8)).jsonObject["messages"] as JsonArray).size)
     }
 
     @Test

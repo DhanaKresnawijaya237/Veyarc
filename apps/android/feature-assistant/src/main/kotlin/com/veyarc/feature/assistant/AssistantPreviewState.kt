@@ -102,7 +102,7 @@ class AssistantPreviewState(
     private val scope: CoroutineScope? = null,
     private val compileCandidate: ((WorkflowDocument) -> List<String>)? = null,
     private val applyCandidate: ((String, AssistantContextSnapshot, String) -> Boolean)? = null,
-    private val providerCall: (suspend (DeepSeekRequest) -> ByteArray)? = null,
+    private val providerCall: (suspend (AssistantRequest) -> ByteArray)? = null,
     private val onModelChanged: ((DeepSeekModel) -> Unit)? = null,
     val attachments: AssistantAttachmentImporter? = null,
     private val applyImageCandidate: (suspend (String, AssistantContextSnapshot, String, List<AssistantImageAddition>, List<AssistantAttachment>) -> Boolean)? = null,
@@ -714,7 +714,7 @@ class AssistantPreviewState(
             return
         }
         providerJob = requireNotNull(scope).launch {
-            var request: DeepSeekRequest? = null
+            var request: AssistantRequest? = null
             try {
                 val contents = if (chat.turns.all { it.attachments.isEmpty() }) {
                     emptyMap()
@@ -766,14 +766,14 @@ class AssistantPreviewState(
         }
     }
 
-    internal fun providerRequest(chat: PreviewConversation, contents: Map<String, AttachmentContent> = emptyMap(), onThinking: ((AssistantThinking) -> Unit)? = null, onReply: ((String) -> Unit)? = null): DeepSeekRequest {
+    internal fun providerRequest(chat: PreviewConversation, contents: Map<String, AttachmentContent> = emptyMap(), onThinking: ((AssistantThinking) -> Unit)? = null, onReply: ((String) -> Unit)? = null): AssistantRequest {
         val current = chat.turns.last()
         val history = chat.turns.dropLast(1).filter {
             it.provider && it.status == PreviewReplyStatus.COMPLETE && it.outcome != null &&
                 (it.outcome != AssistantOutcome.PROPOSAL || it.proposal?.isValid == true) && it.attachments.all { attachment -> attachment.id in contents } &&
                 (current.model == DeepSeekModel.FLASH || it.attachments.none { attachment -> attachment.needsVision })
         }.map { turn ->
-            DeepSeekHistoryTurn(
+            AssistantHistoryTurn(
                 turn.prompt,
                 AssistantResponse(
                     1,

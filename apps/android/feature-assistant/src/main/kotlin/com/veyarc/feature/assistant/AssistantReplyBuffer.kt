@@ -1,7 +1,7 @@
 package com.veyarc.feature.assistant
 
 /** Read only the root JSON text string. Candidates and binding fields stay private until validation. */
-internal class AssistantReplyBuffer(private val request: DeepSeekRequest) {
+internal class AssistantReplyBuffer(private val request: AssistantRequest) {
     private var depth = 0
     private var inString = false
     private var keyExpected = false

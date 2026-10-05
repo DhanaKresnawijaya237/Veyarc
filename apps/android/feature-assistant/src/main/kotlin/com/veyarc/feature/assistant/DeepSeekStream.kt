@@ -14,7 +14,7 @@ import java.nio.charset.CodingErrorAction
 internal object DeepSeekStream {
     const val MAX_EVENT_BYTES = 512 * 1024
 
-    fun read(input: InputStream, request: DeepSeekRequest, cancellation: DeepSeekCancellation): ByteArray {
+    fun read(input: InputStream, request: AssistantRequest, cancellation: DeepSeekCancellation): ByteArray {
         val content = StringBuilder()
         var contentBytes = 0
         var reasoningBytes = 0
@@ -60,7 +60,7 @@ internal object DeepSeekStream {
             }
             require(!stopped)
             val chunk = DeepSeekClient.parseObject(payload.toByteArray(Charsets.UTF_8))
-            require(chunk.string("object") == "chat.completion.chunk" && chunk.string("model") == request.model.apiId)
+            require(chunk.string("object") == "chat.completion.chunk" && chunk.string("model") == request.modelId)
             val id = chunk.string("id")
             require(id.isNotBlank() && id.length <= 256 && (completionId == null || completionId == id))
             completionId = id
