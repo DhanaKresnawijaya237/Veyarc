@@ -9,7 +9,6 @@ package com.veyarc.feature.editor
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
-import android.widget.ImageView
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -139,7 +138,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import com.veyarc.automation.android.ReplayControllerWorkflow
 import com.veyarc.automation.android.ReplayWorkflowCatalog
@@ -1299,6 +1297,7 @@ private fun WorkflowDraftCanvas(
                     AllowedApplications(
                         packages = draft.allowedPackagesText,
                         onPickApplication = onPickApplication,
+                        onReorderApplications = { onDraftChange(draft.copy(allowedPackagesText = it.joinToString(", "))) },
                         onRemoveApplication = { packageName ->
                             onDraftChange(
                                 draft.copy(
@@ -1583,53 +1582,15 @@ private fun AllowedApplications(
     packages: String,
     onPickApplication: () -> Unit,
     onRemoveApplication: (String) -> Unit,
+    onReorderApplications: (List<String>) -> Unit,
 ) {
-    val context = LocalContext.current
     val packageNames = remember(packages) { packages.packageNames() }
     var expanded by rememberSaveable { mutableStateOf(true) }
     EditorSetupSection("Allowed apps", Icons.Outlined.Apps, expanded, { expanded = !expanded }, onPickApplication, "Add allowed app") {
         if (packageNames.isEmpty()) {
             Text("No apps added.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(18.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (packageNames.isNotEmpty()) {
-                    items(packageNames, key = { it }) { packageName ->
-                        val applicationInfo = remember(packageName) {
-                            runCatching { context.packageManager.getApplicationInfo(packageName, 0) }.getOrNull()
-                        }
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.width(72.dp).clickable { onRemoveApplication(packageName) },
-                        ) {
-                            if (applicationInfo != null) {
-                                AndroidView(
-                                    factory = { ImageView(it).apply { scaleType = ImageView.ScaleType.FIT_CENTER } },
-                                    update = { it.setImageDrawable(context.packageManager.getApplicationIcon(applicationInfo)) },
-                                    modifier = Modifier.size(44.dp),
-                                )
-                                Text(
-                                    context.packageManager.getApplicationLabel(applicationInfo).toString(),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    style = MaterialTheme.typography.labelSmall,
-                                )
-                            } else {
-                                Icon(Icons.Outlined.Apps, contentDescription = null, modifier = Modifier.size(44.dp))
-                                Text(
-                                    packageName.substringAfterLast('.'),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    style = MaterialTheme.typography.labelSmall,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
+            AllowedApplicationRow(packageNames, onRemoveApplication, onReorderApplications)
         }
     }
 }
@@ -2032,7 +1993,6 @@ private fun StepCard(
                 this.translationY = translationY
                 scaleX = liftScale
                 scaleY = liftScale
-                shadowElevation = if (dragging) with(density) { 14.dp.toPx() } else 0f
             },
     ) {
         Box(
@@ -2211,7 +2171,6 @@ private fun StageBoundaryRow(
                 this.translationY = translationY
                 scaleX = liftScale
                 scaleY = liftScale
-                shadowElevation = if (dragging) with(density) { 10.dp.toPx() } else 0f
             },
     ) {
         Row(
