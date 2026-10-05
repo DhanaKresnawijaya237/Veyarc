@@ -532,6 +532,7 @@ class MainEditorSession(application: Application) : AndroidViewModel(application
     private val chatRepository = com.veyarc.data.storage.ChatRepository(application)
     private val assistantDraft = AssistantDraftBridge(state)
     private val assistantKeys = com.veyarc.data.storage.AssistantKeyStore(application)
+    private val assistantConnections = com.veyarc.data.storage.AssistantConnectionStore(application)
     private val deepSeek by lazy { com.veyarc.feature.assistant.DeepSeekClient() }
     private val assistantAttachments = com.veyarc.feature.assistant.AssistantAttachmentImporter(application)
     val assistant = AssistantPreviewState(
@@ -549,15 +550,18 @@ class MainEditorSession(application: Application) : AndroidViewModel(application
             }
             deepSeek.await(request, key)
         },
-        onModelChanged = { model -> viewModelScope.launch { AppPreferences.setAssistantModel(application, model) } },
-        onDefaultEffortChanged = { effort -> viewModelScope.launch { AppPreferences.setAssistantEffort(application, effort) } },
+        onConnectionsChanged = { value -> withContext(Dispatchers.IO) { assistantConnections.save(value) } },
     )
 
     init {
         viewModelScope.launch {
             val preferences = AppPreferences.observe(application).first()
-            assistant.restoreModelPreference(preferences.assistantModel)
-            assistant.restoreEffortPreference(preferences.assistantEffort)
+            try {
+                val connections = withContext(Dispatchers.IO) { assistantConnections.loadOrMigrate(preferences.assistantModel.apiId, preferences.assistantEffort.name) }
+                assistant.restoreConnections(connections)
+            } catch (_: Exception) {
+                assistant.connectionStorageFailed()
+            }
         }
     }
 

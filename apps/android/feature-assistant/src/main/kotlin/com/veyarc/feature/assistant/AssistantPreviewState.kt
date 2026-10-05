@@ -3,6 +3,9 @@ package com.veyarc.feature.assistant
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.veyarc.data.storage.AssistantConnection
+import com.veyarc.data.storage.AssistantConnections
+import com.veyarc.data.storage.AssistantModelConfig
 import com.veyarc.data.storage.ChatRepository
 import com.veyarc.data.storage.StoredChat
 import com.veyarc.model.PackageName
@@ -76,6 +79,10 @@ data class PreviewTurn(
     val thinking: AssistantThinking? = null,
     val model: DeepSeekModel = DeepSeekModel.FLASH,
     val attachments: List<AssistantAttachment> = emptyList(),
+    val connectionId: String = AssistantConnection.DEEPSEEK_ID,
+    val modelId: String = model.apiId,
+    val providerName: String = "DeepSeek",
+    val modelName: String = model.shortLabel,
 )
 
 @Serializable
@@ -94,6 +101,10 @@ data class PreviewConversation(
     val effort: DeepSeekEffort = DeepSeekEffort.OFF,
     val model: DeepSeekModel = DeepSeekModel.FLASH,
     val composerAttachments: List<AssistantAttachment> = emptyList(),
+    val connectionId: String = AssistantConnection.DEEPSEEK_ID,
+    val modelId: String = model.apiId,
+    val providerName: String = "DeepSeek",
+    val modelName: String = model.shortLabel,
 )
 
 /** Null storage is reserved for deterministic UI/unit fixtures. The app supplies encrypted storage. */
@@ -108,6 +119,7 @@ class AssistantPreviewState(
     private val applyImageCandidate: (suspend (String, AssistantContextSnapshot, String, List<AssistantImageAddition>, List<AssistantAttachment>) -> Boolean)? = null,
     private val onDefaultEffortChanged: ((DeepSeekEffort) -> Unit)? = null,
     private var contextSource: (() -> AssistantContextCapture)? = null,
+    private val onConnectionsChanged: (suspend (AssistantConnections) -> Unit)? = null,
 ) {
     private val attachmentWork = kotlinx.coroutines.sync.Mutex()
     var isOpen by mutableStateOf(false)
@@ -141,6 +153,79 @@ class AssistantPreviewState(
         private set
     var defaultEffort by mutableStateOf(DeepSeekEffort.OFF)
         private set
+    var connections by mutableStateOf(AssistantConnections(listOf(AssistantConnection.deepSeek()), AssistantConnection.DEEPSEEK_ID))
+        private set
+    var connectionsReady by mutableStateOf(onConnectionsChanged == null)
+        private set
+    var connectionError by mutableStateOf<String?>(null)
+        private set
+    val defaultConnection: AssistantConnection get() = connections.connections.first { it.id == connections.defaultConnectionId }
+    val selectedConnection: AssistantConnection? get() = connections.connections.firstOrNull { it.id == (conversation?.connectionId ?: connections.defaultConnectionId) }
+    val activeModel: AssistantModelConfig? get() = selectedConnection?.models?.firstOrNull { it.id == (conversation?.modelId ?: defaultConnection.defaultModelId) }
+    val activeModelLabel: String get() = conversation?.let { "${it.providerName} ${it.modelName}" } ?: "${defaultConnection.name} ${defaultConnection.defaultModel.name}"
+    val availableEfforts: List<DeepSeekEffort> get() = activeModel?.efforts.orEmpty().mapNotNull { name -> DeepSeekEffort.entries.firstOrNull { it.name == name } }
+
+    fun restoreConnections(value: AssistantConnections) {
+        value.validate()
+        connections = value
+        connectionsReady = true
+        connectionError = null
+        syncLegacyDefaults()
+    }
+
+    fun connectionStorageFailed() {
+        connectionsReady = false
+        disableProvider()
+        connectionError = "Saved AI connections could not be read. Keys and chats have been kept. Restart to retry."
+    }
+
+    suspend fun saveConnections(value: AssistantConnections): Boolean {
+        if (!connectionsReady) return false
+        value.validate()
+        stop(PreviewReplyStatus.INTERRUPTED)
+        return try {
+            onConnectionsChanged?.invoke(value)
+            restoreConnections(value)
+            true
+        } catch (_: Exception) {
+            connectionError = "Could not save AI connections. Your previous setup is kept."
+            false
+        }
+    }
+
+    fun selectConnectionModel(connectionId: String, modelId: String) {
+        if (!usesProvider || !canChange || isResponding || !connectionsReady) return
+        val profile = connections.connections.firstOrNull { it.id == connectionId } ?: return
+        val model = profile.models.firstOrNull { it.id == modelId } ?: return
+        update {
+            it.copy(
+                connectionId = profile.id,
+                modelId = model.id,
+                providerName = profile.name,
+                modelName = model.name,
+                model = DeepSeekModel.entries.firstOrNull { legacy -> legacy.apiId == model.id } ?: DeepSeekModel.FLASH,
+                effort = if (it.effort.name in model.efforts) it.effort else DeepSeekEffort.OFF,
+            )
+        }
+        inputError = null
+        flush()
+    }
+
+    private fun syncLegacyDefaults() {
+        defaultModel = DeepSeekModel.entries.firstOrNull { it.apiId == defaultConnection.defaultModelId } ?: DeepSeekModel.FLASH
+        defaultEffort = DeepSeekEffort.entries.firstOrNull { it.name == defaultConnection.defaultEffort } ?: DeepSeekEffort.OFF
+    }
+
+    private fun saveLegacyDefault(model: DeepSeekModel? = null, effort: DeepSeekEffort? = null) {
+        val profile = defaultConnection
+        val updated = profile.copy(defaultModelId = model?.apiId ?: profile.defaultModelId, defaultEffort = effort?.name ?: profile.defaultEffort)
+        if (onConnectionsChanged == null) {
+            restoreConnections(connections.copy(connections = connections.connections.map { if (it.id == profile.id) updated else it }))
+            return
+        }
+        scope?.launch { saveConnections(connections.copy(connections = connections.connections.map { if (it.id == profile.id) updated else it })) }
+    }
+
     val selectedModel: DeepSeekModel get() = conversation?.model ?: defaultModel
     val usesProvider: Boolean get() = providerCall != null
     val isResponding: Boolean get() = requestId != null || pendingRequestId != null || testingConnection
@@ -165,7 +250,7 @@ class AssistantPreviewState(
         .sortedWith(compareByDescending<PreviewConversation> { it.pinned }.thenByDescending { it.updatedAtMs })
     val canSend: Boolean get() = isOpen && (!usesProvider || providerEnabled) && canChange && !isResponding && conversation?.let {
         !importingAttachments && (it.composer.isNotBlank() || it.composerAttachments.isNotEmpty()) && it.composer.length <= MAX_PROMPT_LENGTH &&
-            (it.model == DeepSeekModel.FLASH || it.composerAttachments.none { attachment -> attachment.needsVision })
+            (!usesProvider || (connectionsReady && activeModel != null && (activeModel!!.vision || it.composerAttachments.none { attachment -> attachment.needsVision })))
     } == true
 
     init {
@@ -178,7 +263,7 @@ class AssistantPreviewState(
 
     // Consent belongs to this ViewModel lifetime; it is never restored or inferred from a saved key.
     fun enableProvider() {
-        if (usesProvider) providerEnabled = true
+        if (usesProvider && connectionsReady) providerEnabled = true
     }
 
     fun disableProvider() {
@@ -403,28 +488,33 @@ class AssistantPreviewState(
     fun setEffort(effort: DeepSeekEffort) {
         inputError = null
         if (!usesProvider || !canChange || isResponding) return
+        if (effort !in availableEfforts) return
         update { it.copy(effort = effort) }
         flush()
     }
 
     fun restoreModelPreference(model: DeepSeekModel) {
         defaultModel = model
+        if (onConnectionsChanged == null) saveLegacyDefault(model = model)
     }
 
     fun restoreEffortPreference(effort: DeepSeekEffort) {
         defaultEffort = effort
+        if (onConnectionsChanged == null) saveLegacyDefault(effort = effort)
     }
 
     fun chooseDefaultModel(model: DeepSeekModel) {
         if (!usesProvider) return
         defaultModel = model
         onModelChanged?.invoke(model)
+        saveLegacyDefault(model = model)
     }
 
     fun chooseDefaultEffort(effort: DeepSeekEffort) {
         if (!usesProvider) return
         defaultEffort = effort
         onDefaultEffortChanged?.invoke(effort)
+        saveLegacyDefault(effort = effort)
     }
 
     fun setModel(model: DeepSeekModel) {
@@ -434,8 +524,7 @@ class AssistantPreviewState(
             chooseDefaultModel(model)
             return
         }
-        update { it.copy(model = model) }
-        flush()
+        selectConnectionModel(AssistantConnection.DEEPSEEK_ID, model.apiId)
     }
 
     fun newChat() {
@@ -445,7 +534,7 @@ class AssistantPreviewState(
     }
 
     private fun createChat() {
-        val chat = PreviewConversation(UUID.randomUUID().toString(), context.workflowId, context = context, model = defaultModel, effort = defaultEffort)
+        val chat = PreviewConversation(UUID.randomUUID().toString(), context.workflowId, context = context, model = defaultModel, effort = defaultEffort, connectionId = defaultConnection.id, modelId = defaultConnection.defaultModelId, providerName = defaultConnection.name, modelName = defaultConnection.defaultModel.name)
         conversations = conversations + chat
         selectedId = chat.id
         persist(chat)
@@ -527,6 +616,8 @@ class AssistantPreviewState(
                 localBindingId = if (turn.applyState == ProposalApplyState.NONE) turn.localBindingId else null,
                 effort = requireNotNull(conversation).effort,
                 model = requireNotNull(conversation).model,
+                connectionId = requireNotNull(conversation).connectionId, modelId = requireNotNull(conversation).modelId,
+                providerName = requireNotNull(conversation).providerName, modelName = requireNotNull(conversation).modelName,
             )
         }
         begin(token)
@@ -678,7 +769,7 @@ class AssistantPreviewState(
         }
         val current = requireNotNull(conversation)
         val prompt = current.composer.trim().ifEmpty { "Look at the attached ${if (current.composerAttachments.all { it.kind == AttachmentKind.IMAGE }) "images" else "files"}." }
-        val turn = PreviewTurn(UUID.randomUUID().toString(), prompt, scenario, baseSnapshot = capture.snapshot, localBindingId = capture.localBindingId, provider = usesProvider, effort = current.effort, model = current.model, attachments = current.composerAttachments)
+        val turn = PreviewTurn(UUID.randomUUID().toString(), prompt, scenario, baseSnapshot = capture.snapshot, localBindingId = capture.localBindingId, provider = usesProvider, effort = current.effort, model = current.model, attachments = current.composerAttachments, connectionId = current.connectionId, modelId = current.modelId, providerName = current.providerName, modelName = current.modelName)
         val updated = current.copy(
             title = if (current.turns.isEmpty() && current.title == "New chat") prompt.take(48) else current.title,
             composer = "",
@@ -768,10 +859,14 @@ class AssistantPreviewState(
 
     internal fun providerRequest(chat: PreviewConversation, contents: Map<String, AttachmentContent> = emptyMap(), onThinking: ((AssistantThinking) -> Unit)? = null, onReply: ((String) -> Unit)? = null): AssistantRequest {
         val current = chat.turns.last()
+        val profile = connections.connections.firstOrNull { it.id == current.connectionId }
+            ?: throw IllegalArgumentException("This chat's connection was removed. Choose another model to continue.")
+        val chosenModel = profile.models.firstOrNull { it.id == current.modelId }
+            ?: throw IllegalArgumentException("This model was removed. Choose another model to continue.")
         val history = chat.turns.dropLast(1).filter {
             it.provider && it.status == PreviewReplyStatus.COMPLETE && it.outcome != null &&
                 (it.outcome != AssistantOutcome.PROPOSAL || it.proposal?.isValid == true) && it.attachments.all { attachment -> attachment.id in contents } &&
-                (current.model == DeepSeekModel.FLASH || it.attachments.none { attachment -> attachment.needsVision })
+                (chosenModel.vision || it.attachments.none { attachment -> attachment.needsVision })
         }.map { turn ->
             AssistantHistoryTurn(
                 turn.prompt,
@@ -787,6 +882,7 @@ class AssistantPreviewState(
                 turn.attachments.map { contents.getValue(it.id) },
             )
         }
+        require(profile.id == AssistantConnection.DEEPSEEK_ID && chosenModel.id == current.model.apiId) { "This connection is not supported yet." }
         return DeepSeekRequest.create(current.requestId, chat.id, current.responseBaseId(chat), current.prompt, current.baseSnapshot, history, streaming = true, effort = current.effort, onThinking = onThinking, model = current.model, attachments = current.attachments.map { contents.getValue(it.id) }, onReply = onReply)
     }
 
@@ -893,7 +989,7 @@ class AssistantPreviewState(
     fun retry() {
         if (!canRetry) return
         val token = UUID.randomUUID().toString()
-        updateLast { it.copy(reply = "", thinking = null, status = PreviewReplyStatus.RESPONDING, requestId = token, attempt = it.attempt + 1, outcome = null, responseError = null, proposal = null, effort = requireNotNull(conversation).effort, model = requireNotNull(conversation).model) }
+        updateLast { it.copy(reply = "", thinking = null, status = PreviewReplyStatus.RESPONDING, requestId = token, attempt = it.attempt + 1, outcome = null, responseError = null, proposal = null, effort = requireNotNull(conversation).effort, model = requireNotNull(conversation).model, connectionId = requireNotNull(conversation).connectionId, modelId = requireNotNull(conversation).modelId, providerName = requireNotNull(conversation).providerName, modelName = requireNotNull(conversation).modelName) }
         begin(token)
     }
 
@@ -978,6 +1074,9 @@ class AssistantPreviewState(
         }
 
         private fun validate(chat: PreviewConversation) {
+            require(AssistantConnection.validId(chat.connectionId))
+            AssistantModelConfig(chat.modelId, chat.modelName).validate()
+            require(chat.providerName.isNotBlank() && chat.providerName.length <= 80)
             require(chat.formatVersion == 1 && UUID.fromString(chat.id).toString() == chat.id)
             require(chat.title.length in 1..80 && chat.composer.length <= MAX_PROMPT_LENGTH)
             require(chat.context.name.length <= 1000 && chat.createdAtMs >= 0 && chat.updatedAtMs >= chat.createdAtMs)
@@ -985,6 +1084,9 @@ class AssistantPreviewState(
             require(chat.turns.map { it.id }.distinct().size == chat.turns.size)
             chat.composerAttachments.forEach(AssistantAttachment::validate)
             chat.turns.forEachIndexed { index, turn ->
+                require(AssistantConnection.validId(turn.connectionId))
+                AssistantModelConfig(turn.modelId, turn.modelName).validate()
+                require(turn.providerName.isNotBlank() && turn.providerName.length <= 80)
                 turn.attachments.forEach(AssistantAttachment::validate)
                 turn.baseSnapshot?.let { snapshot ->
                     require(snapshot.workflowId == chat.workflowId)
