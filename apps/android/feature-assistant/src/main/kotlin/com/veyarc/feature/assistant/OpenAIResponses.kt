@@ -13,16 +13,65 @@ import java.io.InputStream
 
 /** Stateless Responses API. Output prose may stream; workflow candidates still require final validation. */
 internal object OpenAIResponses {
-    fun encode(messages: List<JsonObject>, streaming: Boolean, model: AssistantModelConfig): ByteArray = buildJsonObject {
+    fun encode(messages: List<JsonObject>, streaming: Boolean, model: AssistantModelConfig, effort: DeepSeekEffort, maxTokens: Int? = null): ByteArray = buildJsonObject {
         put("model", model.id)
         put("instructions", messages.first().string("content"))
-        put("input", JsonArray(messages.drop(1)))
+        put(
+            "input",
+            JsonArray(
+                messages.drop(1).map { message ->
+                    val content = message.getValue("content")
+                    if (content !is JsonArray) {
+                        message
+                    } else {
+                        buildJsonObject {
+                            require(message.string("role") == "user")
+                            put("role", "user")
+                            put(
+                                "content",
+                                JsonArray(
+                                    content.map { value ->
+                                        val part = value as JsonObject
+                                        buildJsonObject {
+                                            when (part.string("type")) {
+                                                "text" -> {
+                                                    put("type", "input_text")
+                                                    put("text", part.string("text"))
+                                                }
+
+                                                "image_url" -> {
+                                                    put("type", "input_image")
+                                                    put("image_url", (part["image_url"] as JsonObject).string("url"))
+                                                    put("detail", "auto")
+                                                }
+
+                                                else -> error("Unsupported attachment")
+                                            }
+                                        }
+                                    },
+                                ),
+                            )
+                        }
+                    }
+                },
+            ),
+        )
         put("store", false)
         put("stream", streaming)
+        if (maxTokens != null) put("max_output_tokens", maxTokens)
+        if (model.efforts.size > 1) {
+            put(
+                "reasoning",
+                buildJsonObject {
+                    put("effort", if (effort == DeepSeekEffort.OFF) "none" else effort.name.lowercase())
+                    if (effort != DeepSeekEffort.OFF && model.reasoningSummary) put("summary", "auto")
+                },
+            )
+        }
         if (model.jsonOutput) put("text", buildJsonObject { put("format", buildJsonObject { put("type", "json_object") }) })
     }.toString().toByteArray(Charsets.UTF_8)
 
-    fun decode(response: JsonObject, request: AssistantRequest): ByteArray {
+    fun decode(response: JsonObject, request: AssistantRequest, publishSummary: Boolean = true): ByteArray {
         validateHeader(response, request)
         require(response.string("status") == "completed")
         require(response["error"] == null || response["error"] == JsonNull)
@@ -45,7 +94,39 @@ internal object OpenAIResponses {
         }
         val bytes = text.toString().toByteArray(Charsets.UTF_8)
         AssistantResponseCodec.decode(bytes, request.requestId, request.conversationId, request.baseSnapshotId)
+        val summary = summary(response)
+        if (publishSummary && wantsSummary(request) && summary.isNotBlank()) {
+            AssistantThinkingBuffer(request).apply {
+                append(summary)
+                finish()
+            }
+        }
         return bytes
+    }
+
+    private fun wantsSummary(request: AssistantRequest) = request.thinkingEnabled && request.connection.models.first { it.id == request.modelId }.reasoningSummary
+
+    private fun summary(response: JsonObject): String {
+        val parts = mutableListOf<String>()
+        var size = 0
+        for (item in response["output"] as JsonArray) {
+            item as JsonObject
+            if (item.string("type") != "reasoning") continue
+            for (part in item["summary"] as JsonArray) {
+                part as JsonObject
+                require(part.string("type") == "summary_text")
+                val text = part.string("text")
+                size += text.toByteArray(Charsets.UTF_8).size + if (parts.isEmpty()) 0 else 2
+                if (size > AssistantClient.MAX_REASONING_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
+                parts.add(text)
+            }
+        }
+        return parts.joinToString("\n\n")
+    }
+
+    private class SummaryPart {
+        val text = StringBuilder()
+        var done = false
     }
 
     private fun validateHeader(response: JsonObject, request: AssistantRequest) {
@@ -65,6 +146,16 @@ internal object OpenAIResponses {
         val text = StringBuilder()
         var textBytes = 0
         val reply = AssistantReplyBuffer(request)
+        val thinking = AssistantThinkingBuffer(request)
+        val reasoningItems = mutableMapOf<Int, String>()
+        val summaries = linkedMapOf<Pair<Int, Int>, SummaryPart>()
+        var summaryBytes = 0
+        fun summaryKey(event: JsonObject): Pair<Int, Int> {
+            val index = (event["output_index"] as JsonPrimitive).int
+            val partIndex = (event["summary_index"] as JsonPrimitive).int
+            require(index >= 0 && partIndex >= 0 && reasoningItems[index] == event.string("item_id"))
+            return index to partIndex
+        }
         fun checkPart(event: JsonObject) {
             require(messageId != null && event.string("item_id") == messageId)
             require(event["output_index"] == JsonPrimitive(messageIndex) && event["content_index"] == JsonPrimitive(0))
@@ -100,12 +191,16 @@ internal object OpenAIResponses {
                         val item = event["item"] as JsonObject
                         require(validId(item.string("id")))
                         when (item.string("type")) {
-                            "reasoning" -> Unit
+                            "reasoning" -> {
+                                val index = (event["output_index"] as JsonPrimitive).int
+                                require(index >= 0 && index != messageIndex && reasoningItems.put(index, item.string("id")) == null)
+                            }
 
                             "message" -> {
                                 require(messageId == null && item.string("role") == "assistant")
                                 messageId = item.string("id")
                                 messageIndex = (event["output_index"] as JsonPrimitive).int.also { require(it >= 0) }
+                                require(messageIndex !in reasoningItems)
                             }
 
                             else -> error("Unsupported output")
@@ -124,6 +219,10 @@ internal object OpenAIResponses {
                         textBytes += piece.toByteArray(Charsets.UTF_8).size
                         if (textBytes > AssistantResponseCodec.MAX_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
                         text.append(piece)
+                        if (piece.isNotEmpty()) {
+                            require(summaries.values.all { it.done })
+                            thinking.finish()
+                        }
                         reply.append(piece)
                     }
 
@@ -136,12 +235,47 @@ internal object OpenAIResponses {
                     "response.output_item.done" -> {
                         val item = event["item"] as JsonObject
                         require(item.string("type") in listOf("message", "reasoning"))
-                        if (item.string("type") == "message") require(item.string("id") == messageId && textDone)
+                        if (item.string("type") == "message") {
+                            require(item.string("id") == messageId && textDone)
+                        } else {
+                            require(reasoningItems[(event["output_index"] as JsonPrimitive).int] == item.string("id"))
+                        }
                     }
 
-                    "response.reasoning_summary_part.added", "response.reasoning_summary_part.done",
-                    "response.reasoning_summary_text.delta", "response.reasoning_summary_text.done",
-                    -> require(responseId != null)
+                    "response.reasoning_summary_part.added" -> {
+                        val key = summaryKey(event)
+                        val part = event["part"] as JsonObject
+                        require(part.string("type") == "summary_text" && part.string("text").isEmpty() && key !in summaries)
+                        require(text.isEmpty() && summaries.values.all { it.done })
+                        if (summaries.isNotEmpty()) {
+                            summaryBytes += 2
+                            if (wantsSummary(request)) thinking.append("\n\n")
+                        }
+                        summaries[key] = SummaryPart()
+                    }
+
+                    "response.reasoning_summary_text.delta" -> {
+                        val part = summaries.getValue(summaryKey(event))
+                        require(!part.done && text.isEmpty())
+                        val piece = event.string("delta")
+                        summaryBytes += piece.toByteArray(Charsets.UTF_8).size
+                        if (summaryBytes > AssistantClient.MAX_REASONING_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
+                        part.text.append(piece)
+                        if (wantsSummary(request)) thinking.append(piece)
+                    }
+
+                    "response.reasoning_summary_text.done" -> {
+                        val part = summaries.getValue(summaryKey(event))
+                        require(!part.done && event.string("text") == part.text.toString())
+                        part.done = true
+                    }
+
+                    "response.reasoning_summary_part.done" -> {
+                        val part = summaries.getValue(summaryKey(event))
+                        val final = event["part"] as JsonObject
+                        require(part.done && final.string("type") == "summary_text" && final.string("text") == part.text.toString())
+                        require(event["status"] == null || event["status"] == JsonNull)
+                    }
 
                     "response.completed" -> {
                         require(responseId != null && textDone)
@@ -149,8 +283,12 @@ internal object OpenAIResponses {
                         checkResponse(response)
                         val output = response["output"] as JsonArray
                         require((output[messageIndex] as JsonObject).string("id") == messageId)
-                        val bytes = decode(response, request)
+                        reasoningItems.forEach { (index, id) -> require((output[index] as JsonObject).string("id") == id) }
+                        val bytes = decode(response, request, publishSummary = false)
                         require(bytes.toString(Charsets.UTF_8) == text.toString())
+                        require(summaries.values.all { it.done })
+                        require(summary(response) == summaries.values.joinToString("\n\n") { it.text.toString() })
+                        thinking.finish()
                         reply.publish(force = true)
                         return@read bytes
                     }
@@ -160,6 +298,7 @@ internal object OpenAIResponses {
                 null
             }
         } finally {
+            thinking.publish(force = true)
             reply.publish(force = true)
         }
     }

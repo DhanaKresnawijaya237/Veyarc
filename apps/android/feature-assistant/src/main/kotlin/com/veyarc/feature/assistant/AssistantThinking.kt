@@ -4,7 +4,7 @@ import kotlinx.serialization.Serializable
 
 /** Provider thinking is display-only; it is never an answer, workflow candidate, or request history. */
 @Serializable
-data class AssistantThinking(val text: String, val truncated: Boolean = false, val finished: Boolean = false) {
+data class AssistantThinking(val text: String, val truncated: Boolean = false, val finished: Boolean = false, val summary: Boolean = false) {
     init {
         require(text.length <= MAX_LENGTH && (text.isNotEmpty() || truncated))
     }
@@ -42,7 +42,7 @@ internal class AssistantThinkingBuffer(private val request: AssistantRequest) {
         // Don't display half an emoji while its next delta is still pending.
         val value = text.toString().let { if (it.last().isHighSurrogate()) it.dropLast(1) else it }
         if (value.isEmpty()) return
-        val thinking = AssistantThinking(value, finished = finished)
+        val thinking = AssistantThinking(value, finished = finished, summary = request.connection.protocol == com.veyarc.data.storage.AssistantProtocol.OPENAI_RESPONSES)
         if (thinking != request.latestThinking) request.reportThinking(thinking)
         lastPublishedAt = now
     }

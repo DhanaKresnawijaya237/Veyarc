@@ -401,7 +401,8 @@ private fun ConnectionEditor(existing: AssistantConnection?, busy: Boolean, newM
     var jsonMode by remember { mutableStateOf(!newModel && existing?.defaultModel?.jsonOutput == true) }
     var modelName by remember { mutableStateOf(if (newModel) "" else existing?.defaultModel?.name ?: "") }
     var efforts by remember { mutableStateOf(if (newModel) listOf("OFF") else existing?.defaultModel?.efforts ?: listOf("OFF")) }
-    val model = if (protocol == AssistantProtocol.DEEPSEEK) AssistantConnection.deepSeek().models.firstOrNull { it.id == modelId.trim() } ?: existing?.models?.firstOrNull { it.id == modelId.trim() } else AssistantModelConfig(modelId.trim(), modelName.trim().ifEmpty { modelId.trim() }, vision, jsonMode, efforts)
+    var reasoningSummary by remember { mutableStateOf(!newModel && existing?.defaultModel?.reasoningSummary == true) }
+    val model = if (protocol == AssistantProtocol.DEEPSEEK) AssistantConnection.deepSeek().models.firstOrNull { it.id == modelId.trim() } ?: existing?.models?.firstOrNull { it.id == modelId.trim() } else AssistantModelConfig(modelId.trim(), modelName.trim().ifEmpty { modelId.trim() }, vision, jsonMode, efforts, reasoningSummary = protocol == AssistantProtocol.OPENAI_RESPONSES && efforts.size > 1 && reasoningSummary)
     val candidate = model?.let { selected ->
         AssistantConnection(id, name.trim(), address.trim().trimEnd('/'), protocol, existing?.models.orEmpty().filterNot { it.id == selected.id } + selected, selected.id, existing?.defaultEffort?.takeIf { it in selected.efforts } ?: "OFF")
     }
@@ -433,6 +434,7 @@ private fun ConnectionEditor(existing: AssistantConnection?, busy: Boolean, newM
                     vision = preset.defaultModel.vision
                     jsonMode = preset.defaultModel.jsonOutput
                     efforts = preset.defaultModel.efforts
+                    reasoningSummary = preset.defaultModel.reasoningSummary
                     protocol = preset.protocol
                 }) { Text("OpenAI") }
                 TextButton(onClick = {
@@ -453,6 +455,7 @@ private fun ConnectionEditor(existing: AssistantConnection?, busy: Boolean, newM
                 vision = configured?.vision ?: false
                 jsonMode = configured?.jsonOutput ?: false
                 efforts = configured?.efforts ?: listOf("OFF")
+                reasoningSummary = configured?.reasoningSummary ?: false
             }
         }, label = { Text("Model ID") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), modifier = Modifier.fillMaxWidth().testTag("connection-model"))
         if (protocol != AssistantProtocol.DEEPSEEK) {
@@ -481,6 +484,7 @@ private fun ConnectionEditor(existing: AssistantConnection?, busy: Boolean, newM
                     DeepSeekEffort.entries.filter { it != DeepSeekEffort.OFF }.forEach { effort ->
                         ConnectionCapability(effort.label, effort.name in efforts) { selected -> efforts = if (selected) efforts + effort.name else efforts - effort.name }
                     }
+                    if (protocol == AssistantProtocol.OPENAI_RESPONSES && efforts.size > 1) ConnectionCapability("Reasoning summaries", reasoningSummary) { reasoningSummary = it }
                     Text("Enable only features supported by this model.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }

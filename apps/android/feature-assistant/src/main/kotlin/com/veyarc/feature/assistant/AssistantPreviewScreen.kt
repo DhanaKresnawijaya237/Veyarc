@@ -704,23 +704,26 @@ private fun ThinkingDisclosure(turn: PreviewTurn, followChat: Boolean) {
     }
     val inProgress = turn.status == PreviewReplyStatus.RESPONDING && !thinking.finished
     val label = when {
+        thinking.summary && turn.status in listOf(PreviewReplyStatus.STOPPED, PreviewReplyStatus.INTERRUPTED, PreviewReplyStatus.ERROR) -> "Partial reasoning summary"
+        thinking.summary -> if (inProgress) "Reasoning summary…" else "Reasoning summary"
         inProgress -> "Thinking…"
         turn.status in listOf(PreviewReplyStatus.STOPPED, PreviewReplyStatus.INTERRUPTED, PreviewReplyStatus.ERROR) -> "Partial thoughts"
         else -> "Thoughts"
     }
     val color = MaterialTheme.colorScheme.onSurfaceVariant
+    val jumpLabel = if (thinking.summary) "Jump to latest summary" else "Jump to latest thoughts"
     Column(Modifier.fillMaxWidth()) {
         Row(
             Modifier.fillMaxWidth().heightIn(min = 48.dp)
                 .testTag("assistant-thinking-toggle-${turn.id}")
-                .clickable(onClickLabel = if (expanded) "Hide thinking" else "Show thinking") { expanded = !expanded }
+                .clickable(onClickLabel = if (expanded) "Hide $label" else "Show $label") { expanded = !expanded }
                 .semantics { liveRegion = LiveRegionMode.Polite },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (inProgress) CircularProgressIndicator(Modifier.size(14.dp), color = color, strokeWidth = 1.5.dp)
             Text(label, style = MaterialTheme.typography.labelLarge, color = color)
-            Icon(if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown, if (expanded) "Hide thinking" else "Show thinking", Modifier.size(18.dp), tint = color)
+            Icon(if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown, if (expanded) "Hide $label" else "Show $label", Modifier.size(18.dp), tint = color)
         }
         if (expanded) {
             Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainer) {
@@ -739,7 +742,7 @@ private fun ThinkingDisclosure(turn: PreviewTurn, followChat: Boolean) {
                         IconButton(onClick = {
                             following = true
                             scope.launch { list.scrollToItem(lines.size) }
-                        }, modifier = Modifier.align(Alignment.BottomEnd)) { Icon(Icons.Outlined.KeyboardArrowDown, "Jump to latest thoughts") }
+                        }, modifier = Modifier.align(Alignment.BottomEnd)) { Icon(Icons.Outlined.KeyboardArrowDown, jumpLabel) }
                     }
                 }
             }

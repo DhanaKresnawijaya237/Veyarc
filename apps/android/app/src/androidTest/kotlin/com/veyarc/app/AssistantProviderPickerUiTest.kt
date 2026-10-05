@@ -23,6 +23,52 @@ import java.util.UUID
 class AssistantProviderPickerUiTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun nativeOpenAIShowsExtraHighEffortAndAccurateSummaryLabel() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val profile = AssistantConnection.openAI().copy(defaultEffort = "HIGH")
+        val owner = kotlinx.coroutines.SupervisorJob()
+        val pending = kotlinx.coroutines.CompletableDeferred<ByteArray>()
+        val state = AssistantPreviewState(scope = kotlinx.coroutines.CoroutineScope(owner + kotlinx.coroutines.Dispatchers.Main), providerCall = { request ->
+            request.reportThinking(com.veyarc.feature.assistant.AssistantThinking("Checking the requested change.", summary = true, finished = true))
+            request.reportReply("First paragraph.\n\nSecond paragraph.")
+            pending.await()
+        }, attachments = AssistantAttachmentImporter(context))
+        try {
+            compose.runOnUiThread {
+                state.restoreConnections(AssistantConnections(listOf(profile), profile.id))
+                state.open(AssistantPreviewContext())
+            }
+            compose.setContent { VeyarcTheme { AssistantPreviewScreen(state) } }
+            compose.onNodeWithText("OpenAI GPT-5.4").assertExists()
+            compose.onNodeWithContentDescription("Add attachment").performClick()
+            compose.onNodeWithText("Camera").assertIsEnabled()
+            compose.onNodeWithText("Photos").assertIsEnabled()
+            compose.onNodeWithText("Files").assertIsEnabled()
+            compose.onNodeWithContentDescription("Close Add to chat").performClick()
+            compose.onNodeWithTag("assistant-model-picker").performClick()
+            compose.onNodeWithText("Effort").performClick()
+            compose.onNodeWithText("Extra high").assertExists()
+            compose.onNodeWithText("Max").assertDoesNotExist()
+            compose.onNodeWithText("Extra high").performClick()
+            compose.runOnUiThread {
+                state.enableProvider()
+                state.compose("Explain")
+                state.send()
+            }
+            compose.waitUntil(10_000) { runCatching { compose.onNodeWithText("Reasoning summary").assertExists() }.isSuccess }
+            compose.onNodeWithText("Reasoning summary").performClick()
+            compose.onNodeWithText("Checking the requested change.").assertExists()
+            compose.onNodeWithText("Thoughts").assertDoesNotExist()
+            compose.runOnUiThread { state.stop() }
+            compose.runOnIdle {
+                org.junit.Assert.assertEquals(true, state.conversation!!.turns.single().thinking!!.summary)
+            }
+        } finally {
+            compose.runOnUiThread { state.dispose() }
+            owner.cancel()
+        }
+    }
+
     @Test fun composerUsesFullNamesAndOnlyOffersModelFeatures() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val profile = AssistantConnection(UUID.randomUUID().toString(), "Custom", "https://example.org/v1", models = listOf(AssistantModelConfig("text-model", "Text model")), defaultModelId = "text-model")

@@ -48,6 +48,33 @@ import java.util.UUID
 class AssistantConnectionSettingsTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun openAIPresetUsesNativeFormatWithoutEnablingOrSwitchingChat() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val owner = kotlinx.coroutines.SupervisorJob()
+        val assistant = com.veyarc.feature.assistant.AssistantPreviewState(scope = kotlinx.coroutines.CoroutineScope(owner + kotlinx.coroutines.Dispatchers.Main), providerCall = { error("Setup must never send") })
+        try {
+            compose.runOnUiThread { assistant.open(com.veyarc.feature.assistant.AssistantPreviewContext()) }
+            compose.setContent { VeyarcTheme { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(AssistantKeyStore(context), assistant) } } }
+            compose.onNodeWithTag("assistant-add-connection").performScrollTo().performClick()
+            compose.onNodeWithText("OpenAI").performClick()
+            compose.onNodeWithTag("connection-model").assertTextEquals("Model ID", "gpt-5.4")
+            compose.onNodeWithText("OpenAI Responses API").assertExists()
+            compose.onNodeWithTag("connection-save").performScrollTo().performClick()
+            awaitText("OpenAI API key")
+            compose.onNodeWithText("Cancel").performClick()
+            compose.runOnIdle {
+                val profile = assistant.connections.connections.single { it.protocol == com.veyarc.data.storage.AssistantProtocol.OPENAI_RESPONSES }
+                assertTrue(profile.defaultModel.vision && profile.defaultModel.reasoningSummary)
+                assertTrue("XHIGH" in profile.defaultModel.efforts)
+                assertFalse(assistant.providerEnabled)
+                org.junit.Assert.assertEquals(com.veyarc.data.storage.AssistantConnection.DEEPSEEK_ID, assistant.conversation!!.connectionId)
+            }
+        } finally {
+            compose.runOnUiThread { assistant.dispose() }
+            owner.cancel()
+        }
+    }
+
     @Test
     fun discoveryAndManualModelsKeepChatChoicesAndExposeConfiguredEfforts() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

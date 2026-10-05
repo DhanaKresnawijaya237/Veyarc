@@ -14,16 +14,18 @@ data class AssistantModelConfig(
     val vision: Boolean = false,
     val jsonOutput: Boolean = false,
     val efforts: List<String> = listOf("OFF"),
+    val reasoningSummary: Boolean = false,
 ) {
     fun validate() {
         require(id.isNotBlank() && id.length <= 256 && id.none(Char::isISOControl))
         require(name.isNotBlank() && name.length <= 256 && name.none(Char::isISOControl))
         require(efforts.isNotEmpty() && efforts.distinct() == efforts && efforts.all { it in EFFORTS })
         require("OFF" in efforts)
+        require(!reasoningSummary || efforts.size > 1)
     }
 
     companion object {
-        val EFFORTS = listOf("OFF", "LOW", "MEDIUM", "HIGH", "MAX")
+        val EFFORTS = listOf("OFF", "LOW", "MEDIUM", "HIGH", "XHIGH", "MAX")
     }
 }
 
@@ -77,7 +79,7 @@ data class AssistantConnection(
             "OpenAI",
             "https://api.openai.com/v1",
             AssistantProtocol.OPENAI_RESPONSES,
-            listOf(AssistantModelConfig("gpt-5.4", "GPT-5.4", jsonOutput = true)),
+            listOf(AssistantModelConfig("gpt-5.4", "GPT-5.4", vision = true, jsonOutput = true, efforts = listOf("OFF", "LOW", "MEDIUM", "HIGH", "XHIGH"), reasoningSummary = true)),
             "gpt-5.4",
         ).also { it.validate() }
     }

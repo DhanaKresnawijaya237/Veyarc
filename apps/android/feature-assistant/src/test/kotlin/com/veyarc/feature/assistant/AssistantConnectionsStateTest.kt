@@ -18,6 +18,14 @@ import org.junit.Test
 import java.util.UUID
 
 class AssistantConnectionsStateTest {
+    @Test fun nativeSummarySurvivesChatPersistenceWithoutChangingLegacyThoughts() {
+        val profile = AssistantConnection.openAI()
+        val turn = PreviewTurn(UUID.randomUUID().toString(), "Explain", PreviewScenario.EXPLANATION, status = PreviewReplyStatus.STOPPED, effort = DeepSeekEffort.HIGH, provider = true, thinking = AssistantThinking("Checking the steps", summary = true), connectionId = profile.id, modelId = profile.defaultModelId, providerName = profile.name, modelName = profile.defaultModel.name)
+        val chat = PreviewConversation(UUID.randomUUID().toString(), null, turns = listOf(turn), connectionId = profile.id, modelId = profile.defaultModelId, providerName = profile.name, modelName = profile.defaultModel.name)
+        assertEquals(chat, AssistantPreviewState.decode(AssistantPreviewState.encode(chat)))
+        assertFalse(AssistantThinking("Legacy thoughts").summary)
+    }
+
     @Test fun legacyPayloadGetsDeepSeekBindingWithoutChangingMessagesOrMetadata() {
         val turn = PreviewTurn(UUID.randomUUID().toString(), "hello", PreviewScenario.EXPLANATION, model = DeepSeekModel.PRO, status = PreviewReplyStatus.STOPPED)
         val chat = PreviewConversation(UUID.randomUUID().toString(), null, turns = listOf(turn), model = DeepSeekModel.PRO)

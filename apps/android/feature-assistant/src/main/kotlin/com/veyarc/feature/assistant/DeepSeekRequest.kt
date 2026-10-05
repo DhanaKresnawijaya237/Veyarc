@@ -14,7 +14,7 @@ import okio.ByteString.Companion.toByteString
 import java.util.UUID
 
 @Serializable
-enum class DeepSeekEffort(val label: String) { OFF("Off"), LOW("Low"), MEDIUM("Medium"), HIGH("High"), MAX("Max") }
+enum class DeepSeekEffort(val label: String) { OFF("Off"), LOW("Low"), MEDIUM("Medium"), HIGH("High"), XHIGH("Extra high"), MAX("Max") }
 
 @Serializable
 enum class DeepSeekModel(val apiId: String, val label: String, val shortLabel: String) {
@@ -109,7 +109,7 @@ object DeepSeekRequest {
     }
 
     private fun requestBody(messages: List<kotlinx.serialization.json.JsonObject>, maxTokens: Int, streaming: Boolean, effort: DeepSeekEffort, model: AssistantModelConfig, protocol: AssistantProtocol): ByteArray {
-        if (protocol == AssistantProtocol.OPENAI_RESPONSES) return OpenAIResponses.encode(messages, streaming, model)
+        if (protocol == AssistantProtocol.OPENAI_RESPONSES) return OpenAIResponses.encode(messages, streaming, model, effort, maxTokens.takeIf { it != MAX_OUTPUT_TOKENS })
         return buildJsonObject {
             put("model", model.id)
             put("messages", JsonArray(messages))

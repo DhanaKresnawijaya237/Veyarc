@@ -12,6 +12,8 @@ class AssistantConnectionsTest {
         val profile = AssistantConnection.openAI()
         profile.validate()
         assertEquals(AssistantProtocol.OPENAI_RESPONSES, profile.protocol)
+        assertTrue(profile.defaultModel.vision && profile.defaultModel.reasoningSummary)
+        assertEquals(listOf("OFF", "LOW", "MEDIUM", "HIGH", "XHIGH"), profile.defaultModel.efforts)
         assertEquals(profile, Json.decodeFromString<AssistantConnection>(Json.encodeToString(profile)))
         assertTrue(runCatching { profile.copy(baseUrl = "https://example.org/v1").validate() }.isFailure)
         val compatible = profile.copy(protocol = AssistantProtocol.OPENAI_COMPATIBLE)
