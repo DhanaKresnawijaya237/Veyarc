@@ -69,6 +69,27 @@ class OpenAICompatibleClientTest {
         assertFalse(error.toString().contains("sensitive"))
     }
 
+    @Test fun modelDiscoverySendsNoChatAndDoesNotInferCapabilities() = server { server, endpoint ->
+        var valid = true
+        server.createContext("/models") { exchange ->
+            assertEquals("GET", exchange.requestMethod)
+            assertEquals(-1, exchange.requestBody.read())
+            assertEquals("Bearer fixture-custom-key", exchange.requestHeaders.getFirst("Authorization"))
+            val body = if (valid) "{\"object\":\"list\",\"data\":[{\"id\":\"vision-reasoner\"},{\"id\":\"vision-reasoner\"},{\"id\":\"another\"}]}" else "{\"data\":[{\"id\":\"\"}]}"
+            exchange.responseHeaders.set("Content-Type", "application/json")
+            exchange.sendResponseHeaders(200, 0)
+            exchange.responseBody.use { it.write(body.toByteArray()) }
+        }
+        val client = ChatCompletionClient(endpoint)
+        val models = client.listModels("fixture-custom-key")
+        assertEquals(listOf("vision-reasoner", "another"), models.map { it.id })
+        assertTrue(models.all { !it.vision && !it.jsonOutput && it.efforts == listOf("OFF") })
+        valid = false
+        assertEquals(DeepSeekFailure.INVALID_RESPONSE, (runCatching { client.listModels("fixture-custom-key") }.exceptionOrNull() as DeepSeekException).reason)
+        val cancelled = DeepSeekCancellation().apply { cancel() }
+        assertEquals(DeepSeekFailure.CANCELLED, (runCatching { client.listModels("fixture-custom-key", cancelled) }.exceptionOrNull() as DeepSeekException).reason)
+    }
+
     private fun chunk(text: String, finish: String?, role: Boolean = false): String = "data: " + buildJsonObject {
         put("id", "completion")
         put("object", "chat.completion.chunk")

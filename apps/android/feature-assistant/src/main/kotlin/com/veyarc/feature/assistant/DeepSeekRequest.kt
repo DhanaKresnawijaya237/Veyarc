@@ -14,7 +14,7 @@ import okio.ByteString.Companion.toByteString
 import java.util.UUID
 
 @Serializable
-enum class DeepSeekEffort(val label: String) { OFF("Off"), LOW("Low"), HIGH("High"), MAX("Max") }
+enum class DeepSeekEffort(val label: String) { OFF("Off"), LOW("Low"), MEDIUM("Medium"), HIGH("High"), MAX("Max") }
 
 @Serializable
 enum class DeepSeekModel(val apiId: String, val label: String, val shortLabel: String) {

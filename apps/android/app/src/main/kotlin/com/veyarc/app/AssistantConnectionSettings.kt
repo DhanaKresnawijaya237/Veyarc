@@ -15,10 +15,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -101,14 +103,28 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
     var effortProfile by remember { mutableStateOf<AssistantConnection?>(null) }
     var editProfile by remember { mutableStateOf<AssistantConnection?>(null) }
     var adding by remember { mutableStateOf(false) }
+    var addingModel by remember { mutableStateOf(false) }
+    var modelSearch by remember(modelProfile?.id) { mutableStateOf("") }
+    var keyRevision by remember { mutableStateOf(0) }
     var collapsed by rememberSaveable { mutableStateOf(emptyList<String>()) }
     fun keyStore(profile: AssistantConnection) = if (profile.id == AssistantConnection.DEEPSEEK_ID) store else AssistantKeyStore(context, profile.id)
     LaunchedEffect(profiles.connections.map { it.id }) {
+        val revision = keyRevision
         busy = true
-        hasKeys = withContext(Dispatchers.IO) {
-            profiles.connections.associate { profile -> profile.id to runCatching { keyStore(profile).hasKey() }.getOrDefault(false) }
+        var unreadable = false
+        val readKeys = withContext(Dispatchers.IO) {
+            profiles.connections.associate { profile ->
+                profile.id to runCatching { keyStore(profile).hasKey() }.getOrElse {
+                    unreadable = true
+                    false
+                }
+            }
         }
-        busy = false
+        if (revision == keyRevision) {
+            hasKeys = readKeys
+            if (unreadable) error = "A stored key could not be read. Replace or remove it."
+            busy = false
+        }
     }
     fun save(value: AssistantConnections, after: () -> Unit = {}) {
         if (busy || assistant == null) return
@@ -155,7 +171,10 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
             AnimatedVisibility(expanded, enter = expandVertically(tween(140)) + fadeIn(tween(100)), exit = shrinkVertically(tween(120)) + fadeOut(tween(80))) {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     HorizontalDivider()
-                    TextButton(onClick = { modelProfile = profile }, modifier = Modifier.fillMaxWidth(), enabled = assistant?.usesProvider == true && !busy) {
+                    TextButton(onClick = {
+                        assistant?.stopModelDiscovery()
+                        modelProfile = profile
+                    }, modifier = Modifier.fillMaxWidth(), enabled = assistant?.usesProvider == true && !busy) {
                         Text("Default model", Modifier.weight(1f))
                         Text(profile.defaultModel.name, Modifier.padding(end = 8.dp))
                     }
@@ -211,17 +230,43 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
         if (onHelp != null) TextButton(onClick = onHelp, modifier = Modifier.fillMaxWidth()) { Text("AI chat help", Modifier.weight(1f)) }
     }
     modelProfile?.let { profile ->
-        AssistantPanel("Default model", onDismiss = { modelProfile = null }) {
-            profile.models.forEach { model ->
-                val selected = model.id == profile.defaultModelId
-                Row(
-                    Modifier.fillMaxWidth().selectable(selected, role = Role.RadioButton, onClick = {
-                        replace(profile.copy(defaultModelId = model.id, defaultEffort = if (profile.defaultEffort in model.efforts) profile.defaultEffort else "OFF")) { modelProfile = null }
-                    }).padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(selected, onClick = null)
-                    Text("${profile.name} ${model.name}", Modifier.padding(start = 12.dp))
+        val models = (profile.models + assistant?.discoveredModels.orEmpty()).distinctBy { it.id }
+        val filtered = models.filter { it.id.contains(modelSearch, true) || it.name.contains(modelSearch, true) }
+        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+        AssistantPanel("Default model", onDismiss = {
+            assistant?.stopModelDiscovery()
+            modelProfile = null
+        }, scrollBody = false, bodyState = listState) {
+            Column(Modifier.fillMaxWidth().heightIn(max = 520.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    TextButton(onClick = { assistant?.discoverModels(profile.id) }, enabled = !busy && hasKeys[profile.id] == true && assistant?.supportsModelDiscovery == true && !assistant.isResponding) {
+                        if (assistant?.discoveringModels == true) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Find models")
+                    }
+                    TextButton(onClick = {
+                        assistant?.stopModelDiscovery()
+                        modelProfile = null
+                        addingModel = true
+                        editProfile = profile
+                    }, enabled = !busy) { Text("Add model") }
+                }
+                assistant?.modelDiscoveryStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                if (models.size > 12) OutlinedTextField(modelSearch, { modelSearch = it }, singleLine = true, label = { Text("Search models") }, modifier = Modifier.fillMaxWidth())
+                androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false), state = listState) {
+                    items(filtered.size, key = { filtered[it].id }) { index ->
+                        val model = filtered[index]
+                        val selected = model.id == profile.defaultModelId
+                        Row(
+                            Modifier.fillMaxWidth().selectable(selected, role = Role.RadioButton, enabled = !busy && assistant?.discoveringModels != true, onClick = {
+                                val updatedModels = if (profile.models.any { it.id == model.id }) profile.models else profile.models + model
+                                replace(profile.copy(models = updatedModels, defaultModelId = model.id, defaultEffort = if (profile.defaultEffort in model.efforts) profile.defaultEffort else "OFF")) { modelProfile = null }
+                            }).padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected, onClick = null)
+                            Text("${profile.name} ${model.name}", Modifier.weight(1f).padding(start = 12.dp))
+                            if (!selected && profile.models.any { it.id == model.id }) IconButton(onClick = { replace(profile.copy(models = profile.models.filterNot { it.id == model.id })) { modelProfile = null } }, enabled = !busy) { Icon(Icons.Outlined.DeleteOutline, "Remove model ${model.name}") }
+                        }
+                    }
                 }
             }
         }
@@ -237,13 +282,15 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
         }
     }
     if (adding || editProfile != null) {
-        ConnectionEditor(editProfile, busy, onDismiss = {
+        ConnectionEditor(editProfile, busy, newModel = addingModel, onDismiss = {
+            addingModel = false
             adding = false
             editProfile = null
         }) { profile ->
             val list = if (editProfile == null) profiles.connections + profile else profiles.connections.map { if (it.id == profile.id) profile else it }
             save(profiles.copy(connections = list)) {
                 val newConnection = adding
+                addingModel = false
                 adding = false
                 editProfile = null
                 if (newConnection) keyProfile = profile
@@ -292,6 +339,7 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
     keyProfile?.let { profile ->
         AssistantKeyDialog(title = "${profile.name} API key", onDismiss = { keyProfile = null }, onSave = { value ->
             keyProfile = null
+            keyRevision++
             assistant?.disableProvider()
             busy = true
             scope.launch {
@@ -311,6 +359,7 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
         AlertDialog(onDismissRequest = { removingKey = null }, title = { Text("Remove API key?") }, text = { Text("Chats stay. Revoke the key with your provider to stop all use.") }, confirmButton = {
             TextButton(onClick = {
                 removingKey = null
+                keyRevision++
                 assistant?.disableProvider()
                 busy = true
                 scope.launch {
@@ -341,22 +390,32 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
 }
 
 @Composable
-private fun ConnectionEditor(existing: AssistantConnection?, busy: Boolean, onDismiss: () -> Unit, onSave: (AssistantConnection) -> Unit) {
+private fun ConnectionEditor(existing: AssistantConnection?, busy: Boolean, newModel: Boolean = false, onDismiss: () -> Unit, onSave: (AssistantConnection) -> Unit) {
     val id = remember { existing?.id ?: java.util.UUID.randomUUID().toString() }
     var name by remember { mutableStateOf(existing?.name ?: "") }
     var address by remember { mutableStateOf(existing?.baseUrl ?: "") }
-    var modelId by remember { mutableStateOf(existing?.defaultModelId ?: "") }
+    var modelId by remember { mutableStateOf(if (newModel) "" else existing?.defaultModelId ?: "") }
     var protocol by remember { mutableStateOf(existing?.protocol ?: AssistantProtocol.OPENAI_COMPATIBLE) }
     var advanced by remember { mutableStateOf(false) }
-    var vision by remember { mutableStateOf(existing?.defaultModel?.vision ?: false) }
-    var jsonMode by remember { mutableStateOf(existing?.defaultModel?.jsonOutput ?: false) }
-    var thinking by remember { mutableStateOf(existing?.defaultModel?.efforts?.size?.let { it > 1 } ?: false) }
-    val model = if (protocol == AssistantProtocol.DEEPSEEK) AssistantConnection.deepSeek().models.firstOrNull { it.id == modelId.trim() } else AssistantModelConfig(modelId.trim(), existing?.models?.firstOrNull { it.id == modelId.trim() }?.name ?: modelId.trim(), vision, jsonMode, if (thinking) listOf("OFF", "LOW", "HIGH") else listOf("OFF"))
+    var vision by remember { mutableStateOf(!newModel && existing?.defaultModel?.vision == true) }
+    var jsonMode by remember { mutableStateOf(!newModel && existing?.defaultModel?.jsonOutput == true) }
+    var modelName by remember { mutableStateOf(if (newModel) "" else existing?.defaultModel?.name ?: "") }
+    var efforts by remember { mutableStateOf(if (newModel) listOf("OFF") else existing?.defaultModel?.efforts ?: listOf("OFF")) }
+    val model = if (protocol == AssistantProtocol.DEEPSEEK) AssistantConnection.deepSeek().models.firstOrNull { it.id == modelId.trim() } ?: existing?.models?.firstOrNull { it.id == modelId.trim() } else AssistantModelConfig(modelId.trim(), modelName.trim().ifEmpty { modelId.trim() }, vision, jsonMode, efforts)
     val candidate = model?.let { selected ->
         AssistantConnection(id, name.trim(), address.trim().trimEnd('/'), protocol, existing?.models.orEmpty().filterNot { it.id == selected.id } + selected, selected.id, existing?.defaultEffort?.takeIf { it in selected.efforts } ?: "OFF")
     }
     val valid = candidate != null && runCatching { candidate.validate() }.isSuccess
-    AssistantPanel(if (existing == null) "Add connection" else "Edit connection", onDismiss = onDismiss) {
+    AssistantPanel(
+        if (newModel) {
+            "Add model"
+        } else if (existing == null) {
+            "Add connection"
+        } else {
+            "Edit connection"
+        },
+        onDismiss = onDismiss,
+    ) {
         if (existing == null) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 TextButton(onClick = {
@@ -379,9 +438,18 @@ private fun ConnectionEditor(existing: AssistantConnection?, busy: Boolean, onDi
                 }) { Text("Custom") }
             }
         }
-        OutlinedTextField(name, { if (it.length <= 80) name = it }, label = { Text("Name") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), modifier = Modifier.fillMaxWidth().testTag("connection-name"))
-        OutlinedTextField(address, { if (it.length <= 2048) address = it }, label = { Text("API address") }, placeholder = { Text("https://example.com/v1") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), readOnly = protocol == AssistantProtocol.DEEPSEEK, modifier = Modifier.fillMaxWidth().testTag("connection-address"))
-        OutlinedTextField(modelId, { if (it.length <= 256) modelId = it }, label = { Text("Model ID") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), modifier = Modifier.fillMaxWidth().testTag("connection-model"))
+        if (!newModel) OutlinedTextField(name, { if (it.length <= 80) name = it }, label = { Text("Name") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), modifier = Modifier.fillMaxWidth().testTag("connection-name"))
+        if (!newModel) OutlinedTextField(address, { if (it.length <= 2048) address = it }, label = { Text("API address") }, placeholder = { Text("https://example.com/v1") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), readOnly = protocol == AssistantProtocol.DEEPSEEK, modifier = Modifier.fillMaxWidth().testTag("connection-address"))
+        OutlinedTextField(modelId, {
+            if (it.length <= 256) {
+                modelId = it
+                val configured = existing?.models?.firstOrNull { saved -> saved.id == it.trim() }
+                modelName = configured?.name ?: ""
+                vision = configured?.vision ?: false
+                jsonMode = configured?.jsonOutput ?: false
+                efforts = configured?.efforts ?: listOf("OFF")
+            }
+        }, label = { Text("Model ID") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), modifier = Modifier.fillMaxWidth().testTag("connection-model"))
         if (protocol == AssistantProtocol.OPENAI_COMPATIBLE) {
             Text("Use an OpenAI-compatible Chat Completions address.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             TextButton(onClick = { advanced = !advanced }) { Text("Advanced") }
@@ -389,17 +457,32 @@ private fun ConnectionEditor(existing: AssistantConnection?, busy: Boolean, onDi
                 Column {
                     ConnectionCapability("Images", vision) { vision = it }
                     ConnectionCapability("JSON mode", jsonMode) { jsonMode = it }
-                    ConnectionCapability("Reasoning effort", thinking) { thinking = it }
+                    OutlinedTextField(modelName, { if (it.length <= 256) modelName = it }, label = { Text("Display name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Text("Supported effort levels", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 12.dp))
+                    DeepSeekEffort.entries.filter { it != DeepSeekEffort.OFF }.forEach { effort ->
+                        ConnectionCapability(effort.label, effort.name in efforts) { selected -> efforts = if (selected) efforts + effort.name else efforts - effort.name }
+                    }
+                    Text("Enable only features supported by this model.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
-        Button(onClick = { onSave(requireNotNull(candidate)) }, enabled = valid && !busy, modifier = Modifier.fillMaxWidth().testTag("connection-save")) { Text(if (busy) "Saving" else "Save connection") }
+        Button(onClick = { onSave(requireNotNull(candidate)) }, enabled = valid && !busy, modifier = Modifier.fillMaxWidth().testTag("connection-save")) {
+            Text(
+                if (busy) {
+                    "Saving"
+                } else if (newModel) {
+                    "Save model"
+                } else {
+                    "Save connection"
+                },
+            )
+        }
     }
 }
 
 @Composable
 private fun ConnectionCapability(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(role = Role.Checkbox) { onChange(!checked) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().testTag("capability-$label").toggleable(checked, role = Role.Checkbox, onValueChange = onChange).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         com.veyarc.feature.assistant.RoundedSelectionCheckbox(checked, onCheckedChange = null)
         Text(label, Modifier.padding(start = 12.dp))
     }

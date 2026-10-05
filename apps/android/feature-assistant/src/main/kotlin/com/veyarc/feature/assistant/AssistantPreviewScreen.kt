@@ -188,7 +188,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
     var clearWorkflowOnly by remember(state.context.workflowId) { mutableStateOf(state.context.workflowId != null) }
     if (storageVisible) {
         PreviewDialog("Chat storage", onDismiss = { storageVisible = false }) {
-            Text(if (state.persistent) "Encrypted on this device. Deleting chats here does not delete DeepSeek records." else "Temporary sample history.")
+            Text(if (state.persistent) "Encrypted on this device. Deleting chats here does not delete provider records." else "Temporary sample history.")
             state.storageError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (state.storageError != null && !state.loadFailed) {
                 TextButton(onClick = state::saveAgain, enabled = state.pendingWrites == 0, modifier = Modifier.fillMaxWidth()) { Text("Retry saving") }
@@ -455,7 +455,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
                                 Box(Modifier.weight(1f)) {
                                     Surface(onClick = { composerSheet = "model" }, shape = CircleShape, color = chatControlColor(), modifier = Modifier.testTag("assistant-model-picker")) {
                                         Row(Modifier.heightIn(min = 40.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            Text(if (state.usesProvider) state.selectedModel.label else "Sample", modifier = Modifier.weight(1f, fill = false), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(if (state.usesProvider) state.activeModelLabel else "Sample", modifier = Modifier.weight(1f, fill = false), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             Text(chat.effort.label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                                         }
                                     }
@@ -473,7 +473,9 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
                         }) { Text("Enable AI in Settings") }
                     }
                     val notice = when {
-                        chat.model == DeepSeekModel.PRO && chat.composerAttachments.any { it.needsVision } -> "Choose DeepSeek V4.1 Flash to send images or PDFs."
+                        state.usesProvider && state.activeModel == null -> "Choose another model to continue."
+                        state.usesProvider && chat.effort !in state.availableEfforts -> "Choose an effort supported by this model."
+                        state.usesProvider && state.activeModel?.vision != true && chat.composerAttachments.any { it.needsVision } -> "Choose a model with image support to send images or PDFs."
                         state.storageError != null -> "Chat not saved. Open Chat storage."
                         state.inputError != null -> state.inputError
                         state.usesProvider && !state.providerEnabled && onOpenSettings == null -> "Enable AI in Settings to send."
@@ -487,7 +489,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
 
     if (contextVisible) {
         PreviewDialog(if (capturedTurn) "Captured workflow context" else "Workflow context", onDismiss = { contextVisible = false }) {
-            Text(if (state.usesProvider) "DeepSeek receives your message, recent completed exchanges, and workflow text." else "Sample only. Nothing is sent.")
+            Text(if (state.usesProvider) "Your chosen provider receives your message, recent completed exchanges, and workflow text." else "Sample only. Nothing is sent.")
             if (state.usesProvider) Text("Older messages stay saved when a long chat exceeds the request budget.")
             Text(if (capturedTurn) "Snapshot used for this message and retries." else "Send uses your current draft, including unsaved edits.")
             contextCapture.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -1043,6 +1045,7 @@ private fun DiffValue(label: String, value: String, added: Boolean, compact: Boo
 
 @Composable
 private fun ComposerOptions(sheet: String, state: AssistantPreviewState, onSelect: (String) -> Unit, onDismiss: () -> Unit, onAttachment: (String) -> Unit) {
+    var modelSearch by remember { mutableStateOf("") }
     val title = when (sheet) {
         "attachments" -> "Add to chat"
         "effort" -> "Effort"
@@ -1054,25 +1057,25 @@ private fun ComposerOptions(sheet: String, state: AssistantPreviewState, onSelec
                 BoxWithConstraints(Modifier.fillMaxWidth()) {
                     if (maxWidth < 300.dp || LocalDensity.current.fontScale > 1.5f) {
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            PanelOption("Camera", icon = Icons.Outlined.CameraAlt, enabled = state.attachments != null && state.canChange && !state.importingAttachments, disabledLabel = null, onClick = { onAttachment("Camera") })
-                            PanelOption("Photos", icon = Icons.Outlined.Image, enabled = state.attachments != null && state.canChange && !state.importingAttachments, disabledLabel = null, onClick = { onAttachment("Photos") })
+                            PanelOption("Camera", icon = Icons.Outlined.CameraAlt, enabled = (!state.usesProvider || state.activeModel?.vision == true) && state.attachments != null && state.canChange && !state.importingAttachments, disabledLabel = null, onClick = { onAttachment("Camera") })
+                            PanelOption("Photos", icon = Icons.Outlined.Image, enabled = (!state.usesProvider || state.activeModel?.vision == true) && state.attachments != null && state.canChange && !state.importingAttachments, disabledLabel = null, onClick = { onAttachment("Photos") })
                             PanelOption("Files", icon = Icons.Outlined.UploadFile, enabled = state.attachments != null && state.canChange && !state.importingAttachments, disabledLabel = null, onClick = { onAttachment("Files") })
                         }
                     } else {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            AttachmentTile("Camera", Icons.Outlined.CameraAlt, Modifier.weight(1f), state.attachments != null && state.canChange && !state.importingAttachments) { onAttachment("Camera") }
-                            AttachmentTile("Photos", Icons.Outlined.Image, Modifier.weight(1f), state.attachments != null && state.canChange && !state.importingAttachments) { onAttachment("Photos") }
+                            AttachmentTile("Camera", Icons.Outlined.CameraAlt, Modifier.weight(1f), (!state.usesProvider || state.activeModel?.vision == true) && state.attachments != null && state.canChange && !state.importingAttachments) { onAttachment("Camera") }
+                            AttachmentTile("Photos", Icons.Outlined.Image, Modifier.weight(1f), (!state.usesProvider || state.activeModel?.vision == true) && state.attachments != null && state.canChange && !state.importingAttachments) { onAttachment("Photos") }
                             AttachmentTile("Files", Icons.Outlined.UploadFile, Modifier.weight(1f), state.attachments != null && state.canChange && !state.importingAttachments) { onAttachment("Files") }
                         }
                     }
                 }
-                Text("Images, PDF, DOCX and text", Modifier.fillMaxWidth(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (state.usesProvider && state.activeModel?.vision != true) "This model supports text files. Choose an image model for photos or PDFs." else "Images, PDF, DOCX and text", Modifier.fillMaxWidth(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             "effort" -> {
                 Surface(shape = RoundedCornerShape(18.dp), color = chatPanelColor(raised = true)) {
                     Column(Modifier.testTag("assistant-effort-options"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        DeepSeekEffort.entries.forEach { effort ->
+                        state.availableEfforts.forEach { effort ->
                             PanelOption(effort.label, selected = state.conversation?.effort == effort, enabled = state.usesProvider && state.canChange && !state.isResponding, disabledLabel = null, opensPanel = false, onClick = {
                                 state.setEffort(effort)
                                 onDismiss()
@@ -1080,21 +1083,25 @@ private fun ComposerOptions(sheet: String, state: AssistantPreviewState, onSelec
                         }
                     }
                 }
-                Text(if (state.usesProvider) "More thinking takes longer and uses more tokens." else "Available with DeepSeek.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (state.usesProvider) "More thinking takes longer and uses more tokens." else "Available with an AI connection.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             else -> {
                 if (state.usesProvider) {
-                    DeepSeekModel.entries.forEach { model ->
-                        PanelOption(model.label, selected = state.selectedModel == model, enabled = state.canChange && !state.isResponding, disabledLabel = null, onClick = {
-                            state.setModel(model)
+                    val models = state.connections.connections.flatMap { profile -> profile.models.map { profile to it } }
+                    if (models.size > 12) OutlinedTextField(modelSearch, { modelSearch = it }, singleLine = true, label = { Text("Search models") }, modifier = Modifier.fillMaxWidth())
+                    val shown = models.filter { (profile, model) -> "${profile.name} ${model.name} ${model.id}".contains(modelSearch, true) }
+                    shown.take(60).forEach { (profile, model) ->
+                        PanelOption("${profile.name} ${model.name}", selected = state.selectedConnection?.id == profile.id && state.activeModel?.id == model.id, enabled = state.canChange && !state.isResponding && state.connectionsReady, disabledLabel = null, onClick = {
+                            state.selectConnectionModel(profile.id, model.id)
                             onDismiss()
                         })
                     }
+                    if (shown.size > 60) Text("Search to see more models.", style = MaterialTheme.typography.bodySmall)
                 } else {
                     PanelOption("Sample chat", subtitle = "Offline preview", selected = true)
                 }
-                PanelOption("Effort", value = state.conversation?.effort?.label ?: "Off", opensPanel = true, onClick = { onSelect("effort") })
+                if (state.availableEfforts.size > 1) PanelOption("Effort", value = state.conversation?.effort?.label ?: "Off", opensPanel = true, onClick = { onSelect("effort") })
             }
         }
     }

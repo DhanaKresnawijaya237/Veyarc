@@ -3,7 +3,11 @@ package com.veyarc.feature.assistant
 import com.veyarc.data.storage.AssistantConnection
 import com.veyarc.data.storage.AssistantConnections
 import com.veyarc.data.storage.AssistantModelConfig
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
@@ -49,6 +53,35 @@ class AssistantConnectionsStateTest {
         assertEquals(custom.id, state.conversation!!.connectionId)
         state.selectConnectionModel(AssistantConnection.DEEPSEEK_ID, "deepseek-flash")
         assertTrue(state.canSend)
+        state.dispose()
+    }
+
+    @Test fun discoveryPreservesKnownFeaturesAndCancelledResultsStayOutOfSettings() = runBlocking {
+        val result = CompletableDeferred<List<AssistantModelConfig>>()
+        val state = AssistantPreviewState(scope = this, providerCall = { error("No chat expected") }, modelDiscovery = { withContext(NonCancellable) { result.await() } })
+        state.discoverModels(AssistantConnection.DEEPSEEK_ID)
+        yield()
+        state.stopModelDiscovery()
+        result.complete(listOf(AssistantModelConfig("deepseek-flash")))
+        yield()
+        assertTrue(state.discoveredModels.isEmpty())
+        state.discoverModels(AssistantConnection.DEEPSEEK_ID)
+        yield()
+        assertTrue(state.discoveredModels.single().vision)
+        assertEquals(listOf("OFF", "LOW", "HIGH", "MAX"), state.discoveredModels.single().efforts)
+        state.dispose()
+    }
+
+    @Test fun newChatWaitsForSavedDefaultConnectionBeforeItIsCreated() = runBlocking {
+        val custom = AssistantConnection(UUID.randomUUID().toString(), "Custom", "https://example.org/v1", models = listOf(AssistantModelConfig("my-model", efforts = listOf("OFF", "MEDIUM"))), defaultModelId = "my-model", defaultEffort = "MEDIUM")
+        val state = AssistantPreviewState(scope = this, providerCall = { error("No request expected") }, onConnectionsChanged = {})
+        state.open(AssistantPreviewContext())
+        assertTrue(state.conversation == null)
+        state.restoreConnections(AssistantConnections(listOf(custom), custom.id))
+        assertEquals(custom.id, state.conversation!!.connectionId)
+        assertEquals(DeepSeekEffort.MEDIUM, state.conversation!!.effort)
+        state.setEffort(DeepSeekEffort.HIGH)
+        assertEquals(DeepSeekEffort.MEDIUM, state.conversation!!.effort)
         state.dispose()
     }
 }

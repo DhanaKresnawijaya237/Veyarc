@@ -61,7 +61,7 @@ class DeepSeekClientTest {
     @Test
     fun effortControlsProviderThinkingAndKeepsReasoningSeparateFromValidatedContent() {
         val thinkingEnvelope = envelope().toString(Charsets.UTF_8).replace("\"role\":\"assistant\"", "\"role\":\"assistant\",\"reasoning_content\":\"Untrusted thought, not workflow JSON\"")
-        DeepSeekEffort.entries.forEach { effort ->
+        DeepSeekEffort.entries.filter { it != DeepSeekEffort.MEDIUM }.forEach { effort ->
             val selected = DeepSeekRequest.create("request", "chat", "draft:draft", "Explain", null, effort = effort)
             val body = Json.parseToJsonElement(selected.body.toString(Charsets.UTF_8)).jsonObject
             assertEquals(effort != DeepSeekEffort.OFF, selected.thinkingEnabled)

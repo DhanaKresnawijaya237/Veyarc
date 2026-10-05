@@ -549,6 +549,13 @@ class MainEditorSession(application: Application) : AndroidViewModel(application
             com.veyarc.feature.assistant.ChatCompletionClient(request.connection).await(request, key)
         },
         onConnectionsChanged = { value -> withContext(Dispatchers.IO) { assistantConnections.save(value) } },
+        modelDiscovery = { profile ->
+            val key = withContext(Dispatchers.IO) {
+                runCatching { com.veyarc.data.storage.AssistantKeyStore(application, profile.id).readForRequest() }.getOrNull()
+                    ?: throw com.veyarc.feature.assistant.DeepSeekException(com.veyarc.feature.assistant.DeepSeekFailure.KEY_REQUIRED)
+            }
+            com.veyarc.feature.assistant.ChatCompletionClient(profile).discoverModels(key)
+        },
     )
 
     init {

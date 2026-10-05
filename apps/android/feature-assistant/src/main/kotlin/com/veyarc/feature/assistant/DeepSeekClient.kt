@@ -2,6 +2,7 @@ package com.veyarc.feature.assistant
 
 import com.veyarc.data.storage.AssistantConnection
 import com.veyarc.data.storage.AssistantKeyStore
+import com.veyarc.data.storage.AssistantModelConfig
 import com.veyarc.model.WorkflowJson
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -86,6 +87,57 @@ class ChatCompletionClient internal constructor(
         // The blocking worker always releases its connection in complete()'s finally block.
         CoroutineScope(Dispatchers.IO).launch {
             continuation.resumeWith(runCatching { complete(request, apiKey, cancellation) })
+        }
+    }
+
+    /** Explicit discovery sends a credential, but no chat, attachments or workflow. */
+    suspend fun discoverModels(apiKey: String, cancellation: DeepSeekCancellation = DeepSeekCancellation()): List<AssistantModelConfig> = suspendCancellableCoroutine { continuation ->
+        continuation.invokeOnCancellation { cancellation.cancel() }
+        CoroutineScope(Dispatchers.IO).launch { continuation.resumeWith(runCatching { listModels(apiKey, cancellation) }) }
+    }
+
+    internal fun listModels(apiKey: String, cancellation: DeepSeekCancellation = DeepSeekCancellation()): List<AssistantModelConfig> {
+        if (!AssistantKeyStore.isValidEntry(apiKey)) throw DeepSeekException(DeepSeekFailure.KEY_REQUIRED)
+        if (!busy.compareAndSet(false, true)) throw DeepSeekException(DeepSeekFailure.BUSY)
+        var call: Call? = null
+        try {
+            cancellation.checkActive()
+            val http = Request.Builder().url(endpoint.toString().removeSuffix("/chat/completions") + "/models")
+                .header("Authorization", "Bearer $apiKey").header("Accept", "application/json").header("Accept-Encoding", "identity").get().build()
+            val active = transport.newCall(http)
+            call = active
+            cancellation.attach(active)
+            val models = active.execute().use { response ->
+                cancellation.checkActive()
+                if (response.code != 200) throw DeepSeekException(if (response.code == 401) DeepSeekFailure.KEY_REQUIRED else DeepSeekFailure.UNAVAILABLE)
+                require(response.header("Content-Type")?.substringBefore(';')?.trim()?.lowercase() == "application/json")
+                val input = when (response.header("Content-Encoding")?.lowercase()) {
+                    null, "identity" -> response.body.byteStream()
+                    "gzip" -> GZIPInputStream(response.body.byteStream())
+                    else -> throw DeepSeekException(DeepSeekFailure.INVALID_RESPONSE)
+                }
+                val root = BoundedResponse(input, cancellation::checkActive, 512 * 1024).use { parseObject(it.readBytes()) }
+                require(root["error"] == null || root["error"] == JsonNull)
+                val data = root["data"] as JsonArray
+                require(data.size in 1..4096)
+                // Availability is not a capability declaration. New models start as text-only.
+                data.map { AssistantModelConfig((it as JsonObject).string("id")).also(AssistantModelConfig::validate) }.distinctBy { it.id }
+            }
+            cancellation.checkActive()
+            cancellation.finish()
+            return models
+        } catch (error: Exception) {
+            cancellation.checkActive()
+            throw when (error) {
+                is DeepSeekException -> error
+                is InterruptedIOException -> DeepSeekException(DeepSeekFailure.TIMEOUT)
+                is IOException -> DeepSeekException(DeepSeekFailure.NETWORK)
+                else -> DeepSeekException(DeepSeekFailure.INVALID_RESPONSE)
+            }
+        } finally {
+            cancellation.detach()
+            call?.cancel()
+            busy.set(false)
         }
     }
 

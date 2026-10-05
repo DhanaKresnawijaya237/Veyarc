@@ -14,6 +14,7 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.isFocused
@@ -46,6 +47,65 @@ import java.util.UUID
 @RunWith(AndroidJUnit4::class)
 class AssistantConnectionSettingsTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test
+    fun discoveryAndManualModelsKeepChatChoicesAndExposeConfiguredEfforts() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val profile = com.veyarc.data.storage.AssistantConnection(UUID.randomUUID().toString(), "Server", "https://example.org/v1", models = listOf(com.veyarc.data.storage.AssistantModelConfig("model-a")), defaultModelId = "model-a")
+        val store = AssistantKeyStore(context, profile.id)
+        val owner = kotlinx.coroutines.SupervisorJob()
+        var calls = 0
+        val assistant = com.veyarc.feature.assistant.AssistantPreviewState(scope = kotlinx.coroutines.CoroutineScope(owner + kotlinx.coroutines.Dispatchers.Main), providerCall = { error("No chat expected") }, modelDiscovery = {
+            calls++
+            listOf(com.veyarc.data.storage.AssistantModelConfig("model-b"))
+        })
+        try {
+            store.save("fixture-model-discovery")
+            compose.runOnUiThread {
+                assistant.restoreConnections(com.veyarc.data.storage.AssistantConnections(listOf(profile), profile.id))
+                assistant.open(com.veyarc.feature.assistant.AssistantPreviewContext())
+            }
+            compose.setContent { VeyarcTheme { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(AssistantKeyStore(context), assistant) } } }
+            awaitText("Key saved")
+            compose.onNodeWithText("Default model").performClick()
+            compose.onNodeWithText("Find models").performClick()
+            awaitText("Server model-b")
+            compose.onNodeWithText("Server model-b").performClick()
+            compose.runOnIdle {
+                org.junit.Assert.assertEquals(1, calls)
+                org.junit.Assert.assertEquals("model-a", assistant.conversation!!.modelId)
+                org.junit.Assert.assertEquals("model-b", assistant.defaultConnection.defaultModelId)
+                assertFalse(assistant.defaultConnection.defaultModel.vision)
+                assertFalse(assistant.providerEnabled)
+            }
+            compose.onNodeWithText("Default model").performClick()
+            compose.onNodeWithText("Add model").performClick()
+            compose.onNodeWithTag("connection-model").performTextInput("manual-model")
+            closeKeyboard()
+            compose.onNodeWithText("Advanced").performScrollTo().performClick()
+            compose.onNodeWithTag("capability-Medium").performScrollTo().performClick()
+            compose.onNodeWithTag("connection-save").performScrollTo().performClick()
+            awaitText("Default effort")
+            compose.onNodeWithText("Default effort").performClick()
+            compose.onNodeWithText("Medium").performClick()
+            compose.runOnIdle {
+                org.junit.Assert.assertEquals("manual-model", assistant.defaultConnection.defaultModelId)
+                org.junit.Assert.assertEquals("MEDIUM", assistant.defaultConnection.defaultEffort)
+                org.junit.Assert.assertEquals(listOf("OFF", "MEDIUM"), assistant.defaultConnection.defaultModel.efforts)
+                org.junit.Assert.assertEquals("model-a", assistant.conversation!!.modelId)
+            }
+            compose.onNodeWithContentDescription("Edit Server").performScrollTo().performClick()
+            compose.onNodeWithTag("connection-model").performTextReplacement("unseen-model")
+            compose.onNodeWithText("Advanced").performScrollTo().performClick()
+            compose.onNodeWithTag("capability-Medium").performScrollTo().assertIsOff()
+            compose.onNodeWithTag("capability-Images").performScrollTo().assertIsOff()
+            compose.onNodeWithContentDescription("Close Edit connection").performClick()
+        } finally {
+            compose.runOnUiThread { assistant.dispose() }
+            owner.cancel()
+            store.remove()
+        }
+    }
 
     @Test
     fun customConnectionSetupUsesSeparateKeyAndKeepsExistingChat() {

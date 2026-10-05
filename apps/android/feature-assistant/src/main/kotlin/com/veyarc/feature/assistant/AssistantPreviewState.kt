@@ -118,8 +118,9 @@ class AssistantPreviewState(
     val attachments: AssistantAttachmentImporter? = null,
     private val applyImageCandidate: (suspend (String, AssistantContextSnapshot, String, List<AssistantImageAddition>, List<AssistantAttachment>) -> Boolean)? = null,
     private val onDefaultEffortChanged: ((DeepSeekEffort) -> Unit)? = null,
-    private var contextSource: (() -> AssistantContextCapture)? = null,
     private val onConnectionsChanged: (suspend (AssistantConnections) -> Unit)? = null,
+    private val modelDiscovery: (suspend (AssistantConnection) -> List<AssistantModelConfig>)? = null,
+    private var contextSource: (() -> AssistantContextCapture)? = null,
 ) {
     private val attachmentWork = kotlinx.coroutines.sync.Mutex()
     var isOpen by mutableStateOf(false)
@@ -162,8 +163,51 @@ class AssistantPreviewState(
     val defaultConnection: AssistantConnection get() = connections.connections.first { it.id == connections.defaultConnectionId }
     val selectedConnection: AssistantConnection? get() = connections.connections.firstOrNull { it.id == (conversation?.connectionId ?: connections.defaultConnectionId) }
     val activeModel: AssistantModelConfig? get() = selectedConnection?.models?.firstOrNull { it.id == (conversation?.modelId ?: defaultConnection.defaultModelId) }
-    val activeModelLabel: String get() = conversation?.let { "${it.providerName} ${it.modelName}" } ?: "${defaultConnection.name} ${defaultConnection.defaultModel.name}"
+    val activeModelLabel: String get() = activeModel?.let { "${selectedConnection!!.name} ${it.name}" } ?: conversation?.let { "${it.providerName} ${it.modelName}" } ?: "${defaultConnection.name} ${defaultConnection.defaultModel.name}"
     val availableEfforts: List<DeepSeekEffort> get() = activeModel?.efforts.orEmpty().mapNotNull { name -> DeepSeekEffort.entries.firstOrNull { it.name == name } }
+    val supportsModelDiscovery: Boolean get() = modelDiscovery != null
+    var discoveringModels by mutableStateOf(false)
+        private set
+    var discoveredModels by mutableStateOf<List<AssistantModelConfig>>(emptyList())
+        private set
+    var modelDiscoveryStatus by mutableStateOf<String?>(null)
+        private set
+    private var discoveryJob: Job? = null
+    private var discoveryGeneration = 0
+
+    fun discoverModels(connectionId: String) {
+        if (!connectionsReady || isResponding || modelDiscovery == null) return
+        val profile = connections.connections.firstOrNull { it.id == connectionId } ?: return
+        val token = ++discoveryGeneration
+        discoveredModels = emptyList()
+        modelDiscoveryStatus = null
+        discoveringModels = true
+        discoveryJob = requireNotNull(scope).launch {
+            try {
+                val models = modelDiscovery.invoke(profile)
+                models.forEach(AssistantModelConfig::validate)
+                if (token == discoveryGeneration && connections.connections.any { it == profile }) {
+                    discoveredModels = models.map { model -> profile.models.firstOrNull { it.id == model.id } ?: model }
+                    modelDiscoveryStatus = "Choose a chat model. Availability doesn't confirm its features."
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (token == discoveryGeneration) modelDiscoveryStatus = "Couldn't load models. You can enter a model ID instead."
+            } finally {
+                if (token == discoveryGeneration) discoveringModels = false
+            }
+        }
+    }
+
+    fun stopModelDiscovery() {
+        discoveryGeneration++
+        discoveryJob?.cancel()
+        discoveryJob = null
+        discoveringModels = false
+        discoveredModels = emptyList()
+        modelDiscoveryStatus = null
+    }
 
     fun restoreConnections(value: AssistantConnections) {
         value.validate()
@@ -171,6 +215,7 @@ class AssistantPreviewState(
         connectionsReady = true
         connectionError = null
         syncLegacyDefaults()
+        if (isOpen && conversation == null && !isLoading) createChat()
     }
 
     fun connectionStorageFailed() {
@@ -184,8 +229,10 @@ class AssistantPreviewState(
         value.validate()
         stop(PreviewReplyStatus.INTERRUPTED)
         return try {
-            onConnectionsChanged?.invoke(value)
-            restoreConnections(value)
+            withContext(kotlinx.coroutines.NonCancellable) {
+                onConnectionsChanged?.invoke(value)
+                restoreConnections(value)
+            }
             true
         } catch (_: Exception) {
             connectionError = "Could not save AI connections. Your previous setup is kept."
@@ -228,7 +275,7 @@ class AssistantPreviewState(
 
     val selectedModel: DeepSeekModel get() = conversation?.model ?: defaultModel
     val usesProvider: Boolean get() = providerCall != null
-    val isResponding: Boolean get() = requestId != null || pendingRequestId != null || testingConnection
+    val isResponding: Boolean get() = requestId != null || pendingRequestId != null || testingConnection || discoveringModels
     private var providerJob: Job? = null
     private var imageApplyJob: Job? = null
     var isApplyingImages by mutableStateOf(false)
@@ -250,7 +297,7 @@ class AssistantPreviewState(
         .sortedWith(compareByDescending<PreviewConversation> { it.pinned }.thenByDescending { it.updatedAtMs })
     val canSend: Boolean get() = isOpen && (!usesProvider || providerEnabled) && canChange && !isResponding && conversation?.let {
         !importingAttachments && (it.composer.isNotBlank() || it.composerAttachments.isNotEmpty()) && it.composer.length <= MAX_PROMPT_LENGTH &&
-            (!usesProvider || (connectionsReady && activeModel != null && (activeModel!!.vision || it.composerAttachments.none { attachment -> attachment.needsVision })))
+            (!usesProvider || (connectionsReady && activeModel != null && it.effort in availableEfforts && (activeModel!!.vision || it.composerAttachments.none { attachment -> attachment.needsVision })))
     } == true
 
     init {
@@ -298,6 +345,7 @@ class AssistantPreviewState(
     }
 
     fun dispose() {
+        stopModelDiscovery()
         imageApplyJob?.cancel()
         providerEnabled = false
         testingConnection = false
@@ -534,6 +582,7 @@ class AssistantPreviewState(
     }
 
     private fun createChat() {
+        if (usesProvider && !connectionsReady) return
         val chat = PreviewConversation(UUID.randomUUID().toString(), context.workflowId, context = context, model = defaultModel, effort = defaultEffort, connectionId = defaultConnection.id, modelId = defaultConnection.defaultModelId, providerName = defaultConnection.name, modelName = defaultConnection.defaultModel.name)
         conversations = conversations + chat
         selectedId = chat.id
@@ -966,6 +1015,7 @@ class AssistantPreviewState(
     }
 
     fun stop(status: PreviewReplyStatus = PreviewReplyStatus.STOPPED) {
+        stopModelDiscovery()
         imageApplyJob?.cancel()
         applyGeneration++
         if (testingConnection) connectionTestStatus = "Connection test interrupted. Retry only when ready; charges may still apply."
