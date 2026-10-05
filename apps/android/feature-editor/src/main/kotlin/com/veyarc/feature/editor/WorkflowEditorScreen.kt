@@ -1677,6 +1677,7 @@ private fun TemplateAssetSection(
     onRemoveTemplate: (com.veyarc.model.AssetId) -> Unit,
     onRenameTemplate: (com.veyarc.model.AssetId, String) -> Unit,
 ) {
+    val context = LocalContext.current
     var expanded by remember { mutableStateOf(true) }
     var renameTarget by remember { mutableStateOf<com.veyarc.model.AssetId?>(null) }
     EditorSetupSection("Image templates", Icons.Outlined.Image, expanded, { expanded = !expanded }, onAddTemplate, "Add image template") {
@@ -1700,8 +1701,8 @@ private fun TemplateAssetSection(
                             )
                             Text(
                                 listOfNotNull(
-                                    asset.mimeType,
-                                    asset.widthPx?.let { width -> asset.heightPx?.let { height -> "$width×$height" } },
+                                    asset.addedAtMs?.let { "Added ${java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(it))}" },
+                                    asset.byteCount?.let { android.text.format.Formatter.formatShortFileSize(context, it) },
                                 ).joinToString(" · "),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,

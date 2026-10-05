@@ -1,6 +1,7 @@
 package com.veyarc.data.storage
 
 import androidx.room.Dao
+import androidx.room.Embedded
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
@@ -44,6 +45,17 @@ internal interface WorkflowAssetDao {
     fun listRevisionAssets(workflowId: String, revision: Int): List<RevisionAssetEntity>
 
     @Query(
+        "SELECT ra.*, b.encryptedByteLength AS byteCount, " +
+            "(SELECT wr.createdAtMs FROM revision_assets prior " +
+            "JOIN workflow_revisions wr ON wr.workflowId = prior.workflowId AND wr.revision = prior.revision " +
+            "WHERE prior.workflowId = ra.workflowId AND prior.assetId = ra.assetId " +
+            "AND prior.revision <= ra.revision ORDER BY prior.revision LIMIT 1) AS addedAtMs " +
+            "FROM revision_assets ra JOIN asset_blobs b ON b.blobKey = ra.blobKey " +
+            "WHERE ra.workflowId = :workflowId AND ra.revision = :revision ORDER BY ra.assetId",
+    )
+    fun listRevisionAssetDetails(workflowId: String, revision: Int): List<RevisionAssetDetails>
+
+    @Query(
         "SELECT * FROM revision_assets " +
             "WHERE workflowId = :workflowId AND revision = :revision AND assetId = :assetId",
     )
@@ -68,3 +80,5 @@ internal interface WorkflowAssetDao {
     )
     fun deleteBlobIfUnreferenced(blobKey: String): Int
 }
+
+internal data class RevisionAssetDetails(@Embedded val asset: RevisionAssetEntity, val addedAtMs: Long?, val byteCount: Long)

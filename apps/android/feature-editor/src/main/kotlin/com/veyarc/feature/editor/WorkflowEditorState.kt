@@ -467,7 +467,7 @@ data class WorkflowDraft(
         return copy(
             assets = (assets.filterNot { it.assetId == asset.assetId } + asset).sortedBy { it.assetId.value },
             assetDescriptors = (
-                assetDescriptors.filterNot { it.assetId == asset.assetId } + asset.toDescriptor()
+                assetDescriptors.filterNot { it.assetId == asset.assetId } + asset.toDescriptor(addedAtMs = System.currentTimeMillis())
                 ).sortedBy { it.assetId.value },
             assetNames = assetNames + (asset.assetId.value to "$defaultNamePrefix $index"),
         )
@@ -476,7 +476,7 @@ data class WorkflowDraft(
     fun replaceAsset(asset: BundleAsset): WorkflowDraft = copy(
         assets = (assets.filterNot { it.assetId == asset.assetId } + asset).sortedBy { it.assetId.value },
         assetDescriptors = assetDescriptors.map { existing ->
-            if (existing.assetId == asset.assetId) asset.toDescriptor(existing.displayName) else existing
+            if (existing.assetId == asset.assetId) asset.toDescriptor(existing.displayName, existing.addedAtMs) else existing
         },
     )
 
@@ -649,13 +649,15 @@ private fun WorkflowDraft.persistedContent(): WorkflowDraft = copy(
     recordingJournalFileName = null,
 )
 
-private fun BundleAsset.toDescriptor(displayName: String? = null) = WorkflowAssetDescriptor(
+private fun BundleAsset.toDescriptor(displayName: String? = null, addedAtMs: Long? = null) = WorkflowAssetDescriptor(
     assetId = assetId,
     kind = kind,
     displayName = displayName,
     mimeType = mimeType,
     widthPx = widthPx,
     heightPx = heightPx,
+    addedAtMs = addedAtMs,
+    byteCount = bytes.size.toLong(),
 )
 
 private fun WorkflowStep.childrenFor(branch: NestedBranch): List<WorkflowStep>? = when (branch) {

@@ -50,6 +50,8 @@ data class WorkflowAssetDescriptor(
     val mimeType: String,
     val widthPx: Int?,
     val heightPx: Int?,
+    val addedAtMs: Long? = null,
+    val byteCount: Long? = null,
 )
 
 enum class WorkflowAssetRole {
@@ -1019,11 +1021,12 @@ class WorkflowRepository internal constructor(
     private fun loadEditorData(workflowId: String, revision: Int): WorkflowRevisionEditorData {
         val metadata = ensureManifestRevision(requireRevision(workflowId, revision))
         val manifest = readStoredManifest(metadata)
-        val mappings = database.workflowAssetDao().listRevisionAssets(workflowId, revision)
+        val details = database.workflowAssetDao().listRevisionAssetDetails(workflowId, revision)
+        val mappings = details.map { it.asset }
         validateManifestMappings(manifest, mappings)
         val result = WorkflowRevisionEditorData(
             WorkflowRevisionDocument(manifest.document, manifest.producerVersion),
-            mappings.map { it.toDescriptor() },
+            details.map { it.asset.toDescriptor().copy(addedAtMs = it.addedAtMs, byteCount = it.byteCount) },
         )
         verifyRevisionIdentity(workflowId, revision, result.revision.document)
         updateLatestOrientation(workflowId, revision, result.revision.document)
