@@ -58,15 +58,15 @@ internal object DeepSeekStream {
                 require(delta.string("role") == "assistant")
                 assistant = true
             }
-            if (request.thinkingEnabled && delta["reasoning_content"] != null && delta["reasoning_content"] != JsonNull) {
-                val piece = delta.string("reasoning_content")
+            if (request.thinkingEnabled) {
+                val piece = DeepSeekClient.reasoningText(delta, request)
                 if (piece.isNotEmpty()) {
                     require(assistant)
                     thinking.append(piece)
                 }
             }
             if (delta["content"] != null && delta["content"] != JsonNull) {
-                val piece = delta.string("content")
+                val piece = DeepSeekClient.contentText(delta, request)
                 contentBytes += piece.toByteArray(Charsets.UTF_8).size
                 if (contentBytes > AssistantResponseCodec.MAX_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
                 if (piece.isNotEmpty()) thinking.finish()

@@ -148,6 +148,8 @@ class AssistantPreviewState(
         private set
     var connectionTestStatus by mutableStateOf<String?>(null)
         private set
+    var connectionTestResults by mutableStateOf<Map<String, String>>(emptyMap())
+        private set
     var testingConnection by mutableStateOf(false)
         private set
     var defaultModel by mutableStateOf(DeepSeekModel.FLASH)
@@ -178,17 +180,19 @@ class AssistantPreviewState(
     fun discoverModels(connectionId: String) {
         if (!connectionsReady || isResponding || modelDiscovery == null) return
         val profile = connections.connections.firstOrNull { it.id == connectionId } ?: return
+        if (!profile.canDiscoverModels) return
         val token = ++discoveryGeneration
         discoveredModels = emptyList()
         modelDiscoveryStatus = null
         discoveringModels = true
         discoveryJob = requireNotNull(scope).launch {
             try {
-                val models = modelDiscovery.invoke(profile)
+                val catalog = withContext(Dispatchers.IO) { com.veyarc.data.storage.AssistantProviderCatalog.models(profile) }
+                val models = if (catalog.isNotEmpty()) catalog else modelDiscovery.invoke(profile)
                 models.forEach(AssistantModelConfig::validate)
                 if (token == discoveryGeneration && connections.connections.any { it == profile }) {
-                    discoveredModels = models.map { model -> profile.models.firstOrNull { it.id == model.id } ?: model }
-                    modelDiscoveryStatus = "Choose a chat model. Availability doesn't confirm its features."
+                    discoveredModels = ((if (catalog.isNotEmpty()) profile.models else emptyList()) + models).distinctBy { it.id }.map { model -> profile.models.firstOrNull { it.id == model.id } ?: model }
+                    modelDiscoveryStatus = if (catalog.isNotEmpty()) "Provider catalog. Your account may offer fewer models." else "Choose a chat model. Availability doesn't confirm its features."
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -251,7 +255,7 @@ class AssistantPreviewState(
                 providerName = profile.name,
                 modelName = model.name,
                 model = DeepSeekModel.entries.firstOrNull { legacy -> legacy.apiId == model.id } ?: DeepSeekModel.FLASH,
-                effort = if (it.effort.name in model.efforts) it.effort else DeepSeekEffort.OFF,
+                effort = if (it.effort.name in model.efforts) it.effort else DeepSeekEffort.valueOf(model.efforts.first()),
             )
         }
         inputError = null
@@ -315,29 +319,40 @@ class AssistantPreviewState(
 
     fun disableProvider() {
         connectionTestStatus = null
+        connectionTestResults = emptyMap()
         providerEnabled = false
         stop(PreviewReplyStatus.INTERRUPTED)
     }
 
     fun testConnection() {
-        if (!providerEnabled || providerCall == null || isResponding) return
+        if (!connectionsReady || providerCall == null || isResponding) return
         val generation = applyGeneration
         testingConnection = true
         connectionTestStatus = null
-        val profile = defaultConnection
+        val profiles = connections.connections.toList()
+        connectionTestResults = profiles.associate { it.id to "Waiting" }
         providerJob = requireNotNull(scope).launch {
             try {
-                val request = DeepSeekRequest.connectionTest(connection = profile)
-                val bytes = providerCall(request)
-                if (testingConnection && providerEnabled && generation == applyGeneration) {
-                    val response = AssistantResponseCodec.decode(bytes, request.requestId, request.conversationId, request.baseSnapshotId)
-                    require(response.outcome == AssistantOutcome.EXPLANATION && response.text.length <= 512)
-                    connectionTestStatus = "Connected."
+                var connected = 0
+                for (profile in profiles) {
+                    if (!testingConnection || generation != applyGeneration) break
+                    connectionTestResults = connectionTestResults + (profile.id to "Testing")
+                    try {
+                        val request = DeepSeekRequest.connectionTest(connection = profile)
+                        val bytes = providerCall(request)
+                        if (testingConnection && generation == applyGeneration) {
+                            val response = AssistantResponseCodec.decode(bytes, request.requestId, request.conversationId, request.baseSnapshotId)
+                            require(response.outcome == AssistantOutcome.EXPLANATION && response.text.length <= 512)
+                            connected++
+                            connectionTestResults = connectionTestResults + (profile.id to "Connected")
+                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        if (testingConnection && generation == applyGeneration) connectionTestResults = connectionTestResults + (profile.id to "Not connected · ${(error as? DeepSeekException)?.reason?.message ?: "Test failed"}")
+                    }
                 }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                if (testingConnection && generation == applyGeneration) connectionTestStatus = (error as? DeepSeekException)?.reason?.message ?: "Connection test failed. No message was sent from your chat."
+                if (testingConnection && generation == applyGeneration) connectionTestStatus = if (connected == profiles.size && profiles.size == 1) "Connected." else "$connected of ${profiles.size} connections ready."
             } finally {
                 if (generation == applyGeneration) testingConnection = false
             }
@@ -1018,7 +1033,10 @@ class AssistantPreviewState(
         stopModelDiscovery()
         imageApplyJob?.cancel()
         applyGeneration++
-        if (testingConnection) connectionTestStatus = "Connection test interrupted. Retry only when ready; charges may still apply."
+        if (testingConnection) {
+            connectionTestStatus = "Connection test interrupted. Retry only when ready; charges may still apply."
+            connectionTestResults = connectionTestResults.mapValues { (_, result) -> if (result in listOf("Waiting", "Testing")) "Test interrupted" else result }
+        }
         testingConnection = false
         if (requestId != null || pendingRequestId != null) {
             requestId = null

@@ -13,13 +13,14 @@ class AssistantRequest internal constructor(
     internal val conversationId: String,
     internal val baseSnapshotId: String,
     internal val streaming: Boolean,
-    internal val modelId: String,
+    val modelId: String,
     internal val thinkingEnabled: Boolean,
     private val onThinking: ((AssistantThinking) -> Unit)? = null,
     private val onReply: ((String) -> Unit)? = null,
     val connection: AssistantConnection = AssistantConnection.deepSeek(),
 ) {
-    internal val strictDeepSeek: Boolean get() = connection.protocol == AssistantProtocol.DEEPSEEK
+    internal val protocol: AssistantProtocol get() = connection.protocolFor(connection.models.first { it.id == modelId })
+    internal val strictDeepSeek: Boolean get() = protocol == AssistantProtocol.DEEPSEEK
 
     @Volatile internal var latestReply: String = ""
         private set

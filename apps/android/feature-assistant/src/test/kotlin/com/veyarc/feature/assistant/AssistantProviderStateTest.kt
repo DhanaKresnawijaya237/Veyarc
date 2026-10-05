@@ -68,7 +68,6 @@ class AssistantProviderStateTest {
         state.open(AssistantPreviewContext())
         state.compose("Explain the workflow")
         state.send()
-        state.testConnection()
         assertFalse(state.canSend)
         assertTrue(calls.isEmpty())
         state.enableProvider()

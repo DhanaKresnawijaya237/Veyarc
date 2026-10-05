@@ -59,11 +59,11 @@ internal object OpenAIResponses {
         put("store", false)
         put("stream", streaming)
         if (maxTokens != null) put("max_output_tokens", maxTokens)
-        if (model.efforts.size > 1) {
+        if (model.efforts.any { it != "OFF" } && effort != DeepSeekEffort.DEFAULT) {
             put(
                 "reasoning",
                 buildJsonObject {
-                    put("effort", if (effort == DeepSeekEffort.OFF) "none" else effort.name.lowercase())
+                    (model.wireEffort(effort) ?: "none".takeIf { effort == DeepSeekEffort.OFF && model.effortValues.isEmpty() })?.let { put("effort", it) }
                     if (effort != DeepSeekEffort.OFF && model.reasoningSummary) put("summary", "auto")
                 },
             )

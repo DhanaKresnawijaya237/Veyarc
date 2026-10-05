@@ -66,17 +66,44 @@ class AssistantConnectionsStateTest {
 
     @Test fun discoveryPreservesKnownFeaturesAndCancelledResultsStayOutOfSettings() = runBlocking {
         val result = CompletableDeferred<List<AssistantModelConfig>>()
-        val state = AssistantPreviewState(scope = this, providerCall = { error("No chat expected") }, modelDiscovery = { withContext(NonCancellable) { result.await() } })
+        var calls = 0
+        val state = AssistantPreviewState(scope = this, providerCall = { error("No chat expected") }, modelDiscovery = {
+            calls++
+            withContext(NonCancellable) { result.await() }
+        })
+        val custom = AssistantConnection.deepSeek().copy(providerId = null, baseUrl = "https://example.org/v1")
+        state.restoreConnections(AssistantConnections(listOf(custom), custom.id))
         state.discoverModels(AssistantConnection.DEEPSEEK_ID)
-        yield()
+        kotlinx.coroutines.withTimeout(5000) { while (calls == 0) kotlinx.coroutines.delay(1) }
         state.stopModelDiscovery()
         result.complete(listOf(AssistantModelConfig("deepseek-flash")))
         yield()
         assertTrue(state.discoveredModels.isEmpty())
         state.discoverModels(AssistantConnection.DEEPSEEK_ID)
-        yield()
+        kotlinx.coroutines.withTimeout(5000) { while (state.discoveringModels) kotlinx.coroutines.delay(1) }
         assertTrue(state.discoveredModels.single().vision)
         assertEquals(listOf("OFF", "LOW", "HIGH", "MAX"), state.discoveredModels.single().efforts)
+        state.dispose()
+    }
+
+    @Test fun testsEveryProfileWithoutEnablingChatAndReportsFailuresSeparately() = runBlocking {
+        val first = AssistantConnection.deepSeek()
+        val second = AssistantConnection.openAI()
+        val calls = mutableListOf<String>()
+        val state = AssistantPreviewState(scope = this, providerCall = { request ->
+            calls += request.connection.id
+            if (request.connection.id == first.id) throw DeepSeekException(DeepSeekFailure.INSUFFICIENT_BALANCE)
+            AssistantResponseCodec.encode(AssistantResponse(1, request.requestId, request.conversationId, request.baseSnapshotId, AssistantOutcome.EXPLANATION, "Connected"))
+        })
+        state.restoreConnections(AssistantConnections(listOf(first, second), first.id))
+        state.testConnection()
+        yield()
+        assertEquals(listOf(first.id, second.id), calls)
+        assertFalse(state.providerEnabled)
+        assertTrue(state.connectionTestResults[first.id]!!.contains("balance"))
+        assertEquals("Connected", state.connectionTestResults[second.id])
+        assertEquals("1 of 2 connections ready.", state.connectionTestStatus)
+        assertTrue(state.conversations.isEmpty())
         state.dispose()
     }
 

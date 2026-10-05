@@ -14,7 +14,7 @@ import okio.ByteString.Companion.toByteString
 import java.util.UUID
 
 @Serializable
-enum class DeepSeekEffort(val label: String) { OFF("Off"), LOW("Low"), MEDIUM("Medium"), HIGH("High"), XHIGH("Extra high"), MAX("Max") }
+enum class DeepSeekEffort(val label: String) { DEFAULT("Provider default"), OFF("Off"), ON("On"), MINIMAL("Minimal"), LOW("Low"), MEDIUM("Medium"), HIGH("High"), XHIGH("Extra high"), MAX("Max") }
 
 @Serializable
 enum class DeepSeekModel(val apiId: String, val label: String, val shortLabel: String) {
@@ -69,7 +69,7 @@ object DeepSeekRequest {
         val selected = ArrayDeque<kotlinx.serialization.json.JsonObject>()
         var imageCount = attachments.sumOf { it.images.size }
         require(imageCount <= MAX_IMAGES)
-        var size = requestBody(listOf(system, user), MAX_OUTPUT_TOKENS, streaming, effort, selectedModel, profile.protocol).size
+        var size = requestBody(listOf(system, user), MAX_OUTPUT_TOKENS, streaming, effort, selectedModel, profile).size
         if (size > budget) throw DeepSeekException(DeepSeekFailure.REQUEST_TOO_LARGE)
         // Keep the complete local chat. Only the oldest context falls outside the request byte budget.
         for (turn in history.asReversed()) {
@@ -87,9 +87,9 @@ object DeepSeekRequest {
             selected.addFirst(oldAssistant)
             selected.addFirst(oldUser)
         }
-        val bytes = requestBody(listOf(system) + selected + user, MAX_OUTPUT_TOKENS, streaming, effort, selectedModel, profile.protocol)
+        val bytes = requestBody(listOf(system) + selected + user, MAX_OUTPUT_TOKENS, streaming, effort, selectedModel, profile)
         if (bytes.size > budget) throw DeepSeekException(DeepSeekFailure.REQUEST_TOO_LARGE)
-        AssistantRequest(bytes, requestId, conversationId, baseSnapshotId, streaming, selectedModel.id, effort != DeepSeekEffort.OFF, onThinking, onReply, profile)
+        AssistantRequest(bytes, requestId, conversationId, baseSnapshotId, streaming, selectedModel.id, selectedModel.reasoning && effort != DeepSeekEffort.OFF, onThinking, onReply, profile)
     } catch (error: DeepSeekException) {
         throw error
     } catch (_: Exception) {
@@ -105,22 +105,15 @@ object DeepSeekRequest {
             message("system", "Return only this JSON object, with all IDs unchanged: ${example.toString(Charsets.UTF_8)}"),
             message("user", "Confirm this API connection."),
         )
-        return AssistantRequest(requestBody(messages, 128, false, DeepSeekEffort.OFF, selectedModel, connection.protocol), id, id, "connection-test", false, selectedModel.id, false, connection = connection)
+        val effort = DeepSeekEffort.valueOf(if ("OFF" in selectedModel.efforts) "OFF" else selectedModel.efforts.first())
+        return AssistantRequest(requestBody(messages, if (effort == DeepSeekEffort.OFF) 128 else 4096, false, effort, selectedModel, connection), id, id, "connection-test", false, selectedModel.id, selectedModel.reasoning && effort != DeepSeekEffort.OFF, connection = connection)
     }
 
-    private fun requestBody(messages: List<kotlinx.serialization.json.JsonObject>, maxTokens: Int, streaming: Boolean, effort: DeepSeekEffort, model: AssistantModelConfig, protocol: AssistantProtocol): ByteArray {
-        if (protocol == AssistantProtocol.OPENAI_RESPONSES) return OpenAIResponses.encode(messages, streaming, model, effort, maxTokens.takeIf { it != MAX_OUTPUT_TOKENS })
-        return buildJsonObject {
-            put("model", model.id)
-            put("messages", JsonArray(messages))
-            if (protocol == AssistantProtocol.DEEPSEEK) {
-                put("max_tokens", maxTokens)
-                put("thinking", buildJsonObject { put("type", if (effort == DeepSeekEffort.OFF) "disabled" else "enabled") })
-            }
-            if (effort != DeepSeekEffort.OFF) put("reasoning_effort", effort.name.lowercase())
-            if (model.jsonOutput) put("response_format", buildJsonObject { put("type", "json_object") })
-            put("stream", streaming)
-        }.toString().toByteArray(Charsets.UTF_8)
+    private fun requestBody(messages: List<kotlinx.serialization.json.JsonObject>, maxTokens: Int, streaming: Boolean, effort: DeepSeekEffort, model: AssistantModelConfig, connection: AssistantConnection): ByteArray = when (connection.protocolFor(model)) {
+        AssistantProtocol.OPENAI_RESPONSES -> OpenAIResponses.encode(messages, streaming, model, effort, maxTokens.takeIf { it != MAX_OUTPUT_TOKENS })
+        AssistantProtocol.ANTHROPIC_MESSAGES -> AnthropicMessages.encode(messages, streaming, model, effort, connection.compatibilityFor(model), maxTokens.takeIf { it != MAX_OUTPUT_TOKENS })
+        AssistantProtocol.GOOGLE_GENERATIVE_AI -> GoogleContent.encode(messages, streaming, model, effort, maxTokens.takeIf { it != MAX_OUTPUT_TOKENS })
+        else -> ChatCompletions.encode(messages, streaming, model, effort, connection, maxTokens.takeIf { it != MAX_OUTPUT_TOKENS })
     }
 
     private fun message(role: String, content: String) = buildJsonObject {

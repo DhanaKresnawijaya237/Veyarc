@@ -16,6 +16,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.Call
 import okhttp3.ConnectionPool
 import okhttp3.CookieJar
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -35,7 +36,7 @@ import java.util.zip.GZIPInputStream
 enum class DeepSeekFailure(val message: String) {
     KEY_REQUIRED("Add or replace this connection's API key in Settings."),
     ACCESS_DENIED("The provider denied access. Check your account and API key."),
-    INSUFFICIENT_BALANCE("Check your provider account balance."),
+    INSUFFICIENT_BALANCE("Check your provider account balance or quota."),
     INVALID_REQUEST("The request is invalid. Review the message and workflow."),
     REQUEST_TOO_LARGE("This message or workflow is too large to send. Shorten it and try again."),
     RATE_LIMITED("Provider rate limit reached. Try again later."),
@@ -59,7 +60,7 @@ class AssistantClient internal constructor(
     private val deadlineMs: Long? = null,
 ) {
     constructor() : this(URL("https://api.deepseek.com/chat/completions"))
-    constructor(connection: AssistantConnection) : this(URL(connection.also { it.validate() }.baseUrl.trimEnd('/') + if (connection.protocol == AssistantProtocol.OPENAI_RESPONSES) "/responses" else "/chat/completions"))
+    constructor(connection: AssistantConnection, modelId: String = connection.defaultModelId) : this(endpoint(connection, modelId))
 
     init {
         require(
@@ -98,12 +99,13 @@ class AssistantClient internal constructor(
     }
 
     internal fun listModels(apiKey: String, cancellation: DeepSeekCancellation = DeepSeekCancellation()): List<AssistantModelConfig> {
+        if (!endpoint.path.endsWith("/chat/completions") && !endpoint.path.endsWith("/responses")) throw DeepSeekException(DeepSeekFailure.INVALID_REQUEST)
         if (!AssistantKeyStore.isValidEntry(apiKey)) throw DeepSeekException(DeepSeekFailure.KEY_REQUIRED)
         if (!busy.compareAndSet(false, true)) throw DeepSeekException(DeepSeekFailure.BUSY)
         var call: Call? = null
         try {
             cancellation.checkActive()
-            val http = Request.Builder().url(endpoint.toString().removeSuffix("/chat/completions").removeSuffix("/responses") + "/models")
+            val http = Request.Builder().url(endpoint.toString().removeSuffix("/chat/completions").removeSuffix("/responses").removeSuffix("/messages") + "/models")
                 .header("Authorization", "Bearer $apiKey").header("Accept", "application/json").header("Accept-Encoding", "identity").get().build()
             val active = transport.newCall(http)
             call = active
@@ -117,12 +119,12 @@ class AssistantClient internal constructor(
                     "gzip" -> GZIPInputStream(response.body.byteStream())
                     else -> throw DeepSeekException(DeepSeekFailure.INVALID_RESPONSE)
                 }
-                val root = BoundedResponse(input, cancellation::checkActive, 512 * 1024).use { parseObject(it.readBytes()) }
+                val root = BoundedResponse(input, cancellation::checkActive, 4 * 1024 * 1024).use { parseObject(it.readBytes()) }
                 require(root["error"] == null || root["error"] == JsonNull)
                 val data = root["data"] as JsonArray
                 require(data.size in 1..4096)
                 // Availability is not a capability declaration. New models start as text-only.
-                data.map { AssistantModelConfig((it as JsonObject).string("id")).also(AssistantModelConfig::validate) }.distinctBy { it.id }
+                data.mapNotNull { value -> runCatching { AssistantModelConfig((value as JsonObject).string("id")).also(AssistantModelConfig::validate) }.getOrNull() }.distinctBy { it.id }.also { require(it.isNotEmpty()) }
             }
             cancellation.checkActive()
             cancellation.finish()
@@ -163,8 +165,25 @@ class AssistantClient internal constructor(
                     sink.write(request.body)
                 }
             }
-            val http = Request.Builder().url(endpoint)
-                .header("Authorization", "Bearer $apiKey")
+            val protocol = request.protocol
+            val target = if (protocol == AssistantProtocol.GOOGLE_GENERATIVE_AI && request.streaming) endpoint.toString().replace(":generateContent", ":streamGenerateContent") + "?alt=sse" else endpoint.toString()
+            val builder = Request.Builder().url(target)
+            when {
+                request.connection.providerId == "cloudflare-ai-gateway" -> builder.header("cf-aig-authorization", "Bearer $apiKey")
+
+                request.connection.providerId == "azure-openai-responses" -> {
+                    builder.header("api-key", apiKey)
+                    request.connection.apiVersion?.let { builder.url(target.toHttpUrl().newBuilder().addQueryParameter("api-version", it).build()) }
+                }
+
+                protocol == AssistantProtocol.ANTHROPIC_MESSAGES -> builder.header("x-api-key", apiKey)
+
+                protocol == AssistantProtocol.GOOGLE_GENERATIVE_AI -> builder.header("x-goog-api-key", apiKey)
+
+                else -> builder.header("Authorization", "Bearer $apiKey")
+            }
+            if (protocol == AssistantProtocol.ANTHROPIC_MESSAGES) builder.header("anthropic-version", "2023-06-01")
+            val http = builder
                 .header("Accept", if (request.streaming) "text/event-stream" else "application/json")
                 .header("Accept-Encoding", "identity")
                 .post(body).build()
@@ -176,14 +195,18 @@ class AssistantClient internal constructor(
                 checkActive()
                 if (response.code != 200) {
                     throw DeepSeekException(
-                        when (response.code) {
-                            401 -> DeepSeekFailure.KEY_REQUIRED
-                            402 -> DeepSeekFailure.INSUFFICIENT_BALANCE
-                            403 -> DeepSeekFailure.ACCESS_DENIED
-                            400, 413, 422 -> DeepSeekFailure.INVALID_REQUEST
-                            429 -> DeepSeekFailure.RATE_LIMITED
-                            in 500..599 -> DeepSeekFailure.UNAVAILABLE
-                            else -> DeepSeekFailure.INVALID_RESPONSE
+                        when {
+                            response.code in listOf(400, 403, 429) && quotaError(response.body.byteStream(), ::checkActive) -> DeepSeekFailure.INSUFFICIENT_BALANCE
+
+                            else -> when (response.code) {
+                                401 -> DeepSeekFailure.KEY_REQUIRED
+                                402 -> DeepSeekFailure.INSUFFICIENT_BALANCE
+                                403 -> DeepSeekFailure.ACCESS_DENIED
+                                400, 413, 422 -> DeepSeekFailure.INVALID_REQUEST
+                                429 -> DeepSeekFailure.RATE_LIMITED
+                                in 500..599 -> DeepSeekFailure.UNAVAILABLE
+                                else -> DeepSeekFailure.INVALID_RESPONSE
+                            }
                         },
                     )
                 }
@@ -195,10 +218,11 @@ class AssistantClient internal constructor(
                     else -> throw DeepSeekException(DeepSeekFailure.INVALID_RESPONSE)
                 }
                 BoundedResponse(input, ::checkActive, responseLimit(request)).use { bounded ->
-                    if (request.connection.protocol == AssistantProtocol.OPENAI_RESPONSES) {
-                        if (request.streaming) OpenAIResponses.read(bounded, request, cancellation) else OpenAIResponses.decode(parseObject(bounded.readBytes()), request)
-                    } else {
-                        if (request.streaming) DeepSeekStream.read(bounded, request, cancellation) else decode(bounded.readBytes(), request)
+                    when (protocol) {
+                        AssistantProtocol.OPENAI_RESPONSES -> if (request.streaming) OpenAIResponses.read(bounded, request, cancellation) else OpenAIResponses.decode(parseObject(bounded.readBytes()), request)
+                        AssistantProtocol.ANTHROPIC_MESSAGES -> if (request.streaming) AnthropicMessages.read(bounded, request, cancellation) else AnthropicMessages.decode(parseObject(bounded.readBytes()), request)
+                        AssistantProtocol.GOOGLE_GENERATIVE_AI -> if (request.streaming) GoogleContent.read(bounded, request, cancellation) else GoogleContent.decode(parseObject(bounded.readBytes()), request)
+                        else -> if (request.streaming) DeepSeekStream.read(bounded, request, cancellation) else decode(bounded.readBytes(), request)
                     }
                 }
             }
@@ -245,6 +269,23 @@ class AssistantClient internal constructor(
     }
 
     companion object {
+        internal fun endpoint(connection: AssistantConnection, modelId: String): URL {
+            connection.validate()
+            val model = connection.models.first { it.id == modelId }
+            val base = connection.baseUrlFor(model).trimEnd('/')
+            val path = when (connection.protocolFor(model)) {
+                AssistantProtocol.OPENAI_RESPONSES -> "/responses"
+                AssistantProtocol.ANTHROPIC_MESSAGES -> if (base.endsWith("/v1")) "/messages" else "/v1/messages"
+                AssistantProtocol.GOOGLE_GENERATIVE_AI -> "/models/" + java.net.URLEncoder.encode(model.id.removePrefix("models/"), "UTF-8").replace("+", "%20") + ":generateContent"
+                else -> "/chat/completions"
+            }
+            return URL(base + path)
+        }
+        private fun quotaError(input: InputStream, checkActive: () -> Unit): Boolean = runCatching {
+            val root = BoundedResponse(input, checkActive, 16 * 1024).use { parseObject(it.readBytes()) }
+            val error = root["error"] as? JsonObject ?: return@runCatching false
+            listOf("code", "type").any { (error[it] as? JsonPrimitive)?.content in setOf("insufficient_quota", "exceeded_current_quota_error", "organization_spend_limit_exceeded", "project_spend_limit_exceeded", "organization_usage_limit_exceeded", "insufficient_balance") }
+        }.getOrDefault(false)
         internal const val MAX_RESPONSE_BYTES = 4 * 1024 * 1024
         internal const val MAX_REASONING_BYTES = 2 * 1024 * 1024
 
@@ -252,11 +293,44 @@ class AssistantClient internal constructor(
         internal fun responseLimit(request: AssistantRequest) = if (request.strictDeepSeek && !request.thinkingEnabled) MAX_RESPONSE_BYTES else 32 * 1024 * 1024
 
         internal fun reasoningBytes(fields: JsonObject, request: AssistantRequest): Int {
-            if (fields["reasoning_content"] == null || fields["reasoning_content"] == JsonNull) return 0
-            val size = fields.string("reasoning_content").toByteArray(Charsets.UTF_8).size
+            val size = reasoningText(fields, request).toByteArray(Charsets.UTF_8).size
             require(!request.strictDeepSeek || request.thinkingEnabled || size == 0)
             if (size > MAX_REASONING_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
             return size
+        }
+
+        internal fun contentText(fields: JsonObject, request: AssistantRequest): String = when (val value = fields["content"]) {
+            null, JsonNull -> ""
+
+            is JsonPrimitive -> fields.string("content")
+
+            is JsonArray -> {
+                require(!request.strictDeepSeek)
+                value.joinToString("") { part ->
+                    part as JsonObject
+                    when (part.string("type")) {
+                        "text" -> part.string("text")
+                        "thinking" -> ""
+                        else -> error("Unsupported content")
+                    }
+                }
+            }
+
+            else -> error("Unsupported content")
+        }
+        internal fun reasoningText(fields: JsonObject, request: AssistantRequest): String {
+            val direct = (if (request.strictDeepSeek) listOf("reasoning_content") else listOf("reasoning_content", "reasoning", "reasoning_text")).firstNotNullOfOrNull { key ->
+                (fields[key] as? JsonPrimitive)?.also { require(it.isString) }?.content?.takeIf { it.isNotEmpty() }
+            }.orEmpty()
+            val chunks = if (request.strictDeepSeek) {
+                ""
+            } else {
+                (fields["content"] as? JsonArray).orEmpty().joinToString("") { part ->
+                    part as JsonObject
+                    if (part["type"] == JsonPrimitive("thinking")) (part["thinking"] as JsonArray).joinToString("") { (it as JsonObject).string("text") } else ""
+                }
+            }
+            return direct + chunks
         }
 
         internal fun decode(bytes: ByteArray, request: AssistantRequest): ByteArray = try {
@@ -275,12 +349,12 @@ class AssistantClient internal constructor(
                 }
             }
             reasoningBytes(message, request)
-            val content = message.string("content").toByteArray(Charsets.UTF_8)
+            val content = contentText(message, request).toByteArray(Charsets.UTF_8)
             if (content.size > AssistantResponseCodec.MAX_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
             AssistantResponseCodec.decode(content, request.requestId, request.conversationId, request.baseSnapshotId)
-            if (request.thinkingEnabled && message["reasoning_content"] != null && message["reasoning_content"] != JsonNull) {
+            if (request.thinkingEnabled && reasoningText(message, request).isNotEmpty()) {
                 AssistantThinkingBuffer(request).apply {
-                    append(message.string("reasoning_content"))
+                    append(reasoningText(message, request))
                     finish()
                 }
             }
