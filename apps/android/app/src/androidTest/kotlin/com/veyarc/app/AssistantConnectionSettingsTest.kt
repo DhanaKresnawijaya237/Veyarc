@@ -17,6 +17,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -48,6 +49,51 @@ import java.util.UUID
 class AssistantConnectionSettingsTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun newDeepSeekPresetKeepsCurrentVisionModelAndNativeThinkingControls() {
+        var saved: com.veyarc.data.storage.AssistantConnection? = null
+        compose.setContent { VeyarcTheme { ConnectionEditor(null, false, onManageModels = {}, onDismiss = {}, onSave = { saved = it }) } }
+        compose.onNodeWithTag("connection-provider").performClick()
+        compose.onNodeWithText("Search providers").performTextInput("DeepSeek")
+        closeKeyboard()
+        awaitText("DeepSeek")
+        compose.onNode(hasText("DeepSeek") and !hasSetTextAction()).performClick()
+        compose.onNodeWithTag("connection-model").assertTextEquals("Model ID", "deepseek-flash")
+        compose.onNodeWithText("Advanced").performScrollTo().performClick()
+        compose.onNodeWithText("DeepSeek Chat Completions").performScrollTo().assertExists()
+        compose.onNodeWithTag("connection-save").performScrollTo().performClick()
+        compose.runOnIdle {
+            val profile = requireNotNull(saved)
+            assertTrue(profile.defaultModel.vision)
+            assertTrue(profile.id != com.veyarc.data.storage.AssistantConnection.DEEPSEEK_ID)
+            org.junit.Assert.assertEquals(com.veyarc.data.storage.AssistantProtocol.DEEPSEEK, profile.protocolFor(profile.defaultModel))
+            assertTrue("HIGH" in profile.defaultModel.efforts)
+        }
+    }
+
+    @Test fun claudeCatalogSetsNativeProtocolAndSeparatesAdvancedCategories() {
+        var saved: com.veyarc.data.storage.AssistantConnection? = null
+        compose.setContent { VeyarcTheme { ConnectionEditor(null, false, onManageModels = {}, onDismiss = {}, onSave = { saved = it }) } }
+        compose.onNodeWithTag("connection-provider").performClick()
+        awaitText("Anthropic")
+        compose.onNodeWithText("Search providers").performTextInput("Anthropic")
+        closeKeyboard()
+        compose.onNode(hasText("Anthropic") and !hasSetTextAction()).performClick()
+        compose.onNodeWithTag("draft-find-models").assertDoesNotExist()
+        compose.onNodeWithText("Advanced").performScrollTo().performClick()
+        compose.onNodeWithText("Protocol").performScrollTo().assertExists()
+        compose.onNodeWithText("Model capabilities").performScrollTo().assertExists()
+        compose.onNodeWithTag("capability-Images").performScrollTo().assert(androidx.compose.ui.test.isOn())
+        compose.onNodeWithText("Thinking and effort").performScrollTo().assertExists()
+        compose.onNodeWithText("Request compatibility").performScrollTo().assertExists()
+        compose.onNodeWithTag("connection-save").performScrollTo().performClick()
+        compose.runOnIdle {
+            val profile = requireNotNull(saved)
+            org.junit.Assert.assertEquals("anthropic", profile.providerId)
+            org.junit.Assert.assertEquals(com.veyarc.data.storage.AssistantProtocol.ANTHROPIC_MESSAGES, profile.protocolFor(profile.defaultModel))
+            assertTrue(profile.defaultModel.vision)
+        }
+    }
+
     @Test fun openAIPresetUsesNativeFormatWithoutEnablingOrSwitchingChat() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val owner = kotlinx.coroutines.SupervisorJob()
@@ -56,9 +102,10 @@ class AssistantConnectionSettingsTest {
             compose.runOnUiThread { assistant.open(com.veyarc.feature.assistant.AssistantPreviewContext()) }
             compose.setContent { VeyarcTheme { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(AssistantKeyStore(context), assistant) } } }
             compose.onNodeWithTag("assistant-add-connection").performScrollTo().performClick()
+            compose.onNodeWithTag("connection-provider").performClick()
             compose.onNodeWithText("OpenAI").performClick()
             compose.onNodeWithTag("connection-model").assertTextEquals("Model ID", "gpt-5.4")
-            compose.onNodeWithText("OpenAI Responses API").assertExists()
+            compose.onNodeWithText("Model").assertExists()
             compose.onNodeWithTag("connection-save").performScrollTo().performClick()
             awaitText("OpenAI API key")
             compose.onNodeWithText("Cancel").performClick()
@@ -94,7 +141,7 @@ class AssistantConnectionSettingsTest {
             }
             compose.setContent { VeyarcTheme { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(AssistantKeyStore(context), assistant) } } }
             awaitText("Key saved")
-            compose.onNodeWithText("Default model").performClick()
+            openModels("Server")
             compose.onNodeWithText("Find models").performClick()
             awaitText("Server model-b")
             compose.onNodeWithText("Server model-b").performClick()
@@ -105,7 +152,7 @@ class AssistantConnectionSettingsTest {
                 assertFalse(assistant.defaultConnection.defaultModel.vision)
                 assertFalse(assistant.providerEnabled)
             }
-            compose.onNodeWithText("Default model").performClick()
+            openModels("Server")
             compose.onNodeWithText("Add model").performClick()
             compose.onNodeWithTag("connection-model").performTextInput("manual-model")
             closeKeyboard()
@@ -113,8 +160,9 @@ class AssistantConnectionSettingsTest {
             compose.onNodeWithTag("capability-Medium").performScrollTo().performClick()
             compose.onNodeWithTag("connection-save").performScrollTo().performClick()
             awaitText("Default effort")
-            compose.onNodeWithText("Default effort").performClick()
-            compose.onNodeWithText("Medium").performClick()
+            compose.onNodeWithContentDescription("Edit Server").performScrollTo().performClick()
+            compose.onNodeWithText("Medium").performScrollTo().performClick()
+            compose.onNodeWithTag("connection-save").performScrollTo().performClick()
             compose.runOnIdle {
                 org.junit.Assert.assertEquals("manual-model", assistant.defaultConnection.defaultModelId)
                 org.junit.Assert.assertEquals("MEDIUM", assistant.defaultConnection.defaultEffort)
@@ -168,7 +216,7 @@ class AssistantConnectionSettingsTest {
             }
             assertTrue(AssistantKeyStore(context, customId!!).hasKey())
             assertFalse(legacyStore.hasKey())
-            compose.onNodeWithText("Use for new chats").performScrollTo().performClick()
+            compose.onNodeWithContentDescription("Use My server for new chats").performScrollTo().performClick()
             compose.runOnIdle {
                 assertTrue(assistant.connections.defaultConnectionId == customId)
                 assertTrue(assistant.conversation!!.connectionId != customId)
@@ -198,10 +246,12 @@ class AssistantConnectionSettingsTest {
             compose.runOnUiThread { assistant.open(com.veyarc.feature.assistant.AssistantPreviewContext()) }
             compose.setContent { VeyarcTheme { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(store, assistant) } } }
             awaitText("Default model")
-            compose.onNodeWithText("Default model").performClick()
+            compose.onNodeWithText("Default model").assert(SemanticsMatcher.keyNotDefined(androidx.compose.ui.semantics.SemanticsActions.OnClick))
+            openModels("DeepSeek")
             compose.onNodeWithText("DeepSeek V4 Pro").performClick()
-            compose.onNodeWithText("Default effort").performClick()
-            compose.onNodeWithText("High").performClick()
+            compose.onNodeWithContentDescription("Edit DeepSeek").performScrollTo().performClick()
+            compose.onNodeWithText("High").performScrollTo().performClick()
+            compose.onNodeWithTag("connection-save").performScrollTo().performClick()
             compose.runOnIdle {
                 org.junit.Assert.assertEquals(com.veyarc.feature.assistant.DeepSeekModel.PRO, assistant.defaultModel)
                 org.junit.Assert.assertEquals(com.veyarc.feature.assistant.DeepSeekEffort.HIGH, assistant.defaultEffort)
@@ -214,7 +264,7 @@ class AssistantConnectionSettingsTest {
             compose.onNodeWithText("Privacy and costs").assertExists()
             compose.onNodeWithContentDescription("Expand DeepSeek").performClick()
             compose.onNodeWithText("Default effort").assertExists()
-            compose.onNodeWithContentDescription("Test connection").assertIsNotEnabled()
+            compose.onNodeWithContentDescription("Test all connections").assertIsNotEnabled()
         } finally {
             compose.runOnUiThread { assistant.dispose() }
             owner.cancel()
@@ -245,36 +295,36 @@ class AssistantConnectionSettingsTest {
                     VeyarcTheme { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(store) } }
                 }
             }
-            awaitText("Add API key")
+            compose.waitUntil(10_000) { compose.onAllNodes(androidx.compose.ui.test.hasContentDescription("Add API key")).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Enable AI").assertIsNotEnabled()
-            compose.onNodeWithContentDescription("Test connection").assertIsNotEnabled()
-            compose.onNodeWithText("Add API key").performScrollTo().performClick()
+            compose.onNodeWithContentDescription("Test all connections").assertIsNotEnabled()
+            compose.onNodeWithContentDescription("Add API key").performScrollTo().performClick()
             compose.runOnIdle { assertTrue(window!!.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0) }
             compose.onNodeWithTag("assistant-key-entry").assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Password))
             compose.onNodeWithTag("assistant-key-entry").performTextInput("fixture-unsaved-key")
             closeKeyboard()
             compose.onNodeWithText("Cancel").performClick()
             compose.runOnIdle { assertTrue(window!!.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE == 0) }
-            compose.onNodeWithText("Add API key").performScrollTo().performClick()
+            compose.onNodeWithContentDescription("Add API key").performScrollTo().performClick()
             compose.onNodeWithTag("assistant-key-entry").assertTextEquals("API key", "")
             compose.onNodeWithTag("assistant-key-entry").performTextInput("fixture-saved-key")
             closeKeyboard()
             compose.onNodeWithText("Save key").performClick()
             awaitText("Key saved")
             assertTrue(store.hasKey())
-            compose.onNodeWithText("Replace API key").performScrollTo().performClick()
+            compose.onNodeWithContentDescription("Replace API key").performScrollTo().performClick()
             compose.onNodeWithTag("assistant-key-entry").assertTextEquals("API key", "")
             compose.onNodeWithTag("assistant-key-entry").performTextInput("fixture-discard-on-background")
             compose.runOnUiThread { owner.registry.currentState = Lifecycle.State.CREATED }
             compose.waitForIdle()
             compose.onNodeWithTag("assistant-key-entry").assertDoesNotExist()
             compose.runOnUiThread { owner.registry.currentState = Lifecycle.State.RESUMED }
-            compose.onNodeWithText("Replace API key").performScrollTo().performClick()
+            compose.onNodeWithContentDescription("Replace API key").performScrollTo().performClick()
             compose.onNodeWithTag("assistant-key-entry").performTextInput("fixture-discard-on-restore")
             restoration.emulateSavedInstanceStateRestore()
             compose.onNodeWithTag("assistant-key-entry").assertDoesNotExist()
             awaitText("Key saved")
-            compose.onNodeWithText("Replace API key").performScrollTo().performClick()
+            compose.onNodeWithContentDescription("Replace API key").performScrollTo().performClick()
             compose.onNodeWithTag("assistant-key-entry").assertTextEquals("API key", "")
             compose.onNodeWithTag("assistant-key-entry").performTextInput("fixture-replacement-key")
             closeKeyboard()
@@ -332,13 +382,13 @@ class AssistantConnectionSettingsTest {
                 assertTrue(assistant.providerEnabled)
                 org.junit.Assert.assertEquals(0, calls)
             }
-            compose.onNodeWithContentDescription("Test connection").performScrollTo().performClick()
+            compose.onNodeWithContentDescription("Test all connections").performScrollTo().performClick()
             compose.onNodeWithText("Cancel").performClick()
             compose.runOnIdle { org.junit.Assert.assertEquals(0, calls) }
-            compose.onNodeWithContentDescription("Test connection").performScrollTo().performClick()
+            compose.onNodeWithContentDescription("Test all connections").performScrollTo().performClick()
             compose.onNodeWithText("Send test request").performClick()
             compose.waitUntil(10_000) { calls == 1 }
-            compose.onNodeWithText("Replace API key").performScrollTo().performClick()
+            compose.onNodeWithContentDescription("Replace API key").performScrollTo().performClick()
             compose.onNodeWithTag("assistant-key-entry").performTextInput("fixture-new-opt-in-key")
             closeKeyboard()
             compose.onNodeWithText("Save key").performClick()
@@ -348,7 +398,7 @@ class AssistantConnectionSettingsTest {
                 org.junit.Assert.assertEquals(1, calls)
             }
             awaitText("Key saved")
-            compose.onNodeWithContentDescription("Test connection").assertIsNotEnabled()
+            compose.onNodeWithContentDescription("Test all connections").assert(androidx.compose.ui.test.isEnabled())
             org.junit.Assert.assertEquals("fixture-new-opt-in-key", store.readForRequest())
         } finally {
             compose.runOnIdle { assistant.dispose() }
@@ -358,13 +408,18 @@ class AssistantConnectionSettingsTest {
         }
     }
 
+    private fun openModels(provider: String) {
+        compose.onNodeWithContentDescription("Edit $provider").performScrollTo().performClick()
+        compose.onNodeWithText("Manage models").performScrollTo().performClick()
+    }
+
     private fun closeKeyboard() {
         compose.onNode(isFocused() and hasSetTextAction()).performImeAction()
         compose.waitForIdle()
     }
 
     private fun awaitText(value: String) {
-        compose.waitUntil(10_000) { runCatching { compose.onNodeWithText(value).assertExists() }.isSuccess }
+        compose.waitUntil(10_000) { runCatching { compose.onNode(hasText(value) and !hasSetTextAction()).assertExists() }.isSuccess }
         compose.waitForIdle()
     }
 
