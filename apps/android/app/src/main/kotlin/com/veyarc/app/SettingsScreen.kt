@@ -17,7 +17,6 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -35,12 +34,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.HelpOutline
@@ -94,6 +91,7 @@ import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowSummary
 import com.veyarc.feature.assistant.AssistantMarkdown
 import com.veyarc.feature.assistant.AssistantPanel
+import com.veyarc.feature.assistant.SettingsChoiceTile
 import com.veyarc.model.bundle.BundleLimits
 import com.veyarc.model.bundle.VeyarcBundle
 import kotlinx.coroutines.Dispatchers
@@ -655,22 +653,6 @@ private fun AboutLink(label: String, icon: ImageVector, onClick: () -> Unit) {
         Icon(icon, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
         Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
         Icon(Icons.Outlined.ChevronRight, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-private fun SettingsChoiceTile(label: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val colors = MaterialTheme.colorScheme
-    Surface(
-        modifier = modifier.selectable(selected = selected, role = Role.RadioButton, onClick = onClick),
-        shape = RoundedCornerShape(18.dp),
-        color = if (selected) colors.primaryContainer else colors.surfaceContainerLow,
-        border = BorderStroke(1.dp, if (selected) colors.primary else colors.outlineVariant),
-    ) {
-        Column(Modifier.padding(horizontal = 6.dp, vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Icon(if (selected) Icons.Outlined.CheckCircle else icon, null, Modifier.size(28.dp), tint = if (selected) colors.primary else colors.onSurfaceVariant)
-            Text(label, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
-        }
     }
 }
 

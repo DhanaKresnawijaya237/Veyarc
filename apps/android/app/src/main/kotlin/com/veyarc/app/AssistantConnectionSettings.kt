@@ -24,8 +24,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material.icons.outlined.ExpandLess
-import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.NetworkCheck
 import androidx.compose.material3.AlertDialog
@@ -61,6 +59,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -104,14 +103,13 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
     val enabled = assistant?.providerEnabled == true
     val canEnable = !busy && hasKey && assistant?.usesProvider == true
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(Modifier.fillMaxWidth().clickable(role = Role.Button) { providerExpanded = !providerExpanded }.padding(vertical = 8.dp).testTag("deepseek-provider-section"), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().semantics { stateDescription = if (providerExpanded) "Expanded" else "Collapsed" }.clickable(role = Role.Button) { providerExpanded = !providerExpanded }.padding(vertical = 8.dp).testTag("deepseek-provider-section"), verticalAlignment = Alignment.CenterVertically) {
             Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.primaryContainer) {
                 Icon(painterResource(R.drawable.ic_deepseek), null, Modifier.padding(12.dp).size(32.dp).testTag("deepseek-logo"), tint = Color.Unspecified)
             }
             Column(Modifier.weight(1f).padding(start = 12.dp)) {
                 Text("DeepSeek", style = MaterialTheme.typography.titleMedium)
             }
-            Icon(if (providerExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, if (providerExpanded) "Collapse DeepSeek" else "Expand DeepSeek")
         }
         AnimatedVisibility(
             providerExpanded,

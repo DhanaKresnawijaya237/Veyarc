@@ -758,6 +758,7 @@ class AssistantPreviewUiTest {
             compose.waitUntil(10_000) { state.conversation!!.turns.last().outcome != null }
             compose.runOnIdle { org.junit.Assert.assertTrue(state.conversation!!.turns.last().proposal!!.isValid) }
             compose.onNodeWithTag("assistant-review-toggle").performScrollTo().performClick()
+            compose.onNodeWithText("View all changes").assertIsDisplayed()
             val preview = compose.onNodeWithTag("assistant-changes-preview").performScrollTo().fetchSemanticsNode().boundsInRoot
             val density = InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
             org.junit.Assert.assertTrue("Inline preview must stay compact", preview.height <= 220f * density + 2f)

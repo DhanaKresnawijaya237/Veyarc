@@ -6,6 +6,12 @@ import android.content.ContextWrapper
 import android.content.Intent
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -45,7 +51,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -92,7 +97,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalBottomSheetProperties
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -143,6 +147,7 @@ import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
@@ -186,20 +191,20 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
             Text(if (state.persistent) "Encrypted on this device. Deleting chats here does not delete DeepSeek records." else "Temporary sample history.")
             state.storageError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (state.storageError != null && !state.loadFailed) {
-                TextButton(onClick = state::saveAgain, enabled = state.pendingWrites == 0) { Text("Retry saving") }
+                TextButton(onClick = state::saveAgain, enabled = state.pendingWrites == 0, modifier = Modifier.fillMaxWidth()) { Text("Retry saving") }
             }
             if (state.persistent) {
                 Text("Reload discards unsaved chat edits. It does not resend messages.")
                 TextButton(onClick = {
                     state.reload()
                     storageVisible = false
-                }, enabled = !state.isLoading && state.pendingWrites == 0) { Text("Reload saved history") }
+                }, enabled = !state.isLoading && state.pendingWrites == 0, modifier = Modifier.fillMaxWidth()) { Text("Reload saved history") }
             }
             TextButton(onClick = {
                 storageVisible = false
                 clearWorkflowOnly = state.context.workflowId != null && !state.loadFailed
                 clearVisible = true
-            }, enabled = !state.isLoading && state.pendingWrites == 0) { Text("Clear chat history") }
+            }, enabled = !state.isLoading && state.pendingWrites == 0, modifier = Modifier.fillMaxWidth()) { Text("Clear chat history") }
         }
     }
     if (clearVisible) {
@@ -209,19 +214,10 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
             shape = RoundedCornerShape(24.dp),
             containerColor = chatPanelColor(raised = true),
             text = {
-                Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth().selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(true to "This workflow", false to "All chats").forEach { (workflowOnly, label) ->
                         val enabled = !workflowOnly || (state.context.workflowId != null && !state.loadFailed)
-                        Surface(shape = RoundedCornerShape(14.dp), color = if (clearWorkflowOnly == workflowOnly) MaterialTheme.colorScheme.surfaceContainerHighest else MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.fillMaxWidth().selectable(selected = clearWorkflowOnly == workflowOnly, enabled = enabled, role = Role.RadioButton, onClick = { clearWorkflowOnly = workflowOnly }, interactionSource = null, indication = null)) {
-                            Row(
-                                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                RadioButton(selected = clearWorkflowOnly == workflowOnly, onClick = null, enabled = enabled)
-                                Text(label, color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
+                        SettingsChoiceTile(label, if (workflowOnly) Icons.Outlined.Edit else Icons.Outlined.History, clearWorkflowOnly == workflowOnly, { clearWorkflowOnly = workflowOnly }, Modifier.weight(1f), enabled)
                     }
                 }
             },
@@ -500,7 +496,7 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
             if (snapshot != null) {
                 Text("Only files you add to the message are sent. Recordings and run history stay on this device.")
                 var expanded by remember(snapshot.snapshotId) { mutableStateOf(false) }
-                TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide shared data" else "Show shared data") }
+                TextButton(onClick = { expanded = !expanded }, modifier = Modifier.fillMaxWidth()) { Text(if (expanded) "Hide shared data" else "Show shared data") }
                 if (expanded) SelectionContainer { Text(snapshot.json, modifier = Modifier.testTag("assistant-context-json"), style = MaterialTheme.typography.bodySmall) }
             }
         }
@@ -903,6 +899,14 @@ private class PanelScrollConnection : NestedScrollConnection {
 @Composable
 private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
     var expanded by remember(turn.id) { mutableStateOf(false) }
+    val tail = remember { BringIntoViewRequester() }
+    var height by remember { mutableIntStateOf(0) }
+    LaunchedEffect(expanded, height) {
+        if (expanded) {
+            withFrameNanos { }
+            tail.bringIntoView()
+        }
+    }
     var diagnostics by remember(turn.id) { mutableStateOf(false) }
     var allChangesVisible by remember(turn.id) { mutableStateOf(false) }
     val proposal = turn.proposal
@@ -927,6 +931,16 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
         ProposalApplyState.APPLIED -> "Applied to draft"
         ProposalApplyState.REJECTED -> "Apply was blocked"
     }
+    val colors = MaterialTheme.colorScheme
+    val dark = colors.surface.luminance() < 0.5f
+    val highlight = when {
+        turn.applyState == ProposalApplyState.APPLIED -> if (dark) Color(0xFF82CEAC) else Color(0xFF276949)
+        turn.applyState == ProposalApplyState.REJECTED || status == AssistantReviewStatus.INVALID -> colors.error
+        turn.applyState == ProposalApplyState.RESERVED -> colors.secondary
+        status == AssistantReviewStatus.DISMISSED -> colors.onSurfaceVariant
+        status == AssistantReviewStatus.STALE -> if (dark) Color(0xFFE9BB75) else Color(0xFF805900)
+        else -> colors.primary
+    }
     if (allChangesVisible) {
         AssistantPanel("All changes", onDismiss = { allChangesVisible = false }) {
             Text("${values.size} changes · $reviewLabel", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -935,8 +949,8 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
         }
     }
     Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.fillMaxWidth()) {
-        Column {
-            Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("assistant-review-toggle").clickable { expanded = !expanded }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.onSizeChanged { height = it.height }) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("assistant-review-toggle").semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" }.clickable { expanded = !expanded }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(
                         when {
@@ -946,15 +960,12 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
                         },
                         style = MaterialTheme.typography.titleSmall,
                     )
-                    Text(
-                        reviewLabel,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Surface(shape = RoundedCornerShape(8.dp), color = highlight.copy(alpha = 0.14f)) {
+                        Text(reviewLabel, Modifier.padding(horizontal = 8.dp, vertical = 3.dp), style = MaterialTheme.typography.labelSmall, color = highlight)
+                    }
                 }
-                Icon(if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown, if (expanded) "Collapse changes" else "Expand changes")
             }
-            if (expanded) {
+            AnimatedVisibility(expanded, enter = expandVertically(tween(140), expandFrom = Alignment.Top) + fadeIn(tween(90)), exit = shrinkVertically(tween(120), shrinkTowards = Alignment.Top) + fadeOut(tween(70))) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     when (turn.applyState) {
                         ProposalApplyState.RESERVED -> if (state.isApplyingImages) LinearProgressIndicator(Modifier.fillMaxWidth()) else Text("Check your draft in the editor before continuing.")
@@ -1001,6 +1012,7 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
                     }
                 }
             }
+            Box(Modifier.size(1.dp).bringIntoViewRequester(tail))
         }
     }
 }
