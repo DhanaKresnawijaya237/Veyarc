@@ -818,6 +818,46 @@ class AssistantPreviewUiTest {
     }
 
     @Test
+    fun replyTextAppearsBeforeCompletionAndFollowsItsGrowingTail() {
+        val owner = kotlinx.coroutines.SupervisorJob()
+        val result = kotlinx.coroutines.CompletableDeferred<ByteArray>()
+        var request: DeepSeekRequest? = null
+        lateinit var state: AssistantPreviewState
+        try {
+            compose.runOnIdle {
+                state = AssistantPreviewState(scope = kotlinx.coroutines.CoroutineScope(owner + kotlinx.coroutines.Dispatchers.Main), providerCall = {
+                    request = it
+                    result.await()
+                }).apply {
+                    open(AssistantPreviewContext())
+                    enableProvider()
+                    compose("Explain")
+                    send()
+                }
+            }
+            compose.setContent { VeyarcTheme(darkTheme = true) { AssistantPreviewScreen(state) } }
+            compose.waitUntil(10_000) { request != null }
+            val id = state.conversation!!.turns.single().id
+            val first = "## Answer\n\nFirst streamed paragraph."
+            compose.runOnIdle { request!!.reportReply(first) }
+            compose.onNodeWithText("First streamed paragraph.").assertIsDisplayed()
+            compose.onNodeWithTag("assistant-reply-actions-$id").assertDoesNotExist()
+            val full = first + "\n\n" + (1..35).joinToString("\n\n") { "Streamed paragraph $it. " + "Each step waits before continuing. ".repeat(12) }
+            compose.runOnIdle { request!!.reportReply(full) }
+            compose.waitUntil(10_000) { runCatching { compose.onNodeWithText("Streamed paragraph 35.", substring = true).assertIsDisplayed() }.isSuccess }
+            compose.runOnIdle {
+                val chat = state.conversation!!
+                val turn = chat.turns.single()
+                result.complete(com.veyarc.model.WorkflowJson.encodeCanonical(com.veyarc.feature.assistant.AssistantResponse.serializer(), com.veyarc.feature.assistant.AssistantResponse(1, turn.requestId, chat.id, "draft:${chat.draftId}", com.veyarc.feature.assistant.AssistantOutcome.EXPLANATION, full)).toByteArray())
+            }
+            compose.waitUntil(10_000) { state.conversation!!.turns.single().outcome != null }
+            compose.onNodeWithTag("assistant-reply-actions-$id").assertIsDisplayed()
+        } finally {
+            owner.cancel()
+        }
+    }
+
+    @Test
     fun thinkingStreamsSeparatelyAndStaysCompactWhenExpanded() {
         val owner = kotlinx.coroutines.SupervisorJob()
         val result = kotlinx.coroutines.CompletableDeferred<ByteArray>()

@@ -202,6 +202,7 @@ class DeepSeekRequest private constructor(
             The final user message contains the current prompt and authoritative local binding IDs. Echo those IDs exactly.
             Example response: {"contractVersion":1,"requestId":"copy current requestId","conversationId":"copy current conversationId","baseSnapshotId":"copy current baseSnapshotId","outcome":"explanation","text":"Explanation here"}
             outcome must be explanation, clarification, or proposal. text must be nonempty.
+            Put text before candidate and imageAdditions so the user can read your reply while the proposal is generated.
             Write text for a nontechnical phone user. Match the amount of detail to the user's request, with Markdown headings, short bullets,
             bold emphasis, and code blocks only when useful. Markdown belongs inside the JSON text string.
             Refer to steps by position and action, such as "Step 2: Wait", and images by their names.

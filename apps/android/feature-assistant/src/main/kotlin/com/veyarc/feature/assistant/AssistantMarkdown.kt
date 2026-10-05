@@ -64,7 +64,19 @@ private fun Node.children(): List<Node> = generateSequence(firstChild) { it.next
 /** Native text only. HTML stays literal and images show alt text without fetching remote content. */
 @Composable
 fun AssistantMarkdown(source: String, modifier: Modifier = Modifier) {
-    val document = remember(source) { markdownParser.parse(source) }
+    // Short deltas parse immediately. Long streamed replies must not stall typing or scrolling.
+    val document = if (source.length <= 8192) {
+        remember(source) { markdownParser.parse(source) }
+    } else {
+        val parsed by produceState<Node?>(null, source) {
+            value = withContext(Dispatchers.Default) { markdownParser.parse(source) }
+        }
+        parsed
+    }
+    if (document == null) {
+        CircularProgressIndicator(modifier.padding(8.dp))
+        return
+    }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         document.children().forEach { MarkdownBlock(it) }
     }
