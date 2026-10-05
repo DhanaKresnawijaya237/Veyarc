@@ -5,10 +5,11 @@ import android.util.AtomicFile
 import java.io.File
 
 /** One provider credential, separate from workflow/chat storage and exports. No network access. */
-class AssistantKeyStore internal constructor(private val file: File, private val codec: AesGcmFileCodec) {
-    constructor(context: Context) : this(
-        File(context.noBackupFilesDir, "assistant/deepseek-key.enc"),
-        AesGcmFileCodec(AndroidKeystoreKeySource("veyarc.assistant.deepseek.v1")),
+class AssistantKeyStore internal constructor(private val file: File, private val codec: AesGcmFileCodec, private val associatedData: ByteArray = legacyAssociatedData) {
+    constructor(context: Context, connectionId: String = AssistantConnection.DEEPSEEK_ID) : this(
+        File(context.noBackupFilesDir, "assistant/${checkedId(connectionId)}-key.enc"),
+        AesGcmFileCodec(AndroidKeystoreKeySource("veyarc.assistant.${checkedId(connectionId)}.v1")),
+        if (connectionId == AssistantConnection.DEEPSEEK_ID) legacyAssociatedData else "veyarc:assistant:$connectionId:key:v1".toByteArray(Charsets.UTF_8),
     )
 
     fun hasKey(): Boolean = synchronized(lock) {
@@ -86,6 +87,7 @@ class AssistantKeyStore internal constructor(private val file: File, private val
         const val MAX_KEY_LENGTH = 4096
         fun isValidEntry(value: String): Boolean = value.length in 1..MAX_KEY_LENGTH && value.all { it.code in 33..126 }
         private val lock = Any()
-        private val associatedData = "veyarc:assistant:deepseek:key:v1".toByteArray(Charsets.UTF_8)
+        private val legacyAssociatedData = "veyarc:assistant:deepseek:key:v1".toByteArray(Charsets.UTF_8)
+        private fun checkedId(id: String): String = id.also { require(AssistantConnection.validId(it)) }
     }
 }
