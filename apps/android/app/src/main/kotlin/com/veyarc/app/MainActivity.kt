@@ -546,7 +546,7 @@ class MainEditorSession(application: Application) : AndroidViewModel(application
                 runCatching { com.veyarc.data.storage.AssistantKeyStore(application, request.connection.id).readForRequest() }.getOrNull()
                     ?: throw com.veyarc.feature.assistant.DeepSeekException(com.veyarc.feature.assistant.DeepSeekFailure.KEY_REQUIRED)
             }
-            com.veyarc.feature.assistant.ChatCompletionClient(request.connection).await(request, key)
+            com.veyarc.feature.assistant.AssistantClient(request.connection).await(request, key)
         },
         onConnectionsChanged = { value -> withContext(Dispatchers.IO) { assistantConnections.save(value) } },
         modelDiscovery = { profile ->
@@ -554,7 +554,7 @@ class MainEditorSession(application: Application) : AndroidViewModel(application
                 runCatching { com.veyarc.data.storage.AssistantKeyStore(application, profile.id).readForRequest() }.getOrNull()
                     ?: throw com.veyarc.feature.assistant.DeepSeekException(com.veyarc.feature.assistant.DeepSeekFailure.KEY_REQUIRED)
             }
-            com.veyarc.feature.assistant.ChatCompletionClient(profile).discoverModels(key)
+            com.veyarc.feature.assistant.AssistantClient(profile).discoverModels(key)
         },
     )
 

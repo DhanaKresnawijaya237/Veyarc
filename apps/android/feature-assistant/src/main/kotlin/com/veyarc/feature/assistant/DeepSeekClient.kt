@@ -3,6 +3,7 @@ package com.veyarc.feature.assistant
 import com.veyarc.data.storage.AssistantConnection
 import com.veyarc.data.storage.AssistantKeyStore
 import com.veyarc.data.storage.AssistantModelConfig
+import com.veyarc.data.storage.AssistantProtocol
 import com.veyarc.model.WorkflowJson
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -51,14 +52,14 @@ enum class DeepSeekFailure(val message: String) {
 class DeepSeekException(val reason: DeepSeekFailure) : Exception(reason.message)
 
 /** Blocking adapter. Call off the UI thread. App dispatch and lifecycle binding belong to 4E. */
-class ChatCompletionClient internal constructor(
+class AssistantClient internal constructor(
     private val endpoint: URL,
     private val connectTimeoutMs: Int = 15000,
     private val readTimeoutMs: Int = 90000,
     private val deadlineMs: Long? = null,
 ) {
     constructor() : this(URL("https://api.deepseek.com/chat/completions"))
-    constructor(connection: AssistantConnection) : this(URL(connection.also { it.validate() }.baseUrl.trimEnd('/') + "/chat/completions"))
+    constructor(connection: AssistantConnection) : this(URL(connection.also { it.validate() }.baseUrl.trimEnd('/') + if (connection.protocol == AssistantProtocol.OPENAI_RESPONSES) "/responses" else "/chat/completions"))
 
     init {
         require(
@@ -102,7 +103,7 @@ class ChatCompletionClient internal constructor(
         var call: Call? = null
         try {
             cancellation.checkActive()
-            val http = Request.Builder().url(endpoint.toString().removeSuffix("/chat/completions") + "/models")
+            val http = Request.Builder().url(endpoint.toString().removeSuffix("/chat/completions").removeSuffix("/responses") + "/models")
                 .header("Authorization", "Bearer $apiKey").header("Accept", "application/json").header("Accept-Encoding", "identity").get().build()
             val active = transport.newCall(http)
             call = active
@@ -194,7 +195,11 @@ class ChatCompletionClient internal constructor(
                     else -> throw DeepSeekException(DeepSeekFailure.INVALID_RESPONSE)
                 }
                 BoundedResponse(input, ::checkActive, responseLimit(request)).use { bounded ->
-                    if (request.streaming) DeepSeekStream.read(bounded, request, cancellation) else decode(bounded.readBytes(), request)
+                    if (request.connection.protocol == AssistantProtocol.OPENAI_RESPONSES) {
+                        if (request.streaming) OpenAIResponses.read(bounded, request, cancellation) else OpenAIResponses.decode(parseObject(bounded.readBytes()), request)
+                    } else {
+                        if (request.streaming) DeepSeekStream.read(bounded, request, cancellation) else decode(bounded.readBytes(), request)
+                    }
                 }
             }
             checkActive()
@@ -301,4 +306,5 @@ class ChatCompletionClient internal constructor(
 }
 
 // Existing DeepSeek callers use the same transport and retain strict preset validation.
-typealias DeepSeekClient = ChatCompletionClient
+typealias ChatCompletionClient = AssistantClient
+typealias DeepSeekClient = AssistantClient

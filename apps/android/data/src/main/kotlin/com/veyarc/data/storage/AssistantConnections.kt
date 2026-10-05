@@ -5,7 +5,7 @@ import java.net.URI
 import java.util.UUID
 
 @Serializable
-enum class AssistantProtocol { DEEPSEEK, OPENAI_COMPATIBLE }
+enum class AssistantProtocol { DEEPSEEK, OPENAI_COMPATIBLE, OPENAI_RESPONSES }
 
 @Serializable
 data class AssistantModelConfig(
@@ -45,6 +45,7 @@ data class AssistantConnection(
         models.forEach(AssistantModelConfig::validate)
         require(models.any { it.id == defaultModelId && defaultEffort in it.efforts })
         if (protocol == AssistantProtocol.DEEPSEEK) require(baseUrl.trimEnd('/') == "https://api.deepseek.com")
+        if (protocol == AssistantProtocol.OPENAI_RESPONSES) require(baseUrl.trimEnd('/') == "https://api.openai.com/v1")
     }
 
     val defaultModel: AssistantModelConfig get() = models.first { it.id == defaultModelId }
@@ -69,6 +70,15 @@ data class AssistantConnection(
             ),
             modelId,
             effort,
+        ).also { it.validate() }
+
+        fun openAI(id: String = UUID.randomUUID().toString()): AssistantConnection = AssistantConnection(
+            id,
+            "OpenAI",
+            "https://api.openai.com/v1",
+            AssistantProtocol.OPENAI_RESPONSES,
+            listOf(AssistantModelConfig("gpt-5.4", "GPT-5.4", jsonOutput = true)),
+            "gpt-5.4",
         ).also { it.validate() }
     }
 }

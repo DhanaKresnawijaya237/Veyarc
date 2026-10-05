@@ -8,6 +8,16 @@ import org.junit.Test
 import java.util.UUID
 
 class AssistantConnectionsTest {
+    @Test fun nativeOpenAIIsExplicitAndExistingCompatibleProfilesStayCompatible() {
+        val profile = AssistantConnection.openAI()
+        profile.validate()
+        assertEquals(AssistantProtocol.OPENAI_RESPONSES, profile.protocol)
+        assertEquals(profile, Json.decodeFromString<AssistantConnection>(Json.encodeToString(profile)))
+        assertTrue(runCatching { profile.copy(baseUrl = "https://example.org/v1").validate() }.isFailure)
+        val compatible = profile.copy(protocol = AssistantProtocol.OPENAI_COMPATIBLE)
+        assertEquals(AssistantProtocol.OPENAI_COMPATIBLE, Json.decodeFromString<AssistantConnection>(Json.encodeToString(compatible)).protocol)
+    }
+
     @Test fun profilesValidateAddressesModelsAndDefaultsWithoutCredentials() {
         val deepSeek = AssistantConnection.deepSeek("deepseek-v4-pro", "HIGH")
         val custom = AssistantConnection(UUID.randomUUID().toString(), "My server", "https://example.org/v1", models = listOf(AssistantModelConfig("model-a")), defaultModelId = "model-a")

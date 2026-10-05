@@ -425,10 +425,15 @@ private fun ConnectionEditor(existing: AssistantConnection?, busy: Boolean, newM
                     protocol = AssistantProtocol.DEEPSEEK
                 }) { Text("DeepSeek") }
                 TextButton(onClick = {
-                    name = "OpenAI"
-                    address = "https://api.openai.com/v1"
-                    modelId = ""
-                    protocol = AssistantProtocol.OPENAI_COMPATIBLE
+                    val preset = AssistantConnection.openAI(id)
+                    name = preset.name
+                    address = preset.baseUrl
+                    modelId = preset.defaultModelId
+                    modelName = preset.defaultModel.name
+                    vision = preset.defaultModel.vision
+                    jsonMode = preset.defaultModel.jsonOutput
+                    efforts = preset.defaultModel.efforts
+                    protocol = preset.protocol
                 }) { Text("OpenAI") }
                 TextButton(onClick = {
                     name = ""
@@ -439,7 +444,7 @@ private fun ConnectionEditor(existing: AssistantConnection?, busy: Boolean, newM
             }
         }
         if (!newModel) OutlinedTextField(name, { if (it.length <= 80) name = it }, label = { Text("Name") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), modifier = Modifier.fillMaxWidth().testTag("connection-name"))
-        if (!newModel) OutlinedTextField(address, { if (it.length <= 2048) address = it }, label = { Text("API address") }, placeholder = { Text("https://example.com/v1") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), readOnly = protocol == AssistantProtocol.DEEPSEEK, modifier = Modifier.fillMaxWidth().testTag("connection-address"))
+        if (!newModel) OutlinedTextField(address, { if (it.length <= 2048) address = it }, label = { Text("API address") }, placeholder = { Text("https://example.com/v1") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), readOnly = protocol != AssistantProtocol.OPENAI_COMPATIBLE, modifier = Modifier.fillMaxWidth().testTag("connection-address"))
         OutlinedTextField(modelId, {
             if (it.length <= 256) {
                 modelId = it
@@ -450,11 +455,25 @@ private fun ConnectionEditor(existing: AssistantConnection?, busy: Boolean, newM
                 efforts = configured?.efforts ?: listOf("OFF")
             }
         }, label = { Text("Model ID") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), modifier = Modifier.fillMaxWidth().testTag("connection-model"))
-        if (protocol == AssistantProtocol.OPENAI_COMPATIBLE) {
-            Text("Use an OpenAI-compatible Chat Completions address.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (protocol != AssistantProtocol.DEEPSEEK) {
+            Text(if (protocol == AssistantProtocol.OPENAI_RESPONSES) "OpenAI Responses API" else "OpenAI-compatible Chat Completions", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             TextButton(onClick = { advanced = !advanced }) { Text("Advanced") }
             AnimatedVisibility(advanced, enter = expandVertically(tween(140)), exit = shrinkVertically(tween(120))) {
                 Column {
+                    if (!newModel) {
+                        listOf(AssistantProtocol.OPENAI_COMPATIBLE to "Chat Completions", AssistantProtocol.OPENAI_RESPONSES to "OpenAI Responses").forEach { (format, label) ->
+                            Row(
+                                Modifier.fillMaxWidth().selectable(protocol == format, role = Role.RadioButton, onClick = {
+                                    protocol = format
+                                    if (format == AssistantProtocol.OPENAI_RESPONSES) address = "https://api.openai.com/v1"
+                                }).padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                RadioButton(protocol == format, onClick = null)
+                                Text(label, Modifier.padding(start = 12.dp))
+                            }
+                        }
+                    }
                     ConnectionCapability("Images", vision) { vision = it }
                     ConnectionCapability("JSON mode", jsonMode) { jsonMode = it }
                     OutlinedTextField(modelName, { if (it.length <= 256) modelName = it }, label = { Text("Display name") }, singleLine = true, modifier = Modifier.fillMaxWidth())

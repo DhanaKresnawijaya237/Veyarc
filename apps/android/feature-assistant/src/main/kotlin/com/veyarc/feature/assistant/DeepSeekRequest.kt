@@ -108,17 +108,20 @@ object DeepSeekRequest {
         return AssistantRequest(requestBody(messages, 128, false, DeepSeekEffort.OFF, selectedModel, connection.protocol), id, id, "connection-test", false, selectedModel.id, false, connection = connection)
     }
 
-    private fun requestBody(messages: List<kotlinx.serialization.json.JsonObject>, maxTokens: Int, streaming: Boolean, effort: DeepSeekEffort, model: AssistantModelConfig, protocol: AssistantProtocol): ByteArray = buildJsonObject {
-        put("model", model.id)
-        put("messages", JsonArray(messages))
-        if (protocol == AssistantProtocol.DEEPSEEK) {
-            put("max_tokens", maxTokens)
-            put("thinking", buildJsonObject { put("type", if (effort == DeepSeekEffort.OFF) "disabled" else "enabled") })
-        }
-        if (effort != DeepSeekEffort.OFF) put("reasoning_effort", effort.name.lowercase())
-        if (model.jsonOutput) put("response_format", buildJsonObject { put("type", "json_object") })
-        put("stream", streaming)
-    }.toString().toByteArray(Charsets.UTF_8)
+    private fun requestBody(messages: List<kotlinx.serialization.json.JsonObject>, maxTokens: Int, streaming: Boolean, effort: DeepSeekEffort, model: AssistantModelConfig, protocol: AssistantProtocol): ByteArray {
+        if (protocol == AssistantProtocol.OPENAI_RESPONSES) return OpenAIResponses.encode(messages, streaming, model)
+        return buildJsonObject {
+            put("model", model.id)
+            put("messages", JsonArray(messages))
+            if (protocol == AssistantProtocol.DEEPSEEK) {
+                put("max_tokens", maxTokens)
+                put("thinking", buildJsonObject { put("type", if (effort == DeepSeekEffort.OFF) "disabled" else "enabled") })
+            }
+            if (effort != DeepSeekEffort.OFF) put("reasoning_effort", effort.name.lowercase())
+            if (model.jsonOutput) put("response_format", buildJsonObject { put("type", "json_object") })
+            put("stream", streaming)
+        }.toString().toByteArray(Charsets.UTF_8)
+    }
 
     private fun message(role: String, content: String) = buildJsonObject {
         put("role", role)
