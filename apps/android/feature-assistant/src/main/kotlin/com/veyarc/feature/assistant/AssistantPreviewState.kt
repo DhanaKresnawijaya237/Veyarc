@@ -277,10 +277,10 @@ class AssistantPreviewState(
         val generation = applyGeneration
         testingConnection = true
         connectionTestStatus = null
-        val model = defaultModel
+        val profile = defaultConnection
         providerJob = requireNotNull(scope).launch {
             try {
-                val request = DeepSeekRequest.connectionTest(model)
+                val request = DeepSeekRequest.connectionTest(connection = profile)
                 val bytes = providerCall(request)
                 if (testingConnection && providerEnabled && generation == applyGeneration) {
                     val response = AssistantResponseCodec.decode(bytes, request.requestId, request.conversationId, request.baseSnapshotId)
@@ -821,7 +821,7 @@ class AssistantPreviewState(
                                 size += content.images.sumOf { it.size.toLong() } + (content.text?.toByteArray()?.size ?: 0)
                                 images += content.images.size
                                 if (size > 34 * 1024 * 1024 || images > DeepSeekRequest.MAX_IMAGES) {
-                                    require(turn.id != chat.turns.last().id) { "These attachments exceed DeepSeek's request size or 600-image limit. Send fewer files together." }
+                                    require(turn.id != chat.turns.last().id) { "These attachments are too large to send together. Send fewer files." }
                                     break
                                 }
                                 prepared[attachment.id] = content
@@ -882,8 +882,7 @@ class AssistantPreviewState(
                 turn.attachments.map { contents.getValue(it.id) },
             )
         }
-        require(profile.id == AssistantConnection.DEEPSEEK_ID && chosenModel.id == current.model.apiId) { "This connection is not supported yet." }
-        return DeepSeekRequest.create(current.requestId, chat.id, current.responseBaseId(chat), current.prompt, current.baseSnapshot, history, streaming = true, effort = current.effort, onThinking = onThinking, model = current.model, attachments = current.attachments.map { contents.getValue(it.id) }, onReply = onReply)
+        return DeepSeekRequest.create(current.requestId, chat.id, current.responseBaseId(chat), current.prompt, current.baseSnapshot, history, streaming = true, effort = current.effort, onThinking = onThinking, model = current.model, attachments = current.attachments.map { contents.getValue(it.id) }, onReply = onReply, connection = profile, modelId = chosenModel.id)
     }
 
     private fun receiveThinking(token: String, thinking: AssistantThinking) {

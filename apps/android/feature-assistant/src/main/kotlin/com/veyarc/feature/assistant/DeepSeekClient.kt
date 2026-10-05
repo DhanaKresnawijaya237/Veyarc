@@ -1,5 +1,6 @@
 package com.veyarc.feature.assistant
 
+import com.veyarc.data.storage.AssistantConnection
 import com.veyarc.data.storage.AssistantKeyStore
 import com.veyarc.model.WorkflowJson
 import kotlinx.coroutines.CoroutineScope
@@ -30,17 +31,17 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.GZIPInputStream
 
 enum class DeepSeekFailure(val message: String) {
-    KEY_REQUIRED("Add or replace your DeepSeek API key in Settings."),
-    ACCESS_DENIED("DeepSeek denied access. Check your account and API key."),
-    INSUFFICIENT_BALANCE("Check your DeepSeek API account balance."),
+    KEY_REQUIRED("Add or replace this connection's API key in Settings."),
+    ACCESS_DENIED("The provider denied access. Check your account and API key."),
+    INSUFFICIENT_BALANCE("Check your provider account balance."),
     INVALID_REQUEST("The request is invalid. Review the message and workflow."),
     REQUEST_TOO_LARGE("This message or workflow is too large to send. Shorten it and try again."),
-    RATE_LIMITED("DeepSeek rate limit reached. Try again later."),
-    UNAVAILABLE("DeepSeek is unavailable. Try again later."),
-    NETWORK("Could not connect to DeepSeek. Check your connection."),
+    RATE_LIMITED("Provider rate limit reached. Try again later."),
+    UNAVAILABLE("The provider is unavailable. Try again later."),
+    NETWORK("Could not connect to the provider. Check your connection."),
     TIMEOUT("The request timed out. Retry only when ready; charges may still apply."),
-    INVALID_RESPONSE("DeepSeek returned an incomplete or unsupported response."),
-    RESPONSE_TOO_LARGE("DeepSeek's response exceeded the local size limit."),
+    INVALID_RESPONSE("The provider returned an incomplete or unsupported response."),
+    RESPONSE_TOO_LARGE("The provider's response exceeded the local size limit."),
     BUSY("An AI request is already running."),
     CANCELLED("The AI request was cancelled. No response was accepted."),
 }
@@ -49,17 +50,18 @@ enum class DeepSeekFailure(val message: String) {
 class DeepSeekException(val reason: DeepSeekFailure) : Exception(reason.message)
 
 /** Blocking adapter. Call off the UI thread. App dispatch and lifecycle binding belong to 4E. */
-class DeepSeekClient internal constructor(
+class ChatCompletionClient internal constructor(
     private val endpoint: URL,
     private val connectTimeoutMs: Int = 15000,
     private val readTimeoutMs: Int = 90000,
     private val deadlineMs: Long? = null,
 ) {
     constructor() : this(URL("https://api.deepseek.com/chat/completions"))
+    constructor(connection: AssistantConnection) : this(URL(connection.also { it.validate() }.baseUrl.trimEnd('/') + "/chat/completions"))
 
     init {
         require(
-            endpoint.toString() == "https://api.deepseek.com/chat/completions" ||
+            (endpoint.protocol == "https" && endpoint.userInfo == null && endpoint.query == null && endpoint.ref == null) ||
                 (endpoint.protocol == "http" && endpoint.host == "127.0.0.1" && endpoint.userInfo == null),
         )
         require(connectTimeoutMs > 0 && readTimeoutMs > 0 && (deadlineMs == null || deadlineMs > 0))
@@ -190,12 +192,12 @@ class DeepSeekClient internal constructor(
         internal const val MAX_REASONING_BYTES = 2 * 1024 * 1024
 
         // Thinking adds many SSE envelopes; each final JSON response still has a byte guard.
-        internal fun responseLimit(request: AssistantRequest) = if (!request.thinkingEnabled) MAX_RESPONSE_BYTES else 32 * 1024 * 1024
+        internal fun responseLimit(request: AssistantRequest) = if (request.strictDeepSeek && !request.thinkingEnabled) MAX_RESPONSE_BYTES else 32 * 1024 * 1024
 
         internal fun reasoningBytes(fields: JsonObject, request: AssistantRequest): Int {
             if (fields["reasoning_content"] == null || fields["reasoning_content"] == JsonNull) return 0
             val size = fields.string("reasoning_content").toByteArray(Charsets.UTF_8).size
-            require(request.thinkingEnabled || size == 0)
+            require(!request.strictDeepSeek || request.thinkingEnabled || size == 0)
             if (size > MAX_REASONING_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
             return size
         }
@@ -205,7 +207,7 @@ class DeepSeekClient internal constructor(
             val envelope = parseObject(bytes)
             require(envelope.string("object") == "chat.completion")
             // The official completion example echoes the alias. Do not guess dated wire-model IDs.
-            require(envelope.string("model") == request.modelId)
+            require(validWireModel(envelope.string("model"), request))
             val choice = (envelope["choices"] as JsonArray).single() as JsonObject
             require(choice["index"] == JsonPrimitive(0) && choice.string("finish_reason") == "stop")
             val message = choice["message"] as JsonObject
@@ -219,7 +221,7 @@ class DeepSeekClient internal constructor(
             val content = message.string("content").toByteArray(Charsets.UTF_8)
             if (content.size > AssistantResponseCodec.MAX_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
             AssistantResponseCodec.decode(content, request.requestId, request.conversationId, request.baseSnapshotId)
-            if (message["reasoning_content"] != null && message["reasoning_content"] != JsonNull) {
+            if (request.thinkingEnabled && message["reasoning_content"] != null && message["reasoning_content"] != JsonNull) {
                 AssistantThinkingBuffer(request).apply {
                     append(message.string("reasoning_content"))
                     finish()
@@ -232,6 +234,8 @@ class DeepSeekClient internal constructor(
             throw DeepSeekException(DeepSeekFailure.INVALID_RESPONSE)
         }
 
+        internal fun validWireModel(model: String, request: AssistantRequest): Boolean = if (request.strictDeepSeek) model == request.modelId else model.isNotBlank() && model.length <= 256 && model.none(Char::isISOControl)
+
         internal fun parseObject(bytes: ByteArray): JsonObject {
             val json = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
                 .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString()
@@ -243,3 +247,6 @@ class DeepSeekClient internal constructor(
         internal fun JsonObject.string(key: String): String = (getValue(key) as JsonPrimitive).also { require(it.isString) }.content
     }
 }
+
+// Existing DeepSeek callers use the same transport and retain strict preset validation.
+typealias DeepSeekClient = ChatCompletionClient

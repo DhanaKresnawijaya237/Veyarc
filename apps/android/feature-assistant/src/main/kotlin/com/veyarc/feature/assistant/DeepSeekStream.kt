@@ -1,6 +1,6 @@
 package com.veyarc.feature.assistant
 
-import com.veyarc.feature.assistant.DeepSeekClient.Companion.string
+import com.veyarc.feature.assistant.ChatCompletionClient.Companion.string
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -21,6 +21,7 @@ internal object DeepSeekStream {
         val thinking = AssistantThinkingBuffer(request)
         val reply = AssistantReplyBuffer(request)
         var completionId: String? = null
+        var wireModel: String? = null
         var assistant = false
         var stopped = false
         var firstEvent = true
@@ -58,13 +59,21 @@ internal object DeepSeekStream {
                 AssistantResponseCodec.decode(bytes, request.requestId, request.conversationId, request.baseSnapshotId)
                 return bytes
             }
-            require(!stopped)
             val chunk = DeepSeekClient.parseObject(payload.toByteArray(Charsets.UTF_8))
-            require(chunk.string("object") == "chat.completion.chunk" && chunk.string("model") == request.modelId)
+            require(chunk.string("object") == "chat.completion.chunk" && ChatCompletionClient.validWireModel(chunk.string("model"), request))
+            require(wireModel == null || wireModel == chunk.string("model"))
+            wireModel = chunk.string("model")
             val id = chunk.string("id")
             require(id.isNotBlank() && id.length <= 256 && (completionId == null || completionId == id))
             completionId = id
-            val choice = (chunk["choices"] as JsonArray).single() as JsonObject
+            val choices = chunk["choices"] as JsonArray
+            // Compatible servers may send a usage-only chunk after the terminal choice.
+            if (!request.strictDeepSeek && choices.isEmpty()) {
+                require(stopped && chunk["usage"] is JsonObject && chunk["error"] == null)
+                return null
+            }
+            require(!stopped)
+            val choice = choices.single() as JsonObject
             require(choice["index"] == JsonPrimitive(0))
             val delta = choice["delta"] as JsonObject
             listOf(chunk, choice, delta).forEach { fields ->
@@ -79,7 +88,7 @@ internal object DeepSeekStream {
                 require(delta.string("role") == "assistant")
                 assistant = true
             }
-            if (delta["reasoning_content"] != null && delta["reasoning_content"] != JsonNull) {
+            if (request.thinkingEnabled && delta["reasoning_content"] != null && delta["reasoning_content"] != JsonNull) {
                 val piece = delta.string("reasoning_content")
                 if (piece.isNotEmpty()) {
                     require(assistant)

@@ -1,5 +1,8 @@
 package com.veyarc.feature.assistant
 
+import com.veyarc.data.storage.AssistantConnection
+import com.veyarc.data.storage.AssistantModelConfig
+import com.veyarc.data.storage.AssistantProtocol
 import com.veyarc.model.WorkflowJson
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
@@ -19,7 +22,7 @@ enum class DeepSeekModel(val apiId: String, val label: String, val shortLabel: S
     PRO("deepseek-v4-pro", "DeepSeek V4 Pro", "V4 Pro"),
 }
 
-/** DeepSeek wire encoding; chat ownership and progress use the shared request. */
+/** Shared Chat Completions encoding; only the DeepSeek preset emits DeepSeek extensions. */
 object DeepSeekRequest {
     const val MAX_BYTES = 2 * 1024 * 1024
     internal const val MAX_OUTPUT_TOKENS = 393216
@@ -39,9 +42,15 @@ object DeepSeekRequest {
         model: DeepSeekModel = DeepSeekModel.FLASH,
         attachments: List<AttachmentContent> = emptyList(),
         onReply: ((String) -> Unit)? = null,
+        connection: AssistantConnection? = null,
+        modelId: String = model.apiId,
     ): AssistantRequest = try {
         require(listOf(requestId, conversationId, baseSnapshotId).all { it.isNotBlank() && it.length <= 128 })
         require(prompt.isNotBlank() && prompt.length <= AssistantPreviewState.MAX_PROMPT_LENGTH)
+        val profile = connection ?: AssistantConnection.deepSeek(model.apiId, effort.name)
+        profile.validate()
+        val selectedModel = profile.models.firstOrNull { it.id == modelId } ?: error("Unknown model")
+        require(effort.name in selectedModel.efforts)
         snapshot?.validate()
         require(snapshot == null || snapshot.snapshotId == baseSnapshotId)
         val base = snapshot?.let(AssistantCandidateValidator::baseDraft)
@@ -53,14 +62,14 @@ object DeepSeekRequest {
             put("expectedRevision", base?.let(AssistantCandidateValidator::expectedRevision)?.let(::JsonPrimitive) ?: JsonNull)
             put("snapshot", snapshot?.let(AssistantWireWorkflow::snapshot) ?: JsonNull)
         }
-        require(model == DeepSeekModel.FLASH || (attachments + history.flatMap { it.attachments }).all { it.images.isEmpty() })
+        require(selectedModel.vision || (attachments + history.flatMap { it.attachments }).all { it.images.isEmpty() })
         val budget = if ((attachments + history.flatMap { it.attachments }).any { it.images.isNotEmpty() }) MAX_VISION_BYTES else MAX_BYTES
         val system = message("system", systemPrompt)
         val user = userMessage(current.toString(), attachments)
         val selected = ArrayDeque<kotlinx.serialization.json.JsonObject>()
         var imageCount = attachments.sumOf { it.images.size }
         require(imageCount <= MAX_IMAGES)
-        var size = requestBody(listOf(system, user), MAX_OUTPUT_TOKENS, streaming, effort, model).size
+        var size = requestBody(listOf(system, user), MAX_OUTPUT_TOKENS, streaming, effort, selectedModel, profile.protocol).size
         if (size > budget) throw DeepSeekException(DeepSeekFailure.REQUEST_TOO_LARGE)
         // Keep the complete local chat. Only the oldest context falls outside the request byte budget.
         for (turn in history.asReversed()) {
@@ -78,32 +87,36 @@ object DeepSeekRequest {
             selected.addFirst(oldAssistant)
             selected.addFirst(oldUser)
         }
-        val bytes = requestBody(listOf(system) + selected + user, MAX_OUTPUT_TOKENS, streaming, effort, model)
+        val bytes = requestBody(listOf(system) + selected + user, MAX_OUTPUT_TOKENS, streaming, effort, selectedModel, profile.protocol)
         if (bytes.size > budget) throw DeepSeekException(DeepSeekFailure.REQUEST_TOO_LARGE)
-        AssistantRequest(bytes, requestId, conversationId, baseSnapshotId, streaming, model.apiId, effort != DeepSeekEffort.OFF, onThinking, onReply)
+        AssistantRequest(bytes, requestId, conversationId, baseSnapshotId, streaming, selectedModel.id, effort != DeepSeekEffort.OFF, onThinking, onReply, profile)
     } catch (error: DeepSeekException) {
         throw error
     } catch (_: Exception) {
         throw DeepSeekException(DeepSeekFailure.INVALID_REQUEST)
     }
 
-    internal fun connectionTest(model: DeepSeekModel = DeepSeekModel.FLASH): AssistantRequest {
+    internal fun connectionTest(model: DeepSeekModel = DeepSeekModel.FLASH, connection: AssistantConnection = AssistantConnection.deepSeek(model.apiId)): AssistantRequest {
+        connection.validate()
+        val selectedModel = connection.defaultModel
         val id = UUID.randomUUID().toString()
         val example = AssistantResponseCodec.encode(AssistantResponse(1, id, id, "connection-test", AssistantOutcome.EXPLANATION, "Connected"))
         val messages = listOf(
             message("system", "Return only this JSON object, with all IDs unchanged: ${example.toString(Charsets.UTF_8)}"),
             message("user", "Confirm this API connection."),
         )
-        return AssistantRequest(requestBody(messages, 128, false, model = model), id, id, "connection-test", false, model.apiId, false)
+        return AssistantRequest(requestBody(messages, 128, false, DeepSeekEffort.OFF, selectedModel, connection.protocol), id, id, "connection-test", false, selectedModel.id, false, connection = connection)
     }
 
-    private fun requestBody(messages: List<kotlinx.serialization.json.JsonObject>, maxTokens: Int, streaming: Boolean, effort: DeepSeekEffort = DeepSeekEffort.OFF, model: DeepSeekModel = DeepSeekModel.FLASH): ByteArray = buildJsonObject {
-        put("model", model.apiId)
+    private fun requestBody(messages: List<kotlinx.serialization.json.JsonObject>, maxTokens: Int, streaming: Boolean, effort: DeepSeekEffort, model: AssistantModelConfig, protocol: AssistantProtocol): ByteArray = buildJsonObject {
+        put("model", model.id)
         put("messages", JsonArray(messages))
-        put("max_tokens", maxTokens)
-        put("thinking", buildJsonObject { put("type", if (effort == DeepSeekEffort.OFF) "disabled" else "enabled") })
+        if (protocol == AssistantProtocol.DEEPSEEK) {
+            put("max_tokens", maxTokens)
+            put("thinking", buildJsonObject { put("type", if (effort == DeepSeekEffort.OFF) "disabled" else "enabled") })
+        }
         if (effort != DeepSeekEffort.OFF) put("reasoning_effort", effort.name.lowercase())
-        put("response_format", buildJsonObject { put("type", "json_object") })
+        if (model.jsonOutput) put("response_format", buildJsonObject { put("type", "json_object") })
         put("stream", streaming)
     }.toString().toByteArray(Charsets.UTF_8)
 

@@ -531,9 +531,7 @@ class MainEditorSession(application: Application) : AndroidViewModel(application
     val state = WorkflowEditorSession()
     private val chatRepository = com.veyarc.data.storage.ChatRepository(application)
     private val assistantDraft = AssistantDraftBridge(state)
-    private val assistantKeys = com.veyarc.data.storage.AssistantKeyStore(application)
     private val assistantConnections = com.veyarc.data.storage.AssistantConnectionStore(application)
-    private val deepSeek by lazy { com.veyarc.feature.assistant.DeepSeekClient() }
     private val assistantAttachments = com.veyarc.feature.assistant.AssistantAttachmentImporter(application)
     val assistant = AssistantPreviewState(
         chatRepository,
@@ -545,10 +543,10 @@ class MainEditorSession(application: Application) : AndroidViewModel(application
         applyImageCandidate = { binding, base, candidate, additions, sources -> assistantDraft.applyImages(binding, base, candidate, additions, sources, assistantAttachments.store) },
         providerCall = { request ->
             val key = withContext(Dispatchers.IO) {
-                runCatching { assistantKeys.readForRequest() }.getOrNull()
+                runCatching { com.veyarc.data.storage.AssistantKeyStore(application, request.connection.id).readForRequest() }.getOrNull()
                     ?: throw com.veyarc.feature.assistant.DeepSeekException(com.veyarc.feature.assistant.DeepSeekFailure.KEY_REQUIRED)
             }
-            deepSeek.await(request, key)
+            com.veyarc.feature.assistant.ChatCompletionClient(request.connection).await(request, key)
         },
         onConnectionsChanged = { value -> withContext(Dispatchers.IO) { assistantConnections.save(value) } },
     )

@@ -1,5 +1,8 @@
 package com.veyarc.feature.assistant
 
+import com.veyarc.data.storage.AssistantConnection
+import com.veyarc.data.storage.AssistantProtocol
+
 /** Completed, validated exchanges only. Failed, interrupted and sample turns stay local. */
 class AssistantHistoryTurn(val prompt: String, val response: AssistantResponse, val attachments: List<AttachmentContent> = emptyList())
 
@@ -14,7 +17,10 @@ class AssistantRequest internal constructor(
     internal val thinkingEnabled: Boolean,
     private val onThinking: ((AssistantThinking) -> Unit)? = null,
     private val onReply: ((String) -> Unit)? = null,
+    val connection: AssistantConnection = AssistantConnection.deepSeek(),
 ) {
+    internal val strictDeepSeek: Boolean get() = connection.protocol == AssistantProtocol.DEEPSEEK
+
     @Volatile internal var latestReply: String = ""
         private set
 
