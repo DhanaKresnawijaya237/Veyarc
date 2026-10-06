@@ -20,6 +20,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -107,6 +108,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -115,6 +117,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -123,6 +126,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.LocalPinnableContainer
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -628,6 +632,7 @@ fun WorkflowEditorScreen(
             onEditGeometry = { path, index -> geometryTarget = GeometryTarget(path, index) },
             onEditCondition = { path, index -> conditionTarget = ConditionTarget(path, index) },
             onAddTemplate = { templatePicker.launch("image/*") },
+            loadPreview = ::loadDraftPreview,
             revisions = session.revisionSummaries,
             onOpenRevision = ::openRevision,
             onPickApplication = {
@@ -907,6 +912,7 @@ private fun WorkflowDraftScreen(
     onEditGeometry: (StepListPath, Int) -> Unit,
     onEditCondition: (StepListPath, Int) -> Unit,
     onAddTemplate: () -> Unit,
+    loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
     revisions: List<RevisionSummary>,
     onOpenRevision: (Int) -> Unit,
     onPickApplication: () -> Unit,
@@ -987,6 +993,7 @@ private fun WorkflowDraftScreen(
                             onEditGeometry = onEditGeometry,
                             onEditCondition = onEditCondition,
                             onAddTemplate = onAddTemplate,
+                            loadPreview = loadPreview,
                             revisions = revisions,
                             onOpenRevision = onOpenRevision,
                             onPickApplication = onPickApplication,
@@ -1022,6 +1029,7 @@ private fun WorkflowDraftScreen(
                         onEditGeometry = onEditGeometry,
                         onEditCondition = onEditCondition,
                         onAddTemplate = onAddTemplate,
+                        loadPreview = loadPreview,
                         revisions = revisions,
                         onOpenRevision = onOpenRevision,
                         onPickApplication = onPickApplication,
@@ -1221,6 +1229,7 @@ private fun WorkflowDraftCanvas(
     onEditGeometry: (StepListPath, Int) -> Unit,
     onEditCondition: (StepListPath, Int) -> Unit,
     onAddTemplate: () -> Unit,
+    loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
     revisions: List<RevisionSummary>,
     onOpenRevision: (Int) -> Unit,
     onPickApplication: () -> Unit,
@@ -1320,6 +1329,7 @@ private fun WorkflowDraftCanvas(
                         assetNames = draft.assetNames,
                         referencedAssetIds = draft.referencedAssetIds(),
                         onAddTemplate = onAddTemplate,
+                        loadPreview = loadPreview,
                         onRemoveTemplate = { assetId ->
                             clearTemplatePreviewCache()
                             onDraftChange(draft.removeAsset(assetId))
@@ -1635,6 +1645,7 @@ private fun TemplateAssetSection(
     assetNames: Map<String, String>,
     referencedAssetIds: Set<String>,
     onAddTemplate: () -> Unit,
+    loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
     onRemoveTemplate: (com.veyarc.model.AssetId) -> Unit,
     onRenameTemplate: (com.veyarc.model.AssetId, String) -> Unit,
 ) {
@@ -1679,6 +1690,9 @@ private fun TemplateAssetSection(
     }
     renameTarget?.let { assetId ->
         var name by remember(assetId) { mutableStateOf(assetNames[assetId.value].orEmpty()) }
+        val preview by produceState(cachedTemplatePreview(assetId, 320), assetId) {
+            value = loadPreview(assetId, 320)
+        }
         val valid = name.trim().let { candidate ->
             candidate.isNotEmpty() && candidate.length <= 64 &&
                 assetNames.none { (id, existing) -> id != assetId.value && existing.equals(candidate, ignoreCase = true) }
@@ -1687,13 +1701,23 @@ private fun TemplateAssetSection(
             onDismissRequest = { renameTarget = null },
             title = { Text("Rename template") },
             text = {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    singleLine = true,
-                    label = { Text("Template name") },
-                    supportingText = if (valid) null else ({ Text("Use a unique name with 1 to 64 characters.") }),
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(Modifier.fillMaxWidth().height(112.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh), contentAlignment = Alignment.Center) {
+                        val image = preview
+                        if (image != null) {
+                            Image(image.image, "Image template preview", Modifier.fillMaxSize().testTag("rename-template-preview"), contentScale = ContentScale.Fit)
+                        } else {
+                            Icon(Icons.Outlined.Image, "Image template preview", Modifier.size(28.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        singleLine = true,
+                        label = { Text("Template name") },
+                        supportingText = if (valid) null else ({ Text("Use a unique name with 1 to 64 characters.") }),
+                    )
+                }
             },
             confirmButton = {
                 TextButton(

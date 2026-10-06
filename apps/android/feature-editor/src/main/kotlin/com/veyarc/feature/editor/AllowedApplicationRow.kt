@@ -3,6 +3,7 @@ package com.veyarc.feature.editor
 import android.content.Intent
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -43,6 +44,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -207,8 +209,11 @@ internal fun AllowedApplicationRow(packages: List<String>, onRemove: (String) ->
             )
         }
         AnimatedVisibility(dragged != null, Modifier.align(Alignment.CenterEnd).padding(end = 8.dp), enter = fadeIn(tween(90)), exit = fadeOut(tween(70))) {
-            Box(Modifier.size(40.dp).background(if (overDelete) MaterialTheme.colorScheme.error.copy(alpha = 0.22f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f), CircleShape).testTag("allowed-app-delete"), contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.Delete, "Drop to remove app", tint = if (overDelete) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f))
+            val hoverRed = Color(0xFFEF4444)
+            val background by animateColorAsState(if (overDelete) hoverRed.copy(alpha = 0.28f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f), tween(90), label = "delete hover background")
+            val tint by animateColorAsState(if (overDelete) hoverRed else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f), tween(90), label = "delete hover icon")
+            Box(Modifier.size(40.dp).background(background, CircleShape).testTag("allowed-app-delete"), contentAlignment = Alignment.Center) {
+                Icon(Icons.Outlined.Delete, "Drop to remove app", tint = tint)
             }
         }
     }
