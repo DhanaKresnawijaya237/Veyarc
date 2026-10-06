@@ -26,6 +26,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Key
@@ -40,7 +41,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -56,11 +56,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -152,13 +150,7 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
                     .padding(vertical = 8.dp).testTag(if (profile.id == AssistantConnection.DEEPSEEK_ID) "deepseek-provider-section" else "provider-${profile.id}"),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.primaryContainer) {
-                    if (profile.catalogProviderId == "deepseek" || profile.protocol == AssistantProtocol.DEEPSEEK) {
-                        Icon(painterResource(R.drawable.ic_deepseek), null, Modifier.padding(12.dp).size(32.dp).testTag("deepseek-logo"), tint = Color.Unspecified)
-                    } else {
-                        androidx.compose.foundation.layout.Box(Modifier.size(56.dp), contentAlignment = Alignment.Center) { Text(profile.name.take(1).uppercase(), style = MaterialTheme.typography.titleLarge) }
-                    }
-                }
+                ProviderLogo(profile.catalogProviderId, Modifier.size(48.dp))
                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
                     Text(profile.name, style = MaterialTheme.typography.titleMedium)
                     if (profiles.defaultConnectionId == profile.id) Text("Default", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
@@ -180,8 +172,8 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
                     }
                     if (profile.defaultModel.efforts.size > 1) {
                         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("Default effort", Modifier.weight(1f))
-                            Text(DeepSeekEffort.entries.firstOrNull { it.name == profile.defaultEffort }?.label ?: "Off", Modifier.padding(end = 8.dp))
+                            Text("Default effort", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                            Text(DeepSeekEffort.entries.firstOrNull { it.name == profile.defaultEffort }?.label ?: "Off", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                     Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -260,16 +252,19 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
                     items(filtered.size, key = { filtered[it].id }) { index ->
                         val model = filtered[index]
                         val selected = model.id == profile.defaultModelId
-                        Row(
-                            Modifier.fillMaxWidth().selectable(selected, role = Role.RadioButton, enabled = !busy && assistant?.discoveringModels != true, onClick = {
+                        Surface(
+                            Modifier.fillMaxWidth().padding(vertical = 3.dp).selectable(selected, role = Role.RadioButton, enabled = !busy && assistant?.discoveringModels != true, onClick = {
                                 val updatedModels = if (profile.models.any { it.id == model.id }) profile.models else profile.models + model
                                 replace(profile.copy(models = updatedModels, defaultModelId = model.id, defaultEffort = if (profile.defaultEffort in model.efforts) profile.defaultEffort else model.efforts.first())) { modelProfile = null }
-                            }).padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                            }),
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainer,
                         ) {
-                            RadioButton(selected, onClick = null)
-                            Text("${profile.name} ${model.name}", Modifier.weight(1f).padding(start = 12.dp))
-                            if (!selected && profile.models.any { it.id == model.id }) IconButton(onClick = { replace(profile.copy(models = profile.models.filterNot { it.id == model.id })) { modelProfile = null } }, enabled = !busy) { Icon(Icons.Outlined.DeleteOutline, "Remove model ${model.name}") }
+                            Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp).heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("${profile.name} ${model.name}", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                                if (selected) Icon(Icons.Outlined.Check, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                                if (!selected && profile.models.any { it.id == model.id }) IconButton(onClick = { replace(profile.copy(models = profile.models.filterNot { it.id == model.id })) { modelProfile = null } }, enabled = !busy) { Icon(Icons.Outlined.DeleteOutline, "Remove model ${model.name}") }
+                            }
                         }
                     }
                 }
