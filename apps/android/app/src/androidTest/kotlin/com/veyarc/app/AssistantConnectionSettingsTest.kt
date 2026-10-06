@@ -14,9 +14,13 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.StateRestorationTester
@@ -27,6 +31,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
@@ -67,6 +72,70 @@ class AssistantConnectionSettingsTest {
             assertTrue(profile.id != com.veyarc.data.storage.AssistantConnection.DEEPSEEK_ID)
             org.junit.Assert.assertEquals(com.veyarc.data.storage.AssistantProtocol.DEEPSEEK, profile.protocolFor(profile.defaultModel))
             assertTrue("HIGH" in profile.defaultModel.efforts)
+        }
+    }
+
+    @Test fun editProviderTitleRemainsOpaqueInDarkMode() {
+        compose.setContent { VeyarcTheme(darkTheme = true) { ConnectionEditor(com.veyarc.data.storage.AssistantConnection.deepSeek(), false, onManageModels = {}, onDismiss = {}, onSave = {}) } }
+        compose.onNodeWithTag("connection-provider").assert(SemanticsMatcher.keyNotDefined(androidx.compose.ui.semantics.SemanticsActions.OnClick))
+        compose.onNodeWithTag("connection-provider").assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.Disabled))
+        val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        compose.onNode(hasText("DeepSeek") and !hasSetTextAction()).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        val color = layouts.single().layoutInput.style.color
+        org.junit.Assert.assertEquals(1f, color.alpha, 0f)
+        assertTrue(color.red > 0.8f && color.green > 0.8f && color.blue > 0.8f)
+        capture("edit-provider-title")
+    }
+
+    @Test fun catalogModelsCanBeAddedTogetherWithoutChangingDefaultAndSaveFailureKeepsChoices() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val profile = com.veyarc.data.storage.AssistantConnection.openAI()
+        val extras = com.veyarc.data.storage.AssistantProviderCatalog.providers.first { it.id == "openai" }.models.filter { it.id != profile.defaultModelId }.take(2)
+        val owner = kotlinx.coroutines.SupervisorJob()
+        var failSave = true
+        var persisted: com.veyarc.data.storage.AssistantConnections? = null
+        val assistant = com.veyarc.feature.assistant.AssistantPreviewState(scope = kotlinx.coroutines.CoroutineScope(owner + kotlinx.coroutines.Dispatchers.Main), providerCall = { error("No requests expected") }, onConnectionsChanged = {
+            if (failSave) error("Storage unavailable")
+            persisted = it
+        })
+        try {
+            compose.runOnUiThread {
+                assistant.restoreConnections(com.veyarc.data.storage.AssistantConnections(listOf(profile), profile.id))
+                assistant.open(com.veyarc.feature.assistant.AssistantPreviewContext())
+            }
+            compose.setContent { VeyarcTheme(darkTheme = true) { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(AssistantKeyStore(context), assistant) } } }
+            openModels("OpenAI")
+            compose.onNodeWithText("Add models").performClick()
+            extras.forEach { model ->
+                compose.waitUntil(10_000) { runCatching { compose.onNodeWithTag("connection-model-list").performScrollToNode(hasTestTag("managed-model-${model.id}")) }.isSuccess }
+                compose.onNodeWithTag("managed-model-${model.id}").performClick().assertIsOn()
+            }
+            capture("add-models")
+            compose.onNodeWithTag("add-selected-models").performClick()
+            compose.waitUntil(10_000) { assistant.connectionError != null }
+            compose.onNodeWithTag("add-selected-models").assertTextEquals("Add 2 models")
+            compose.runOnIdle {
+                org.junit.Assert.assertEquals(profile, assistant.defaultConnection)
+                failSave = false
+            }
+            compose.onNodeWithTag("add-selected-models").performClick()
+            compose.waitUntil(10_000) { assistant.defaultConnection.models.size == 3 }
+            compose.onNodeWithTag("managed-model-${profile.defaultModelId}").performScrollTo().assertIsSelected()
+            compose.onNodeWithTag("managed-model-${extras.first().id}").performScrollTo().assertIsNotSelected().performClick()
+            compose.waitUntil(10_000) { assistant.defaultConnection.defaultModelId == extras.first().id }
+            compose.onNodeWithTag("managed-model-${profile.defaultModelId}").performScrollTo().assertIsNotSelected()
+            compose.onNodeWithContentDescription("Remove model ${extras.first().name}").performScrollTo().assertIsNotEnabled()
+            compose.onNodeWithContentDescription("Remove model ${extras.last().name}").performScrollTo().performClick()
+            compose.waitUntil(10_000) { assistant.defaultConnection.models.size == 2 }
+            compose.runOnIdle {
+                org.junit.Assert.assertEquals(assistant.connections, persisted)
+                org.junit.Assert.assertEquals(profile.defaultModelId, assistant.conversation!!.modelId)
+                org.junit.Assert.assertEquals(profile.id, assistant.connections.defaultConnectionId)
+            }
+            capture("saved-models")
+        } finally {
+            compose.runOnUiThread { assistant.dispose() }
+            owner.cancel()
         }
     }
 
@@ -167,7 +236,7 @@ class AssistantConnectionSettingsTest {
     @Test
     fun discoveryAndManualModelsKeepChatChoicesAndExposeConfiguredEfforts() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val profile = com.veyarc.data.storage.AssistantConnection(UUID.randomUUID().toString(), "Server", "https://example.org/v1", models = listOf(com.veyarc.data.storage.AssistantModelConfig("model-a")), defaultModelId = "model-a")
+        val profile = com.veyarc.data.storage.AssistantConnection(UUID.randomUUID().toString(), "Server", "https://example.org/v1", models = listOf(com.veyarc.data.storage.AssistantModelConfig("search")), defaultModelId = "search")
         val store = AssistantKeyStore(context, profile.id)
         val owner = kotlinx.coroutines.SupervisorJob()
         var calls = 0
@@ -184,23 +253,33 @@ class AssistantConnectionSettingsTest {
             compose.setContent { VeyarcTheme { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(AssistantKeyStore(context), assistant) } } }
             awaitText("Key saved")
             openModels("Server")
+            compose.onNodeWithText("Add models").performClick()
             compose.onNodeWithText("Find models").performClick()
-            awaitText("Server model-b")
-            compose.onNodeWithText("Server model-b").performClick()
+            awaitText("model-b")
+            compose.onNodeWithTag("managed-model-model-b").performClick()
+            compose.onNodeWithTag("add-selected-models").performClick()
             compose.runOnIdle {
                 org.junit.Assert.assertEquals(1, calls)
-                org.junit.Assert.assertEquals("model-a", assistant.conversation!!.modelId)
-                org.junit.Assert.assertEquals("model-b", assistant.defaultConnection.defaultModelId)
+                org.junit.Assert.assertEquals("search", assistant.conversation!!.modelId)
+                org.junit.Assert.assertEquals("search", assistant.defaultConnection.defaultModelId)
+                org.junit.Assert.assertEquals(2, assistant.defaultConnection.models.size)
                 assertFalse(assistant.defaultConnection.defaultModel.vision)
                 assertFalse(assistant.providerEnabled)
             }
-            openModels("Server")
-            compose.onNodeWithText("Add model").performClick()
+            compose.onNodeWithContentDescription("Use model-b as default").performClick()
+            compose.onNodeWithTag("managed-model-search").assertIsNotSelected()
+            compose.onNodeWithTag("managed-model-model-b").assertIsSelected()
+            compose.onNodeWithContentDescription("Remove model model-b").assertIsNotEnabled()
+            compose.onNodeWithText("Add models").performClick()
+            compose.onNodeWithText("Custom model").performClick()
             compose.onNodeWithTag("connection-model").performTextInput("manual-model")
             closeKeyboard()
             compose.onNodeWithText("Advanced").performScrollTo().performClick()
             compose.onNodeWithTag("capability-Medium").performScrollTo().performClick()
             compose.onNodeWithTag("connection-save").performScrollTo().performClick()
+            compose.runOnIdle { org.junit.Assert.assertEquals("model-b", assistant.defaultConnection.defaultModelId) }
+            compose.onNodeWithContentDescription("Use manual-model as default").performClick()
+            compose.onNodeWithContentDescription("Close Models").performClick()
             awaitText("Default effort")
             compose.onNodeWithContentDescription("Edit Server").performScrollTo().performClick()
             compose.onNodeWithText("Medium").performScrollTo().performClick()
@@ -209,7 +288,7 @@ class AssistantConnectionSettingsTest {
                 org.junit.Assert.assertEquals("manual-model", assistant.defaultConnection.defaultModelId)
                 org.junit.Assert.assertEquals("MEDIUM", assistant.defaultConnection.defaultEffort)
                 org.junit.Assert.assertEquals(listOf("OFF", "MEDIUM"), assistant.defaultConnection.defaultModel.efforts)
-                org.junit.Assert.assertEquals("model-a", assistant.conversation!!.modelId)
+                org.junit.Assert.assertEquals("search", assistant.conversation!!.modelId)
             }
             compose.onNodeWithContentDescription("Edit Server").performScrollTo().performClick()
             compose.onNodeWithTag("connection-model").performTextReplacement("unseen-model")
@@ -294,7 +373,8 @@ class AssistantConnectionSettingsTest {
             org.junit.Assert.assertEquals(layouts[0].layoutInput.style.fontSize, layouts[1].layoutInput.style.fontSize)
             compose.onNodeWithText("Default model").assert(SemanticsMatcher.keyNotDefined(androidx.compose.ui.semantics.SemanticsActions.OnClick))
             openModels("DeepSeek")
-            compose.onNodeWithText("DeepSeek V4 Pro").performClick()
+            compose.onNodeWithContentDescription("Use V4 Pro as default").performClick()
+            compose.onNodeWithContentDescription("Close Models").performClick()
             compose.onNodeWithContentDescription("Edit DeepSeek").performScrollTo().performClick()
             compose.onNodeWithText("High").performScrollTo().performClick()
             compose.onNodeWithTag("connection-save").performScrollTo().performClick()
@@ -460,8 +540,7 @@ class AssistantConnectionSettingsTest {
     }
 
     private fun openModels(provider: String) {
-        compose.onNodeWithContentDescription("Edit $provider").performScrollTo().performClick()
-        compose.onNodeWithText("Manage models").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("Manage $provider models").performScrollTo().performClick()
     }
 
     private fun closeKeyboard() {

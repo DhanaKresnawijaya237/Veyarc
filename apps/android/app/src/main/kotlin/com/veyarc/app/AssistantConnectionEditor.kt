@@ -5,6 +5,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,9 +22,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -128,7 +131,9 @@ internal fun ConnectionEditor(existing: AssistantConnection?, busy: Boolean, new
         ?: configuredModel.efforts.first()
     val candidate = AssistantConnection(
         id, name.trim(), address.trim().trimEnd('/'), protocol,
-        existing?.models.orEmpty().filterNot { it.id == model.id } + configuredModel, model.id, validEffort,
+        existing?.models.orEmpty().filterNot { it.id == model.id } + configuredModel,
+        if (newModel && existing != null) existing.defaultModelId else model.id,
+        if (newModel && existing != null) existing.defaultEffort else validEffort,
         providerId, compatibility, apiVersion.takeIf { it.isNotBlank() },
     )
     val tokenLimitValid = suppliedModel?.maxOutputTokens?.let { configuredModel.maxOutputTokens!! <= it } ?: true
@@ -152,12 +157,25 @@ internal fun ConnectionEditor(existing: AssistantConnection?, busy: Boolean, new
         onDismiss = onDismiss,
     ) {
         if (!newModel) {
-            TextButton(onClick = {
-                search = ""
-                choosingProvider = true
-            }, enabled = existing == null, modifier = Modifier.fillMaxWidth().testTag("connection-provider")) {
-                ProviderLogo(providerId, Modifier.size(44.dp))
-                Text(catalog?.name ?: "Custom provider", Modifier.weight(1f).padding(start = 12.dp), style = MaterialTheme.typography.titleMedium)
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.fillMaxWidth().testTag("connection-provider").then(
+                    if (existing == null) {
+                        Modifier.clickable {
+                            search = ""
+                            choosingProvider = true
+                        }
+                    } else {
+                        Modifier
+                    },
+                ),
+            ) {
+                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    ProviderLogo(providerId, Modifier.size(44.dp))
+                    Text(catalog?.name ?: existing?.name ?: "Custom provider", Modifier.weight(1f).padding(start = 12.dp), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                }
             }
             OutlinedTextField(name, { if (it.length <= 80) name = it }, label = { Text("Name") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), modifier = Modifier.fillMaxWidth().testTag("connection-name"))
             OutlinedTextField(address, { if (it.length <= 2048) address = it }, label = { Text("API address") }, placeholder = { Text("https://example.com/v1") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), modifier = Modifier.fillMaxWidth().testTag("connection-address"))
@@ -183,20 +201,39 @@ internal fun ConnectionEditor(existing: AssistantConnection?, busy: Boolean, new
             if (address != existing?.baseUrl && existing != null) Text("Your saved key will be sent to this address.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (providerId == "azure-openai-responses") OutlinedTextField(apiVersion, { apiVersion = it.take(40) }, label = { Text("API version (optional)") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), modifier = Modifier.fillMaxWidth())
         }
-        EditorCategory("Model") {
+        EditorCategory(
+            "Model",
+            action = if (existing != null && !newModel) {
+                (
+                    {
+                        IconButton(onClick = { onManageModels(existing) }, enabled = !busy) { Icon(Icons.Outlined.Tune, "Manage models", tint = MaterialTheme.colorScheme.primary) }
+                    }
+                    )
+            } else {
+                null
+            },
+        ) {
             if (providerId == null && selectedProtocol in listOf(AssistantProtocol.OPENAI_COMPATIBLE, AssistantProtocol.OPENAI_RESPONSES)) {
                 TextButton(onClick = { probeKey = true }, enabled = discoveryJob == null && runCatching { AssistantConnection.validateBaseUrl(address.trim().trimEnd('/')) }.isSuccess, modifier = Modifier.fillMaxWidth().testTag("draft-find-models")) { Text(if (discoveryJob == null) "Find models" else "Loading models…") }
                 discoveryStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
             if (available.isNotEmpty()) {
-                TextButton(onClick = {
-                    search = ""
-                    choosingModel = true
-                }, modifier = Modifier.fillMaxWidth()) { Text("Choose model") }
+                Surface(
+                    Modifier.fillMaxWidth().testTag("choose-connection-model").clickable {
+                        search = ""
+                        choosingModel = true
+                    },
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                ) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(if (newModel) "Choose model" else "Default model", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(model.name.ifBlank { "Choose model" }, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+                    }
+                }
             }
             OutlinedTextField(model.id, { if (it.length <= 256) choose(available.firstOrNull { saved -> saved.id == it.trim() } ?: AssistantModelConfig(it.trim())) }, label = { Text(if (providerId == "azure-openai-responses") "Deployment / model ID" else "Model ID") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), modifier = Modifier.fillMaxWidth().testTag("connection-model"))
-            if (existing != null && !newModel) TextButton(onClick = { onManageModels(existing) }) { Text("Manage models") }
-            if (configuredModel.efforts.size > 1) {
+            if (!newModel && configuredModel.efforts.size > 1) {
                 Text("Default effort", style = MaterialTheme.typography.bodyMedium)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     configuredModel.efforts.forEach { effort -> EditorChoice(DeepSeekEffort.valueOf(effort).label, effort == validEffort, Modifier.testTag("default-effort-$effort")) { defaultEffort = effort } }
@@ -370,19 +407,27 @@ internal fun ConnectionEditor(existing: AssistantConnection?, busy: Boolean, new
     }
     if (choosingModel) {
         val models = available.filter { it.id.contains(search, true) || it.name.contains(search, true) }
-        AssistantPanel("Choose model", onDismiss = { choosingModel = false }, scrollBody = false) {
+        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+        AssistantPanel("Choose model", onDismiss = { choosingModel = false }, subtitle = name, scrollBody = false, bodyState = listState) {
             Column(Modifier.heightIn(max = 520.dp)) {
                 OutlinedTextField(search, { search = it }, label = { Text("Search models") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), modifier = Modifier.fillMaxWidth())
-                LazyColumn {
+                LazyColumn(state = listState, modifier = Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     items(models.size, key = { models[it].id }) { index ->
                         val value = models[index]
-                        TextButton(onClick = {
-                            choose(value)
-                            choosingModel = false
-                        }, modifier = Modifier.fillMaxWidth()) {
-                            Column(Modifier.fillMaxWidth()) {
-                                Text(value.name)
-                                Text(if (value.vision) "Text and images" else "Text only", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Surface(
+                            Modifier.fillMaxWidth().selectable(value.id == model.id, role = Role.RadioButton) {
+                                choose(value)
+                                choosingModel = false
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (value.id == model.id) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+                        ) {
+                            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(value.name, style = MaterialTheme.typography.bodyLarge)
+                                    Text(if (value.vision) "Text and images" else "Text only", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                if (value.id == model.id) Icon(Icons.Outlined.Check, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                             }
                         }
                     }
@@ -410,10 +455,13 @@ private fun protocolLabel(protocol: AssistantProtocol) = when (protocol) {
     AssistantProtocol.GOOGLE_GENERATIVE_AI -> "Gemini Generate Content"
 }
 
-@Composable private fun EditorCategory(title: String, content: @Composable () -> Unit) {
+@Composable private fun EditorCategory(title: String, action: (@Composable () -> Unit)? = null, content: @Composable () -> Unit) {
     Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainer) {
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                action?.invoke()
+            }
             content()
         }
     }
