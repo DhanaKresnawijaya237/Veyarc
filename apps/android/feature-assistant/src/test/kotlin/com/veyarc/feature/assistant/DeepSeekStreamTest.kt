@@ -89,6 +89,19 @@ class DeepSeekStreamTest {
     private fun valid() = event(chunk(content.toString(Charsets.UTF_8), role = "assistant")) + event(chunk(stop = "stop")) + event("[DONE]")
 
     @Test
+    fun nullableReasoningAtTheAnswerTransitionDoesNotRejectDeepSeekOutput() {
+        listOf(DeepSeekEffort.OFF, DeepSeekEffort.HIGH, DeepSeekEffort.MAX).forEach { effort ->
+            val selected = DeepSeekRequest.create("r", "c", "draft:d", "hello", null, streaming = true, effort = effort)
+            val thought = if (effort == DeepSeekEffort.OFF) "" else event(chunk(role = "assistant", reasoning = "Checking the greeting.").replace("\"delta\":{", "\"delta\":{\"content\":null,"))
+            val answer = chunk(content.toString(Charsets.UTF_8), role = "assistant").replace("\"delta\":{", "\"delta\":{\"reasoning_content\":null,")
+            val terminal = chunk(stop = "stop").replace("\"delta\":{}", "\"delta\":{\"content\":\"\",\"reasoning_content\":null}")
+            assertArrayEquals(content, DeepSeekStream.read((thought + event(answer) + event(terminal) + event("[DONE]")).byteInputStream(), selected, DeepSeekCancellation()))
+            assertEquals("Hello 界 🌍", selected.latestReply)
+            if (effort != DeepSeekEffort.OFF) assertEquals(AssistantThinking("Checking the greeting.", finished = true), selected.latestThinking)
+        }
+    }
+
+    @Test
     fun proStreamsAcceptOnlyTheRequestedModelIncludingTheTerminalChunk() {
         val pro = DeepSeekRequest.create("r", "c", "draft:d", "Explain", null, streaming = true, model = DeepSeekModel.PRO)
         val first = event(chunk(content.toString(Charsets.UTF_8), role = "assistant", model = DeepSeekModel.PRO.apiId))

@@ -320,7 +320,7 @@ class AssistantClient internal constructor(
         }
         internal fun reasoningText(fields: JsonObject, request: AssistantRequest): String {
             val direct = (if (request.strictDeepSeek) listOf("reasoning_content") else listOf("reasoning_content", "reasoning", "reasoning_text")).firstNotNullOfOrNull { key ->
-                (fields[key] as? JsonPrimitive)?.also { require(it.isString) }?.content?.takeIf { it.isNotEmpty() }
+                (fields[key] as? JsonPrimitive)?.takeUnless { it == JsonNull }?.also { require(it.isString) }?.content?.takeIf { it.isNotEmpty() }
             }.orEmpty()
             val chunks = if (request.strictDeepSeek) {
                 ""

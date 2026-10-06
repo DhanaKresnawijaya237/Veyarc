@@ -63,6 +63,7 @@ class DeepSeekClientTest {
         val thinkingEnvelope = envelope().toString(Charsets.UTF_8).replace("\"role\":\"assistant\"", "\"role\":\"assistant\",\"reasoning_content\":\"Untrusted thought, not workflow JSON\"")
         DeepSeekEffort.entries.filter { it.name in com.veyarc.data.storage.AssistantConnection.deepSeek().defaultModel.efforts }.forEach { effort ->
             val selected = DeepSeekRequest.create("request", "chat", "draft:draft", "Explain", null, effort = effort)
+            assertArrayEquals(content, DeepSeekClient.decode(envelope().toString(Charsets.UTF_8).replace("\"role\":\"assistant\"", "\"role\":\"assistant\",\"reasoning_content\":null").toByteArray(), selected))
             val body = Json.parseToJsonElement(selected.body.toString(Charsets.UTF_8)).jsonObject
             assertEquals(effort != DeepSeekEffort.OFF, selected.thinkingEnabled)
             assertEquals(JsonPrimitive(if (effort == DeepSeekEffort.OFF) "disabled" else "enabled"), body.getValue("thinking").jsonObject.getValue("type"))
