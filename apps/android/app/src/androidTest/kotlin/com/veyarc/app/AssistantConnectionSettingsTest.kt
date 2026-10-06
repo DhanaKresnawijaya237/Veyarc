@@ -27,6 +27,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.lifecycle.Lifecycle
@@ -55,8 +56,7 @@ class AssistantConnectionSettingsTest {
         compose.onNodeWithTag("connection-provider").performClick()
         compose.onNodeWithText("Search providers").performTextInput("DeepSeek")
         closeKeyboard()
-        awaitText("DeepSeek")
-        compose.onNode(hasText("DeepSeek") and !hasSetTextAction()).performClick()
+        chooseProvider("deepseek")
         compose.onNodeWithTag("connection-model").assertTextEquals("Model ID", "deepseek-flash")
         compose.onNodeWithText("Advanced").performScrollTo().performClick()
         compose.onNodeWithText("DeepSeek Chat Completions").performScrollTo().assertExists()
@@ -74,23 +74,65 @@ class AssistantConnectionSettingsTest {
         var saved: com.veyarc.data.storage.AssistantConnection? = null
         compose.setContent { VeyarcTheme { ConnectionEditor(null, false, onManageModels = {}, onDismiss = {}, onSave = { saved = it }) } }
         compose.onNodeWithTag("connection-provider").performClick()
-        awaitText("Anthropic")
         compose.onNodeWithText("Search providers").performTextInput("Anthropic")
         closeKeyboard()
-        compose.onNode(hasText("Anthropic") and !hasSetTextAction()).performClick()
+        chooseProvider("anthropic")
         compose.onNodeWithTag("draft-find-models").assertDoesNotExist()
         compose.onNodeWithText("Advanced").performScrollTo().performClick()
-        compose.onNodeWithText("Protocol").performScrollTo().assertExists()
+        compose.onNodeWithText("Protocol").assertDoesNotExist()
         compose.onNodeWithText("Model capabilities").performScrollTo().assertExists()
-        compose.onNodeWithTag("capability-Images").performScrollTo().assert(androidx.compose.ui.test.isOn())
-        compose.onNodeWithText("Thinking and effort").performScrollTo().assertExists()
-        compose.onNodeWithText("Request compatibility").performScrollTo().assertExists()
+        compose.onNodeWithText("Text and images").performScrollTo().assertExists()
+        compose.onNodeWithTag("capability-Images").assertDoesNotExist()
+        compose.onNodeWithTag("default-effort-MINIMAL").assertDoesNotExist()
+        compose.onNodeWithTag("default-effort-XHIGH").assertDoesNotExist()
+        compose.onNodeWithText("Thinking and effort").assertDoesNotExist()
+        compose.onNodeWithText("Request compatibility").assertDoesNotExist()
+        capture("listed-model-advanced")
         compose.onNodeWithTag("connection-save").performScrollTo().performClick()
         compose.runOnIdle {
             val profile = requireNotNull(saved)
             org.junit.Assert.assertEquals("anthropic", profile.providerId)
             org.junit.Assert.assertEquals(com.veyarc.data.storage.AssistantProtocol.ANTHROPIC_MESSAGES, profile.protocolFor(profile.defaultModel))
             assertTrue(profile.defaultModel.vision)
+        }
+    }
+
+    @Test fun listedModelsOnlyOfferTheirEffortsAndCustomModelsRetainFullControls() {
+        var saved: com.veyarc.data.storage.AssistantConnection? = null
+        compose.setContent { VeyarcTheme { ConnectionEditor(null, false, onManageModels = {}, onDismiss = {}, onSave = { saved = it }) } }
+        compose.onNodeWithTag("connection-provider").performClick()
+        capture("provider-picker")
+        compose.onNodeWithText("Search providers").performTextInput("Google")
+        closeKeyboard()
+        compose.onNodeWithTag("provider-logo-google", useUnmergedTree = true).assertExists()
+        chooseProvider("google")
+        compose.onNodeWithTag("default-effort-HIGH").performScrollTo().performClick()
+        compose.onNodeWithTag("default-effort-OFF").assertDoesNotExist()
+        compose.onNodeWithTag("default-effort-MAX").assertDoesNotExist()
+        compose.onNodeWithText("Advanced").performScrollTo().performClick()
+        compose.onNodeWithText("Request compatibility").assertDoesNotExist()
+        compose.onNodeWithText("Maximum output tokens (optional)").performScrollTo().performTextReplacement("999999")
+        closeKeyboard()
+        compose.onNodeWithTag("connection-save").assertIsNotEnabled()
+        compose.onNodeWithText("Maximum output tokens (optional)").performScrollTo().performTextReplacement("4096")
+        closeKeyboard()
+        compose.onNodeWithTag("connection-save").performScrollTo().performClick()
+        compose.runOnIdle {
+            org.junit.Assert.assertEquals(listOf("MINIMAL", "LOW", "MEDIUM", "HIGH"), saved!!.defaultModel.efforts)
+            org.junit.Assert.assertEquals("HIGH", saved!!.defaultEffort)
+            org.junit.Assert.assertEquals(4096, saved!!.defaultModel.maxOutputTokens)
+        }
+        compose.onNodeWithTag("connection-model").performScrollTo().performTextReplacement("my-custom-model")
+        closeKeyboard()
+        compose.onNodeWithTag("capability-Max").performScrollTo().performClick()
+        compose.onNodeWithTag("capability-Images").performScrollTo().performClick()
+        compose.onNodeWithText("Request compatibility").performScrollTo().assertExists()
+        compose.onNodeWithText("Protocol").performScrollTo().assertExists()
+        capture("custom-model-advanced")
+        compose.onNodeWithTag("connection-save").performScrollTo().performClick()
+        compose.runOnIdle {
+            org.junit.Assert.assertEquals(listOf("OFF", "MAX"), saved!!.defaultModel.efforts)
+            assertTrue(saved!!.defaultModel.vision)
         }
     }
 
@@ -103,7 +145,7 @@ class AssistantConnectionSettingsTest {
             compose.setContent { VeyarcTheme { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(AssistantKeyStore(context), assistant) } } }
             compose.onNodeWithTag("assistant-add-connection").performScrollTo().performClick()
             compose.onNodeWithTag("connection-provider").performClick()
-            compose.onNodeWithText("OpenAI").performClick()
+            chooseProvider("openai")
             compose.onNodeWithTag("connection-model").assertTextEquals("Model ID", "gpt-5.4")
             compose.onNodeWithText("Model").assertExists()
             compose.onNodeWithTag("connection-save").performScrollTo().performClick()
@@ -246,6 +288,10 @@ class AssistantConnectionSettingsTest {
             compose.runOnUiThread { assistant.open(com.veyarc.feature.assistant.AssistantPreviewContext()) }
             compose.setContent { VeyarcTheme { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(store, assistant) } } }
             awaitText("Default model")
+            val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+            compose.onNodeWithText("Default model").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            compose.onNodeWithText("Default effort").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            org.junit.Assert.assertEquals(layouts[0].layoutInput.style.fontSize, layouts[1].layoutInput.style.fontSize)
             compose.onNodeWithText("Default model").assert(SemanticsMatcher.keyNotDefined(androidx.compose.ui.semantics.SemanticsActions.OnClick))
             openModels("DeepSeek")
             compose.onNodeWithText("DeepSeek V4 Pro").performClick()
@@ -406,6 +452,11 @@ class AssistantConnectionSettingsTest {
             store.remove()
             directory.deleteRecursively()
         }
+    }
+
+    private fun chooseProvider(id: String) {
+        compose.waitUntil(10_000) { runCatching { compose.onNodeWithTag("provider-choice-$id").assertExists() }.isSuccess }
+        compose.onNodeWithTag("provider-choice-$id").performScrollTo().performClick()
     }
 
     private fun openModels(provider: String) {
