@@ -138,71 +138,75 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         profiles.connections.forEach { profile ->
             val expanded = profile.id !in collapsed
-            Row(
-                Modifier.fillMaxWidth().semantics {
-                    stateDescription = if (expanded) "Expanded" else "Collapsed"
-                    contentDescription = "${if (expanded) "Collapse" else "Expand"} ${profile.name}"
-                }.clickable(role = Role.Button) { collapsed = if (expanded) collapsed + profile.id else collapsed - profile.id }
-                    .padding(vertical = 8.dp).testTag(if (profile.id == AssistantConnection.DEEPSEEK_ID) "deepseek-provider-section" else "provider-${profile.id}"),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                ProviderLogo(profile.catalogProviderId, Modifier.size(48.dp))
-                Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                    Text(profile.name, style = MaterialTheme.typography.titleMedium)
-                    if (profiles.defaultConnectionId == profile.id) Text("Default", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                }
-                if (assistant != null) {
-                    IconButton(onClick = { save(profiles.copy(defaultConnectionId = profile.id)) }, enabled = !busy && assistant.connectionsReady) {
-                        Icon(Icons.Outlined.Star, if (profiles.defaultConnectionId == profile.id) "Default for new chats" else "Use ${profile.name} for new chats", tint = if (profiles.defaultConnectionId == profile.id) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    IconButton(onClick = { editProfile = profile }, enabled = !busy && assistant.connectionsReady) { Icon(Icons.Outlined.Edit, "Edit ${profile.name}") }
-                    IconButton(onClick = { removingProfile = profile }, enabled = !busy && profiles.connections.size > 1 && assistant.connectionsReady) { Icon(Icons.Outlined.DeleteOutline, "Remove ${profile.name} connection") }
-                }
-            }
-            AnimatedVisibility(expanded, enter = expandVertically(tween(140)) + fadeIn(tween(100)), exit = shrinkVertically(tween(120)) + fadeOut(tween(80))) {
-                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    HorizontalDivider()
-                    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Default model", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                        Text(profile.defaultModel.name, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    if (profile.defaultModel.efforts.size > 1) {
-                        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("Default effort", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                            Text(DeepSeekEffort.entries.firstOrNull { it.name == profile.defaultEffort }?.label ?: "Off", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Surface(Modifier.fillMaxWidth().padding(bottom = 12.dp).testTag("connection-group-${profile.id}"), shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surfaceContainerLowest) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth().semantics {
+                            stateDescription = if (expanded) "Expanded" else "Collapsed"
+                            contentDescription = "${if (expanded) "Collapse" else "Expand"} ${profile.name}"
+                        }.clickable(role = Role.Button) { collapsed = if (expanded) collapsed + profile.id else collapsed - profile.id }
+                            .padding(vertical = 8.dp).testTag(if (profile.id == AssistantConnection.DEEPSEEK_ID) "deepseek-provider-section" else "provider-${profile.id}"),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        ProviderLogo(profile.catalogProviderId, Modifier.size(48.dp))
+                        Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                            Text(profile.name, style = MaterialTheme.typography.titleMedium)
+                            if (profiles.defaultConnectionId == profile.id) Text("Default", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        }
+                        if (assistant != null) {
+                            IconButton(onClick = { save(profiles.copy(defaultConnectionId = profile.id)) }, enabled = !busy && assistant.connectionsReady) {
+                                Icon(Icons.Outlined.Star, if (profiles.defaultConnectionId == profile.id) "Default for new chats" else "Use ${profile.name} for new chats", tint = if (profiles.defaultConnectionId == profile.id) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            IconButton(onClick = { editProfile = profile }, enabled = !busy && assistant.connectionsReady) { Icon(Icons.Outlined.Edit, "Edit ${profile.name}", tint = MaterialTheme.colorScheme.onSurface.copy(alpha = if (assistant.connectionsReady) 1f else 0.38f)) }
+                            IconButton(onClick = { removingProfile = profile }, enabled = !busy && profiles.connections.size > 1 && assistant.connectionsReady) { Icon(Icons.Outlined.DeleteOutline, "Remove ${profile.name} connection", tint = MaterialTheme.colorScheme.onSurface.copy(alpha = if (profiles.connections.size > 1 && assistant.connectionsReady) 1f else 0.38f)) }
                         }
                     }
-                    if (assistant != null) {
-                        Surface(
-                            Modifier.fillMaxWidth().clickable(enabled = !busy && assistant.connectionsReady) {
-                                assistant.stopModelDiscovery()
-                                modelProfile = profile
-                            }.testTag("manage-models-${profile.id}"),
-                            shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainer,
-                        ) {
-                            Row(Modifier.padding(horizontal = 14.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Column(Modifier.weight(1f)) {
-                                    Text("Models", style = MaterialTheme.typography.bodyMedium)
-                                    Text("${profile.models.size} added", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    AnimatedVisibility(expanded, enter = expandVertically(tween(140)) + fadeIn(tween(100)), exit = shrinkVertically(tween(120)) + fadeOut(tween(80))) {
+                        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            HorizontalDivider()
+                            if (assistant != null) {
+                                Surface(
+                                    Modifier.fillMaxWidth().clickable(enabled = !busy && assistant.connectionsReady) {
+                                        assistant.stopModelDiscovery()
+                                        modelProfile = profile
+                                    }.testTag("manage-models-${profile.id}"),
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = MaterialTheme.colorScheme.surfaceContainer,
+                                ) {
+                                    Row(Modifier.padding(horizontal = 14.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text("Models", style = MaterialTheme.typography.bodyMedium)
+                                            Text("${profile.models.size} added", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        Icon(Icons.Outlined.Tune, "Manage ${profile.name} models", tint = MaterialTheme.colorScheme.primary)
+                                    }
                                 }
-                                Icon(Icons.Outlined.Tune, "Manage ${profile.name} models", tint = MaterialTheme.colorScheme.primary)
+                            }
+                            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("Default model", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                                Text(profile.defaultModel.name, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (profile.defaultModel.efforts.size > 1) {
+                                Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Default effort", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                                    Text(DeepSeekEffort.entries.firstOrNull { it.name == profile.defaultEffort }?.label ?: "Off", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Outlined.Key, null)
+                                Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                                    Text("API key", style = MaterialTheme.typography.bodyMedium)
+                                    Text(if (hasKeys[profile.id] == true) "Key saved" else "No API key", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                IconButton(onClick = { keyProfile = profile }, enabled = !busy) { Icon(if (hasKeys[profile.id] == true) Icons.Outlined.Edit else Icons.Outlined.Add, if (hasKeys[profile.id] == true) "Replace API key" else "Add API key", tint = MaterialTheme.colorScheme.onSurface) }
+                                IconButton(onClick = { removingKey = profile }, enabled = !busy) { Icon(Icons.Outlined.DeleteOutline, "Remove API key", tint = MaterialTheme.colorScheme.onSurface) }
                             }
                         }
                     }
-                    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Key, null)
-                        Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                            Text("API key", style = MaterialTheme.typography.bodyMedium)
-                            Text(if (hasKeys[profile.id] == true) "Key saved" else "No API key", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        IconButton(onClick = { keyProfile = profile }, enabled = !busy) { Icon(if (hasKeys[profile.id] == true) Icons.Outlined.Edit else Icons.Outlined.Add, if (hasKeys[profile.id] == true) "Replace API key" else "Add API key") }
-                        IconButton(onClick = { removingKey = profile }, enabled = !busy) { Icon(Icons.Outlined.DeleteOutline, "Remove API key") }
+                    assistant?.connectionTestResults?.get(profile.id)?.let { result ->
+                        Text(result, style = MaterialTheme.typography.bodySmall, color = if (result.startsWith("Not connected")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-            }
-            assistant?.connectionTestResults?.get(profile.id)?.let { result ->
-                Text(result, style = MaterialTheme.typography.bodySmall, color = if (result.startsWith("Not connected")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         if (assistant != null) {

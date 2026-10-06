@@ -9,16 +9,20 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -93,25 +97,47 @@ class AssistantConnectionSettingsTest {
         val extras = com.veyarc.data.storage.AssistantProviderCatalog.providers.first { it.id == "openai" }.models.filter { it.id != profile.defaultModelId }.take(2)
         val owner = kotlinx.coroutines.SupervisorJob()
         var failSave = true
+        var pendingSave: kotlinx.coroutines.CompletableDeferred<Unit>? = null
         var persisted: com.veyarc.data.storage.AssistantConnections? = null
         val assistant = com.veyarc.feature.assistant.AssistantPreviewState(scope = kotlinx.coroutines.CoroutineScope(owner + kotlinx.coroutines.Dispatchers.Main), providerCall = { error("No requests expected") }, onConnectionsChanged = {
+            pendingSave?.await()
             if (failSave) error("Storage unavailable")
             persisted = it
         })
         try {
             compose.runOnUiThread {
-                assistant.restoreConnections(com.veyarc.data.storage.AssistantConnections(listOf(profile), profile.id))
+                assistant.restoreConnections(com.veyarc.data.storage.AssistantConnections(listOf(profile, com.veyarc.data.storage.AssistantConnection.deepSeek()), profile.id))
                 assistant.open(com.veyarc.feature.assistant.AssistantPreviewContext())
             }
             compose.setContent { VeyarcTheme(darkTheme = true) { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(AssistantKeyStore(context), assistant) } } }
+            val modelsBounds = compose.onNodeWithTag("manage-models-${profile.id}").fetchSemanticsNode().boundsInRoot
+            val defaultBounds = compose.onNode(hasText("Default model") and hasAnyAncestor(hasTestTag("connection-group-${profile.id}"))).fetchSemanticsNode().boundsInRoot
+            assertTrue(modelsBounds.top < defaultBounds.top)
+            val firstProvider = compose.onNodeWithTag("connection-group-${profile.id}").fetchSemanticsNode().boundsInRoot
+            val nextProvider = compose.onNodeWithTag("connection-group-deepseek").fetchSemanticsNode().boundsInRoot
+            assertTrue(firstProvider.bottom < nextProvider.top)
+            capture("provider-groups")
             openModels("OpenAI")
             compose.onNodeWithText("Add models").performClick()
+            val customBounds = compose.onNodeWithText("Custom model").fetchSemanticsNode().boundsInRoot
+            val listBounds = compose.onNodeWithTag("connection-model-list").fetchSemanticsNode().boundsInRoot
+            org.junit.Assert.assertEquals(listBounds.center.x, customBounds.center.x, 1f)
             extras.forEach { model ->
                 compose.waitUntil(10_000) { runCatching { compose.onNodeWithTag("connection-model-list").performScrollToNode(hasTestTag("managed-model-${model.id}")) }.isSuccess }
                 compose.onNodeWithTag("managed-model-${model.id}").performClick().assertIsOn()
             }
             capture("add-models")
+            val addLayouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+            compose.onNodeWithText("Add 2 models").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(addLayouts) }
+            compose.runOnIdle { pendingSave = kotlinx.coroutines.CompletableDeferred() }
             compose.onNodeWithTag("add-selected-models").performClick()
+            compose.onNodeWithTag("add-selected-models").assertIsNotEnabled()
+            compose.onNodeWithText("Add 2 models").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(addLayouts) }
+            org.junit.Assert.assertEquals(addLayouts.first().layoutInput.style.color, addLayouts.last().layoutInput.style.color)
+            compose.runOnIdle {
+                pendingSave!!.complete(Unit)
+                pendingSave = null
+            }
             compose.waitUntil(10_000) { assistant.connectionError != null }
             compose.onNodeWithTag("add-selected-models").assertTextEquals("Add 2 models")
             compose.runOnIdle {
@@ -120,8 +146,19 @@ class AssistantConnectionSettingsTest {
             }
             compose.onNodeWithTag("add-selected-models").performClick()
             compose.waitUntil(10_000) { assistant.defaultConnection.models.size == 3 }
-            compose.onNodeWithTag("managed-model-${profile.defaultModelId}").performScrollTo().assertIsSelected()
+            compose.onNodeWithTag("managed-model-${profile.defaultModelId}").assertIsDisplayed().assertIsSelected()
+            compose.onNodeWithContentDescription("Use ${extras.first().name} as default").assertDoesNotExist()
+            compose.onNodeWithContentDescription("Remove model ${extras.last().name}").performScrollTo()
+            val iconBeforeSave = compose.onNodeWithContentDescription("Remove model ${extras.last().name}").captureToImage().toPixelMap()
+            compose.runOnIdle { pendingSave = kotlinx.coroutines.CompletableDeferred() }
             compose.onNodeWithTag("managed-model-${extras.first().id}").performScrollTo().assertIsNotSelected().performClick()
+            compose.onNodeWithContentDescription("Remove model ${extras.last().name}").performScrollTo().assertIsNotEnabled()
+            val iconDuringSave = compose.onNodeWithContentDescription("Remove model ${extras.last().name}").captureToImage().toPixelMap()
+            for (y in 0 until iconBeforeSave.height) for (x in 0 until iconBeforeSave.width) org.junit.Assert.assertEquals(iconBeforeSave[x, y], iconDuringSave[x, y])
+            compose.runOnIdle {
+                pendingSave!!.complete(Unit)
+                pendingSave = null
+            }
             compose.waitUntil(10_000) { assistant.defaultConnection.defaultModelId == extras.first().id }
             compose.onNodeWithTag("managed-model-${profile.defaultModelId}").performScrollTo().assertIsNotSelected()
             compose.onNodeWithContentDescription("Remove model ${extras.first().name}").performScrollTo().assertIsNotEnabled()
@@ -134,7 +171,10 @@ class AssistantConnectionSettingsTest {
             }
             capture("saved-models")
         } finally {
-            compose.runOnUiThread { assistant.dispose() }
+            compose.runOnUiThread {
+                pendingSave?.complete(Unit)
+                assistant.dispose()
+            }
             owner.cancel()
         }
     }
@@ -254,6 +294,9 @@ class AssistantConnectionSettingsTest {
             awaitText("Key saved")
             openModels("Server")
             compose.onNodeWithText("Add models").performClick()
+            val customBounds = compose.onNodeWithText("Custom model").fetchSemanticsNode().boundsInRoot
+            val listBounds = compose.onNodeWithTag("connection-model-list").fetchSemanticsNode().boundsInRoot
+            org.junit.Assert.assertEquals(listBounds.center.x, customBounds.center.x, 1f)
             compose.onNodeWithText("Find models").performClick()
             awaitText("model-b")
             compose.onNodeWithTag("managed-model-model-b").performClick()
@@ -266,7 +309,7 @@ class AssistantConnectionSettingsTest {
                 assertFalse(assistant.defaultConnection.defaultModel.vision)
                 assertFalse(assistant.providerEnabled)
             }
-            compose.onNodeWithContentDescription("Use model-b as default").performClick()
+            compose.onNodeWithTag("managed-model-model-b").performClick()
             compose.onNodeWithTag("managed-model-search").assertIsNotSelected()
             compose.onNodeWithTag("managed-model-model-b").assertIsSelected()
             compose.onNodeWithContentDescription("Remove model model-b").assertIsNotEnabled()
@@ -278,7 +321,7 @@ class AssistantConnectionSettingsTest {
             compose.onNodeWithTag("capability-Medium").performScrollTo().performClick()
             compose.onNodeWithTag("connection-save").performScrollTo().performClick()
             compose.runOnIdle { org.junit.Assert.assertEquals("model-b", assistant.defaultConnection.defaultModelId) }
-            compose.onNodeWithContentDescription("Use manual-model as default").performClick()
+            compose.onNodeWithTag("managed-model-manual-model").performClick()
             compose.onNodeWithContentDescription("Close Models").performClick()
             awaitText("Default effort")
             compose.onNodeWithContentDescription("Edit Server").performScrollTo().performClick()
@@ -373,7 +416,7 @@ class AssistantConnectionSettingsTest {
             org.junit.Assert.assertEquals(layouts[0].layoutInput.style.fontSize, layouts[1].layoutInput.style.fontSize)
             compose.onNodeWithText("Default model").assert(SemanticsMatcher.keyNotDefined(androidx.compose.ui.semantics.SemanticsActions.OnClick))
             openModels("DeepSeek")
-            compose.onNodeWithContentDescription("Use V4 Pro as default").performClick()
+            compose.onNodeWithTag("managed-model-deepseek-v4-pro").performClick()
             compose.onNodeWithContentDescription("Close Models").performClick()
             compose.onNodeWithContentDescription("Edit DeepSeek").performScrollTo().performClick()
             compose.onNodeWithText("High").performScrollTo().performClick()

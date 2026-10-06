@@ -18,8 +18,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -63,8 +63,9 @@ internal fun ConnectionModels(profile: AssistantConnection, busy: Boolean, disco
     }
     val available = (profile.models + catalog.orEmpty() + discovered).distinctBy { it.id }
     val models = (if (adding) available else profile.models).filter { it.name.contains(search, true) || it.id.contains(search, true) }
-    val list = rememberLazyListState()
-    LaunchedEffect(adding) { list.scrollToItem(0) }
+    val savedList = rememberLazyListState()
+    val addList = rememberLazyListState()
+    val list = if (adding) addList else savedList
     AssistantPanel(
         if (adding) "Add models" else "Models",
         onDismiss,
@@ -91,7 +92,7 @@ internal fun ConnectionModels(profile: AssistantConnection, busy: Boolean, disco
                     FilledTonalButton(onClick = {
                         adding = true
                         search = ""
-                    }, enabled = !busy) {
+                    }, enabled = !busy, colors = ButtonDefaults.filledTonalButtonColors(disabledContainerColor = MaterialTheme.colorScheme.secondaryContainer, disabledContentColor = MaterialTheme.colorScheme.onSecondaryContainer)) {
                         Icon(Icons.Outlined.Add, null, Modifier.size(18.dp))
                         Text("Add models", Modifier.padding(start = 6.dp))
                     }
@@ -100,9 +101,9 @@ internal fun ConnectionModels(profile: AssistantConnection, busy: Boolean, disco
             LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false).testTag("connection-model-list"), state = list, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (adding) {
                     item(key = "controls-actions") {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            if (profile.catalogProviderId == null && onFind != null) TextButton(onClick = onFind, enabled = !busy && !discovering) { Text("Find models") }
-                            TextButton(onClick = onCustom, enabled = !busy && !discovering) { Text("Custom model") }
+                        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                            if (profile.catalogProviderId == null && onFind != null) TextButton(onClick = onFind, enabled = !busy && !discovering, colors = ButtonDefaults.textButtonColors(disabledContentColor = MaterialTheme.colorScheme.primary)) { Text("Find models") }
+                            TextButton(onClick = onCustom, enabled = !busy && !discovering, colors = ButtonDefaults.textButtonColors(disabledContentColor = MaterialTheme.colorScheme.primary)) { Text("Custom model") }
                         }
                     }
                 }
@@ -129,7 +130,7 @@ internal fun ConnectionModels(profile: AssistantConnection, busy: Boolean, disco
                         if (adding) {
                             Modifier.toggleable(selected, enabled = enabled, role = Role.Checkbox) { picked = if (it) picked + model.id else picked - model.id }
                         } else {
-                            Modifier.selectable(selected, enabled = enabled, role = Role.RadioButton) { onUpdate(profile.copy(defaultModelId = model.id, defaultEffort = profile.defaultEffort.takeIf { it in model.efforts } ?: model.efforts.first()), {}) }
+                            Modifier.selectable(selected, enabled = enabled, role = Role.RadioButton) { if (!selected) onUpdate(profile.copy(defaultModelId = model.id, defaultEffort = profile.defaultEffort.takeIf { it in model.efforts } ?: model.efforts.first()), {}) }
                         },
                     )
                     Surface(modifier, shape = RoundedCornerShape(16.dp), color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainer) {
@@ -146,8 +147,7 @@ internal fun ConnectionModels(profile: AssistantConnection, busy: Boolean, disco
                                 }
                             } else {
                                 if (selected) Text("Default", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                                IconButton(onClick = { onUpdate(profile.copy(defaultModelId = model.id, defaultEffort = profile.defaultEffort.takeIf { it in model.efforts } ?: model.efforts.first()), {}) }, enabled = enabled) { Icon(Icons.Outlined.Star, "Use ${model.name} as default", tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
-                                IconButton(onClick = { onUpdate(profile.copy(models = profile.models.filterNot { it.id == model.id }), {}) }, enabled = enabled && !selected) { Icon(Icons.Outlined.DeleteOutline, "Remove model ${model.name}") }
+                                IconButton(onClick = { onUpdate(profile.copy(models = profile.models.filterNot { it.id == model.id }), {}) }, enabled = enabled && !selected) { Icon(Icons.Outlined.DeleteOutline, "Remove model ${model.name}", tint = MaterialTheme.colorScheme.onSurface.copy(alpha = if (selected) 0.38f else 1f)) }
                             }
                         }
                     }
@@ -161,7 +161,7 @@ internal fun ConnectionModels(profile: AssistantConnection, busy: Boolean, disco
                         search = ""
                         adding = false
                     }
-                }, enabled = !busy && !discovering && picked.isNotEmpty(), modifier = Modifier.fillMaxWidth().testTag("add-selected-models")) { Text(if (picked.isEmpty()) "Select models" else "Add ${picked.size} ${if (picked.size == 1) "model" else "models"}") }
+                }, enabled = !busy && !discovering && picked.isNotEmpty(), colors = if (picked.isNotEmpty()) ButtonDefaults.buttonColors(disabledContainerColor = MaterialTheme.colorScheme.primary, disabledContentColor = MaterialTheme.colorScheme.onPrimary) else ButtonDefaults.buttonColors(), modifier = Modifier.fillMaxWidth().testTag("add-selected-models")) { Text(if (picked.isEmpty()) "Select models" else "Add ${picked.size} ${if (picked.size == 1) "model" else "models"}") }
             }
         }
     }
