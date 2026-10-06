@@ -153,7 +153,7 @@
       "properties": {
         "assetId": { "$ref": "#/$defs/assetId" },
         "kind": { "const": "imageTemplate" },
-        "displayName": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 }
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 64 }
       }
     },
     "scalarValue": {
@@ -239,7 +239,11 @@
             "type": { "const": "imagePresent" },
             "assetId": { "$ref": "#/$defs/assetId" },
             "region": { "$ref": "#/$defs/rect" },
-            "matchThreshold": { "type": "number", "minimum": 0, "maximum": 1 }
+            "matchThreshold": { "type": "number", "minimum": 0, "maximum": 1 },
+            "matchMode": {
+              "enum": ["appearsWithinRegion", "screenState"],
+              "default": "appearsWithinRegion"
+            }
           }
         },
         {
