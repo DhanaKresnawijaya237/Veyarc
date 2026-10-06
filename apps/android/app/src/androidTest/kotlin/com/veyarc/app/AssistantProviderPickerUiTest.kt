@@ -7,6 +7,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.platform.app.InstrumentationRegistry
 import com.veyarc.app.ui.theme.VeyarcTheme
 import com.veyarc.data.storage.AssistantConnection
@@ -88,7 +89,12 @@ class AssistantProviderPickerUiTest {
             compose.onNodeWithContentDescription("Close Add to chat").performClick()
             compose.onNodeWithTag("assistant-model-picker").performClick()
             compose.onNodeWithText("Effort").assertDoesNotExist()
-            compose.onNodeWithText("DeepSeek V4.1 Flash").performClick()
+            compose.onNodeWithTag("chat-model-provider-${profile.id}").assertExists()
+            compose.onNodeWithTag("chat-model-provider-deepseek").performScrollTo().assertExists()
+            InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot().let { screenshot ->
+                java.io.File(context.cacheDir, "provider-grouped-models.png").outputStream().use { screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            }
+            compose.onNodeWithText("V4.1 Flash").performScrollTo().performClick()
             compose.onNodeWithText("DeepSeek V4.1 Flash").assertExists()
             compose.onNodeWithTag("assistant-model-picker").performClick()
             compose.onNodeWithText("Effort").assertExists()

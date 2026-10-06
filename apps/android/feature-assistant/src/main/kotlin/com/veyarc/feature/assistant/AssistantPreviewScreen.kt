@@ -1049,12 +1049,13 @@ private fun DiffValue(label: String, value: String, added: Boolean, compact: Boo
 @Composable
 private fun ComposerOptions(sheet: String, state: AssistantPreviewState, onSelect: (String) -> Unit, onDismiss: () -> Unit, onAttachment: (String) -> Unit) {
     var modelSearch by remember { mutableStateOf("") }
+    val modelList = rememberLazyListState()
     val title = when (sheet) {
         "attachments" -> "Add to chat"
         "effort" -> "Effort"
         else -> "Select model"
     }
-    AssistantPanel(title, onDismiss, onBack = if (sheet == "effort") ({ onSelect("model") }) else null) {
+    AssistantPanel(title, onDismiss, onBack = if (sheet == "effort") ({ onSelect("model") }) else null, scrollBody = sheet != "model", bodyState = if (sheet == "model") modelList else null) {
         when (sheet) {
             "attachments" -> {
                 BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -1090,21 +1091,27 @@ private fun ComposerOptions(sheet: String, state: AssistantPreviewState, onSelec
             }
 
             else -> {
-                if (state.usesProvider) {
-                    val models = state.connections.connections.flatMap { profile -> profile.models.map { profile to it } }
-                    if (models.size > 12) OutlinedTextField(modelSearch, { modelSearch = it }, singleLine = true, label = { Text("Search models") }, modifier = Modifier.fillMaxWidth())
-                    val shown = models.filter { (profile, model) -> "${profile.name} ${model.name} ${model.id}".contains(modelSearch, true) }
-                    shown.take(60).forEach { (profile, model) ->
-                        PanelOption("${profile.name} ${model.name}", selected = state.selectedConnection?.id == profile.id && state.activeModel?.id == model.id, enabled = state.canChange && !state.isResponding && state.connectionsReady, disabledLabel = null, onClick = {
-                            state.selectConnectionModel(profile.id, model.id)
-                            onDismiss()
-                        })
+                Column(Modifier.fillMaxWidth().heightIn(max = 520.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (state.usesProvider && state.connections.connections.sumOf { it.models.size } > 12) OutlinedTextField(modelSearch, { modelSearch = it }, singleLine = true, label = { Text("Search models") }, modifier = Modifier.fillMaxWidth())
+                    LazyColumn(state = modelList, modifier = Modifier.fillMaxWidth().weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (state.usesProvider) {
+                            val groups = state.connections.connections.map { profile -> profile to profile.models.filter { "${profile.name} ${it.name} ${it.id}".contains(modelSearch, true) } }.filter { it.second.isNotEmpty() }
+                            groups.forEach { (profile, models) ->
+                                item(key = "provider-${profile.id}") { Text(profile.name, Modifier.fillMaxWidth().padding(start = 6.dp, top = 12.dp, bottom = 4.dp).testTag("chat-model-provider-${profile.id}"), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface) }
+                                items(models, key = { "model-${profile.id}-${it.id}" }) { model ->
+                                    PanelOption(model.name, selected = state.selectedConnection?.id == profile.id && state.activeModel?.id == model.id, enabled = state.canChange && !state.isResponding && state.connectionsReady, disabledLabel = null, onClick = {
+                                        state.selectConnectionModel(profile.id, model.id)
+                                        onDismiss()
+                                    })
+                                }
+                            }
+                            if (groups.isEmpty()) item { Text("No models found", Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        } else {
+                            item { PanelOption("Sample chat", subtitle = "Offline preview", selected = true) }
+                        }
+                        if (state.availableEfforts.size > 1) item(key = "effort") { PanelOption("Effort", value = state.conversation?.effort?.label ?: "Off", opensPanel = true, onClick = { onSelect("effort") }) }
                     }
-                    if (shown.size > 60) Text("Search to see more models.", style = MaterialTheme.typography.bodySmall)
-                } else {
-                    PanelOption("Sample chat", subtitle = "Offline preview", selected = true)
                 }
-                if (state.availableEfforts.size > 1) PanelOption("Effort", value = state.conversation?.effort?.label ?: "Off", opensPanel = true, onClick = { onSelect("effort") })
             }
         }
     }

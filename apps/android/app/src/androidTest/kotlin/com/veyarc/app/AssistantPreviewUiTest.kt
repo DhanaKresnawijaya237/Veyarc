@@ -347,7 +347,7 @@ class AssistantPreviewUiTest {
             compose.onNodeWithText("Off").assertIsDisplayed()
             compose.onNodeWithText("DeepSeek V4.1 Flash").assertIsDisplayed()
             compose.onNodeWithTag("assistant-model-picker").performClick()
-            modelOption("DeepSeek V4 Pro").assertIsEnabled().performClick()
+            modelOption("V4 Pro").assertIsEnabled().performClick()
             compose.onNodeWithTag("assistant-model-picker").performClick()
             compose.onNodeWithContentDescription("Open Effort").assertExists()
             compose.onNodeWithText("Effort").performClick()
@@ -361,8 +361,8 @@ class AssistantPreviewUiTest {
             compose.onNodeWithContentDescription("Send message").performClick()
             compose.waitUntil(10_000) { calls == 1 }
             compose.onNodeWithTag("assistant-model-picker").performClick()
-            modelOption("DeepSeek V4.1 Flash").assertIsNotEnabled()
-            modelOption("DeepSeek V4 Pro").assertIsSelected().assertIsNotEnabled()
+            modelOption("V4.1 Flash").assertIsNotEnabled()
+            modelOption("V4 Pro").assertIsSelected().assertIsNotEnabled()
             compose.onNodeWithText("Effort").performClick()
             effortOption("High").assertIsSelected().assertIsNotEnabled()
             effortOption("Low").assertIsNotEnabled()
@@ -378,7 +378,7 @@ class AssistantPreviewUiTest {
                 assertEquals(1, calls)
             }
             compose.onNodeWithTag("assistant-model-picker").performClick()
-            modelOption("DeepSeek V4.1 Flash").performClick()
+            modelOption("V4.1 Flash").performClick()
             compose.onNodeWithText("DeepSeek V4.1 Flash").assertIsDisplayed()
             compose.runOnIdle { assertEquals(DeepSeekModel.FLASH, state.selectedModel) }
             capture("effort-selected")
