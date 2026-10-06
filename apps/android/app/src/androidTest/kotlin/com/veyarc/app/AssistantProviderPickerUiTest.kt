@@ -47,6 +47,9 @@ class AssistantProviderPickerUiTest {
             compose.onNodeWithText("Files").assertIsEnabled()
             compose.onNodeWithContentDescription("Close Add to chat").performClick()
             compose.onNodeWithTag("assistant-model-picker").performClick()
+            val effortBounds = compose.onNodeWithTag("chat-model-effort").fetchSemanticsNode().boundsInRoot
+            val modelBounds = compose.onNodeWithText("GPT-5.4").fetchSemanticsNode().boundsInRoot
+            org.junit.Assert.assertTrue(effortBounds.top > modelBounds.bottom)
             compose.onNodeWithText("Effort").performClick()
             compose.onNodeWithText("Extra high").assertExists()
             compose.onNodeWithText("Max").assertDoesNotExist()

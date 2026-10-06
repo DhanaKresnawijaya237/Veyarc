@@ -110,6 +110,11 @@ class AssistantConnectionSettingsTest {
                 assistant.open(com.veyarc.feature.assistant.AssistantPreviewContext())
             }
             compose.setContent { VeyarcTheme(darkTheme = true) { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(AssistantKeyStore(context), assistant) } } }
+            compose.onNodeWithContentDescription("Expand OpenAI").assertExists()
+            compose.onNodeWithContentDescription("Expand DeepSeek").assertExists()
+            compose.onNodeWithTag("manage-models-${profile.id}").assertDoesNotExist()
+            capture("providers-collapsed")
+            expandProvider("OpenAI")
             val modelsBounds = compose.onNodeWithTag("manage-models-${profile.id}").fetchSemanticsNode().boundsInRoot
             val defaultBounds = compose.onNode(hasText("Default model") and hasAnyAncestor(hasTestTag("connection-group-${profile.id}"))).fetchSemanticsNode().boundsInRoot
             assertTrue(modelsBounds.top < defaultBounds.top)
@@ -291,6 +296,7 @@ class AssistantConnectionSettingsTest {
                 assistant.open(com.veyarc.feature.assistant.AssistantPreviewContext())
             }
             compose.setContent { VeyarcTheme { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(AssistantKeyStore(context), assistant) } } }
+            expandProvider("Server")
             awaitText("Key saved")
             openModels("Server")
             compose.onNodeWithText("Add models").performClick()
@@ -372,6 +378,8 @@ class AssistantConnectionSettingsTest {
             compose.onNodeWithTag("assistant-key-entry").performTextInput("fixture-custom-profile-key")
             closeKeyboard()
             compose.onNodeWithText("Save key").performClick()
+            compose.onNodeWithContentDescription("Expand My server").assertExists()
+            expandProvider("My server")
             awaitText("Key saved")
             compose.runOnIdle {
                 customId = assistant.connections.connections.first { it.name == "My server" }.id
@@ -409,6 +417,9 @@ class AssistantConnectionSettingsTest {
         try {
             compose.runOnUiThread { assistant.open(com.veyarc.feature.assistant.AssistantPreviewContext()) }
             compose.setContent { VeyarcTheme { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(store, assistant) } } }
+            compose.onNodeWithText("Default model").assertDoesNotExist()
+            compose.onNodeWithText("Default effort").assertDoesNotExist()
+            expandProvider("DeepSeek")
             awaitText("Default model")
             val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
             compose.onNodeWithText("Default model").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(layouts) }
@@ -464,6 +475,7 @@ class AssistantConnectionSettingsTest {
                     VeyarcTheme { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(store) } }
                 }
             }
+            expandProvider("DeepSeek")
             compose.waitUntil(10_000) { compose.onAllNodes(androidx.compose.ui.test.hasContentDescription("Add API key")).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Enable AI").assertIsNotEnabled()
             compose.onNodeWithContentDescription("Test all connections").assertIsNotEnabled()
@@ -536,6 +548,7 @@ class AssistantConnectionSettingsTest {
             compose.setContent {
                 VeyarcTheme { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(store, assistant) } }
             }
+            expandProvider("DeepSeek")
             awaitText("Key saved")
             compose.onNodeWithText("Provider privacy policy").assertDoesNotExist()
             capture("settings")
@@ -583,7 +596,15 @@ class AssistantConnectionSettingsTest {
     }
 
     private fun openModels(provider: String) {
+        expandProvider(provider)
         compose.onNodeWithContentDescription("Manage $provider models").performScrollTo().performClick()
+    }
+
+    private fun expandProvider(provider: String) {
+        if (compose.onAllNodes(androidx.compose.ui.test.hasContentDescription("Expand $provider")).fetchSemanticsNodes().isNotEmpty()) {
+            compose.onNodeWithContentDescription("Expand $provider").performScrollTo().performClick()
+            compose.waitForIdle()
+        }
     }
 
     private fun closeKeyboard() {

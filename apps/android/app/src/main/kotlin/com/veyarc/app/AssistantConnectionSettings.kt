@@ -100,7 +100,7 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
     var adding by remember { mutableStateOf(false) }
     var addingModel by remember { mutableStateOf(false) }
     var keyRevision by remember { mutableStateOf(0) }
-    var collapsed by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    var expandedProviders by rememberSaveable { mutableStateOf(emptyList<String>()) }
     fun keyStore(profile: AssistantConnection) = if (profile.id == AssistantConnection.DEEPSEEK_ID) store else AssistantKeyStore(context, profile.id)
     LaunchedEffect(profiles.connections.map { it.id }) {
         val revision = keyRevision
@@ -137,14 +137,14 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
     val canEnable = !busy && hasKeys[currentDefault.id] == true && assistant?.usesProvider == true && assistant.connectionsReady
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         profiles.connections.forEach { profile ->
-            val expanded = profile.id !in collapsed
+            val expanded = profile.id in expandedProviders
             Surface(Modifier.fillMaxWidth().padding(bottom = 12.dp).testTag("connection-group-${profile.id}"), shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surfaceContainerLowest) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(
                         Modifier.fillMaxWidth().semantics {
                             stateDescription = if (expanded) "Expanded" else "Collapsed"
                             contentDescription = "${if (expanded) "Collapse" else "Expand"} ${profile.name}"
-                        }.clickable(role = Role.Button) { collapsed = if (expanded) collapsed + profile.id else collapsed - profile.id }
+                        }.clickable(role = Role.Button) { expandedProviders = if (expanded) expandedProviders - profile.id else expandedProviders + profile.id }
                             .padding(vertical = 8.dp).testTag(if (profile.id == AssistantConnection.DEEPSEEK_ID) "deepseek-provider-section" else "provider-${profile.id}"),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {

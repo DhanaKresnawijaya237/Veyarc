@@ -1109,7 +1109,10 @@ private fun ComposerOptions(sheet: String, state: AssistantPreviewState, onSelec
                         } else {
                             item { PanelOption("Sample chat", subtitle = "Offline preview", selected = true) }
                         }
-                        if (state.availableEfforts.size > 1) item(key = "effort") { PanelOption("Effort", value = state.conversation?.effort?.label ?: "Off", opensPanel = true, onClick = { onSelect("effort") }) }
+                    }
+                    if (state.availableEfforts.size > 1) {
+                        HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                        Box(Modifier.testTag("chat-model-effort")) { PanelOption("Effort", value = state.conversation?.effort?.label ?: "Off", opensPanel = true, onClick = { onSelect("effort") }) }
                     }
                 }
             }
