@@ -255,7 +255,7 @@ class AssistantPreviewState(
                 providerName = profile.name,
                 modelName = model.name,
                 model = DeepSeekModel.entries.firstOrNull { legacy -> legacy.apiId == model.id } ?: DeepSeekModel.FLASH,
-                effort = if (it.effort.name in model.efforts) it.effort else DeepSeekEffort.valueOf(model.efforts.first()),
+                effort = DeepSeekEffort.valueOf(profile.defaultEffort.takeIf { it in model.efforts } ?: model.efforts.first()),
             )
         }
         inputError = null

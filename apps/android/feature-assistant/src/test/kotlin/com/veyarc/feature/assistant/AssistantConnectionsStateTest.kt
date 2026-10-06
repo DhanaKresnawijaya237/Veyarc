@@ -119,4 +119,38 @@ class AssistantConnectionsStateTest {
         assertEquals(DeepSeekEffort.MEDIUM, state.conversation!!.effort)
         state.dispose()
     }
+
+    @Test fun switchingModelsUsesSavedProviderEffortAndFallsBackWhenUnsupported() = runBlocking {
+        val deepSeek = AssistantConnection.deepSeek(effort = "HIGH")
+        val custom = AssistantConnection(
+            UUID.randomUUID().toString(),
+            "Custom",
+            "https://example.org/v1",
+            models = listOf(
+                AssistantModelConfig("default", efforts = listOf("OFF", "MEDIUM")),
+                AssistantModelConfig("other", efforts = listOf("OFF", "MEDIUM")),
+                AssistantModelConfig("text-only"),
+            ),
+            defaultModelId = "default",
+            defaultEffort = "MEDIUM",
+        )
+        val state = AssistantPreviewState(scope = this, providerCall = { error("No requests expected") })
+        try {
+            state.restoreConnections(AssistantConnections(listOf(deepSeek, custom), deepSeek.id))
+            state.open(AssistantPreviewContext())
+            state.setEffort(DeepSeekEffort.OFF)
+            state.selectConnectionModel(deepSeek.id, "deepseek-v4-pro")
+            assertEquals(DeepSeekEffort.HIGH, state.conversation!!.effort)
+            state.selectConnectionModel(custom.id, "default")
+            assertEquals(DeepSeekEffort.MEDIUM, state.conversation!!.effort)
+            state.setEffort(DeepSeekEffort.OFF)
+            state.selectConnectionModel(custom.id, "other")
+            assertEquals(DeepSeekEffort.MEDIUM, state.conversation!!.effort)
+            state.selectConnectionModel(custom.id, "text-only")
+            assertEquals(DeepSeekEffort.OFF, state.conversation!!.effort)
+            assertEquals("MEDIUM", state.connections.connections.last().defaultEffort)
+        } finally {
+            state.dispose()
+        }
+    }
 }

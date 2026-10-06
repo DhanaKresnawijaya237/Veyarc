@@ -339,8 +339,11 @@ class AssistantPreviewUiTest {
             calls++
             kotlinx.coroutines.awaitCancellation()
         }).apply {
+            val profile = com.veyarc.data.storage.AssistantConnection.deepSeek(effort = "HIGH")
+            restoreConnections(com.veyarc.data.storage.AssistantConnections(listOf(profile), profile.id))
             open(AssistantPreviewContext())
             enableProvider()
+            setEffort(DeepSeekEffort.OFF)
         }
         try {
             compose.setContent { VeyarcTheme(darkTheme = true) { AssistantPreviewScreen(state) } }
@@ -352,7 +355,7 @@ class AssistantPreviewUiTest {
             compose.onNodeWithContentDescription("Open Effort").assertExists()
             compose.onNodeWithText("Effort").performClick()
             DeepSeekEffort.entries.forEach { compose.onNodeWithContentDescription("Open ${it.label}").assertDoesNotExist() }
-            effortOption("Off").assertIsSelected()
+            effortOption("High").assertIsSelected()
             compose.onNodeWithText("Medium").assertDoesNotExist()
             effortOption("High").assertIsEnabled().performClick()
             compose.onNodeWithText("High").assertIsDisplayed()
@@ -380,7 +383,10 @@ class AssistantPreviewUiTest {
             compose.onNodeWithTag("assistant-model-picker").performClick()
             modelOption("V4.1 Flash").performClick()
             compose.onNodeWithText("DeepSeek V4.1 Flash").assertIsDisplayed()
-            compose.runOnIdle { assertEquals(DeepSeekModel.FLASH, state.selectedModel) }
+            compose.runOnIdle {
+                assertEquals(DeepSeekModel.FLASH, state.selectedModel)
+                assertEquals(DeepSeekEffort.HIGH, state.conversation!!.effort)
+            }
             capture("effort-selected")
         } finally {
             compose.runOnIdle { state.dispose() }
