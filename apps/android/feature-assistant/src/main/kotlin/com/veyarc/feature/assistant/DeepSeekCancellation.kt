@@ -2,8 +2,8 @@ package com.veyarc.feature.assistant
 
 import okhttp3.Call
 
-/** One attempt only. Stop, owner loss, background, disable, and key changes share cancel().
- * The 4E owner must invalidate its attempt token and cancel this handle; never reuse it. */
+/** One attempt only. Stop, owner loss, disable, and key changes share cancel().
+ * The request owner must invalidate its attempt token and cancel this handle; never reuse it. */
 class DeepSeekCancellation {
     private var call: Call? = null
     private var cancelled = false

@@ -121,6 +121,7 @@ class AssistantPreviewState(
     private val onDefaultEffortChanged: ((DeepSeekEffort) -> Unit)? = null,
     private val onConnectionsChanged: (suspend (AssistantConnections) -> Unit)? = null,
     private val modelDiscovery: (suspend (AssistantConnection) -> List<AssistantModelConfig>)? = null,
+    private val onRequestStarted: ((String) -> Unit)? = null,
     private var contextSource: (() -> AssistantContextCapture)? = null,
 ) {
     private val attachmentWork = kotlinx.coroutines.sync.Mutex()
@@ -285,7 +286,8 @@ class AssistantPreviewState(
     private var imageApplyJob: Job? = null
     var isApplyingImages by mutableStateOf(false)
         private set
-    private var pendingRequestId: String? = null
+    private var pendingRequestId by mutableStateOf<String?>(null)
+    val activeRequestId: String? get() = requestId ?: pendingRequestId
     private var applyGeneration = 0
     private var draftSave: Job? = null
     var importingAttachments by mutableStateOf(false)
@@ -314,7 +316,7 @@ class AssistantPreviewState(
         }
     }
 
-    // Consent belongs to this ViewModel lifetime; it is never restored or inferred from a saved key.
+    // Consent belongs to the process owner; it is never inferred from a saved key.
     fun enableProvider() {
         if (usesProvider && connectionsReady) providerEnabled = true
     }
@@ -423,6 +425,10 @@ class AssistantPreviewState(
 
     fun open(currentContext: AssistantPreviewContext, captureContext: (() -> AssistantContextCapture)? = null) {
         if (captureContext != null) contextSource = captureContext
+        if (activeRequestId != null) {
+            isOpen = true
+            return
+        }
         if (isOpen && context.workflowId == currentContext.workflowId) {
             context = currentContext
             return
@@ -457,8 +463,9 @@ class AssistantPreviewState(
     }
 
     fun close() {
-        stop(PreviewReplyStatus.INTERRUPTED)
+        // Closing the screen does not cancel a sent message or its pending durable write.
         isOpen = false
+        if (usesProvider) flush() else stop(PreviewReplyStatus.INTERRUPTED)
     }
 
     fun compose(text: String) {
@@ -861,8 +868,18 @@ class AssistantPreviewState(
     private fun begin(token: String) {
         pendingRequestId = token
         val chat = requireNotNull(conversation)
+        if (chat.turns.last().provider) {
+            try {
+                onRequestStarted?.invoke(token)
+            } catch (_: Exception) {
+                pendingRequestId = null
+                updateLast { it.copy(status = PreviewReplyStatus.ERROR, responseError = "Couldn't start the background reply. Open Veyarc and try again.") }
+                flush()
+                return
+            }
+        }
         persist(chat) {
-            if (pendingRequestId == token && selectedId == chat.id && isOpen) {
+            if (pendingRequestId == token && selectedId == chat.id) {
                 pendingRequestId = null
                 requestId = token
                 if (chat.turns.last().provider) dispatchProvider(chat, token)
@@ -903,7 +920,7 @@ class AssistantPreviewState(
                     }
                 }
                 val notifyThinking: (AssistantThinking) -> Unit = { thinking ->
-                    // Network callbacks run on IO. State belongs to the ViewModel's main scope.
+                    // Network callbacks run on IO. State belongs to the owner's main scope.
                     scope.launch { receiveThinking(token, thinking) }
                 }
                 val notifyReply: (String) -> Unit = { text -> scope.launch { receiveReply(token, text) } }

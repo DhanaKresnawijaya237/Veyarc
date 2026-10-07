@@ -32,7 +32,6 @@ import com.veyarc.data.storage.WorkflowRevisionDocument
 import com.veyarc.data.storage.WorkflowSummary
 import com.veyarc.feature.assistant.AssistantPreviewHost
 import com.veyarc.feature.assistant.AssistantPreviewState
-import com.veyarc.feature.assistant.PreviewReplyStatus
 import com.veyarc.feature.editor.WorkflowEditorScreen
 import com.veyarc.feature.editor.WorkflowEditorSession
 import com.veyarc.feature.recorder.CoordinateRecorderScreen
@@ -294,11 +293,6 @@ class MainActivity : ComponentActivity() {
         handleControllerIntent(intent)
     }
 
-    override fun onStop() {
-        if (!isChangingConfigurations) editorSession.assistant.stop(PreviewReplyStatus.INTERRUPTED)
-        super.onStop()
-    }
-
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString(SELECTED_DESTINATION_KEY, selectedDestination.name)
         fullScreenDestination?.let { outState.putString(FULL_SCREEN_DESTINATION_KEY, it.name) }
@@ -407,6 +401,14 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleControllerIntent(intent: Intent?) {
+        if (intent?.action == AssistantReplyService.OPEN_CHAT) {
+            intent.action = null
+            if (fullScreenDestination == null && workflowToRun == null) {
+                selectedDestination = VeyarcDestination.EDITOR
+                editorSession.assistant.open(editorSession.assistant.context)
+            }
+            return
+        }
         if (intent?.action != ReplayFloatingController.ACTION_OPEN_WORKFLOW) return
         intent.action = null
         val workflowId = intent.getStringExtra(ReplayFloatingController.EXTRA_WORKFLOW_ID)
@@ -528,6 +530,14 @@ class MainRecordingSession(application: Application) : AndroidViewModel(applicat
 }
 
 class MainEditorSession(application: Application) : AndroidViewModel(application) {
+    private val owner = (application as VeyarcApplication).editor
+    val state = owner.state
+    val assistant = owner.assistant
+}
+
+/** Keeps the active chat and its draft binding alive independently of activity/navigation lifetime. */
+internal class EditorSessionOwner(application: Application) {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val state = WorkflowEditorSession()
     private val chatRepository = com.veyarc.data.storage.ChatRepository(application)
     private val assistantDraft = AssistantDraftBridge(state)
@@ -535,7 +545,7 @@ class MainEditorSession(application: Application) : AndroidViewModel(application
     private val assistantAttachments = com.veyarc.feature.assistant.AssistantAttachmentImporter(application)
     val assistant = AssistantPreviewState(
         chatRepository,
-        viewModelScope,
+        scope,
         compileCandidate = ::assistantCompilationIssues,
         applyCandidate = assistantDraft::apply,
         contextSource = assistantDraft::capture,
@@ -548,6 +558,7 @@ class MainEditorSession(application: Application) : AndroidViewModel(application
             }
             com.veyarc.feature.assistant.AssistantClient(request.connection, request.modelId).await(request, key)
         },
+        onRequestStarted = { token -> AssistantReplyService.start(application, token) },
         onConnectionsChanged = { value -> withContext(Dispatchers.IO) { assistantConnections.save(value) } },
         modelDiscovery = { profile ->
             val key = withContext(Dispatchers.IO) {
@@ -559,7 +570,7 @@ class MainEditorSession(application: Application) : AndroidViewModel(application
     )
 
     init {
-        viewModelScope.launch {
+        scope.launch {
             val preferences = AppPreferences.observe(application).first()
             try {
                 val connections = withContext(Dispatchers.IO) { assistantConnections.loadOrMigrate(preferences.assistantModel.apiId, preferences.assistantEffort.name) }
@@ -568,11 +579,5 @@ class MainEditorSession(application: Application) : AndroidViewModel(application
                 assistant.connectionStorageFailed()
             }
         }
-    }
-
-    override fun onCleared() {
-        assistant.dispose()
-        chatRepository.close()
-        super.onCleared()
     }
 }

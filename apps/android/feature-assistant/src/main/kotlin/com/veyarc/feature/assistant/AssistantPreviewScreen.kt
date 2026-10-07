@@ -280,7 +280,6 @@ fun AssistantPreviewScreen(state: AssistantPreviewState, onOpenSettings: (() -> 
         activity?.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         onDispose {
             previousSoftInputMode?.let { activity?.window?.setSoftInputMode(it) }
-            if (activity?.isChangingConfigurations != true) state.stop(PreviewReplyStatus.INTERRUPTED)
         }
     }
 
