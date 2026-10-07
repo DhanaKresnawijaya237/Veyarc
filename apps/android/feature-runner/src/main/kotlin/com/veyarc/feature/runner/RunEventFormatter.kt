@@ -67,8 +67,13 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
         val threshold = event.threshold ?: condition?.matchThresholdOrNull()
         if (threshold == null) return "$base: ${event.result}"
 
-        val match = event.matchScore?.let(::formatPercent) ?: "unavailable"
-        return "$base: ${event.result} · match $match · threshold ${formatPercent(threshold)}"
+        val score = event.matchScore
+        val match = when {
+            score != null -> "match ${formatPercent(score)}"
+            (condition is ImageAbsentCondition && event.result) || (condition is ImagePresentCondition && !event.result) -> "image not found"
+            else -> "score not reported"
+        }
+        return "$base: ${event.result} · $match · threshold ${formatPercent(threshold)}"
     }
 
     private fun stepDescription(stepId: String): String = when (val step = stepsById[stepId]) {

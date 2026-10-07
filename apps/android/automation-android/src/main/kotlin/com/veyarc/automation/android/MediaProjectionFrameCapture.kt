@@ -12,6 +12,7 @@ import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.NormalizedRect
 import java.io.Closeable
@@ -105,8 +106,8 @@ data class RgbaColor(
 }
 
 /**
- * A copied in-memory frame. The underlying Image is closed before this object is returned, and
- * [close] clears the copied pixels so callers cannot accidentally retain a screenshot.
+ * An independent in-memory copy of selected screen pixels. [close] clears the copied pixels
+ * so callers cannot accidentally retain a screenshot.
  */
 class EphemeralScreenFrame internal constructor(
     val widthPx: Int,
@@ -233,7 +234,7 @@ class MediaProjectionFrameCapture(
     private var projection: MediaProjection? = null
     private var projectionCallback: MediaProjection.Callback? = null
     private var virtualDisplay: VirtualDisplay? = null
-    private var imageReader: ImageReader? = null
+    private var frames: ProjectionFrames? = null
     private var state = State.NEW
 
     override val isActive: Boolean
@@ -253,12 +254,17 @@ class MediaProjectionFrameCapture(
                 ?: throw MediaProjectionCaptureException("Android MediaProjection is unavailable")
             val mediaProjection = manager.getMediaProjection(resultCode, resultData)
                 ?: throw MediaProjectionCaptureException("Android did not return a MediaProjection")
-            val reader = ImageReader.newInstance(
-                displaySpec.widthPx,
-                displaySpec.heightPx,
-                PixelFormat.RGBA_8888,
-                MAX_RETAINED_IMAGES,
-            )
+            val reader = try {
+                ImageReader.newInstance(
+                    displaySpec.widthPx,
+                    displaySpec.heightPx,
+                    PixelFormat.RGBA_8888,
+                    ProjectionFrames.MAX_IMAGES,
+                )
+            } catch (error: Throwable) {
+                runCatching { mediaProjection.stop() }
+                throw MediaProjectionCaptureException("MediaProjection capture buffers could not be created", error)
+            }
             val callback = object : MediaProjection.Callback() {
                 override fun onStop() {
                     handleRevocation("MediaProjection consent was revoked or the capture stopped")
@@ -279,11 +285,11 @@ class MediaProjectionFrameCapture(
                 projection = mediaProjection
                 projectionCallback = callback
                 virtualDisplay = display
-                imageReader = reader
+                frames = ProjectionFrames(reader)
                 state = State.ACTIVE
             } catch (error: Throwable) {
                 runCatching { mediaProjection.unregisterCallback(callback) }
-                reader.close()
+                runCatching { reader.close() }
                 runCatching { mediaProjection.stop() }
                 throw if (error is MediaProjectionCaptureException) {
                     error
@@ -294,21 +300,12 @@ class MediaProjectionFrameCapture(
         }
     }
 
-    /** Copies the newest frame, closes Android's Image immediately, and returns memory-only data. */
+    /** Copies requested pixels from the latest image, including when the screen has not changed. */
     override fun captureLatestFrame(): EphemeralScreenFrame? = captureLatestFrame(ScreenCaptureArea.FullScreen)
 
     override fun captureLatestFrame(area: ScreenCaptureArea): EphemeralScreenFrame? = synchronized(lock) {
         check(state == State.ACTIVE) { "MediaProjection capture is not active" }
-        val image = try {
-            imageReader?.acquireLatestImage()
-        } catch (error: IllegalStateException) {
-            throw MediaProjectionCaptureException("MediaProjection frame capture is unavailable", error)
-        } ?: return@synchronized null
-        try {
-            copyImage(image, area)
-        } finally {
-            image.close()
-        }
+        checkNotNull(frames).capture(area)
     }
 
     override fun close() {
@@ -335,25 +332,18 @@ class MediaProjectionFrameCapture(
     private fun releaseLocked(stopProjection: Boolean) {
         val currentProjection = projection
         val currentCallback = projectionCallback
+        val currentDisplay = virtualDisplay
+        val currentFrames = frames
         projection = null
         projectionCallback = null
-        virtualDisplay?.release()
         virtualDisplay = null
-        imageReader?.close()
-        imageReader = null
+        frames = null
+        runCatching { currentDisplay?.release() }
+        runCatching { currentFrames?.close() }
         if (currentProjection != null && currentCallback != null) {
             runCatching { currentProjection.unregisterCallback(currentCallback) }
         }
         if (stopProjection) runCatching { currentProjection?.stop() }
-    }
-
-    private fun copyImage(image: Image, area: ScreenCaptureArea): EphemeralScreenFrame {
-        require(image.format == PixelFormat.RGBA_8888) {
-            "MediaProjection returned an unsupported pixel format"
-        }
-        val plane = image.planes.singleOrNull()
-            ?: throw MediaProjectionCaptureException("MediaProjection returned an unexpected image layout")
-        return copyRgbaFrame(image.width, image.height, image.timestamp, plane.buffer, plane.pixelStride, plane.rowStride, area)
     }
 
     private enum class State {
@@ -364,8 +354,68 @@ class MediaProjectionFrameCapture(
     }
 
     private companion object {
-        const val MAX_RETAINED_IMAGES = 2
         const val VIRTUAL_DISPLAY_NAME = "Veyarc ephemeral workflow frame"
+    }
+}
+
+/** Retains one native image only until replacement or capture teardown, without a full-screen heap copy. */
+internal class ProjectionFrames(private val reader: ImageReader) : Closeable {
+    private var latest: Image? = null
+    private var closed = false
+
+    init {
+        require(reader.maxImages >= MAX_IMAGES) { "Capture needs one retained image and two acquisition slots" }
+    }
+
+    @Synchronized
+    fun capture(area: ScreenCaptureArea): EphemeralScreenFrame? {
+        check(!closed) { "MediaProjection capture is closed" }
+        val deadline = SystemClock.elapsedRealtime() + FIRST_FRAME_TIMEOUT_MS
+        do {
+            val image = try {
+                reader.acquireLatestImage()
+            } catch (error: IllegalStateException) {
+                throw MediaProjectionCaptureException("MediaProjection frame capture is unavailable", error)
+            }
+            if (image != null) {
+                val previous = latest
+                latest = image
+                previous?.close()
+            }
+            if (latest != null) break
+            if (SystemClock.elapsedRealtime() >= deadline) return null
+            Thread.sleep(10)
+        } while (true)
+        val image = checkNotNull(latest)
+        return try {
+            require(image.format == PixelFormat.RGBA_8888) { "MediaProjection returned an unsupported pixel format" }
+            val plane = image.planes.singleOrNull()
+                ?: throw MediaProjectionCaptureException("MediaProjection returned an unexpected image layout")
+            copyRgbaFrame(image.width, image.height, image.timestamp, plane.buffer, plane.pixelStride, plane.rowStride, area)
+        } catch (error: Throwable) {
+            latest = null
+            image.close()
+            throw error
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        if (closed) return
+        closed = true
+        val image = latest
+        latest = null
+        try {
+            image?.close()
+        } finally {
+            reader.close()
+        }
+    }
+
+    companion object {
+        // acquireLatestImage needs two free slots to discard old queued frames while one is held.
+        const val MAX_IMAGES = 3
+        private const val FIRST_FRAME_TIMEOUT_MS = 1_000L
     }
 }
 

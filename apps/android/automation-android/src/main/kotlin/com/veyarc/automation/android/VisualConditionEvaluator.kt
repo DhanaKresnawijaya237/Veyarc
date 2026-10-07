@@ -146,7 +146,7 @@ class VisualConditionEvaluator(
     }
 
     private fun evaluatePixelColor(condition: PixelColorCondition): Boolean {
-        val frame = frameSource.invoke(ScreenCaptureArea.Pixel(condition.point)) ?: return false
+        val frame = requireFrame(ScreenCaptureArea.Pixel(condition.point))
         return try {
             val point = FramePixelBounds.pixel(condition.point, frame.widthPx, frame.heightPx)
             withinTolerance(frame.pixelAt(point.left, point.top), argbColor(condition.expectedArgb), condition.tolerance)
@@ -167,10 +167,7 @@ class VisualConditionEvaluator(
                 "Image template asset ${assetId.value} is unavailable",
             )
         val area = if (matchMode == ImageMatchMode.SCREEN_STATE) ScreenCaptureArea.FullScreen else ScreenCaptureArea.Region(region)
-        val frame = frameSource.invoke(area) ?: return ConditionObservation(
-            result = false,
-            threshold = threshold,
-        )
+        val frame = requireFrame(area)
         return try {
             val match = template.withRgbaBytes { templateBytes ->
                 frame.withRgbaBytes { frameBytes ->
@@ -203,6 +200,9 @@ class VisualConditionEvaluator(
             frame.close()
         }
     }
+
+    private fun requireFrame(area: ScreenCaptureArea): EphemeralScreenFrame = frameSource.invoke(area)
+        ?: throw VisualConditionEvaluationException("No screen capture frame arrived. Restart the run and allow screen capture.")
 
     /** Measures the full fixed-position screen similarity so diagnostics never substitute the threshold. */
     private fun matchesScreenState(
