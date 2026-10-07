@@ -59,6 +59,19 @@ import java.util.UUID
 class AssistantConnectionSettingsTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun enableControlPrecedesProvidersAndHelpLinksAreCentered() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        compose.setContent { VeyarcTheme { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(AssistantKeyStore(context), onHelp = {}) } } }
+        val control = compose.onNodeWithText("Enable AI").fetchSemanticsNode().boundsInRoot
+        val provider = compose.onNodeWithContentDescription("Expand DeepSeek").fetchSemanticsNode().boundsInRoot
+        assertTrue(control.bottom < provider.top)
+        val width = context.resources.displayMetrics.widthPixels.toFloat()
+        listOf("Privacy and costs", "AI chat help").forEach {
+            val bounds = compose.onNodeWithText(it).fetchSemanticsNode().boundsInRoot
+            org.junit.Assert.assertEquals(width / 2, bounds.center.x, 2f)
+        }
+    }
+
     @Test fun newDeepSeekPresetKeepsCurrentVisionModelAndNativeThinkingControls() {
         var saved: com.veyarc.data.storage.AssistantConnection? = null
         compose.setContent { VeyarcTheme { ConnectionEditor(null, false, onManageModels = {}, onDismiss = {}, onSave = { saved = it }) } }

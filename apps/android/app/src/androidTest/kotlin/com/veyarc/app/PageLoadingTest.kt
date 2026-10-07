@@ -2,10 +2,14 @@ package com.veyarc.app
 
 import android.os.SystemClock
 import android.util.Log
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -14,6 +18,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.veyarc.app.ui.theme.VeyarcTheme
@@ -35,6 +40,34 @@ import org.junit.runner.RunWith
 class PageLoadingTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun openingContentFollowsItsBottomButInitialContentDoesNotScroll() {
+        var expanded by mutableStateOf(true)
+        val scroll = androidx.compose.foundation.ScrollState(0)
+        compose.setContent {
+            VeyarcTheme {
+                androidx.compose.foundation.layout.Column(
+                    androidx.compose.ui.Modifier.height(260.dp).testTag("expansion-viewport").verticalScroll(scroll),
+                ) {
+                    androidx.compose.foundation.layout.Spacer(androidx.compose.ui.Modifier.height(200.dp))
+                    androidx.compose.material3.TextButton(onClick = { expanded = !expanded }) { androidx.compose.material3.Text("Expand section") }
+                    androidx.compose.animation.AnimatedVisibility(expanded) {
+                        androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.height(180.dp), contentAlignment = androidx.compose.ui.Alignment.BottomStart) { androidx.compose.material3.Text("Expanded bottom") }
+                    }
+                    com.veyarc.feature.editor.ExpansionScrollAnchor(expanded)
+                }
+            }
+        }
+        compose.waitForIdle()
+        assertEquals(0, scroll.value)
+        compose.onNodeWithText("Expand section").performClick()
+        compose.onNodeWithText("Expand section").performClick()
+        compose.waitUntil(10_000) { scroll.value > 0 && !scroll.isScrollInProgress }
+        compose.onNodeWithText("Expanded bottom").assertIsDisplayed()
+        compose.onNodeWithText("Expand section").performClick()
+        compose.waitForIdle()
+        assertEquals(0, scroll.value)
+    }
+
     @Test
     fun manyTemplatesStayLazyAndTheLastTemplateCanBeRenamed() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -48,6 +81,9 @@ class PageLoadingTest {
             assertTrue("Only nearby templates should be composed, got $composed", composed in 1..20)
             compose.onNodeWithTag("workflow-template-list").performScrollToKey(draft.assetDescriptors.last().assetId.value)
             compose.onNodeWithText(draft.assetNames.getValue(draft.assetDescriptors.last().assetId.value)).performClick()
+            compose.waitUntil(10_000) { compose.onAllNodes(androidx.compose.ui.test.hasTestTag("rename-template-preview")).fetchSemanticsNodes().isNotEmpty() }
+            val previewBounds = compose.onNodeWithTag("rename-template-preview").fetchSemanticsNode().boundsInRoot
+            assertEquals(previewBounds.width, previewBounds.height, 2f)
             compose.onNodeWithText("Template name").performTextReplacement("Last template renamed")
             compose.onNodeWithText("Rename").performClick()
             compose.onNodeWithText("Last template renamed").assertExists()

@@ -136,6 +136,27 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
     val enabled = assistant?.providerEnabled == true
     val canEnable = !busy && hasKeys[currentDefault.id] == true && assistant?.usesProvider == true && assistant.connectionsReady
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            Modifier.fillMaxWidth().clickable(enabled = enabled || canEnable) {
+                if (enabled) assistant?.disableProvider() else enabling = true
+            }.padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(if (enabled) "Disable AI" else "Enable AI", style = MaterialTheme.typography.bodyLarge)
+                Text(if (enabled) "Enabled until app restart" else "AI disabled", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            IconButton(onClick = { if (assistant?.testingConnection == true) assistant.stop() else testing = true }, enabled = assistant?.testingConnection == true || (!busy && hasKeys.values.any { it } && assistant?.isResponding == false && assistant.connectionsReady)) {
+                if (assistant?.testingConnection == true) {
+                    CircularProgressIndicator(Modifier.size(22.dp).semantics { contentDescription = "Stop connection test" }, strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Outlined.NetworkCheck, "Test all connections")
+                }
+            }
+            Switch(checked = enabled, enabled = enabled || canEnable, onCheckedChange = { if (it) enabling = true else assistant?.disableProvider() })
+        }
+        assistant?.connectionTestStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        HorizontalDivider(Modifier.padding(vertical = 8.dp))
         profiles.connections.forEach { profile ->
             val expanded = profile.id in expandedProviders
             Surface(Modifier.fillMaxWidth().padding(bottom = 12.dp).testTag("connection-group-${profile.id}"), shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surfaceContainerLowest) {
@@ -203,6 +224,7 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
                             }
                         }
                     }
+                    com.veyarc.feature.editor.ExpansionScrollAnchor(expanded)
                     assistant?.connectionTestResults?.get(profile.id)?.let { result ->
                         Text(result, style = MaterialTheme.typography.bodySmall, color = if (result.startsWith("Not connected")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -219,28 +241,8 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         assistant?.connectionError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         HorizontalDivider()
-        Row(
-            Modifier.fillMaxWidth().clickable(enabled = enabled || canEnable) {
-                if (enabled) assistant?.disableProvider() else enabling = true
-            }.padding(vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(if (enabled) "Disable AI" else "Enable AI", style = MaterialTheme.typography.bodyLarge)
-                Text(if (enabled) "Enabled until app restart" else "AI disabled", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            IconButton(onClick = { if (assistant?.testingConnection == true) assistant.stop() else testing = true }, enabled = assistant?.testingConnection == true || (!busy && hasKeys.values.any { it } && assistant?.isResponding == false && assistant.connectionsReady)) {
-                if (assistant?.testingConnection == true) {
-                    CircularProgressIndicator(Modifier.size(22.dp).semantics { contentDescription = "Stop connection test" }, strokeWidth = 2.dp)
-                } else {
-                    Icon(Icons.Outlined.NetworkCheck, "Test all connections")
-                }
-            }
-            Switch(checked = enabled, enabled = enabled || canEnable, onCheckedChange = { if (it) enabling = true else assistant?.disableProvider() })
-        }
-        assistant?.connectionTestStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-        TextButton(onClick = { privacyVisible = true }, modifier = Modifier.fillMaxWidth()) { Text("Privacy and costs", Modifier.weight(1f)) }
-        if (onHelp != null) TextButton(onClick = onHelp, modifier = Modifier.fillMaxWidth()) { Text("AI chat help", Modifier.weight(1f)) }
+        TextButton(onClick = { privacyVisible = true }, modifier = Modifier.fillMaxWidth()) { Text("Privacy and costs") }
+        if (onHelp != null) TextButton(onClick = onHelp, modifier = Modifier.fillMaxWidth()) { Text("AI chat help") }
     }
     modelProfile?.let { selected ->
         val profile = profiles.connections.first { it.id == selected.id }

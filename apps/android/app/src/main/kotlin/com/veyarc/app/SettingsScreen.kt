@@ -623,6 +623,7 @@ private fun SettingsCard(
                     content = content,
                 )
             }
+            com.veyarc.feature.editor.ExpansionScrollAnchor(expanded)
         }
     }
 }

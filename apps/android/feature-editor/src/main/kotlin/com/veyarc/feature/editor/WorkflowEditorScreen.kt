@@ -1692,8 +1692,8 @@ private fun TemplateAssetSection(
     }
     renameTarget?.let { assetId ->
         var name by remember(assetId) { mutableStateOf(assetNames[assetId.value].orEmpty()) }
-        val preview by produceState(cachedTemplatePreview(assetId, 320), assetId) {
-            value = loadPreview(assetId, 320)
+        val preview by produceState(cachedTemplatePreview(assetId, 640), assetId) {
+            value = loadPreview(assetId, 640)
         }
         val valid = name.trim().let { candidate ->
             candidate.isNotEmpty() && candidate.length <= 64 &&
@@ -1704,12 +1704,15 @@ private fun TemplateAssetSection(
             title = { Text("Rename template") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Box(Modifier.fillMaxWidth().height(112.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh), contentAlignment = Alignment.Center) {
-                        val image = preview
-                        if (image != null) {
-                            Image(image.image, "Image template preview", Modifier.fillMaxSize().testTag("rename-template-preview"), contentScale = ContentScale.Fit)
-                        } else {
-                            Icon(Icons.Outlined.Image, "Image template preview", Modifier.size(28.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    BoxWithConstraints(Modifier.fillMaxWidth()) {
+                        val previewHeight = minOf(maxWidth, androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp * 0.35f)
+                        Box(Modifier.fillMaxWidth().height(previewHeight).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh), contentAlignment = Alignment.Center) {
+                            val image = preview
+                            if (image != null) {
+                                Image(image.image, "Image template preview", Modifier.fillMaxSize().testTag("rename-template-preview"), contentScale = ContentScale.Fit)
+                            } else {
+                                Icon(Icons.Outlined.Image, "Image template preview", Modifier.size(28.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
                     OutlinedTextField(
@@ -1757,6 +1760,7 @@ private fun EditorSetupSection(
             AnimatedVisibility(expanded, enter = fadeIn(tween(120)) + expandVertically(tween(120)), exit = fadeOut(tween(100)) + shrinkVertically(tween(100))) {
                 Box(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 12.dp)) { content() }
             }
+            ExpansionScrollAnchor(expanded)
         }
     }
 }
@@ -2134,6 +2138,7 @@ private fun StepCard(
                         )
                     }
                 }
+                ExpansionScrollAnchor(expanded)
             }
         }
         Box(modifier = Modifier.matchParentSize()) {
