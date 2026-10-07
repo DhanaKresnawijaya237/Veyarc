@@ -599,14 +599,22 @@ private fun ConversationBody(state: AssistantPreviewState, onContext: (PreviewTu
                 item { Box(Modifier.heightIn(min = 2.dp)) }
             }
         }
-        if (!followLatest && list.canScrollForward) {
-            Button(
+        androidx.compose.animation.AnimatedVisibility(
+            visible = !followLatest && list.canScrollForward,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
+            enter = androidx.compose.animation.fadeIn(tween(100)) + androidx.compose.animation.slideInVertically(androidx.compose.animation.core.spring(dampingRatio = 0.65f, stiffness = 400f)) { it / 4 },
+            exit = androidx.compose.animation.fadeOut(tween(90)),
+        ) {
+            FilledIconButton(
                 onClick = {
-                    followLatest = true
-                    scope.launch { list.scrollToItem((list.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)) }
+                    scope.launch {
+                        list.animateScrollToItem((list.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
+                        followLatest = true
+                    }
                 },
-                modifier = Modifier.align(Alignment.BottomCenter).padding(8.dp),
-            ) { Text("Jump to latest") }
+                modifier = Modifier.size(44.dp),
+                colors = androidx.compose.material3.IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer),
+            ) { Icon(Icons.Outlined.KeyboardArrowDown, "Jump to latest", Modifier.size(24.dp)) }
         }
     }
 }

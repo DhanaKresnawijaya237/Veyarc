@@ -170,7 +170,11 @@ class AssistantAccessibilityAcceptanceTest {
         compose.onNode(hasText("First question") and hasAnyAncestor(hasTestTag("assistant-messages"))).assertIsDisplayed()
         compose.runOnIdle { owner.complete("The later answer is complete.") }
         compose.onNode(hasText("First question") and hasAnyAncestor(hasTestTag("assistant-messages"))).assertIsDisplayed()
-        compose.onNodeWithText("Jump to latest").assertIsDisplayed().performClick()
+        val jump = compose.onNodeWithContentDescription("Jump to latest").assertIsDisplayed()
+        val buttonBounds = jump.fetchSemanticsNode().boundsInRoot
+        val messageBounds = compose.onNodeWithTag("assistant-messages").fetchSemanticsNode().boundsInRoot
+        assertTrue(buttonBounds.center.x > messageBounds.center.x)
+        jump.performClick()
         compose.onNodeWithText("The later answer is complete.").assertIsDisplayed()
         compose.runOnIdle { assertTrue(owner.state.conversation!!.turns.all { it.status == PreviewReplyStatus.COMPLETE }) }
     }
