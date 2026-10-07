@@ -1326,7 +1326,7 @@ class WorkflowRepository internal constructor(
         const val MAX_STORED_RUN_EVENTS = 50
         const val MAX_FOLDER_NAME_LENGTH = 80
         const val PREVIEW_CACHE_SIZE = 16
-        const val MATCHER_OVERHEAD_BYTES_PER_TEMPLATE = 16L * 16L * 4L * Int.SIZE_BYTES
+        const val MATCHER_OVERHEAD_BYTES_PER_TEMPLATE = (16L * 16L + 16L) * 4L * Int.SIZE_BYTES
         const val DEFAULT_MAINTENANCE_LIMIT = 256
         val MIGRATION_LOCK = Any()
 
