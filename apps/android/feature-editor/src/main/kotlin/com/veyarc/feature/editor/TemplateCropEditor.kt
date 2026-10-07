@@ -1,6 +1,5 @@
 package com.veyarc.feature.editor
 
-import android.content.res.Configuration
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -26,7 +25,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asAndroidBitmap
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -61,7 +59,6 @@ internal fun TemplateCropEditorDialog(draft: TemplateCropDraft, displayWidthPx: 
     Dialog(onDismissRequest = { if (!saving) onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         Surface(Modifier.fillMaxSize().testTag("template-crop-editor"), color = Color.Black) {
             ImageEditor(draft.source.preview.asAndroidBitmap(), edits, true, saving, null, applyEnabled = supported && nameValid, onDismiss = onDismiss, onApply = { onApply(edits.crop, edits.turns, draft.name.trim(), edits.strokes) }, details = {
-                val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
                 val nameField: @Composable () -> Unit = {
                     OutlinedTextField(
                         draft.name,
@@ -82,15 +79,8 @@ internal fun TemplateCropEditorDialog(draft: TemplateCropDraft, displayWidthPx: 
                     }
                 }
                 Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (landscape) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            androidx.compose.foundation.layout.Box(Modifier.weight(1f)) { nameField() }
-                            cropDetails()
-                        }
-                    } else {
-                        nameField()
-                        cropDetails()
-                    }
+                    nameField()
+                    cropDetails()
                     if (!nameValid) Text("Use a unique name up to 64 characters.", Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
                     if (!supported) Text(if (!fitsDisplay) "Crop must fit $displayWidthPx × $displayHeightPx px." else "Crop is too large. Select a smaller area.", Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
                 }

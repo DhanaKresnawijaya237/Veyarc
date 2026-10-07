@@ -1678,9 +1678,9 @@ private fun TemplateAssetSection(
                                 )
                                 Text(
                                     listOfNotNull(
-                                        asset.addedAtMs?.let { "Added ${java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(it))}" },
+                                        asset.addedAtMs?.let { "Added ${java.text.SimpleDateFormat("dd/MM/yy HH:mm", java.util.Locale.ROOT).format(java.util.Date(it))}" },
                                         asset.byteCount?.let { android.text.format.Formatter.formatShortFileSize(context, it) },
-                                        usageNumbers[asset.assetId.value]?.takeIf { it.isNotEmpty() }?.joinToString(", "),
+                                        usageNumbers[asset.assetId.value]?.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "Steps: "),
                                     ).joinToString(" · "),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1704,11 +1704,20 @@ private fun TemplateAssetSection(
             candidate.isNotEmpty() && candidate.length <= 64 &&
                 assetNames.none { (id, existing) -> id != assetId.value && existing.equals(candidate, ignoreCase = true) }
         }
+        val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val renameButton: @Composable () -> Unit = {
+            TextButton(enabled = valid, onClick = {
+                onRenameTemplate(assetId, name.trim())
+                renameTarget = null
+            }) { Text("Rename") }
+        }
+        val cancelButton: @Composable () -> Unit = { TextButton(onClick = { renameTarget = null }) { Text("Cancel") } }
         AlertDialog(
             onDismissRequest = { renameTarget = null },
+            modifier = if (landscape) Modifier.widthIn(min = 560.dp, max = 760.dp) else Modifier,
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = !landscape),
             title = { Text("Rename template") },
             text = {
-                val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
                 val nameField: @Composable () -> Unit = {
                     OutlinedTextField(
                         value = name,
@@ -1731,9 +1740,15 @@ private fun TemplateAssetSection(
                 }
                 Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (landscape) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            imagePreview(Modifier.size(96.dp))
-                            Box(Modifier.weight(1f)) { nameField() }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+                            imagePreview(Modifier.weight(1f).heightIn(min = 140.dp, max = 220.dp).height(LocalConfiguration.current.screenHeightDp.dp * 0.42f))
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                nameField()
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                    cancelButton()
+                                    renameButton()
+                                }
+                            }
                         }
                     } else {
                         BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -1744,16 +1759,8 @@ private fun TemplateAssetSection(
                     }
                 }
             },
-            confirmButton = {
-                TextButton(
-                    enabled = valid,
-                    onClick = {
-                        onRenameTemplate(assetId, name.trim())
-                        renameTarget = null
-                    },
-                ) { Text("Rename") }
-            },
-            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("Cancel") } },
+            confirmButton = { if (!landscape) renameButton() },
+            dismissButton = { if (!landscape) cancelButton() },
         )
     }
 }

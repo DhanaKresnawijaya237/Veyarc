@@ -28,8 +28,10 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.RotateRight
@@ -241,21 +243,26 @@ fun ImageEditor(source: Bitmap?, edits: ImageEdits, editable: Boolean, saving: B
     val rotate: @Composable () -> Unit = { IconButton(onClick = edits::rotate, enabled = active) { Icon(Icons.AutoMirrored.Outlined.RotateRight, "Rotate") } }
     CompositionLocalProvider(LocalContentColor provides Color.White) {
         if (landscape) {
-            Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-                details?.invoke()
-                Row(Modifier.weight(1f).fillMaxWidth()) {
-                    Column(Modifier.width(56.dp).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Row(Modifier.fillMaxSize().safeDrawingPadding()) {
+                Column(Modifier.width(if (details != null) 196.dp else 56.dp).fillMaxHeight().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
+                    if (details != null) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            close()
+                            if (editable) rotate()
+                        }
+                    } else {
                         close()
                         if (editable) rotate()
                     }
-                    Box(Modifier.weight(1f).fillMaxHeight()) { preview() }
-                    if (editable) {
-                        Column(Modifier.width(112.dp).fillMaxHeight().padding(4.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
-                            if (edits.mode == "draw" && edits.tool != AnnotationTool.ERASER) LazyVerticalGrid(GridCells.Fixed(2), Modifier.weight(1f).testTag("annotation-colors")) { items(colors) { swatch(it) } }
-                            Row { undoRedo() }
-                            Row { modes() }
-                            accept()
-                        }
+                    details?.invoke()
+                }
+                Box(Modifier.weight(1f).fillMaxHeight()) { preview() }
+                if (editable) {
+                    Column(Modifier.width(112.dp).fillMaxHeight().padding(4.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
+                        if (edits.mode == "draw" && edits.tool != AnnotationTool.ERASER) LazyVerticalGrid(GridCells.Fixed(2), Modifier.weight(1f).testTag("annotation-colors")) { items(colors) { swatch(it) } }
+                        Row { undoRedo() }
+                        Row { modes() }
+                        accept()
                     }
                 }
             }

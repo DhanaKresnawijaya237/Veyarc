@@ -982,7 +982,7 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
                     when (turn.applyState) {
                         ProposalApplyState.RESERVED -> if (state.isApplyingImages) LinearProgressIndicator(Modifier.fillMaxWidth()) else Text("Check your draft in the editor before continuing.")
 
-                        ProposalApplyState.APPLIED -> Text("Undo in the editor. Save when ready.")
+                        ProposalApplyState.APPLIED -> Unit
 
                         ProposalApplyState.REJECTED -> Text("Nothing applied. Send a new request.")
 
@@ -1017,7 +1017,6 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
                         if (compact) OutlinedButton(onClick = { allChangesVisible = true }, modifier = Modifier.fillMaxWidth()) { Text("View all changes") }
                     }
                     Text(if (state.supportsApply && proposal != null) "Draft only. Save and Run are separate." else "Sample only. Apply is unavailable.", style = MaterialTheme.typography.bodySmall)
-                    Text("Device capabilities have not been checked.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = { state.applyProposal(turn.id) }, enabled = changes.isSuccess && state.canApply(turn)) { Text(if (compact) "Apply all changes" else "Apply to draft") }
                         if (proposal != null && !turn.proposalDismissed && turn.applyState == ProposalApplyState.NONE) TextButton(onClick = { state.dismissProposal(turn.id) }, enabled = state.canChange) { Text("Dismiss proposal") }
