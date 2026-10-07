@@ -9,6 +9,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -77,7 +78,7 @@ class AssistantProviderStateTest {
         assertTrue(calls.isEmpty())
         state.send()
         state.send()
-        yield()
+        await { calls.size == 1 }
         assertEquals(1, calls.size)
         assertTrue(calls[0].first.thinkingEnabled)
         assertEquals(DeepSeekModel.PRO.apiId, calls[0].first.modelId)
@@ -104,7 +105,7 @@ class AssistantProviderStateTest {
         state.setModel(DeepSeekModel.FLASH)
         state.setEffort(DeepSeekEffort.MAX)
         state.retry()
-        yield()
+        await { calls.size == 2 }
         assertEquals(2, calls.size)
         assertNull(state.conversation!!.turns.single().thinking)
         calls[0].first.reportThinking(AssistantThinking("Stale secret thought", finished = true))
@@ -146,7 +147,7 @@ class AssistantProviderStateTest {
         assertEquals(DeepSeekModel.FLASH, state.selectedModel)
         state.setModel(DeepSeekModel.PRO)
         state.regenerate(state.conversation!!.turns.single().id)
-        yield()
+        await { calls.size == 3 }
         assertEquals(DeepSeekModel.PRO.apiId, calls[2].first.modelId)
         calls[2].second.complete(reply(calls[2].first, "Regenerated"))
         yield()
@@ -246,31 +247,31 @@ class AssistantProviderStateTest {
             state.enableProvider()
             state.compose("Keep my prompt")
             state.send()
-            yield()
+            await { state.conversation!!.turns.last().status == PreviewReplyStatus.ERROR }
             assertEquals(PreviewReplyStatus.ERROR, state.conversation!!.turns.last().status)
             assertFalse(state.conversation!!.turns.last().responseError!!.contains("secret"))
             state.retry()
-            yield()
+            await { calls == 2 }
             state.disableProvider()
             yield()
             assertEquals(PreviewReplyStatus.INTERRUPTED, state.conversation!!.turns.last().status)
             state.enableProvider()
             assertEquals(2, calls)
             state.retry()
-            yield()
+            await { calls == 3 }
             state.close()
             yield()
             state.open(AssistantPreviewContext())
             assertEquals(3, calls)
             state.retry()
-            yield()
+            await { calls == 4 }
             state.clearHistory()
             yield()
             assertTrue(state.conversations.isEmpty())
             state.newChat()
             state.compose("Owner loss")
             state.send()
-            yield()
+            await { calls == 5 }
             owner.cancel()
             yield()
             assertNull(state.requestId)
@@ -318,6 +319,8 @@ class AssistantProviderStateTest {
         assertEquals("Connected.", state.connectionTestStatus)
         state.dispose()
     }
+
+    private suspend fun await(condition: () -> Boolean) = withTimeout(5_000) { while (!condition()) yield() }
 
     private fun reply(request: AssistantRequest, text: String) = AssistantResponseCodec.encode(
         AssistantResponse(1, request.requestId, request.conversationId, request.baseSnapshotId, AssistantOutcome.EXPLANATION, text),

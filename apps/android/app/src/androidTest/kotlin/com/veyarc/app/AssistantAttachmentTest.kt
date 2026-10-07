@@ -53,6 +53,8 @@ import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -65,6 +67,35 @@ import java.util.zip.ZipOutputStream
 class AssistantAttachmentTest {
     @get:Rule val compose = createComposeRule()
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
+
+    @Test
+    fun thumbnailsReuseMemoryEvictOldPreviewsAndKeepOriginalQuality() {
+        val importer = AssistantAttachmentImporter(context)
+        val source = Bitmap.createBitmap(400, 400, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.BLUE) }
+        val images = mutableListOf<com.veyarc.feature.assistant.AssistantAttachment>()
+        try {
+            images += importer.saveImage("First.png", source)
+            val first = importer.preview(images.first())
+            assertSame(first, importer.preview(images.first()))
+            repeat(32) {
+                images += importer.saveImage("Image $it.png", source)
+                importer.preview(images.last())
+            }
+            val reloaded = importer.preview(images.first())
+            assertNotSame(first, reloaded)
+            assertFalse(first.isRecycled)
+            assertEquals(Color.BLUE, reloaded.getPixel(0, 0))
+            val original = importer.bitmap(images.first())
+            try {
+                assertEquals(400, original.width)
+            } finally {
+                original.recycle()
+            }
+        } finally {
+            source.recycle()
+            images.forEach { File(context.filesDir, "assistant-attachments/attachment-${it.id}.wfenc").delete() }
+        }
+    }
 
     @Test
     fun markdownFilesHaveAFormattedPreviewAndRetainTheirTextForSending() {

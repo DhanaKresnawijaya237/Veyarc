@@ -16,6 +16,37 @@ import javax.crypto.spec.SecretKeySpec
 @RunWith(AndroidJUnit4::class)
 class ChatRepositoryTest {
     @Test
+    fun changedReadsDetectReplacementDeletionAndMissingFiles() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val database = Room.inMemoryDatabaseBuilder(context, VeyarcDatabase::class.java).allowMainThreadQueries().build()
+        val directory = File(context.cacheDir, "chat-changes-${UUID.randomUUID()}")
+        val files = EncryptedFileStore(directory, AesGcmFileCodec(SecretKeySource { SecretKeySpec(ByteArray(32) { 4 }, "AES") }))
+        val repository = ChatRepository(database, files)
+        val anotherOwner = ChatRepository(database, files)
+        val chat = StoredChat(UUID.randomUUID().toString(), null, 1, 1, null, "EMPTY", byteArrayOf(1))
+        try {
+            repository.save(chat, create = true)
+            val (versions, loaded) = repository.loadChanges(emptyMap())
+            assertArrayEquals(chat.payload, loaded.single().payload)
+            assertTrue(repository.loadChanges(versions).second.isEmpty())
+            anotherOwner.save(chat.copy(payload = byteArrayOf(2)), create = false)
+            val (replacementVersions, replacements) = repository.loadChanges(versions)
+            assertArrayEquals(byteArrayOf(2), replacements.single().payload)
+            files.delete(replacementVersions.getValue(chat.id))
+            assertTrue(runCatching { repository.loadChanges(replacementVersions) }.isFailure)
+            anotherOwner.delete(chat.id)
+            assertTrue(repository.loadChanges(replacementVersions).first.isEmpty())
+            files.writeNew("orphan.wfenc", byteArrayOf(1), byteArrayOf(2))
+            repository.save(chat, create = true)
+            repository.load()
+            assertFalse(files.exists("orphan.wfenc"))
+        } finally {
+            database.close()
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun largeHistoryAndUnavailableDirectoryPreserveChatsAndWorkflow() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val database = Room.inMemoryDatabaseBuilder(context, VeyarcDatabase::class.java).allowMainThreadQueries().build()

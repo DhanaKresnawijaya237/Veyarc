@@ -125,7 +125,7 @@ class DeepSeekClientTest {
         val schema = Json.parseToJsonElement(instructions.substringAfter("Workflow schema (spec/workflows/v1/workflow.schema.json):")).jsonObject
         val imageSchema = schema.getValue("$" + "defs").jsonObject.getValue("assetReference").jsonObject
         val nameSchema = imageSchema.getValue("properties").jsonObject.getValue("displayName").jsonObject
-        assertEquals(Json.parseToJsonElement("[\"string\",\"null\"]"), nameSchema.getValue("type"))
+        assertEquals(JsonPrimitive("string"), nameSchema.getValue("type"))
         assertEquals(JsonPrimitive(64), nameSchema.getValue("maxLength"))
         val current = Json.parseToJsonElement(messages.last().jsonObject.getValue("content").jsonPrimitive.content).jsonObject
         assertEquals(JsonNull, current["snapshot"])

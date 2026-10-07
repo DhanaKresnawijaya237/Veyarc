@@ -63,17 +63,22 @@ data class StoredChat(
 /** Opaque encrypted chat payloads. This repository never reads or modifies workflow bodies. */
 class ChatRepository internal constructor(private val database: VeyarcDatabase, private val files: EncryptedFileStore) {
     constructor(context: Context) : this(VeyarcDatabase.create(context), createFiles(context))
+    private var garbageCollected = false
 
-    fun load(): List<StoredChat> = synchronized(storageLock) {
-        collectGarbage()
+    fun load(): List<StoredChat> = loadChanges(emptyMap()).second
+
+    /** Unique immutable file names identify committed replacements, including writes by another owner. */
+    fun loadChanges(knownVersions: Map<String, String>): Pair<Map<String, String>, List<StoredChat>> = synchronized(storageLock) {
         val rows = database.chatDao().list()
-        rows.map { row ->
+        collectGarbage(rows)
+        val versions = rows.associate { it.conversationId to it.encryptedFileName }
+        versions to rows.filter { knownVersions[it.conversationId] != it.encryptedFileName || !files.exists(it.encryptedFileName) }.map { row ->
             StoredChat(row.conversationId, row.scopeId, row.createdAtMs, row.updatedAtMs, row.requestId, row.status, files.read(row.encryptedFileName, associatedData(row.conversationId)))
         }
     }
 
     fun save(chat: StoredChat, create: Boolean) = synchronized(storageLock) {
-        collectGarbage()
+        if (!garbageCollected) collectGarbage()
         require(UUID.fromString(chat.id).toString() == chat.id)
         require(chat.createdAtMs >= 0 && chat.updatedAtMs >= chat.createdAtMs)
         require(chat.payload.size in 1..MAX_PAYLOAD_BYTES)
@@ -123,10 +128,11 @@ class ChatRepository internal constructor(private val database: VeyarcDatabase, 
         delete(database.chatDao().list().filter { it.scopeId == workflowId }.map { it.conversationId }.toSet())
     }
 
-    private fun collectGarbage() {
-        val referenced = database.chatDao().list().map { it.encryptedFileName }.toSet()
+    private fun collectGarbage(rows: List<ChatEntity> = database.chatDao().list()) {
+        val referenced = rows.map { it.encryptedFileName }.toSet()
         files.listCommittedFileNames(Int.MAX_VALUE).filterNot(referenced::contains).forEach(files::delete)
         files.deleteStaleTemporaryFiles(Int.MAX_VALUE)
+        garbageCollected = true
     }
 
     fun close() = synchronized(storageLock) { database.close() }

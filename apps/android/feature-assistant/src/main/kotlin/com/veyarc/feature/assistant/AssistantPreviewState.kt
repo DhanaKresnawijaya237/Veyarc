@@ -291,6 +291,7 @@ class AssistantPreviewState(
         private set
     private var blockingWrites by mutableStateOf(0)
     private val savedIds = mutableSetOf<String>()
+    private var historyVersions: Map<String, String> = emptyMap()
 
     // One ordered writer prevents an older composer save from replacing a newer sent turn.
     private val writes = Channel<suspend () -> Unit>(64)
@@ -386,11 +387,13 @@ class AssistantPreviewState(
         enqueue { loadHistory() }
     }
 
-    private suspend fun loadHistory() {
+    private suspend fun loadHistory(reuseUnchanged: Boolean = false) {
         val store = requireNotNull(repository)
         loadFailed = true
-        val loaded = withContext(Dispatchers.IO) {
-            store.load().map { stored ->
+        val previous = conversations.associateBy { it.id }
+        val (versions, changed) = withContext(Dispatchers.IO) {
+            val (versions, changed) = store.loadChanges(if (reuseUnchanged) historyVersions else emptyMap())
+            versions to changed.map { stored ->
                 val chat = decode(stored)
                 val recovered = chat.copy(
                     turns = chat.turns.mapIndexed { index, it ->
@@ -405,10 +408,12 @@ class AssistantPreviewState(
                 recovered
             }
         }
-        conversations = loaded
-        pruneAttachments()
+        val loaded = changed.associateBy { it.id }
+        conversations = versions.keys.map { loaded[it] ?: previous.getValue(it) }
+        if (!reuseUnchanged || versions != historyVersions) pruneAttachments()
+        historyVersions = versions
         savedIds.clear()
-        savedIds.addAll(loaded.map { it.id })
+        savedIds.addAll(versions.keys)
         selectedId = history.maxByOrNull { it.updatedAtMs }?.id
         storageError = null
         isLoading = false
@@ -430,7 +435,7 @@ class AssistantPreviewState(
             enqueue {
                 // Read after queued close writes; a failed write must retain unsaved text.
                 if (storageError == null) {
-                    loadHistory()
+                    loadHistory(reuseUnchanged = true)
                     if (conversation == null && isOpen) createChat()
                 } else {
                     isLoading = false
@@ -900,7 +905,8 @@ class AssistantPreviewState(
                     scope.launch { receiveThinking(token, thinking) }
                 }
                 val notifyReply: (String) -> Unit = { text -> scope.launch { receiveReply(token, text) } }
-                request = if (contents.isEmpty()) providerRequest(chat, contents, notifyThinking, notifyReply) else withContext(Dispatchers.Default) { providerRequest(chat, contents, notifyThinking, notifyReply) }
+                val profiles = connections
+                request = withContext(Dispatchers.Default) { providerRequest(chat, contents, notifyThinking, notifyReply, profiles) }
                 val bytes = providerCall(request)
                 request.latestThinking?.let { receiveThinking(token, it) }
                 receiveReply(token, request.latestReply)
@@ -921,9 +927,9 @@ class AssistantPreviewState(
         }
     }
 
-    internal fun providerRequest(chat: PreviewConversation, contents: Map<String, AttachmentContent> = emptyMap(), onThinking: ((AssistantThinking) -> Unit)? = null, onReply: ((String) -> Unit)? = null): AssistantRequest {
+    internal fun providerRequest(chat: PreviewConversation, contents: Map<String, AttachmentContent> = emptyMap(), onThinking: ((AssistantThinking) -> Unit)? = null, onReply: ((String) -> Unit)? = null, profiles: AssistantConnections = connections): AssistantRequest {
         val current = chat.turns.last()
-        val profile = connections.connections.firstOrNull { it.id == current.connectionId }
+        val profile = profiles.connections.firstOrNull { it.id == current.connectionId }
             ?: throw IllegalArgumentException("This chat's connection was removed. Choose another model to continue.")
         val chosenModel = profile.models.firstOrNull { it.id == current.modelId }
             ?: throw IllegalArgumentException("This model was removed. Choose another model to continue.")

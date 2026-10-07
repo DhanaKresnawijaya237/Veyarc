@@ -9,6 +9,7 @@ import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
+import android.util.LruCache
 import com.veyarc.data.storage.ChatAttachmentStore
 import kotlinx.serialization.Serializable
 import org.xmlpull.v1.XmlPullParser
@@ -58,6 +59,9 @@ class AttachmentContent(val attachment: AssistantAttachment, val text: String? =
 
 /** Android pickers grant access only to explicitly selected files. Imports copy and encrypt immediately. */
 class AssistantAttachmentImporter(private val context: Context, val store: ChatAttachmentStore = ChatAttachmentStore(context)) {
+    private val previews = object : LruCache<String, Bitmap>(4 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
+    }
     fun import(uri: Uri): AssistantAttachment {
         val resolver = context.contentResolver
         val displayName = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
@@ -128,10 +132,13 @@ class AssistantAttachmentImporter(private val context: Context, val store: ChatA
     fun bitmap(attachment: AssistantAttachment): Bitmap = BitmapFactory.decodeByteArray(store.read(attachment.id), 0, attachment.byteCount) ?: error("This image could not be read.")
 
     fun preview(attachment: AssistantAttachment): Bitmap {
+        previews.get(attachment.id)?.let { return it }
         var sample = 1
         while (maxOf(attachment.width, attachment.height) / sample > 320) sample *= 2
         val bytes = store.read(attachment.id)
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample }) ?: error("This image could not be read.")
+        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample }) ?: error("This image could not be read.")
+        previews.put(attachment.id, bitmap)
+        return bitmap
     }
 
     fun cropPreview(attachment: AssistantAttachment, crop: com.veyarc.model.NormalizedRect, maxSide: Int = 1600): Bitmap {
