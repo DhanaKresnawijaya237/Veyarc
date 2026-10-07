@@ -964,18 +964,17 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
     Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.onSizeChanged { height = it.height }) {
             Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("assistant-review-toggle").semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" }.clickable { expanded = !expanded }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        when {
-                            proposal == null -> "Example change"
-                            changes.isSuccess -> "Changes · ${changes.getOrNull()?.size ?: 0}"
-                            else -> "Proposed changes"
-                        },
-                        style = MaterialTheme.typography.titleSmall,
-                    )
-                    Surface(shape = RoundedCornerShape(8.dp), color = highlight.copy(alpha = 0.14f)) {
-                        Text(reviewLabel, Modifier.padding(horizontal = 8.dp, vertical = 3.dp), style = MaterialTheme.typography.labelSmall, color = highlight)
-                    }
+                Text(
+                    when {
+                        proposal == null -> "Example change"
+                        changes.isSuccess -> "Changes · ${changes.getOrNull()?.size ?: 0}"
+                        else -> "Proposed changes"
+                    },
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Surface(shape = RoundedCornerShape(8.dp), color = highlight.copy(alpha = 0.14f)) {
+                    Text(reviewLabel, Modifier.padding(horizontal = 8.dp, vertical = 3.dp), style = MaterialTheme.typography.labelSmall, color = highlight)
                 }
             }
             AnimatedVisibility(expanded, enter = expandVertically(tween(140), expandFrom = Alignment.Top) + fadeIn(tween(90)), exit = shrinkVertically(tween(120), shrinkTowards = Alignment.Top) + fadeOut(tween(70))) {
