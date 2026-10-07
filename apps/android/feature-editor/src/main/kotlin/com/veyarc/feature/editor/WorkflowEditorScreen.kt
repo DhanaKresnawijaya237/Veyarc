@@ -1656,12 +1656,24 @@ private fun TemplateAssetSection(
     val context = LocalContext.current
     var expanded by remember { mutableStateOf(true) }
     var renameTarget by remember { mutableStateOf<com.veyarc.model.AssetId?>(null) }
+    val templateScroll = rememberLazyListState()
+    val edgeScroll = remember(templateScroll) { TemplateListScroll(templateScroll) }
     EditorSetupSection("Image templates", Icons.Outlined.Image, expanded, { expanded = !expanded }, onAddTemplate, "Add image template") {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (assets.isEmpty()) {
                 Text("No templates added.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
-                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 288.dp).nestedScroll(IsolatedVerticalScroll).testTag("workflow-template-list"), overscrollEffect = null, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                LazyColumn(
+                    Modifier.fillMaxWidth().heightIn(max = 288.dp).nestedScroll(edgeScroll).pointerInput(edgeScroll) {
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                            edgeScroll.startGesture()
+                        }
+                    }.testTag("workflow-template-list"),
+                    state = templateScroll,
+                    overscrollEffect = null,
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
                     itemsIndexed(assets, key = { _, asset -> asset.assetId.value }) { index, asset ->
                         Row(
                             modifier = Modifier.fillMaxWidth().clickable { renameTarget = asset.assetId },

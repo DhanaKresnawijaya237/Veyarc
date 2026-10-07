@@ -244,7 +244,7 @@ fun ImageEditor(source: Bitmap?, edits: ImageEdits, editable: Boolean, saving: B
     CompositionLocalProvider(LocalContentColor provides Color.White) {
         if (landscape) {
             Row(Modifier.fillMaxSize().safeDrawingPadding()) {
-                Column(Modifier.width(if (details != null) 196.dp else 56.dp).fillMaxHeight().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(Modifier.width(if (details != null) 196.dp else 56.dp).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
                     if (details != null) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             close()
@@ -254,7 +254,11 @@ fun ImageEditor(source: Bitmap?, edits: ImageEdits, editable: Boolean, saving: B
                         close()
                         if (editable) rotate()
                     }
-                    details?.invoke()
+                    if (details != null) {
+                        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) { details() }
+                        }
+                    }
                 }
                 Box(Modifier.weight(1f).fillMaxHeight()) { preview() }
                 if (editable) {

@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -273,10 +274,23 @@ private object PreventUpwardSheetOverscrollConnection : NestedScrollConnection {
     }
 }
 
-/** A nested list keeps its leftover drag and fling instead of moving the workflow behind it. */
-internal object IsolatedVerticalScroll : NestedScrollConnection {
-    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource) = Offset(0f, available.y)
-    override suspend fun onPostFling(consumed: Velocity, available: Velocity) = Velocity(0f, available.y)
+/** A gesture that starts inside the list stops there; a fresh outward drag at an edge can leave it. */
+internal class TemplateListScroll(private val list: LazyListState) : NestedScrollConnection {
+    private var keepInside: Boolean? = null
+
+    fun startGesture() {
+        keepInside = null
+    }
+
+    override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+        if (source == NestedScrollSource.UserInput && keepInside == null && available.y != 0f) {
+            keepInside = if (available.y > 0f) list.canScrollBackward else list.canScrollForward
+        }
+        return Offset.Zero
+    }
+
+    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource) = if (keepInside != false) Offset(0f, available.y) else Offset.Zero
+    override suspend fun onPostFling(consumed: Velocity, available: Velocity) = if (keepInside != false) Velocity(0f, available.y) else Velocity.Zero
 }
 
 internal fun upwardOverscrollConsumption(availableY: Float): Float = if (availableY < 0f) availableY else 0f
