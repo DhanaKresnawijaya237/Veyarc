@@ -1,5 +1,11 @@
 package com.veyarc.app
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -23,6 +29,8 @@ import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -41,6 +49,8 @@ enum class VeyarcDestination(
     SETTINGS("Settings", Icons.Outlined.Settings),
 }
 
+internal val LocalMainPageActive = compositionLocalOf { true }
+
 @Composable
 internal fun VeyarcAppShell(
     selectedDestination: VeyarcDestination,
@@ -53,8 +63,13 @@ internal fun VeyarcAppShell(
 
     @Composable
     fun DestinationContent() {
-        destinationStates.SaveableStateProvider(selectedDestination.name) {
-            content(selectedDestination)
+        AnimatedContent(selectedDestination, modifier = Modifier.fillMaxSize(), transitionSpec = {
+            val direction = if (targetState.ordinal > initialState.ordinal) 1 else -1
+            (slideInHorizontally(tween(190)) { it * direction } togetherWith slideOutHorizontally(tween(190)) { -it * direction }).using(SizeTransform(clip = true))
+        }, label = "page navigation") { destination ->
+            destinationStates.SaveableStateProvider(destination.name) {
+                CompositionLocalProvider(LocalMainPageActive provides (destination == selectedDestination)) { content(destination) }
+            }
         }
     }
 

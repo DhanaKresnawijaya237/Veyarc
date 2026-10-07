@@ -231,7 +231,9 @@ fun SettingsScreen(
             shizukuProbe.close()
         }
     }
-    LaunchedEffect(refreshGeneration) {
+    val pageActive = LocalMainPageActive.current
+    LaunchedEffect(refreshGeneration, pageActive) {
+        if (!pageActive) return@LaunchedEffect
         refreshCapabilities()
         refreshStorage()
     }

@@ -70,6 +70,7 @@ import com.veyarc.data.storage.WorkflowSummary
 import com.veyarc.feature.editor.StoredRunDetailScreen
 import com.veyarc.feature.editor.VeyarcChoice
 import com.veyarc.feature.editor.VeyarcChoicePicker
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -139,7 +140,9 @@ internal fun RunManagerScreen(
     var dateMenuOpen by remember { mutableStateOf(false) }
     var filtersOpen by remember { mutableStateOf(false) }
 
-    LaunchedEffect(repository, refreshGeneration, localRefresh) {
+    val pageActive = LocalMainPageActive.current
+    LaunchedEffect(repository, refreshGeneration, localRefresh, pageActive) {
+        if (!pageActive) return@LaunchedEffect
         isBusy = true
         message = null
         runCatching {
@@ -173,7 +176,10 @@ internal fun RunManagerScreen(
                 selectedView = RUNS_ALL_VIEW
             }
             if (workflowFilter != null && loadedWorkflows.none { it.workflowId == workflowFilter }) workflowFilter = null
-        }.onFailure { message = "Runs could not be loaded." }
+        }.onFailure {
+            if (it is CancellationException) throw it
+            message = "Runs could not be loaded."
+        }
         isBusy = false
     }
 

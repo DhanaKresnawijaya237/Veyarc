@@ -53,6 +53,7 @@ import com.veyarc.data.storage.StoredRunRecord
 import com.veyarc.data.storage.StoredRunStatus
 import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowSummary
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.DateFormat
@@ -72,7 +73,9 @@ fun HomeDashboardScreen(
     var latestRecording by pageState.latestRecording
     var error by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(repository, refreshGeneration) {
+    val pageActive = LocalMainPageActive.current
+    LaunchedEffect(repository, refreshGeneration, pageActive) {
+        if (!pageActive) return@LaunchedEffect
         error = null
         runCatching {
             withContext(Dispatchers.IO) {
@@ -89,6 +92,8 @@ fun HomeDashboardScreen(
             workflows = loadedWorkflows
             latestRecording = loadedRecording
         }.onFailure {
+            if (it is CancellationException) throw it
+
             error = "Dashboard data could not be loaded."
         }
     }

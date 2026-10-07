@@ -74,6 +74,7 @@ import com.veyarc.feature.editor.VeyarcChoice
 import com.veyarc.feature.editor.VeyarcChoicePicker
 import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.WorkflowIds
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -136,7 +137,9 @@ internal fun WorkflowManagerScreen(
     var orientationMenuOpen by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
-    LaunchedEffect(repository, refreshGeneration, localRefresh) {
+    val pageActive = LocalMainPageActive.current
+    LaunchedEffect(repository, refreshGeneration, localRefresh, pageActive) {
+        if (!pageActive) return@LaunchedEffect
         isBusy = true
         error = null
         runCatching {
@@ -165,6 +168,8 @@ internal fun WorkflowManagerScreen(
                 selectedView = ALL_VIEW
             }
         }.onFailure {
+            if (it is CancellationException) throw it
+
             error = "Workflows could not be loaded."
         }
         isBusy = false

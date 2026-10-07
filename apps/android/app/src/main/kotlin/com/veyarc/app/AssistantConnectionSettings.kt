@@ -287,9 +287,9 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
             Text("• Your API account pays. Stop may still cost.")
             Text("• Deleting locally doesn't erase provider records.")
             if (currentDefault.protocol == AssistantProtocol.DEEPSEEK) {
-                TextButton(onClick = { uri.openUri("https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html") }) { Text("Provider privacy policy") }
-                TextButton(onClick = { uri.openUri("https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html") }) { Text("Provider API terms") }
-                TextButton(onClick = { uri.openUri("https://api-docs.deepseek.com/quick_start/pricing/") }) { Text("Provider pricing") }
+                TextButton(onClick = { uri.openUri("https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html") }, modifier = Modifier.fillMaxWidth()) { Text("Provider privacy policy") }
+                TextButton(onClick = { uri.openUri("https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html") }, modifier = Modifier.fillMaxWidth()) { Text("Provider API terms") }
+                TextButton(onClick = { uri.openUri("https://api-docs.deepseek.com/quick_start/pricing/") }, modifier = Modifier.fillMaxWidth()) { Text("Provider pricing") }
             } else {
                 Text("Check your provider's privacy policy and pricing.", style = MaterialTheme.typography.bodySmall)
             }

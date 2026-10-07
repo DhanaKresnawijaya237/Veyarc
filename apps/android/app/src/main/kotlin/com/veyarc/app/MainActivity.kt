@@ -210,7 +210,7 @@ class MainActivity : ComponentActivity() {
                                             refreshGeneration = resumeGeneration,
                                             onEditWorkflow = ::editWorkflow,
                                             onPlayWorkflow = ::playWorkflow,
-                                            onSelectionBarChange = { managerSelectionBar = it },
+                                            onSelectionBarChange = { if (selectedDestination == VeyarcDestination.WORKFLOWS) managerSelectionBar = it },
                                         )
 
                                         VeyarcDestination.EDITOR -> AssistantPreviewHost(
@@ -253,7 +253,7 @@ class MainActivity : ComponentActivity() {
                                             repository = workflowRepository,
                                             refreshGeneration = resumeGeneration,
                                             onOpenWorkflowRevision = ::editRunWorkflowRevision,
-                                            onSelectionBarChange = { managerSelectionBar = it },
+                                            onSelectionBarChange = { if (selectedDestination == VeyarcDestination.RUNS) managerSelectionBar = it },
                                         )
 
                                         VeyarcDestination.SETTINGS -> SettingsScreen(
