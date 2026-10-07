@@ -178,6 +178,7 @@ dependencies {
     implementation(project(":automation-android"))
     implementation(project(":data"))
     implementation(project(":core-model"))
+    implementation(project(":core-ui"))
     implementation(project(":core-engine"))
     implementation(project(":feature-editor"))
     implementation(project(":feature-recorder"))

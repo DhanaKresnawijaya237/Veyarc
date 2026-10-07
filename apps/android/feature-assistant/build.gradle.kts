@@ -47,6 +47,7 @@ dependencies {
     implementation(composeBom)
     implementation(project(":data"))
     implementation(project(":core-model"))
+    implementation(project(":core-ui"))
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.androidx.activity.compose)
     implementation("androidx.exifinterface:exifinterface:1.4.2")

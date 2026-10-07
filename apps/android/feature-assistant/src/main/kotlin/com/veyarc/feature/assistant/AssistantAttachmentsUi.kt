@@ -2,28 +2,21 @@ package com.veyarc.feature.assistant
 
 import android.content.res.Configuration
 import android.graphics.Bitmap
-import android.graphics.Matrix
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.spring
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.rememberTransformableState
-import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -31,89 +24,63 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
-import androidx.compose.material.icons.automirrored.outlined.RotateRight
-import androidx.compose.material.icons.automirrored.outlined.Undo
-import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Crop
 import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.PictureAsPdf
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
-import com.veyarc.model.NormalizedRect
+import com.veyarc.ui.ImageEditor
+import com.veyarc.ui.ImageEdits
+import com.veyarc.ui.ImageEditsSaver
+import com.veyarc.ui.ZoomableImage
+import com.veyarc.ui.renderEditedImage
+import com.veyarc.ui.rotatedForEditing
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
-import kotlin.math.hypot
 
 /** Pickers return to the same composer. Taking a photo grants only the temporary camera URI. */
 @Composable
@@ -294,357 +261,46 @@ private fun PdfAttachmentPreview(attachment: AssistantAttachment, importer: Assi
 }
 
 @Composable
-private fun ZoomableImage(bitmap: Bitmap) {
-    var scale by remember(bitmap) { mutableFloatStateOf(1f) }
-    var offset by remember(bitmap) { mutableStateOf(Offset.Zero) }
-    var viewport by remember { mutableStateOf(IntSize.Zero) }
-    val transform = rememberTransformableState { zoom, pan, _ ->
-        scale = (scale * zoom).coerceIn(1f, 5f)
-        val limitX = viewport.width * (scale - 1) / 2
-        val limitY = viewport.height * (scale - 1) / 2
-        offset = Offset((offset.x + pan.x).coerceIn(-limitX, limitX), (offset.y + pan.y).coerceIn(-limitY, limitY))
-    }
-    Box(
-        // Let the pager handle a one-finger swipe until the image is zoomed.
-        Modifier.fillMaxSize().clipToBounds().onSizeChanged { viewport = it }.transformable(transform, canPan = { scale > 1f }),
-        contentAlignment = Alignment.Center,
-    ) {
-        Image(
-            bitmap.asImageBitmap(),
-            "Image preview",
-            Modifier.fillMaxSize().graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-                translationX = offset.x
-                translationY = offset.y
-            },
-            contentScale = ContentScale.Fit,
-        )
-    }
-}
-
-private data class AnnotationStroke(val points: List<Offset>, val color: Color, val marker: Boolean)
-
-private class ImageEdits {
-    var mode by mutableStateOf("view")
-    var turns by mutableIntStateOf(0)
-    var crop by mutableStateOf(NormalizedRect(0.0, 0.0, 1.0, 1.0))
-    var strokes by mutableStateOf<List<AnnotationStroke>>(emptyList())
-    var colorValue by mutableIntStateOf(Color(0xFFFF5A5F).toArgb())
-    var marker by mutableStateOf(false)
-}
-
-private val ImageEditsSaver = listSaver<ImageEdits, Any>(
-    save = { edits ->
-        buildList {
-            addAll(listOf(edits.mode, edits.turns, edits.crop.x, edits.crop.y, edits.crop.width, edits.crop.height, edits.colorValue, edits.marker))
-            edits.strokes.forEach { stroke ->
-                add(stroke.color.toArgb())
-                add(stroke.marker)
-                add(stroke.points.size)
-                stroke.points.forEach {
-                    add(it.x)
-                    add(it.y)
-                }
-            }
-        }
-    },
-    restore = { values ->
-        ImageEdits().apply {
-            mode = values[0] as String
-            turns = values[1] as Int
-            crop = NormalizedRect(values[2] as Double, values[3] as Double, values[4] as Double, values[5] as Double)
-            colorValue = values[6] as Int
-            marker = values[7] as Boolean
-            var index = 8
-            strokes = buildList {
-                while (index < values.size) {
-                    val color = Color(values[index++] as Int)
-                    val marker = values[index++] as Boolean
-                    val count = values[index++] as Int
-                    add(AnnotationStroke(List(count) { Offset(values[index++] as Float, values[index++] as Float) }, color, marker))
-                }
-            }
-        }
-    },
-)
-
-@Composable
 private fun ImageAttachmentPreview(attachment: AssistantAttachment, importer: AssistantAttachmentImporter, editable: Boolean, edits: ImageEdits, onDismiss: () -> Unit, onSaved: suspend (() -> AssistantAttachment) -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
+    var saving by remember { mutableStateOf(false) }
     val source by produceState<Bitmap?>(null, attachment.id) {
         val result = withContext(Dispatchers.IO) { runCatching { importer.bitmap(attachment) } }
         if (result.isFailure) error = "This image could not be opened."
         value = result.getOrNull()
     }
-    var mode by edits::mode
-    var turns by edits::turns
-    var crop by edits::crop
-    var strokes by edits::strokes
-    var colorValue by edits::colorValue
-    val color = Color(colorValue)
-    var marker by edits::marker
-    var saving by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    val rotatedState by produceState<Bitmap?>(null, source, turns) {
-        value = null
-        value = withContext(Dispatchers.Default) { source?.let { Bitmap.createBitmap(it, 0, 0, it.width, it.height, Matrix().apply { postRotate(turns * 90f) }, true) } }
-    }
-    val rotated = rotatedState
-    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val rotate = {
-        turns = (turns + 1) % 4
-        crop = NormalizedRect(1.0 - (crop.y + crop.height), crop.x, crop.height, crop.width)
-        strokes = strokes.map { it.copy(points = it.points.map { point -> Offset(1f - point.y, point.x) }) }
-    }
-    val preview: @Composable () -> Unit = {
-        Box(Modifier.fillMaxSize().testTag("attachment-image-viewport"), contentAlignment = Alignment.Center) {
-            when {
-                error != null -> Text(error!!, color = Color.White)
-                rotated == null -> CircularProgressIndicator()
-                mode == "view" -> ZoomableImage(rotated)
-                else -> ImageEditCanvas(rotated, crop, mode == "crop", strokes, color, marker, { crop = it }, { strokes = it })
-            }
-        }
-    }
-    val colors = listOf("Red" to Color(0xFFFF5A5F), "Orange" to Color(0xFFFF922B), "Yellow" to Color(0xFFFFD43B), "Green" to Color(0xFF51CF66), "Blue" to Color(0xFF4DABF7), "Purple" to Color(0xFFB197FC), "White" to Color.White, "Black" to Color.Black)
-    val swatch: @Composable (Pair<String, Color>) -> Unit = { (name, ink) ->
-        Box(Modifier.size(48.dp).selectable(selected = color.toArgb() == ink.toArgb(), role = Role.RadioButton, onClick = { colorValue = ink.toArgb() }).semantics { contentDescription = "$name ink" }, contentAlignment = Alignment.Center) {
-            Surface(color = ink, shape = CircleShape, border = androidx.compose.foundation.BorderStroke(if (color.toArgb() == ink.toArgb()) 3.dp else 1.dp, if (color.toArgb() == ink.toArgb()) Color.White else Color.Gray), modifier = Modifier.size(30.dp)) {}
-        }
-    }
-    val drawingActions: @Composable () -> Unit = {
-        IconButton(onClick = { marker = !marker }, enabled = !saving) { Icon(if (marker) Icons.Outlined.Brush else Icons.Outlined.Edit, if (marker) "Use pen" else "Use marker", tint = Color.White) }
-        IconButton(onClick = { strokes = strokes.dropLast(1) }, enabled = strokes.isNotEmpty() && !saving) { Icon(Icons.AutoMirrored.Outlined.Undo, "Undo annotation", tint = Color.White) }
-    }
-    val actions: @Composable () -> Unit = {
-        if (editable && rotated != null) {
-            if (mode == "view") {
-                FilledTonalButton(onClick = { mode = "draw" }, contentPadding = PaddingValues(12.dp)) {
-                    Icon(Icons.Outlined.Edit, null, Modifier.size(18.dp))
-                    Text("Annotate", Modifier.padding(start = 6.dp))
-                }
-                FilledTonalButton(onClick = { mode = "crop" }, contentPadding = PaddingValues(12.dp)) {
-                    Icon(Icons.Outlined.Crop, null, Modifier.size(18.dp))
-                    Text("Crop", Modifier.padding(start = 6.dp))
-                }
-            } else {
-                IconButton(onClick = { mode = if (mode == "crop") "draw" else "crop" }, enabled = !saving) { Icon(if (mode == "crop") Icons.Outlined.Edit else Icons.Outlined.Crop, if (mode == "crop") "Annotate" else "Crop", tint = Color.White) }
-                Button(onClick = {
-                    saving = true
-                    error = null
-                    val image = rotated
-                    val selectedCrop = crop
-                    val selectedStrokes = strokes
-                    scope.launch {
+    ImageEditor(source, edits, editable, saving, error, onDismiss = onDismiss, onApply = {
+        val image = source ?: return@ImageEditor
+        val crop = edits.crop
+        val turns = edits.turns
+        val strokes = edits.strokes
+        saving = true
+        error = null
+        scope.launch {
+            try {
+                onSaved {
+                    val rotated = image.rotatedForEditing(turns)
+                    try {
+                        val edited = renderEditedImage(rotated, crop, strokes)
                         try {
-                            onSaved {
-                                val edited = renderEditedImage(image, selectedCrop, selectedStrokes)
-                                try {
-                                    importer.saveImage(attachment.name, edited)
-                                } finally {
-                                    edited.recycle()
-                                }
-                            }
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (_: Exception) {
-                            error = "Could not save this edit. Try again."
+                            importer.saveImage(attachment.name, edited)
                         } finally {
-                            saving = false
+                            edited.recycle()
                         }
-                    }
-                }, enabled = !saving, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(28.dp), contentPadding = PaddingValues(12.dp)) {
-                    if (saving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text("Use image")
-                }
-            }
-        }
-    }
-    if (landscape) {
-        Row(Modifier.fillMaxSize().safeDrawingPadding()) {
-            Column(Modifier.width(56.dp).fillMaxHeight().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                IconButton(onClick = onDismiss, enabled = !saving) { Icon(Icons.Outlined.Close, "Close preview", tint = Color.White) }
-                if (editable && mode != "view") IconButton(onClick = rotate, enabled = !saving) { Icon(Icons.AutoMirrored.Outlined.RotateRight, "Rotate", tint = Color.White) }
-            }
-            Box(Modifier.weight(1f).fillMaxHeight()) { preview() }
-            if (editable) {
-                Column(Modifier.width(136.dp).fillMaxHeight().padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically)) {
-                    if (mode == "draw") {
-                        LazyVerticalGrid(GridCells.Fixed(2), Modifier.weight(1f).fillMaxWidth().testTag("annotation-colors"), horizontalArrangement = Arrangement.Center) { items(colors) { swatch(it) } }
-                        Row { drawingActions() }
-                    }
-                    actions()
-                }
-            }
-        }
-    } else {
-        Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onDismiss, enabled = !saving) { Icon(Icons.Outlined.Close, "Close preview", tint = Color.White) }
-                Spacer(Modifier.weight(1f))
-                if (editable && mode != "view") {
-                    TextButton(onClick = rotate, enabled = !saving, modifier = Modifier.semantics { contentDescription = "Rotate" }) {
-                        Icon(Icons.AutoMirrored.Outlined.RotateRight, null, tint = Color.White)
-                        Text("Rotate", color = Color.White)
+                    } finally {
+                        if (rotated !== image) rotated.recycle()
                     }
                 }
-            }
-            Box(Modifier.weight(1f).fillMaxWidth()) { preview() }
-            if (mode == "draw") {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    LazyRow(Modifier.weight(1f).testTag("annotation-colors"), horizontalArrangement = Arrangement.spacedBy(2.dp)) { items(colors) { swatch(it) } }
-                    drawingActions()
-                }
-            }
-            if (editable) {
-                Row(Modifier.fillMaxWidth().heightIn(min = 72.dp).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (mode == "view") Spacer(Modifier.weight(1f))
-                    actions()
-                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                error = "Could not save this edit. Try again."
+            } finally {
+                saving = false
             }
         }
-    }
-}
-
-private fun fittedImage(size: Size, bitmap: Bitmap): Rect {
-    val scale = minOf(size.width / bitmap.width, size.height / bitmap.height)
-    val width = bitmap.width * scale
-    val height = bitmap.height * scale
-    return Rect((size.width - width) / 2, (size.height - height) / 2, (size.width + width) / 2, (size.height + height) / 2)
-}
-
-@Composable
-private fun ImageEditCanvas(bitmap: Bitmap, crop: NormalizedRect, cropping: Boolean, strokes: List<AnnotationStroke>, color: Color, marker: Boolean, onCrop: (NormalizedRect) -> Unit, onStrokes: (List<AnnotationStroke>) -> Unit) {
-    val currentCrop by rememberUpdatedState(crop)
-    val currentStrokes by rememberUpdatedState(strokes)
-    val currentColor by rememberUpdatedState(color)
-    val currentMarker by rememberUpdatedState(marker)
-    val cropCallback by rememberUpdatedState(onCrop)
-    val strokesCallback by rememberUpdatedState(onStrokes)
-    Box(Modifier.fillMaxSize().padding(20.dp)) {
-        Image(bitmap.asImageBitmap(), "Edit image", Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
-        Canvas(
-            Modifier.fillMaxSize().testTag("attachment-image-editor").pointerInput(bitmap, cropping) {
-                var handle = -1
-                var anchor = Offset.Zero
-                var startedInside = false
-                var drawingStrokes = emptyList<AnnotationStroke>()
-                detectDragGestures(onDragStart = { point ->
-                    val bounds = fittedImage(Size(size.width.toFloat(), size.height.toFloat()), bitmap)
-                    startedInside = bounds.contains(point)
-                    val normalized = Offset(((point.x - bounds.left) / bounds.width).coerceIn(0f, 1f), ((point.y - bounds.top) / bounds.height).coerceIn(0f, 1f))
-                    anchor = normalized
-                    if (cropping) {
-                        val c = currentCrop
-                        val corners = listOf(Offset(c.x.toFloat(), c.y.toFloat()), Offset((c.x + c.width).toFloat(), c.y.toFloat()), Offset((c.x + c.width).toFloat(), (c.y + c.height).toFloat()), Offset(c.x.toFloat(), (c.y + c.height).toFloat()))
-                        handle = corners.indices.minBy { index -> hypot((corners[index].x - normalized.x) * bounds.width, (corners[index].y - normalized.y) * bounds.height) }
-                        if (hypot((corners[handle].x - normalized.x) * bounds.width, (corners[handle].y - normalized.y) * bounds.height) > 64.dp.toPx()) handle = -1
-                    } else if (bounds.contains(point)) {
-                        drawingStrokes = currentStrokes + AnnotationStroke(listOf(normalized), currentColor, currentMarker)
-                        strokesCallback(drawingStrokes)
-                    }
-                }) { change, _ ->
-                    change.consume()
-                    val bounds = fittedImage(Size(size.width.toFloat(), size.height.toFloat()), bitmap)
-                    val point = Offset(((change.position.x - bounds.left) / bounds.width).coerceIn(0f, 1f), ((change.position.y - bounds.top) / bounds.height).coerceIn(0f, 1f))
-                    if (cropping) {
-                        val c = currentCrop
-                        var left = c.x
-                        var top = c.y
-                        var right = c.x + c.width
-                        var bottom = c.y + c.height
-                        when (handle) {
-                            0 -> {
-                                left = point.x.toDouble().coerceIn(0.0, right - 0.02)
-                                top = point.y.toDouble().coerceIn(0.0, bottom - 0.02)
-                            }
-
-                            1 -> {
-                                right = point.x.toDouble().coerceIn(left + 0.02, 1.0)
-                                top = point.y.toDouble().coerceIn(0.0, bottom - 0.02)
-                            }
-
-                            2 -> {
-                                right = point.x.toDouble().coerceIn(left + 0.02, 1.0)
-                                bottom = point.y.toDouble().coerceIn(top + 0.02, 1.0)
-                            }
-
-                            3 -> {
-                                left = point.x.toDouble().coerceIn(0.0, right - 0.02)
-                                bottom = point.y.toDouble().coerceIn(top + 0.02, 1.0)
-                            }
-
-                            else -> {
-                                left = (left + point.x - anchor.x).coerceIn(0.0, 1.0 - c.width)
-                                top = (top + point.y - anchor.y).coerceIn(0.0, 1.0 - c.height)
-                                right = left + c.width
-                                bottom = top + c.height
-                            }
-                        }
-                        cropCallback(NormalizedRect(left, top, minOf(right - left, 1.0 - left), minOf(bottom - top, 1.0 - top)))
-                    } else if (startedInside && drawingStrokes.isNotEmpty()) {
-                        // Drag start and its first update can arrive before the next Compose frame.
-                        drawingStrokes = drawingStrokes.dropLast(1) + drawingStrokes.last().copy(points = drawingStrokes.last().points + point)
-                        strokesCallback(drawingStrokes)
-                    }
-                    anchor = point
-                }
-            },
-        ) {
-            val bounds = fittedImage(size, bitmap)
-            strokes.forEach { stroke ->
-                val path = Path()
-                stroke.points.forEachIndexed { index, point ->
-                    val x = bounds.left + point.x * bounds.width
-                    val y = bounds.top + point.y * bounds.height
-                    if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
-                }
-                drawPath(path, stroke.color.copy(alpha = if (stroke.marker) 0.35f else 1f), style = Stroke(bounds.width * if (stroke.marker) 0.025f else 0.006f, cap = StrokeCap.Round))
-            }
-            if (cropping) {
-                val selected = Rect(bounds.left + (crop.x * bounds.width).toFloat(), bounds.top + (crop.y * bounds.height).toFloat(), bounds.left + ((crop.x + crop.width) * bounds.width).toFloat(), bounds.top + ((crop.y + crop.height) * bounds.height).toFloat())
-                val shade = Color.Black.copy(alpha = 0.65f)
-                drawRect(shade, Offset(bounds.left, bounds.top), Size(bounds.width, selected.top - bounds.top))
-                drawRect(shade, Offset(bounds.left, selected.bottom), Size(bounds.width, bounds.bottom - selected.bottom))
-                drawRect(shade, Offset(bounds.left, selected.top), Size(selected.left - bounds.left, selected.height))
-                drawRect(shade, Offset(selected.right, selected.top), Size(bounds.right - selected.right, selected.height))
-                drawRect(Color.White, selected.topLeft, selected.size, style = Stroke(2.dp.toPx()))
-                for (fraction in listOf(1f / 3, 2f / 3)) {
-                    drawLine(Color.White.copy(alpha = 0.4f), Offset(selected.left + selected.width * fraction, selected.top), Offset(selected.left + selected.width * fraction, selected.bottom))
-                    drawLine(Color.White.copy(alpha = 0.4f), Offset(selected.left, selected.top + selected.height * fraction), Offset(selected.right, selected.top + selected.height * fraction))
-                }
-                listOf(selected.topLeft, selected.topRight, selected.bottomLeft, selected.bottomRight).forEach { drawCircle(Color.White, 5.dp.toPx(), it) }
-            }
-        }
-    }
-}
-
-private fun renderEditedImage(source: Bitmap, crop: NormalizedRect, strokes: List<AnnotationStroke>): Bitmap {
-    val copy = source.copy(Bitmap.Config.ARGB_8888, true)
-    try {
-        val canvas = android.graphics.Canvas(copy)
-        strokes.forEach { stroke ->
-            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                color = stroke.color.toArgb()
-                alpha = if (stroke.marker) 90 else 255
-                style = android.graphics.Paint.Style.STROKE
-                strokeWidth = copy.width * if (stroke.marker) 0.025f else 0.006f
-                strokeCap = android.graphics.Paint.Cap.ROUND
-                strokeJoin = android.graphics.Paint.Join.ROUND
-            }
-            val path = android.graphics.Path()
-            stroke.points.forEachIndexed { index, point -> if (index == 0) path.moveTo(point.x * copy.width, point.y * copy.height) else path.lineTo(point.x * copy.width, point.y * copy.height) }
-            canvas.drawPath(path, paint)
-        }
-        val left = (crop.x * copy.width).toInt().coerceIn(0, copy.width - 1)
-        val top = (crop.y * copy.height).toInt().coerceIn(0, copy.height - 1)
-        val width = (crop.width * copy.width).toInt().coerceIn(1, copy.width - left)
-        val height = (crop.height * copy.height).toInt().coerceIn(1, copy.height - top)
-        val result = Bitmap.createBitmap(copy, left, top, width, height)
-        return if (result === copy) copy.copy(Bitmap.Config.ARGB_8888, false) else result
-    } finally {
-        copy.recycle()
-    }
+    })
 }
 
 /** The review shows precisely the submitted crop; tapping opens a larger, read-only preview. */

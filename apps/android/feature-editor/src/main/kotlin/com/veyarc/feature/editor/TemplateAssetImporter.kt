@@ -18,6 +18,8 @@ import com.veyarc.model.AssetKind
 import com.veyarc.model.NormalizedRect
 import com.veyarc.model.WorkflowIds
 import com.veyarc.model.bundle.BundleAsset
+import com.veyarc.ui.AnnotationStroke
+import com.veyarc.ui.annotateCroppedImage
 import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
@@ -73,6 +75,7 @@ internal fun importTemplateAsset(
     uri: Uri,
     crop: NormalizedRect,
     rotationQuarterTurns: Int = 0,
+    strokes: List<AnnotationStroke> = emptyList(),
 ): BundleAsset {
     val (sourceWidth, sourceHeight) = readImageBounds(contentResolver, uri)
     val turns = rotationQuarterTurns.mod(4)
@@ -92,7 +95,13 @@ internal fun importTemplateAsset(
         throw error
     }
     if (rotated !== bitmap) bitmap.recycle()
-    return encryptTemplateBitmap(rotated)
+    if (strokes.isEmpty()) return encryptTemplateBitmap(rotated)
+    val annotated = try {
+        annotateCroppedImage(rotated, crop, strokes)
+    } finally {
+        rotated.recycle()
+    }
+    return encryptTemplateBitmap(annotated)
 }
 
 /** Rotates an existing encrypted crop while preserving its asset id and references. */

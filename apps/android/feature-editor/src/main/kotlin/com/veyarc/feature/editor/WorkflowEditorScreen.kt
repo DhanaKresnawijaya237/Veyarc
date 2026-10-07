@@ -722,15 +722,16 @@ fun WorkflowEditorScreen(
             displayWidthPx = display.recordedWidthPx,
             displayHeightPx = display.recordedHeightPx,
             existingNames = session.draft?.activeAssetNames().orEmpty(),
+            saving = isBusy,
             onDraftChange = { pendingTemplateCrop = it },
             onDismiss = { pendingTemplateCrop = null },
-            onApply = { crop, rotationQuarterTurns, requestedName ->
+            onApply = { crop, rotationQuarterTurns, requestedName, strokes ->
                 scope.launch {
                     isBusy = true
                     statusMessage = null
                     runCatching {
                         withContext(Dispatchers.Default) {
-                            importTemplateAsset(context.contentResolver, cropDraft.source.uri, crop, rotationQuarterTurns)
+                            importTemplateAsset(context.contentResolver, cropDraft.source.uri, crop, rotationQuarterTurns, strokes)
                         }
                     }.onSuccess { asset ->
                         val prefix = if (crop == FULL_TEMPLATE_CROP) "Full screen" else "Crop"

@@ -42,6 +42,7 @@ val androidProjectPaths =
         ":app",
         ":automation-android",
         ":data",
+        ":core-ui",
         ":feature-assistant",
         ":feature-editor",
         ":feature-recorder",
