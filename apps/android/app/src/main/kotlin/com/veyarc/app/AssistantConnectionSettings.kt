@@ -40,7 +40,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -137,13 +136,13 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
     val canEnable = !busy && hasKeys[currentDefault.id] == true && assistant?.usesProvider == true && assistant.connectionsReady
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(
-            Modifier.fillMaxWidth().clickable(enabled = enabled || canEnable) {
-                if (enabled) assistant?.disableProvider() else enabling = true
-            }.padding(vertical = 8.dp),
+            Modifier.fillMaxWidth().toggleable(value = enabled, enabled = enabled || canEnable, role = Role.Switch, onValueChange = {
+                if (it) enabling = true else assistant?.disableProvider()
+            }).testTag("assistant-enable").padding(vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
-                Text(if (enabled) "Disable AI" else "Enable AI", style = MaterialTheme.typography.bodyLarge)
+                Text(if (enabled) "Disable AI" else "Enable AI", style = MaterialTheme.typography.bodyLarge, color = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(if (enabled) "Enabled until app restart" else "AI disabled", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             IconButton(onClick = { if (assistant?.testingConnection == true) assistant.stop() else testing = true }, enabled = assistant?.testingConnection == true || (!busy && hasKeys.values.any { it } && assistant?.isResponding == false && assistant.connectionsReady)) {
@@ -153,7 +152,6 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
                     Icon(Icons.Outlined.NetworkCheck, "Test all connections")
                 }
             }
-            Switch(checked = enabled, enabled = enabled || canEnable, onCheckedChange = { if (it) enabling = true else assistant?.disableProvider() })
         }
         assistant?.connectionTestStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         HorizontalDivider(Modifier.padding(vertical = 8.dp))

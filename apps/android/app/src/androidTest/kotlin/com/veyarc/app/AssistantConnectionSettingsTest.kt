@@ -574,6 +574,14 @@ class AssistantConnectionSettingsTest {
             compose.onNodeWithText("Details").assertDoesNotExist()
             compose.runOnIdle { org.junit.Assert.assertEquals(0, calls) }
             compose.onNodeWithText("Enable for this session").performClick()
+            compose.onNodeWithTag("assistant-enable").assertIsOn().performClick().assertIsOff()
+            compose.runOnIdle {
+                assertFalse(assistant.providerEnabled)
+                org.junit.Assert.assertEquals(0, calls)
+            }
+            compose.onNodeWithTag("assistant-enable").performClick()
+            compose.onNodeWithText("Enable for this session").performClick()
+            compose.onNodeWithTag("assistant-enable").assertIsOn()
             compose.runOnIdle {
                 assertTrue(assistant.providerEnabled)
                 org.junit.Assert.assertEquals(0, calls)
