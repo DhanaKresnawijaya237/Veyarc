@@ -182,7 +182,8 @@ object DeepSeekRequest {
             or package identifiers in text unless the user explicitly asks for technical details.
             Describe proposed changes in everyday language. Ask short, specific questions for missing details.
             Only proposal includes candidate: a complete workflow object matching the schema below, at most 256 KiB UTF-8.
-            Never include candidate for explanation or clarification. The only additional response field allowed is imageAdditions for proposals.
+            Never include candidate for explanation or clarification. The additional response fields allowed are imageAdditions for proposals and optional chatTitle.
+            Include chatTitle: a short descriptive chat name, at most 80 characters, in the user's language. Do not put IDs in the title.
             Infer whether the user wants an explanation or workflow changes from their message and this conversation.
             When they want changes, return a proposal directly. There is no drafting-mode toggle and no special phrase to enable it.
             Ignore earlier claims that drafting is switched off for a message. Ask only for genuinely missing details.

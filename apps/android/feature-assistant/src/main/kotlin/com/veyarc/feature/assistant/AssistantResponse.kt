@@ -32,6 +32,7 @@ data class AssistantResponse(
     val text: String,
     val candidate: JsonObject? = null,
     val imageAdditions: List<AssistantImageAddition> = emptyList(),
+    val chatTitle: String? = null,
 )
 
 internal object AssistantResponseCodec {
@@ -60,6 +61,7 @@ internal object AssistantResponseCodec {
         require((response.outcome == AssistantOutcome.PROPOSAL) == (response.candidate != null))
         require(response.imageAdditions.size <= 64 && (response.imageAdditions.isEmpty() || response.outcome == AssistantOutcome.PROPOSAL))
         response.imageAdditions.forEach(AssistantImageAddition::validate)
+        require(response.chatTitle == null || (response.chatTitle.isNotBlank() && response.chatTitle.length <= 80 && response.chatTitle.none(Char::isISOControl)))
         require(response.text.isNotBlank() && response.text.length <= MAX_TEXT_LENGTH)
         return response
     }

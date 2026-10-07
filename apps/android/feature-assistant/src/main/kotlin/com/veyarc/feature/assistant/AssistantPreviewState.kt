@@ -90,6 +90,7 @@ data class PreviewConversation(
     val id: String,
     val workflowId: String?,
     val title: String = "New chat",
+    val titleManuallySet: Boolean = false,
     val composer: String = "",
     val turns: List<PreviewTurn> = emptyList(),
     val draftId: String = workflowId ?: UUID.randomUUID().toString(),
@@ -617,7 +618,7 @@ class AssistantPreviewState(
 
     fun rename(title: String, id: String? = selectedId) {
         if (!canChange || title.isBlank() || title.length > 80) return
-        changeHistory(id) { it.copy(title = title.trim()) }
+        changeHistory(id) { it.copy(title = title.trim(), titleManuallySet = true) }
     }
 
     fun togglePin(id: String? = selectedId) {
@@ -644,6 +645,7 @@ class AssistantPreviewState(
         val fork = source.copy(
             id = UUID.randomUUID().toString(),
             title = "${source.title.take(68)} · Branch",
+            titleManuallySet = true,
             composer = "",
             composerAttachments = emptyList(),
             turns = source.turns.take(index + 1).map {
@@ -1030,6 +1032,9 @@ class AssistantPreviewState(
         } else {
             val proposal = response.candidate?.let { AssistantCandidateValidator.validate(turn.baseSnapshot, AssistantWireWorkflow.restoreLocalFields(turn.baseSnapshot, it).toString(), compileCandidate, response.imageAdditions, imagesThrough(chat, turn.id)) }
             updateLast { it.copy(reply = response.text, status = PreviewReplyStatus.COMPLETE, outcome = response.outcome, responseError = null, proposal = proposal) }
+            if (chat.turns.size == 1 && !chat.titleManuallySet && (chat.title == "New chat" || chat.title == turn.prompt.take(48))) {
+                response.chatTitle?.trim()?.let { title -> update { it.copy(title = title) } }
+            }
         }
         requestId = null
         flush()
