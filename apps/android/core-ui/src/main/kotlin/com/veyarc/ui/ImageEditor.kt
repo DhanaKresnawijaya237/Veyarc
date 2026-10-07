@@ -28,10 +28,8 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.RotateRight
@@ -43,8 +41,6 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Crop
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -85,6 +81,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.veyarc.model.NormalizedRect
@@ -184,7 +181,6 @@ fun ImageEditor(source: Bitmap?, edits: ImageEdits, editable: Boolean, saving: B
         onDispose { if (displayed?.second == true) displayed.first.recycle() }
     }
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    var toolsOpen by remember { mutableStateOf(false) }
     val active = editable && !saving && rotated != null
     val preview: @Composable () -> Unit = {
         Box(Modifier.fillMaxSize().testTag("attachment-image-viewport"), contentAlignment = Alignment.Center) {
@@ -213,31 +209,26 @@ fun ImageEditor(source: Bitmap?, edits: ImageEdits, editable: Boolean, saving: B
         IconButton(onClick = edits::redo, enabled = active && edits.redoStrokes.isNotEmpty()) { Icon(Icons.AutoMirrored.Outlined.Redo, "Redo annotation") }
     }
     val modes: @Composable () -> Unit = {
-        Box {
-            IconButton(onClick = {
-                edits.mode = "draw"
-                toolsOpen = true
-            }, enabled = active) {
-                Icon(
-                    if (edits.tool == AnnotationTool.BRUSH) {
-                        Icons.Outlined.Brush
-                    } else if (edits.tool == AnnotationTool.ERASER) {
-                        Icons.Outlined.AutoFixNormal
-                    } else {
-                        Icons.Outlined.Edit
-                    },
-                    "Annotate",
-                    tint = if (edits.mode == "draw") MaterialTheme.colorScheme.primary else Color.White,
-                )
-            }
-            DropdownMenu(expanded = toolsOpen, onDismissRequest = { toolsOpen = false }) {
-                listOf(AnnotationTool.PENCIL to "Pencil", AnnotationTool.BRUSH to "Brush", AnnotationTool.ERASER to "Eraser").forEach { (tool, name) ->
-                    DropdownMenuItem(text = { Text(name) }, onClick = {
-                        edits.tool = tool
-                        toolsOpen = false
-                    })
+        IconButton(onClick = {
+            if (edits.mode == "draw") {
+                edits.tool = when (edits.tool) {
+                    AnnotationTool.PENCIL -> AnnotationTool.BRUSH
+                    AnnotationTool.BRUSH -> AnnotationTool.ERASER
+                    AnnotationTool.ERASER -> AnnotationTool.PENCIL
                 }
             }
+            edits.mode = "draw"
+        }, enabled = active) {
+            Icon(
+                when (edits.tool) {
+                    AnnotationTool.PENCIL -> Icons.Outlined.Edit
+                    AnnotationTool.BRUSH -> Icons.Outlined.Brush
+                    AnnotationTool.ERASER -> Icons.Outlined.AutoFixNormal
+                },
+                "Annotate",
+                modifier = Modifier.semantics { stateDescription = edits.tool.name.lowercase().replaceFirstChar { it.uppercase() } },
+                tint = if (edits.mode == "draw") MaterialTheme.colorScheme.primary else Color.White,
+            )
         }
         IconButton(onClick = { edits.mode = if (edits.mode == "crop") "view" else "crop" }, enabled = active) { Icon(Icons.Outlined.Crop, "Crop", tint = if (edits.mode == "crop") MaterialTheme.colorScheme.primary else Color.White) }
     }
@@ -250,19 +241,21 @@ fun ImageEditor(source: Bitmap?, edits: ImageEdits, editable: Boolean, saving: B
     val rotate: @Composable () -> Unit = { IconButton(onClick = edits::rotate, enabled = active) { Icon(Icons.AutoMirrored.Outlined.RotateRight, "Rotate") } }
     CompositionLocalProvider(LocalContentColor provides Color.White) {
         if (landscape) {
-            Row(Modifier.fillMaxSize().safeDrawingPadding()) {
-                Column(Modifier.width(if (details != null) 196.dp else 56.dp).fillMaxHeight().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
-                    close()
-                    if (editable) rotate()
-                    details?.invoke()
-                }
-                Box(Modifier.weight(1f).fillMaxHeight()) { preview() }
-                if (editable) {
-                    Column(Modifier.width(112.dp).fillMaxHeight().padding(4.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
-                        if (edits.mode == "draw" && edits.tool != AnnotationTool.ERASER) LazyVerticalGrid(GridCells.Fixed(2), Modifier.weight(1f).testTag("annotation-colors")) { items(colors) { swatch(it) } }
-                        Row { undoRedo() }
-                        Row { modes() }
-                        accept()
+            Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+                details?.invoke()
+                Row(Modifier.weight(1f).fillMaxWidth()) {
+                    Column(Modifier.width(56.dp).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
+                        close()
+                        if (editable) rotate()
+                    }
+                    Box(Modifier.weight(1f).fillMaxHeight()) { preview() }
+                    if (editable) {
+                        Column(Modifier.width(112.dp).fillMaxHeight().padding(4.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
+                            if (edits.mode == "draw" && edits.tool != AnnotationTool.ERASER) LazyVerticalGrid(GridCells.Fixed(2), Modifier.weight(1f).testTag("annotation-colors")) { items(colors) { swatch(it) } }
+                            Row { undoRedo() }
+                            Row { modes() }
+                            accept()
+                        }
                     }
                 }
             }

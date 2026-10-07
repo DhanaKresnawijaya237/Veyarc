@@ -1680,11 +1680,11 @@ private fun TemplateAssetSection(
                                     listOfNotNull(
                                         asset.addedAtMs?.let { "Added ${java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(it))}" },
                                         asset.byteCount?.let { android.text.format.Formatter.formatShortFileSize(context, it) },
+                                        usageNumbers[asset.assetId.value]?.takeIf { it.isNotEmpty() }?.joinToString(", "),
                                     ).joinToString(" · "),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
-                                usageNumbers[asset.assetId.value]?.let { numbers -> Text(numbers.joinToString(", "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
                             }
                             IconButton(onClick = { onRemoveTemplate(asset.assetId) }) {
                                 Icon(Icons.Outlined.Delete, contentDescription = "Remove image template")
@@ -1708,25 +1708,40 @@ private fun TemplateAssetSection(
             onDismissRequest = { renameTarget = null },
             title = { Text("Rename template") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    BoxWithConstraints(Modifier.fillMaxWidth()) {
-                        val previewHeight = minOf(maxWidth, androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp * 0.35f)
-                        Box(Modifier.fillMaxWidth().height(previewHeight).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh), contentAlignment = Alignment.Center) {
-                            val image = preview
-                            if (image != null) {
-                                Image(image.image, "Image template preview", Modifier.fillMaxSize().testTag("rename-template-preview"), contentScale = ContentScale.Fit)
-                            } else {
-                                Icon(Icons.Outlined.Image, "Image template preview", Modifier.size(28.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                    }
+                val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+                val nameField: @Composable () -> Unit = {
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
+                        modifier = Modifier.fillMaxWidth().testTag("rename-template-name"),
                         singleLine = true,
                         label = { Text("Template name") },
                         supportingText = if (valid) null else ({ Text("Use a unique name with 1 to 64 characters.") }),
                     )
+                }
+                val imagePreview: @Composable (Modifier) -> Unit = { modifier ->
+                    Box(modifier.clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh), contentAlignment = Alignment.Center) {
+                        val image = preview
+                        if (image != null) {
+                            Image(image.image, "Image template preview", Modifier.fillMaxSize().testTag("rename-template-preview"), contentScale = ContentScale.Fit)
+                        } else {
+                            Icon(Icons.Outlined.Image, "Image template preview", Modifier.size(28.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (landscape) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            imagePreview(Modifier.size(96.dp))
+                            Box(Modifier.weight(1f)) { nameField() }
+                        }
+                    } else {
+                        BoxWithConstraints(Modifier.fillMaxWidth()) {
+                            val previewHeight = minOf(maxWidth, LocalConfiguration.current.screenHeightDp.dp * 0.35f)
+                            imagePreview(Modifier.fillMaxWidth().height(previewHeight))
+                        }
+                        nameField()
+                    }
                 }
             },
             confirmButton = {

@@ -1,12 +1,12 @@
 package com.veyarc.feature.editor
 
+import android.content.res.Configuration
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.RestartAlt
@@ -22,10 +22,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -58,7 +61,8 @@ internal fun TemplateCropEditorDialog(draft: TemplateCropDraft, displayWidthPx: 
     Dialog(onDismissRequest = { if (!saving) onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         Surface(Modifier.fillMaxSize().testTag("template-crop-editor"), color = Color.Black) {
             ImageEditor(draft.source.preview.asAndroidBitmap(), edits, true, saving, null, applyEnabled = supported && nameValid, onDismiss = onDismiss, onApply = { onApply(edits.crop, edits.turns, draft.name.trim(), edits.strokes) }, details = {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+                val nameField: @Composable () -> Unit = {
                     OutlinedTextField(
                         draft.name,
                         onValueChange = { onDraftChange(draft.copy(name = it)) },
@@ -69,13 +73,26 @@ internal fun TemplateCropEditorDialog(draft: TemplateCropDraft, displayWidthPx: 
                         isError = !nameValid,
                         colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, unfocusedLabelColor = Color.LightGray),
                     )
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                        IconButton(onClick = { edits.crop = FULL_TEMPLATE_CROP }, enabled = !saving) { Icon(Icons.Outlined.Fullscreen, "Full image") }
-                        Text("$width × $height px", Modifier.padding(top = 14.dp), style = MaterialTheme.typography.bodySmall)
-                        IconButton(onClick = { edits.crop = DEFAULT_TEMPLATE_CROP }, enabled = !saving) { Icon(Icons.Outlined.RestartAlt, "Reset crop") }
+                }
+                val cropDetails: @Composable () -> Unit = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                        if (edits.mode == "crop") IconButton(onClick = { edits.crop = FULL_TEMPLATE_CROP }, enabled = !saving) { Icon(Icons.Outlined.Fullscreen, "Full image") }
+                        Text("$width × $height px", style = MaterialTheme.typography.bodySmall)
+                        if (edits.mode == "crop") IconButton(onClick = { edits.crop = DEFAULT_TEMPLATE_CROP }, enabled = !saving) { Icon(Icons.Outlined.RestartAlt, "Reset crop") }
                     }
-                    if (!nameValid) Text("Use a unique name up to 64 characters.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-                    if (!supported) Text(if (!fitsDisplay) "Crop must fit $displayWidthPx × $displayHeightPx px." else "Crop is too large. Select a smaller area.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (landscape) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            androidx.compose.foundation.layout.Box(Modifier.weight(1f)) { nameField() }
+                            cropDetails()
+                        }
+                    } else {
+                        nameField()
+                        cropDetails()
+                    }
+                    if (!nameValid) Text("Use a unique name up to 64 characters.", Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+                    if (!supported) Text(if (!fitsDisplay) "Crop must fit $displayWidthPx × $displayHeightPx px." else "Crop is too large. Select a smaller area.", Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
                 }
             })
         }
