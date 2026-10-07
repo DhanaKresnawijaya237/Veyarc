@@ -1,5 +1,6 @@
 package com.veyarc.feature.assistant
 
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -10,16 +11,19 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -27,17 +31,25 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.RotateRight
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.Brush
-import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Crop
 import androidx.compose.material.icons.outlined.Description
@@ -54,6 +66,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -67,6 +80,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -79,12 +93,15 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -197,6 +214,7 @@ internal fun AttachmentPreview(attachment: AssistantAttachment, state: Assistant
     // Dialogs have their own save registry. Keep the edit in the parent chat's saved state.
     val edits = rememberSaveable(attachment.id, saver = ImageEditsSaver) { ImageEdits() }
     var page by rememberSaveable(attachment.id) { mutableIntStateOf(0) }
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         Surface(Modifier.fillMaxSize().testTag("attachment-preview"), color = if (attachment.kind == AttachmentKind.IMAGE) Color.Black else MaterialTheme.colorScheme.surface) {
             if (attachment.kind == AttachmentKind.IMAGE) {
@@ -208,27 +226,10 @@ internal fun AttachmentPreview(attachment: AssistantAttachment, state: Assistant
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = onDismiss) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Close preview") }
                         Text(attachment.name, Modifier.weight(1f).padding(end = 16.dp), style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (landscape && attachment.kind == AttachmentKind.PDF) Text("${page + 1} / ${attachment.pageCount}", Modifier.padding(end = 16.dp), style = MaterialTheme.typography.labelLarge)
                     }
                     if (attachment.kind == AttachmentKind.PDF) {
-                        var failed by remember(attachment.id, page) { mutableStateOf(false) }
-                        val image by produceState<Bitmap?>(null, attachment.id, page) {
-                            value = null
-                            val result = withContext(Dispatchers.IO) { runCatching { importer.pdfPage(attachment, page) } }
-                            failed = result.isFailure
-                            value = result.getOrNull()
-                        }
-                        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            when {
-                                failed -> Text("This page could not be opened.")
-                                image == null -> CircularProgressIndicator()
-                                else -> ZoomableImage(image!!)
-                            }
-                        }
-                        Row(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = { page-- }, enabled = page > 0) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Previous page") }
-                            Text("${page + 1} / ${attachment.pageCount}")
-                            IconButton(onClick = { page++ }, enabled = page + 1 < attachment.pageCount) { Icon(Icons.Outlined.ChevronRight, "Next page") }
-                        }
+                        PdfAttachmentPreview(attachment, importer, page, { page = it }, landscape, Modifier.weight(1f))
                     } else {
                         var failed by remember { mutableStateOf(false) }
                         val text by produceState<String?>(null, attachment.id) {
@@ -255,18 +256,57 @@ internal fun AttachmentPreview(attachment: AssistantAttachment, state: Assistant
 }
 
 @Composable
+private fun PdfAttachmentPreview(attachment: AssistantAttachment, importer: AssistantAttachmentImporter, initialPage: Int, onPageChanged: (Int) -> Unit, landscape: Boolean, modifier: Modifier) {
+    val pager = rememberPagerState(initialPage = initialPage) { attachment.pageCount }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(pager.settledPage) { onPageChanged(pager.settledPage) }
+    val previous: @Composable () -> Unit = {
+        IconButton(onClick = { scope.launch { pager.animateScrollToPage(pager.currentPage - 1) } }, enabled = pager.currentPage > 0 && !pager.isScrollInProgress) { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, "Previous page") }
+    }
+    val next: @Composable () -> Unit = {
+        IconButton(onClick = { scope.launch { pager.animateScrollToPage(pager.currentPage + 1) } }, enabled = pager.currentPage + 1 < pager.pageCount && !pager.isScrollInProgress) { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, "Next page") }
+    }
+    Column(modifier.fillMaxWidth()) {
+        Row(Modifier.weight(1f).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            if (landscape) previous()
+            HorizontalPager(pager, Modifier.weight(1f).fillMaxHeight().testTag("pdf-pages")) { index ->
+                val image by produceState<Result<Bitmap>?>(null, attachment.id, index) {
+                    value = withContext(Dispatchers.IO) { runCatching { importer.pdfPage(attachment, index) } }
+                }
+                Box(Modifier.fillMaxSize().testTag("pdf-page-$index"), contentAlignment = Alignment.Center) {
+                    when {
+                        image == null -> CircularProgressIndicator()
+                        image!!.isFailure -> Text("This page could not be opened.")
+                        else -> ZoomableImage(image!!.getOrThrow())
+                    }
+                }
+            }
+            if (landscape) next()
+        }
+        if (!landscape) {
+            Row(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                previous()
+                Text("${pager.currentPage + 1} / ${pager.pageCount}")
+                next()
+            }
+        }
+    }
+}
+
+@Composable
 private fun ZoomableImage(bitmap: Bitmap) {
     var scale by remember(bitmap) { mutableFloatStateOf(1f) }
     var offset by remember(bitmap) { mutableStateOf(Offset.Zero) }
+    var viewport by remember { mutableStateOf(IntSize.Zero) }
+    val transform = rememberTransformableState { zoom, pan, _ ->
+        scale = (scale * zoom).coerceIn(1f, 5f)
+        val limitX = viewport.width * (scale - 1) / 2
+        val limitY = viewport.height * (scale - 1) / 2
+        offset = Offset((offset.x + pan.x).coerceIn(-limitX, limitX), (offset.y + pan.y).coerceIn(-limitY, limitY))
+    }
     Box(
-        Modifier.fillMaxSize().pointerInput(bitmap) {
-            detectTransformGestures { _, pan, zoom, _ ->
-                scale = (scale * zoom).coerceIn(1f, 5f)
-                val limitX = size.width * (scale - 1) / 2
-                val limitY = size.height * (scale - 1) / 2
-                offset = Offset((offset.x + pan.x).coerceIn(-limitX, limitX), (offset.y + pan.y).coerceIn(-limitY, limitY))
-            }
-        },
+        // Let the pager handle a one-finger swipe until the image is zoomed.
+        Modifier.fillMaxSize().clipToBounds().onSizeChanged { viewport = it }.transformable(transform, canPan = { scale > 1f }),
         contentAlignment = Alignment.Center,
     ) {
         Image(
@@ -351,22 +391,14 @@ private fun ImageAttachmentPreview(attachment: AssistantAttachment, importer: As
         value = withContext(Dispatchers.Default) { source?.let { Bitmap.createBitmap(it, 0, 0, it.width, it.height, Matrix().apply { postRotate(turns * 90f) }, true) } }
     }
     val rotated = rotatedState
-    Column(Modifier.safeDrawingPadding()) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onDismiss, enabled = !saving) { Icon(Icons.Outlined.Close, "Close preview", tint = Color.White) }
-            Spacer(Modifier.weight(1f))
-            if (editable && mode != "view") {
-                TextButton(onClick = {
-                    turns = (turns + 1) % 4
-                    crop = NormalizedRect(1.0 - (crop.y + crop.height), crop.x, crop.height, crop.width)
-                    strokes = strokes.map { it.copy(points = it.points.map { point -> Offset(1f - point.y, point.x) }) }
-                }, enabled = !saving) {
-                    Icon(Icons.AutoMirrored.Outlined.RotateRight, null, tint = Color.White)
-                    Text("Rotate", color = Color.White)
-                }
-            }
-        }
-        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val rotate = {
+        turns = (turns + 1) % 4
+        crop = NormalizedRect(1.0 - (crop.y + crop.height), crop.x, crop.height, crop.width)
+        strokes = strokes.map { it.copy(points = it.points.map { point -> Offset(1f - point.y, point.x) }) }
+    }
+    val preview: @Composable () -> Unit = {
+        Box(Modifier.fillMaxSize().testTag("attachment-image-viewport"), contentAlignment = Alignment.Center) {
             when {
                 error != null -> Text(error!!, color = Color.White)
                 rotated == null -> CircularProgressIndicator()
@@ -374,60 +406,100 @@ private fun ImageAttachmentPreview(attachment: AssistantAttachment, importer: As
                 else -> ImageEditCanvas(rotated, crop, mode == "crop", strokes, color, marker, { crop = it }, { strokes = it })
             }
         }
-        if (mode == "draw") {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                LazyRow(Modifier.weight(1f).testTag("annotation-colors"), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    items(listOf("Red" to Color(0xFFFF5A5F), "Orange" to Color(0xFFFF922B), "Yellow" to Color(0xFFFFD43B), "Green" to Color(0xFF51CF66), "Blue" to Color(0xFF4DABF7), "Purple" to Color(0xFFB197FC), "White" to Color.White, "Black" to Color.Black)) { (name, swatch) ->
-                        Box(Modifier.size(48.dp).selectable(selected = color.toArgb() == swatch.toArgb(), role = Role.RadioButton, onClick = { colorValue = swatch.toArgb() }).semantics { contentDescription = "$name ink" }, contentAlignment = Alignment.Center) {
-                            Surface(color = swatch, shape = CircleShape, border = androidx.compose.foundation.BorderStroke(if (color.toArgb() == swatch.toArgb()) 3.dp else 1.dp, if (color.toArgb() == swatch.toArgb()) Color.White else Color.Gray), modifier = Modifier.size(30.dp)) {}
+    }
+    val colors = listOf("Red" to Color(0xFFFF5A5F), "Orange" to Color(0xFFFF922B), "Yellow" to Color(0xFFFFD43B), "Green" to Color(0xFF51CF66), "Blue" to Color(0xFF4DABF7), "Purple" to Color(0xFFB197FC), "White" to Color.White, "Black" to Color.Black)
+    val swatch: @Composable (Pair<String, Color>) -> Unit = { (name, ink) ->
+        Box(Modifier.size(48.dp).selectable(selected = color.toArgb() == ink.toArgb(), role = Role.RadioButton, onClick = { colorValue = ink.toArgb() }).semantics { contentDescription = "$name ink" }, contentAlignment = Alignment.Center) {
+            Surface(color = ink, shape = CircleShape, border = androidx.compose.foundation.BorderStroke(if (color.toArgb() == ink.toArgb()) 3.dp else 1.dp, if (color.toArgb() == ink.toArgb()) Color.White else Color.Gray), modifier = Modifier.size(30.dp)) {}
+        }
+    }
+    val drawingActions: @Composable () -> Unit = {
+        IconButton(onClick = { marker = !marker }, enabled = !saving) { Icon(if (marker) Icons.Outlined.Brush else Icons.Outlined.Edit, if (marker) "Use pen" else "Use marker", tint = Color.White) }
+        IconButton(onClick = { strokes = strokes.dropLast(1) }, enabled = strokes.isNotEmpty() && !saving) { Icon(Icons.AutoMirrored.Outlined.Undo, "Undo annotation", tint = Color.White) }
+    }
+    val actions: @Composable () -> Unit = {
+        if (editable && rotated != null) {
+            if (mode == "view") {
+                FilledTonalButton(onClick = { mode = "draw" }, contentPadding = PaddingValues(12.dp)) {
+                    Icon(Icons.Outlined.Edit, null, Modifier.size(18.dp))
+                    Text("Annotate", Modifier.padding(start = 6.dp))
+                }
+                FilledTonalButton(onClick = { mode = "crop" }, contentPadding = PaddingValues(12.dp)) {
+                    Icon(Icons.Outlined.Crop, null, Modifier.size(18.dp))
+                    Text("Crop", Modifier.padding(start = 6.dp))
+                }
+            } else {
+                IconButton(onClick = { mode = if (mode == "crop") "draw" else "crop" }, enabled = !saving) { Icon(if (mode == "crop") Icons.Outlined.Edit else Icons.Outlined.Crop, if (mode == "crop") "Annotate" else "Crop", tint = Color.White) }
+                Button(onClick = {
+                    saving = true
+                    error = null
+                    val image = rotated
+                    val selectedCrop = crop
+                    val selectedStrokes = strokes
+                    scope.launch {
+                        try {
+                            onSaved {
+                                val edited = renderEditedImage(image, selectedCrop, selectedStrokes)
+                                try {
+                                    importer.saveImage(attachment.name, edited)
+                                } finally {
+                                    edited.recycle()
+                                }
+                            }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Exception) {
+                            error = "Could not save this edit. Try again."
+                        } finally {
+                            saving = false
                         }
                     }
+                }, enabled = !saving, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(28.dp), contentPadding = PaddingValues(12.dp)) {
+                    if (saving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text("Use image")
                 }
-                IconButton(onClick = { marker = !marker }) { Icon(if (marker) Icons.Outlined.Brush else Icons.Outlined.Edit, if (marker) "Use pen" else "Use marker", tint = Color.White) }
-                IconButton(onClick = { strokes = strokes.dropLast(1) }, enabled = strokes.isNotEmpty()) { Icon(Icons.AutoMirrored.Outlined.Undo, "Undo annotation", tint = Color.White) }
             }
         }
-        Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (editable && rotated != null) {
-                if (mode == "view") {
-                    Spacer(Modifier.weight(1f))
-                    FilledTonalButton(onClick = { mode = "draw" }) {
-                        Icon(Icons.Outlined.Edit, null, Modifier.size(18.dp))
-                        Text("Annotate", Modifier.padding(start = 6.dp))
+    }
+    if (landscape) {
+        Row(Modifier.fillMaxSize().safeDrawingPadding()) {
+            Column(Modifier.width(56.dp).fillMaxHeight().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                IconButton(onClick = onDismiss, enabled = !saving) { Icon(Icons.Outlined.Close, "Close preview", tint = Color.White) }
+                if (editable && mode != "view") IconButton(onClick = rotate, enabled = !saving) { Icon(Icons.AutoMirrored.Outlined.RotateRight, "Rotate", tint = Color.White) }
+            }
+            Box(Modifier.weight(1f).fillMaxHeight()) { preview() }
+            if (editable) {
+                Column(Modifier.width(136.dp).fillMaxHeight().padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically)) {
+                    if (mode == "draw") {
+                        LazyVerticalGrid(GridCells.Fixed(2), Modifier.weight(1f).fillMaxWidth().testTag("annotation-colors"), horizontalArrangement = Arrangement.Center) { items(colors) { swatch(it) } }
+                        Row { drawingActions() }
                     }
-                    FilledTonalButton(onClick = { mode = "crop" }) {
-                        Icon(Icons.Outlined.Crop, null, Modifier.size(18.dp))
-                        Text("Crop", Modifier.padding(start = 6.dp))
+                    actions()
+                }
+            }
+        }
+    } else {
+        Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onDismiss, enabled = !saving) { Icon(Icons.Outlined.Close, "Close preview", tint = Color.White) }
+                Spacer(Modifier.weight(1f))
+                if (editable && mode != "view") {
+                    TextButton(onClick = rotate, enabled = !saving, modifier = Modifier.semantics { contentDescription = "Rotate" }) {
+                        Icon(Icons.AutoMirrored.Outlined.RotateRight, null, tint = Color.White)
+                        Text("Rotate", color = Color.White)
                     }
-                } else {
-                    IconButton(onClick = { mode = if (mode == "crop") "draw" else "crop" }, enabled = !saving) { Icon(if (mode == "crop") Icons.Outlined.Edit else Icons.Outlined.Crop, if (mode == "crop") "Annotate" else "Crop", tint = Color.White) }
-                    Button(onClick = {
-                        saving = true
-                        error = null
-                        val image = rotated
-                        val selectedCrop = crop
-                        val selectedStrokes = strokes
-                        scope.launch {
-                            try {
-                                onSaved {
-                                    val edited = renderEditedImage(image, selectedCrop, selectedStrokes)
-                                    try {
-                                        importer.saveImage(attachment.name, edited)
-                                    } finally {
-                                        edited.recycle()
-                                    }
-                                }
-                            } catch (cancelled: CancellationException) {
-                                throw cancelled
-                            } catch (_: Exception) {
-                                error = "Could not save this edit. Try again."
-                            } finally {
-                                saving = false
-                            }
-                        }
-                    }, enabled = !saving, modifier = Modifier.weight(1f), shape = RoundedCornerShape(28.dp)) {
-                        if (saving) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text("Use image")
-                    }
+                }
+            }
+            Box(Modifier.weight(1f).fillMaxWidth()) { preview() }
+            if (mode == "draw") {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LazyRow(Modifier.weight(1f).testTag("annotation-colors"), horizontalArrangement = Arrangement.spacedBy(2.dp)) { items(colors) { swatch(it) } }
+                    drawingActions()
+                }
+            }
+            if (editable) {
+                Row(Modifier.fillMaxWidth().heightIn(min = 72.dp).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (mode == "view") Spacer(Modifier.weight(1f))
+                    actions()
                 }
             }
         }

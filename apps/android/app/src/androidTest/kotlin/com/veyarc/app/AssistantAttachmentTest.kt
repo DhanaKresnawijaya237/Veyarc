@@ -1,14 +1,22 @@
 package com.veyarc.app
 
+import android.app.UiAutomation
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.center
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -17,9 +25,13 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.pinch
 import androidx.compose.ui.test.swipe
+import androidx.compose.ui.test.swipeLeft
+import androidx.compose.ui.test.swipeRight
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.veyarc.app.ui.theme.VeyarcTheme
@@ -50,12 +62,14 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.jsonObject
+import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -67,6 +81,82 @@ import java.util.zip.ZipOutputStream
 class AssistantAttachmentTest {
     @get:Rule val compose = createComposeRule()
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
+    private val landscape get() = InstrumentationRegistry.getArguments().getString("layoutLabel").orEmpty().contains("landscape")
+
+    @Before fun setOrientation() {
+        InstrumentationRegistry.getInstrumentation().uiAutomation.setRotation(if (landscape) UiAutomation.ROTATION_FREEZE_90 else UiAutomation.ROTATION_FREEZE_0)
+        compose.waitUntil(10_000) { context.resources.configuration.orientation == if (landscape) Configuration.ORIENTATION_LANDSCAPE else Configuration.ORIENTATION_PORTRAIT }
+    }
+
+    @After fun restoreOrientation() {
+        InstrumentationRegistry.getInstrumentation().uiAutomation.setRotation(UiAutomation.ROTATION_FREEZE_0)
+    }
+
+    @Test fun pdfPagesSwipeAndNavigateWithoutChangingTheFile() {
+        val file = File.createTempFile("attachment-pages-", ".pdf", context.cacheDir)
+        val document = PdfDocument()
+        try {
+            repeat(3) { index ->
+                val page = document.startPage(PdfDocument.PageInfo.Builder(200, 200, index + 1).create())
+                page.canvas.drawColor(listOf(Color.RED, Color.GREEN, Color.BLUE)[index])
+                document.finishPage(page)
+            }
+            file.outputStream().use(document::writeTo)
+        } finally {
+            document.close()
+        }
+        val importer = AssistantAttachmentImporter(context)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        val state = AssistantPreviewState(scope = scope, attachments = importer)
+        try {
+            compose.runOnUiThread { state.open(AssistantPreviewContext()) }
+            val restoration = StateRestorationTester(compose)
+            restoration.setContent { VeyarcTheme(darkTheme = true) { AssistantPreviewScreen(state) } }
+            compose.runOnUiThread { state.importAttachments(listOf(Uri.fromFile(file)), state.selectedId!!) }
+            compose.waitUntil(10_000) { !state.importingAttachments && state.conversation!!.composerAttachments.size == 1 }
+            val attachment = state.conversation!!.composerAttachments.single()
+            val bytes = importer.store.read(attachment.id)
+            compose.onNodeWithTag("attachment-${attachment.id}").performClick()
+            compose.onNodeWithText("1 / 3").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Previous page").assertIsNotEnabled()
+            if (landscape) {
+                val viewport = compose.onNodeWithTag("pdf-pages").fetchSemanticsNode().boundsInRoot
+                val previous = compose.onNodeWithContentDescription("Previous page").fetchSemanticsNode().boundsInRoot
+                val next = compose.onNodeWithContentDescription("Next page").fetchSemanticsNode().boundsInRoot
+                assertTrue(previous.right <= viewport.left && next.left >= viewport.right)
+                assertEquals(viewport.center.y, previous.center.y, 1f)
+                assertEquals(viewport.center.y, next.center.y, 1f)
+            }
+            // Wait for the image itself, so the swipe exercises zoom/pager gesture arbitration.
+            compose.waitUntil(10_000) { runCatching { compose.onNodeWithContentDescription("Image preview").assertExists() }.isSuccess }
+            capturePreview("pdf")
+            compose.onNodeWithTag("pdf-pages").performTouchInput { swipeLeft() }
+            compose.onNodeWithText("2 / 3").assertIsDisplayed()
+            compose.waitUntil(10_000) { runCatching { compose.onNode(hasContentDescription("Image preview") and hasAnyAncestor(hasTestTag("pdf-page-1"))).assertExists() }.isSuccess }
+            compose.onNodeWithTag("pdf-page-1").performTouchInput {
+                pinch(center - Offset(30f, 0f), center - Offset(90f, 0f), center + Offset(30f, 0f), center + Offset(90f, 0f))
+            }
+            compose.onNodeWithTag("pdf-pages").performTouchInput { swipeLeft() }
+            compose.onNodeWithText("2 / 3").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Next page").performClick()
+            compose.onNodeWithText("3 / 3").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Next page").assertIsNotEnabled()
+            compose.onNodeWithTag("pdf-pages").performTouchInput { swipeLeft() }
+            compose.onNodeWithText("3 / 3").assertIsDisplayed()
+            restoration.emulateSavedInstanceStateRestore()
+            compose.onNodeWithText("3 / 3").assertIsDisplayed()
+            compose.onNodeWithTag("pdf-pages").performTouchInput { swipeRight() }
+            compose.onNodeWithText("2 / 3").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Previous page").performClick()
+            compose.onNodeWithText("1 / 3").assertIsDisplayed()
+            assertArrayEquals(bytes, importer.store.read(attachment.id))
+            compose.onNodeWithContentDescription("Close preview").performClick()
+        } finally {
+            compose.runOnUiThread { state.dispose() }
+            scope.cancel()
+            file.delete()
+        }
+    }
 
     @Test
     fun thumbnailsReuseMemoryEvictOldPreviewsAndKeepOriginalQuality() {
@@ -152,7 +242,14 @@ class AssistantAttachmentTest {
         compose.onNodeWithTag("attachment-${original.id}").performClick()
         compose.onNodeWithTag("attachment-preview").assertExists()
         compose.onNodeWithText("Crop").performClick()
-        compose.onNodeWithText("Rotate").performClick()
+        compose.onNodeWithContentDescription("Rotate").performClick()
+        if (landscape) {
+            val viewport = compose.onNodeWithTag("attachment-image-viewport").fetchSemanticsNode().boundsInRoot
+            val close = compose.onNodeWithContentDescription("Close preview").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            val save = compose.onNodeWithText("Use image").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            assertTrue(close.right <= viewport.left && save.left >= viewport.right)
+            assertTrue("Editing tools must leave the image full height", viewport.height > context.resources.displayMetrics.heightPixels * 0.7f)
+        }
         compose.onNodeWithContentDescription("Annotate").performClick()
         compose.onNodeWithContentDescription("Red ink").performClick()
         compose.onNodeWithTag("attachment-image-editor").performTouchInput { swipe(center - Offset(70f, 20f), center + Offset(70f, -20f), 400) }
@@ -160,6 +257,7 @@ class AssistantAttachmentTest {
         compose.onNodeWithContentDescription("Blue ink").performClick().assertIsSelected()
         compose.onNodeWithTag("attachment-image-editor").performTouchInput { swipe(center - Offset(70f, -20f), center + Offset(70f, 20f), 400) }
         compose.onNodeWithContentDescription("Undo annotation").assertIsEnabled()
+        capturePreview("image-edit")
         restoration.emulateSavedInstanceStateRestore()
         compose.onNodeWithTag("attachment-preview").assertExists()
         compose.onNodeWithContentDescription("Undo annotation").assertIsEnabled()
@@ -184,8 +282,11 @@ class AssistantAttachmentTest {
         assertTrue(state.conversation!!.composerAttachments.isEmpty())
         val turn = state.conversation!!.turns.single()
         assertEquals(listOf(edited), turn.attachments)
-        val cardBounds = compose.onNodeWithTag("attachment-${edited.id}").fetchSemanticsNode().boundsInRoot
-        assertTrue("A single sent attachment must sit on the right", cardBounds.center.x > compose.onRoot().fetchSemanticsNode().boundsInRoot.center.x)
+        compose.onNodeWithTag("assistant-messages").performScrollToIndex(0)
+        capturePreview("sent-chat", "assistant-messages")
+        val cardBounds = compose.onNodeWithTag("attachment-${edited.id}").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val rootBounds = compose.onRoot().fetchSemanticsNode().boundsInRoot
+        assertTrue("A single sent attachment must sit on the right: card=$cardBounds, root=$rootBounds", cardBounds.center.x > rootBounds.center.x)
         compose.runOnUiThread { state.branch(turn.id) }
         assertEquals(listOf(edited), state.conversation!!.turns.single().attachments)
         compose.runOnUiThread { state.dispose() }
@@ -343,5 +444,13 @@ class AssistantAttachmentTest {
         assertFalse(stale)
         file.delete()
         Unit
+    }
+
+    private fun capturePreview(name: String, tag: String = "attachment-preview") {
+        if (InstrumentationRegistry.getArguments().getString("capturePreview") != "true") return
+        val directory = File(context.cacheDir, "attachment-layout-qa").apply { mkdirs() }
+        File(directory, "${if (landscape) "landscape" else "portrait"}-$name.png").outputStream().use { output ->
+            compose.onNodeWithTag(tag).captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, output)
+        }
     }
 }
