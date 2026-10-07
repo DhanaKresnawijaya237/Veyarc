@@ -11,6 +11,7 @@ import com.veyarc.model.NormalizedRect
 import com.veyarc.model.PixelColorCondition
 import java.io.Closeable
 import kotlin.math.abs
+import kotlin.math.roundToLong
 
 /** Supplies a decoded, user-selected template without exposing how it is stored or decrypted. */
 fun interface ImageTemplateSource {
@@ -315,7 +316,63 @@ class VisualConditionEvaluator(
                 }
             }
         }
-        return ImageMatchResult.Unmatched
+        return closestCheckedMatch(frame.capturedBounds.width, frameBytes, template, templateBytes, bounds, maxError, budget)
+    }
+
+    /** Scores rejected searches without changing their result or exceeding the remaining work budget. */
+    private fun closestCheckedMatch(
+        frameWidth: Int,
+        frameBytes: ByteArray,
+        template: RgbaTemplate,
+        templateBytes: ByteArray,
+        bounds: FramePixelBounds,
+        maxError: Double,
+        budget: ComparisonBudget,
+    ): ImageMatchResult {
+        val pixels = template.widthPx.toLong() * template.heightPx
+        if (budget.remaining < pixels || Thread.currentThread().isInterrupted) return ImageMatchResult.Unmatched
+        var closestX = bounds.left
+        var closestY = bounds.top
+        var leastBound = Long.MAX_VALUE
+        TemplateWindowPrefilter(frameWidth, frameBytes, template, bounds).use { prefilter ->
+            for (y in bounds.top..bounds.bottomExclusive - template.heightPx) {
+                if (Thread.currentThread().isInterrupted) return ImageMatchResult.Unmatched
+                if (y > bounds.top) prefilter.moveDown()
+                for (x in bounds.left..bounds.rightExclusive - template.widthPx) {
+                    val lowerBound = prefilter.minimumError(leastBound.toDouble() - 1.0)
+                    if (lowerBound < leastBound) {
+                        leastBound = lowerBound
+                        closestX = x
+                        closestY = y
+                    }
+                    if (x < bounds.rightExclusive - template.widthPx) prefilter.moveRight()
+                }
+            }
+        }
+        var best = scoreAt(frameWidth, frameBytes, template, templateBytes, closestX, closestY, maxError, budget)
+        val maximumError = MAX_CHANNEL_ERROR.toDouble() * pixels
+        val measuredError = ((1.0 - best.score!!) * maximumError).roundToLong()
+        if (measuredError == leastBound) return best
+        var bestError = measuredError - 1.0
+        // ponytail: bounded nearest-candidate search; report "best checked" if the budget stops it early.
+        TemplateWindowPrefilter(frameWidth, frameBytes, template, bounds).use { prefilter ->
+            for (y in bounds.top..bounds.bottomExclusive - template.heightPx) {
+                if (budget.remaining < pixels || Thread.currentThread().isInterrupted) return best
+                if (y > bounds.top) prefilter.moveDown()
+                for (x in bounds.left..bounds.rightExclusive - template.widthPx) {
+                    if ((x != closestX || y != closestY) && prefilter.mayMatch(bestError)) {
+                        if (budget.remaining < pixels) return best
+                        val candidate = matchesAt(frameWidth, frameBytes, template, templateBytes, x, y, bestError, budget)
+                        if (candidate.score != null && candidate.score > best.score!!) {
+                            best = ImageMatchResult(matched = false, score = candidate.score)
+                            bestError = ((1.0 - candidate.score) * maximumError).roundToLong() - 1.0
+                        }
+                    }
+                    if (x < bounds.rightExclusive - template.widthPx) prefilter.moveRight()
+                }
+            }
+        }
+        return best
     }
 
     /**
@@ -361,7 +418,9 @@ class VisualConditionEvaluator(
             }
         }
 
-        fun mayMatch(maxError: Double): Boolean {
+        fun mayMatch(maxError: Double): Boolean = minimumError(maxError).toDouble() <= maxError
+
+        fun minimumError(maxError: Double): Long {
             var lowerBound = 0L
             val relativeX = originX - bounds.left
             // Whole-band bounds cheaply reject unrelated backgrounds before the finer cells.
@@ -370,7 +429,7 @@ class VisualConditionEvaluator(
                     val left = yBand * prefixStride + relativeX * CHANNEL_COUNT
                     val right = left + templateWidth * CHANNEL_COUNT
                     for (channel in 0 until CHANNEL_COUNT) lowerBound += abs(prefixes[right + channel] - prefixes[left + channel] - templateBandSums[yBand * CHANNEL_COUNT + channel]).toLong()
-                    if (lowerBound.toDouble() > maxError) return false
+                    if (lowerBound.toDouble() > maxError) return lowerBound
                 }
                 lowerBound = 0L
             }
@@ -380,10 +439,10 @@ class VisualConditionEvaluator(
                     val right = yBand * prefixStride + (relativeX + xEnds[xBand]) * CHANNEL_COUNT
                     val cell = (yBand * xBandCount + xBand) * CHANNEL_COUNT
                     for (channel in 0 until CHANNEL_COUNT) lowerBound += abs(prefixes[right + channel] - prefixes[left + channel] - templateCellSums[cell + channel]).toLong()
-                    if (lowerBound.toDouble() > maxError) return false
+                    if (lowerBound.toDouble() > maxError) return lowerBound
                 }
             }
-            return true
+            return lowerBound
         }
 
         fun moveRight() {
@@ -466,6 +525,8 @@ class VisualConditionEvaluator(
         private val context: String,
     ) {
         private var comparisons = 0L
+
+        val remaining: Long get() = limit - comparisons
 
         fun consume() {
             comparisons++

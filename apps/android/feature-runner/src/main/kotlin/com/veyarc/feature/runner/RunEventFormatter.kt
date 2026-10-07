@@ -68,9 +68,16 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
         if (threshold == null) return "$base: ${event.result}"
 
         val score = event.matchScore
+        val imageNotFound = (condition is ImageAbsentCondition && event.result) ||
+            (condition is ImagePresentCondition && !event.result)
         val match = when {
+            score != null && imageNotFound && (condition as? ImagePresentCondition)?.matchMode != ImageMatchMode.SCREEN_STATE ->
+                "best checked match ${formatPercent(score)}"
+
             score != null -> "match ${formatPercent(score)}"
-            (condition is ImageAbsentCondition && event.result) || (condition is ImagePresentCondition && !event.result) -> "image not found"
+
+            imageNotFound -> "image not found · score unavailable"
+
             else -> "score not reported"
         }
         return "$base: ${event.result} · $match · threshold ${formatPercent(threshold)}"
