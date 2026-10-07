@@ -1985,7 +1985,7 @@ private fun StepListFooter(
         if (bottomGap > 0.dp) Spacer(Modifier.height(bottomGap))
         AddBlockMenu(
             compact = true,
-            canAddJump = steps.isNotEmpty(),
+            canAddJump = steps.isNotEmpty() || path.segments.isNotEmpty(),
             modifier = Modifier.align(Alignment.CenterHorizontally).offset(y = (-10).dp),
             onAdd = { kind -> onDraftChange(draft.addStep(path, kind, draft.allowedPackagesText.firstPackageOrDefault())) },
             onPaste = { clipboard?.onPaste?.invoke(path, steps.size) },
@@ -2190,7 +2190,7 @@ private fun StepCard(
                 AddBlockMenu(
                     compact = true,
                     subdued = true,
-                    canAddJump = draft.stepsAt(path).size > 1 || step !is Jump,
+                    canAddJump = draft.stepsAt(path).size > 1 || path.segments.isNotEmpty() || step !is Jump,
                     modifier = Modifier.align(Alignment.BottomStart).offset(x = 2.dp, y = 24.dp).zIndex(3f),
                     onAdd = onInsertAfter,
                     onPaste = { clipboard?.onPaste?.invoke(path, index + 1) },
@@ -2578,7 +2578,7 @@ private fun EditableStepSummary(
             is Jump -> {
                 Text("Continue from", style = MaterialTheme.typography.bodyMedium)
                 JumpTargetPicker(
-                    steps = draft.stepsAt(path),
+                    targetLists = draft.jumpTargetLists(path),
                     selectedId = step.targetStepId,
                     excludedId = step.id,
                     onSelect = { targetId ->
@@ -2599,22 +2599,38 @@ private fun EditableStepSummary(
 
 @Composable
 private fun JumpTargetPicker(
-    steps: List<WorkflowStep>,
+    targetLists: List<List<WorkflowStep>>,
     selectedId: String,
     excludedId: String,
     onSelect: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val options = steps.filterNot { it.id == excludedId }
+    val options = remember(targetLists, excludedId) {
+        targetLists.flatMapIndexed { depth, steps ->
+            var stageNumber = 0
+            var blockNumber = 0
+            val scope = if (depth == 0) {
+                ""
+            } else if (depth == targetLists.lastIndex) {
+                " · Workflow"
+            } else {
+                " · Outer level $depth"
+            }
+            steps.mapNotNull { step ->
+                val label = if (step is StageBoundary) "Stage ${++stageNumber}" else "${++blockNumber}. ${step.displayName()}"
+                if (step.id == excludedId) null else VeyarcChoice(step.id, label + scope)
+            }
+        }
+    }
     val selected = options.firstOrNull { it.id == selectedId }
     Box {
         TextButton(onClick = { expanded = true }) {
-            Text(steps.jumpTargetLabel(selected), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(selected?.label ?: "Choose a destination", maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (expanded) {
             VeyarcChoicePicker(
                 title = "Go to",
-                options = options.map { VeyarcChoice(it.id, steps.jumpTargetLabel(it)) },
+                options = options,
                 selectedId = selectedId,
                 onDismiss = { expanded = false },
                 onSelect = { choice ->
@@ -2624,16 +2640,6 @@ private fun JumpTargetPicker(
             )
         }
     }
-}
-
-private fun List<WorkflowStep>.jumpTargetLabel(step: WorkflowStep?): String {
-    if (step == null) return "Choose a destination"
-    if (step is StageBoundary) {
-        val stageNumber = take(indexOf(step) + 1).count { it is StageBoundary }
-        return "Stage $stageNumber"
-    }
-    val blockNumber = take(indexOf(step) + 1).count { it !is StageBoundary }
-    return "$blockNumber. ${step.displayName()}"
 }
 
 @Composable

@@ -73,6 +73,7 @@ class WorkflowRunner {
         return try {
             ensureBoundary(state)
             val execution = executeSteps(plan.steps, state)
+            check(execution.jumpTargetId == null) { "Go to destination is not available" }
             if (execution.halt == null) {
                 finish(state, RunOutcome.COMPLETED, null, null)
             } else {
@@ -104,22 +105,26 @@ class WorkflowRunner {
                 index++
                 continue
             }
-            val execution = executeStep(step, state)
+            var execution = executeStep(step, state)
             if (execution.halt != null) return execution
 
             if (step is ExecutionStep.Jump) {
-                val visits = state.jumpVisits.getOrDefault(step.id, 0) + 1
+                val previousVisits = state.jumpVisits.getOrDefault(step.id, 0)
+                val visits = if (previousVisits < step.maxVisits) previousVisits + 1 else previousVisits
                 state.jumpVisits[step.id] = visits
                 if (visits < step.maxVisits) {
-                    val targetIndex = steps.indexOfFirst { it.id == step.targetStepId }
-                    if (targetIndex < 0 || targetIndex == index) {
-                        throw IllegalStateException("Jump target is not available in this stage")
-                    }
-                    index = targetIndex
-                    continue
+                    execution = execution.copy(jumpTargetId = step.targetStepId)
                 }
             }
-            index++
+            val targetId = execution.jumpTargetId
+            if (targetId != null) {
+                val targetIndex = steps.indexOfFirst { it.id == targetId }
+                if (targetIndex < 0) return execution
+                check(step !is ExecutionStep.Jump || targetIndex != index) { "Go to cannot target itself" }
+                index = targetIndex
+            } else {
+                index++
+            }
         }
         return StepExecution(StepOutcome.COMPLETED)
     }
@@ -224,7 +229,7 @@ class WorkflowRunner {
             repeat(step.count) {
                 ensureBoundary(state)
                 val execution = executeSteps(step.bodySteps, state)
-                if (execution.halt != null) return execution
+                if (execution.halt != null || execution.jumpTargetId != null) return execution
             }
             StepExecution(StepOutcome.COMPLETED)
         }
@@ -236,7 +241,7 @@ class WorkflowRunner {
                 val condition = evaluateCondition(step.condition, step.id, "${step.id}/condition", state)
                 if (!condition) break
                 val execution = executeSteps(step.bodySteps, state)
-                if (execution.halt != null) return execution
+                if (execution.halt != null || execution.jumpTargetId != null) return execution
                 iterations++
             }
             StepExecution(StepOutcome.COMPLETED)
@@ -622,6 +627,7 @@ class WorkflowRunner {
     private data class StepExecution(
         val outcome: StepOutcome,
         val halt: RunHalt? = null,
+        val jumpTargetId: String? = null,
     )
 
     private data class RunHalt(

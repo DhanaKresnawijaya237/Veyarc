@@ -393,11 +393,16 @@ data class WorkflowDraft(
 
     fun stepsAt(path: StepListPath): List<WorkflowStep> = readSteps(steps, path.segments)
 
+    fun jumpTargetLists(path: StepListPath): List<List<WorkflowStep>> = (path.segments.size downTo 0).map { depth ->
+        stepsAt(StepListPath(path.segments.take(depth)))
+    }
+
     fun addStep(path: StepListPath, kind: WorkflowStepKind, defaultPackage: String): WorkflowDraft = insertStep(path, stepsAt(path).size, kind, defaultPackage)
 
     fun insertStep(path: StepListPath, index: Int, kind: WorkflowStepKind, defaultPackage: String): WorkflowDraft {
         val current = stepsAt(path)
         val jumpTargetId = current.getOrNull((index - 1).coerceAtLeast(0))?.id
+            ?: jumpTargetLists(path).drop(1).firstOrNull()?.firstOrNull()?.id
         val step = newStep(kind, defaultPackage, jumpTargetId)
         return updateList(path) { current ->
             current.toMutableList().apply { add(index.coerceIn(0, size), step) }
@@ -751,7 +756,7 @@ fun newStep(kind: WorkflowStepKind, defaultPackage: String, jumpTargetId: String
 
         WorkflowStepKind.JUMP -> Jump(
             id = id,
-            targetStepId = requireNotNull(jumpTargetId) { "A jump needs another block or boundary in its stage" },
+            targetStepId = requireNotNull(jumpTargetId) { "Go to needs another block or boundary" },
             maxVisits = 5,
         )
 

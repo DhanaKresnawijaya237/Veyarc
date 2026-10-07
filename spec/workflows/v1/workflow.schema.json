@@ -364,6 +364,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["type", "id", "targetStepId", "maxVisits"],
+          "description": "Continue at another block or boundary in the same list or any enclosing list. A jump outside a nest exits all intervening branches and loops. It cannot enter a child nest or another branch. Counts are shared across the run; the jump is taken while its visit count is below maxVisits, then execution continues after it.",
           "properties": { "type": { "const": "jump" }, "id": { "$ref": "#/$defs/uuid" }, "targetStepId": { "$ref": "#/$defs/uuid" }, "maxVisits": { "type": "integer", "exclusiveMinimum": 0 } }
         },
         {

@@ -39,7 +39,7 @@ object WorkflowCompiler {
         errors += WorkflowValidator.validate(document).map(::invalidWorkflowError)
         validateCapabilities(document.steps, "/steps", capabilities, errors)
 
-        val analysis = analyzeSteps(document.steps, depth = 1)
+        val analysis = analyzeWorkflow(document.steps)
         validateAnalysis(document, analysis, errors)
 
         if (errors.isNotEmpty()) return failure(errors)
@@ -240,7 +240,41 @@ object WorkflowCompiler {
         }
     }
 
-    private fun analyzeSteps(steps: List<WorkflowStep>, depth: Int): ControlFlowAnalysis {
+    private fun analyzeWorkflow(steps: List<WorkflowStep>): ControlFlowAnalysis {
+        if (jumpCount(steps, nestedOnly = true).value == 0L) return analyzeSteps(steps, depth = 1)
+        val analysis = analyzeSteps(steps, depth = 1, followJumps = false)
+        val passes = add(Cost(1L, false), jumpCount(steps, nestedOnly = false))
+        // Nested jump counters outlive each invocation of the nest, so later entries can
+        // execute code skipped on the first pass even when the destination is local.
+        // Each taken jump starts another segment. A full traversal with all loop iterations
+        // bounds each segment, even when an outward jump re-enters code skipped on the first pass.
+        val stepCost = multiply(analysis.worstCaseStepCount, passes.value, analysis.arithmeticOverflow || passes.overflowed)
+        val runtimeCost = multiply(analysis.worstCaseRuntimeMs, passes.value, analysis.arithmeticOverflow || passes.overflowed)
+        return analysis.copy(
+            worstCaseStepCount = stepCost.value,
+            worstCaseRuntimeMs = runtimeCost.value,
+            arithmeticOverflow = stepCost.overflowed || runtimeCost.overflowed,
+        )
+    }
+
+    private fun jumpCount(steps: List<WorkflowStep>, nestedOnly: Boolean, depth: Int = 1): Cost {
+        var count = Cost(0L, false)
+        steps.forEach { step ->
+            count = add(
+                count,
+                when (step) {
+                    is Jump -> Cost(if (nestedOnly && depth == 1) 0L else step.maxVisits.toLong() - 1L, false)
+                    is IfElse -> add(jumpCount(step.thenSteps, nestedOnly, depth + 1), jumpCount(step.elseSteps, nestedOnly, depth + 1))
+                    is Repeat -> jumpCount(step.bodySteps, nestedOnly, depth + 1)
+                    is WhileStep -> jumpCount(step.bodySteps, nestedOnly, depth + 1)
+                    else -> Cost(0L, false)
+                },
+            )
+        }
+        return count
+    }
+
+    private fun analyzeSteps(steps: List<WorkflowStep>, depth: Int, followJumps: Boolean = true): ControlFlowAnalysis {
         var totalSteps = Cost(0L, false)
         var totalRuntime = Cost(0L, false)
         var maxDepth = depth
@@ -255,13 +289,13 @@ object WorkflowCompiler {
                 return ControlFlowAnalysis(Long.MAX_VALUE, Long.MAX_VALUE, maxDepth, maxLoopBound, true)
             }
             val step = steps[index]
-            val cost = analyzeStep(step, depth)
+            val cost = analyzeStep(step, depth, followJumps)
             totalSteps = add(totalSteps, cost.steps)
             totalRuntime = add(totalRuntime, cost.runtime)
             maxDepth = maxOf(maxDepth, cost.maxDepth)
             maxLoopBound = maxOf(maxLoopBound, cost.maxLoopBound)
 
-            if (step is Jump) {
+            if (followJumps && step is Jump) {
                 val visits = jumpVisits.getOrDefault(step.id, 0) + 1
                 jumpVisits[step.id] = visits
                 val target = indices[step.targetStepId]
@@ -282,7 +316,7 @@ object WorkflowCompiler {
         )
     }
 
-    private fun analyzeStep(step: WorkflowStep, depth: Int): StepCost {
+    private fun analyzeStep(step: WorkflowStep, depth: Int, followJumps: Boolean): StepCost {
         val ownRuntime = when (step) {
             is LongPress -> step.durationMs.value
             is com.veyarc.model.SwipePath -> step.durationMs.value
@@ -305,8 +339,8 @@ object WorkflowCompiler {
 
         return when (step) {
             is IfElse -> {
-                val thenCost = analyzeSteps(step.thenSteps, depth + 1)
-                val elseCost = analyzeSteps(step.elseSteps, depth + 1)
+                val thenCost = analyzeSteps(step.thenSteps, depth + 1, followJumps)
+                val elseCost = analyzeSteps(step.elseSteps, depth + 1, followJumps)
                 own.copy(
                     steps = add(own.steps, maxCost(thenCost, elseCost, CostSelector.STEPS)),
                     runtime = add(own.runtime, maxCost(thenCost, elseCost, CostSelector.RUNTIME)),
@@ -317,10 +351,10 @@ object WorkflowCompiler {
             }
 
             is Repeat -> {
-                val bodyCost = analyzeSteps(step.bodySteps, depth + 1)
+                val bodyCost = analyzeSteps(step.bodySteps, depth + 1, followJumps)
                 own.copy(
-                    steps = add(own.steps, multiply(bodyCost.worstCaseStepCount, step.count, bodyCost.arithmeticOverflow)),
-                    runtime = add(own.runtime, multiply(bodyCost.worstCaseRuntimeMs, step.count, bodyCost.arithmeticOverflow)),
+                    steps = add(own.steps, multiply(bodyCost.worstCaseStepCount, step.count.toLong(), bodyCost.arithmeticOverflow)),
+                    runtime = add(own.runtime, multiply(bodyCost.worstCaseRuntimeMs, step.count.toLong(), bodyCost.arithmeticOverflow)),
                     maxDepth = maxOf(own.maxDepth, bodyCost.maxNestingDepth),
                     maxLoopBound = maxOf(own.maxLoopBound, bodyCost.maxLoopBound),
                     overflowed = bodyCost.arithmeticOverflow,
@@ -328,10 +362,10 @@ object WorkflowCompiler {
             }
 
             is WhileStep -> {
-                val bodyCost = analyzeSteps(step.bodySteps, depth + 1)
+                val bodyCost = analyzeSteps(step.bodySteps, depth + 1, followJumps)
                 own.copy(
-                    steps = add(own.steps, multiply(bodyCost.worstCaseStepCount, step.maxIterations, bodyCost.arithmeticOverflow)),
-                    runtime = add(own.runtime, multiply(bodyCost.worstCaseRuntimeMs, step.maxIterations, bodyCost.arithmeticOverflow)),
+                    steps = add(own.steps, multiply(bodyCost.worstCaseStepCount, step.maxIterations.toLong(), bodyCost.arithmeticOverflow)),
+                    runtime = add(own.runtime, multiply(bodyCost.worstCaseRuntimeMs, step.maxIterations.toLong(), bodyCost.arithmeticOverflow)),
                     maxDepth = maxOf(own.maxDepth, bodyCost.maxNestingDepth),
                     maxLoopBound = maxOf(own.maxLoopBound, bodyCost.maxLoopBound),
                     overflowed = bodyCost.arithmeticOverflow,
@@ -375,7 +409,7 @@ object WorkflowCompiler {
         return Cost(first.value + second.value, first.overflowed || second.overflowed)
     }
 
-    private fun multiply(value: Long, multiplier: Int, inheritedOverflow: Boolean): Cost {
+    private fun multiply(value: Long, multiplier: Long, inheritedOverflow: Boolean): Cost {
         if (multiplier <= 0 || value == 0L) return Cost(0L, inheritedOverflow)
         if (value > Long.MAX_VALUE / multiplier) return Cost(Long.MAX_VALUE, true)
         return Cost(value * multiplier, inheritedOverflow)
