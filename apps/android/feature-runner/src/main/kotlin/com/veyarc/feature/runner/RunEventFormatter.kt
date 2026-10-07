@@ -102,7 +102,7 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
 
         is SetVariable -> "Set variable ${step.name.value}"
 
-        null -> "Step $stepId"
+        null -> "Workflow step"
     }
 
     private fun stepName(stepId: String): String = when (stepsById[stepId]) {

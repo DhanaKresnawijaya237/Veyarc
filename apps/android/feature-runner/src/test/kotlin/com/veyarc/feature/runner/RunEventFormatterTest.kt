@@ -23,6 +23,10 @@ import org.junit.Test
 class RunEventFormatterTest {
     private val formatter = RunEventFormatter(document())
 
+    @Test fun unknownStepsNeverExposeTheirInternalIdentifier() {
+        assertEquals("Workflow step started", formatter.format(RunEvent.StepStarted(10L, "unknown-step-id")))
+    }
+
     @Test
     fun describesGestureStartAndCompletionUsingRecordedCoordinates() {
         assertEquals(

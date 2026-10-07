@@ -229,6 +229,7 @@ internal fun RunManagerScreen(
         val managedRun = runs.firstOrNull { it.record.runId == run.runId } ?: return@let
         StoredRunDetailScreen(
             record = run,
+            workflowName = managedRun.workflowName,
             onBack = {
                 selectedRunId = null
                 selectedRunDetails = null
