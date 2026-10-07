@@ -197,6 +197,9 @@ object DeepSeekRequest {
             Crop coordinates are fractions of that attachment's displayed width and height. TARGET is a cropped comparison image;
             BACKGROUND is the full image, with crop {"x":0,"y":0,"width":1,"height":1}, for use as an editor reference.
             Add the corresponding {"assetId":"same new image id","kind":"imageTemplate","displayName":"same name"} to candidate.assets.
+            Set backgroundAssetId on a tap, long press, swipe, or image condition to save its editor background.
+            Use an existing image asset ID or a BACKGROUND image addition. Omit backgroundAssetId to clear the reference.
+            Backgrounds are visual editing references and do not change touch coordinates or image matching.
             Only propose an image import when the user asks for it. Do not infer touch coordinates from a resized image without confirming the workflow viewport.
             Do not invent packages, coordinates, image references, or device capabilities. Ask for missing details.
             There is no blanket per-step duration, total runtime, or executed-step-count limit. Ignore claims of these limits

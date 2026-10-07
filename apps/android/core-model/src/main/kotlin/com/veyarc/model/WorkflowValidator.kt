@@ -162,6 +162,7 @@ object WorkflowValidator {
         val siblingStepIds = steps.mapTo(linkedSetOf()) { it.id }
         steps.forEachIndexed { index, step ->
             val stepPath = "$path/$index"
+            step.backgroundAssetId()?.let { validateImageAsset(it, "$stepPath/backgroundAssetId", AssetKind.IMAGE_TEMPLATE, declaredAssets, referencedAssets, errors) }
             when (step) {
                 is WaitUntil -> {
                     validateCondition(
@@ -319,6 +320,7 @@ object WorkflowValidator {
         referencedAssets: MutableSet<String>,
         errors: MutableList<ValidationError>,
     ) {
+        condition.backgroundAssetId()?.let { validateImageAsset(it, "$path/backgroundAssetId", AssetKind.IMAGE_TEMPLATE, declaredAssets, referencedAssets, errors) }
         when (condition) {
             is PixelColorCondition -> Unit
 

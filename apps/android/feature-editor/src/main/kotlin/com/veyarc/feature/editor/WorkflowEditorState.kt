@@ -44,6 +44,7 @@ import com.veyarc.model.WorkflowDocument
 import com.veyarc.model.WorkflowIds
 import com.veyarc.model.WorkflowStep
 import com.veyarc.model.WorkflowValidator
+import com.veyarc.model.backgroundAssetId
 import com.veyarc.model.bundle.BundleAsset
 import com.veyarc.model.bundle.WorkflowBundle
 
@@ -364,7 +365,8 @@ data class WorkflowDraft(
             if (error.code == ValidationErrorCode.MISSING_ASSET) {
                 val missingId = missingAssetIds.firstOrNull { it in error.message }
                 val displayName = missingId?.let(assetNames::get) ?: "Deleted image"
-                DraftIssue(error.path, "$displayName is still used")
+                val numbers = missingId?.let { assetUsageNumbers()[it] }.orEmpty()
+                DraftIssue(error.path, "$displayName is still used" + if (numbers.isEmpty()) "" else " · ${numbers.joinToString(", ")}")
             } else {
                 DraftIssue(error.path, error.message)
             }
@@ -469,6 +471,42 @@ data class WorkflowDraft(
     }
 
     fun referencedAssetIds(): Set<String> = buildSet { steps.forEach { addStepAssetReferences(it) } }
+
+    fun assetUsageNumbers(): Map<String, List<String>> {
+        val uses = linkedMapOf<String, MutableList<String>>()
+        fun visit(items: List<WorkflowStep>, prefix: String) {
+            var number = 0
+            items.forEach { step ->
+                if (step is StageBoundary) return@forEach
+                number++
+                val label = "$prefix$number"
+                val ownReferences = buildSet {
+                    step.backgroundAssetId()?.let { add(it.value) }
+                    when (step) {
+                        is WaitUntil -> addConditionAssetReferences(step.condition)
+                        is IfElse -> addConditionAssetReferences(step.condition)
+                        is WhileStep -> addConditionAssetReferences(step.condition)
+                        else -> Unit
+                    }
+                }
+                ownReferences.forEach { uses.getOrPut(it) { mutableListOf() }.add(label) }
+                when (step) {
+                    is IfElse -> {
+                        visit(step.thenSteps, "$label.")
+                        visit(step.elseSteps, "$label.")
+                    }
+
+                    is Repeat -> visit(step.bodySteps, "$label.")
+
+                    is WhileStep -> visit(step.bodySteps, "$label.")
+
+                    else -> Unit
+                }
+            }
+        }
+        visit(steps, "")
+        return uses.mapValues { (_, numbers) -> numbers.distinct() }
+    }
 
     fun addAsset(asset: BundleAsset, defaultNamePrefix: String = "Template"): WorkflowDraft {
         val usedNames = activeAssetNames().mapTo(mutableSetOf()) { it.lowercase() }
@@ -746,6 +784,7 @@ fun newStep(kind: WorkflowStepKind, defaultPackage: String, jumpTargetId: String
 }
 
 private fun MutableSet<String>.addStepAssetReferences(step: WorkflowStep) {
+    step.backgroundAssetId()?.let { add(it.value) }
     when (step) {
         is WaitUntil -> addConditionAssetReferences(step.condition)
 
@@ -767,6 +806,7 @@ private fun MutableSet<String>.addStepAssetReferences(step: WorkflowStep) {
 }
 
 private fun MutableSet<String>.addConditionAssetReferences(condition: Condition) {
+    condition.backgroundAssetId()?.let { add(it.value) }
     when (condition) {
         is ImagePresentCondition -> add(condition.assetId.value)
         is ImageAbsentCondition -> add(condition.assetId.value)

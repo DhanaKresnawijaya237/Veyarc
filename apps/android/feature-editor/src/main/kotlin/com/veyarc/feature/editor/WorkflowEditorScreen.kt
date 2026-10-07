@@ -124,6 +124,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -1328,6 +1329,7 @@ private fun WorkflowDraftCanvas(
                         assets = draft.assetDescriptors,
                         assetNames = draft.assetNames,
                         referencedAssetIds = remember(draft.steps) { draft.referencedAssetIds() },
+                        usageNumbers = remember(draft.steps) { draft.assetUsageNumbers() },
                         onAddTemplate = onAddTemplate,
                         loadPreview = loadPreview,
                         onRemoveTemplate = { assetId ->
@@ -1543,7 +1545,7 @@ private fun EditorToolbar(
     }
 }
 
-private fun DraftIssue.displayMessage(): String = if (path == "/assets" && message.endsWith(" is still used")) {
+private fun DraftIssue.displayMessage(): String = if (path == "/assets" && " is still used" in message) {
     message
 } else {
     "$path: $message"
@@ -1644,6 +1646,7 @@ private fun TemplateAssetSection(
     assets: List<com.veyarc.data.storage.WorkflowAssetDescriptor>,
     assetNames: Map<String, String>,
     referencedAssetIds: Set<String>,
+    usageNumbers: Map<String, List<String>>,
     onAddTemplate: () -> Unit,
     loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
     onRemoveTemplate: (com.veyarc.model.AssetId) -> Unit,
@@ -1657,7 +1660,7 @@ private fun TemplateAssetSection(
             if (assets.isEmpty()) {
                 Text("No templates added.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
-                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 288.dp).testTag("workflow-template-list"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 288.dp).nestedScroll(IsolatedVerticalScroll).testTag("workflow-template-list"), overscrollEffect = null, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     itemsIndexed(assets, key = { _, asset -> asset.assetId.value }) { index, asset ->
                         Row(
                             modifier = Modifier.fillMaxWidth().clickable { renameTarget = asset.assetId },
@@ -1680,6 +1683,7 @@ private fun TemplateAssetSection(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                                usageNumbers[asset.assetId.value]?.let { numbers -> Text(numbers.joinToString(", "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
                             }
                             IconButton(onClick = { onRemoveTemplate(asset.assetId) }) {
                                 Icon(Icons.Outlined.Delete, contentDescription = "Remove image template")

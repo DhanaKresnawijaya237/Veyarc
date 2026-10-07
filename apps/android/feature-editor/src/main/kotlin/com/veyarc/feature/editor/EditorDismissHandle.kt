@@ -54,6 +54,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -270,6 +271,12 @@ private object PreventUpwardSheetOverscrollConnection : NestedScrollConnection {
     } else {
         Offset.Zero
     }
+}
+
+/** A nested list keeps its leftover drag and fling instead of moving the workflow behind it. */
+internal object IsolatedVerticalScroll : NestedScrollConnection {
+    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource) = Offset(0f, available.y)
+    override suspend fun onPostFling(consumed: Velocity, available: Velocity) = Velocity(0f, available.y)
 }
 
 internal fun upwardOverscrollConsumption(availableY: Float): Float = if (availableY < 0f) availableY else 0f

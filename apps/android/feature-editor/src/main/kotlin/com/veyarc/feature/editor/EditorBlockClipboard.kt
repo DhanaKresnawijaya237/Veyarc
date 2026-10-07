@@ -24,7 +24,9 @@ import com.veyarc.model.WhileStep
 import com.veyarc.model.WorkflowIds
 import com.veyarc.model.WorkflowJson
 import com.veyarc.model.WorkflowStep
+import com.veyarc.model.backgroundAssetId
 import com.veyarc.model.bundle.BundleAsset
+import com.veyarc.model.withBackgroundAsset
 import kotlinx.serialization.Serializable
 import java.io.File
 
@@ -109,6 +111,7 @@ internal class EditorBlockClipboard(context: Context) {
 
 internal fun List<WorkflowStep>.clipboardImageIds(): Set<String> = buildSet {
     fun condition(value: Condition) {
+        value.backgroundAssetId()?.let { add(it.value) }
         when (value) {
             is ImagePresentCondition -> add(value.assetId.value)
             is ImageAbsentCondition -> add(value.assetId.value)
@@ -119,6 +122,7 @@ internal fun List<WorkflowStep>.clipboardImageIds(): Set<String> = buildSet {
         }
     }
     fun step(value: WorkflowStep) {
+        value.backgroundAssetId()?.let { add(it.value) }
         when (value) {
             is WaitUntil -> condition(value.condition)
 
@@ -160,8 +164,8 @@ internal fun remapClipboardSteps(steps: List<WorkflowStep>, assetIds: Map<String
     }
     steps.forEach(::assign)
     fun condition(value: Condition): Condition = when (value) {
-        is ImagePresentCondition -> value.copy(assetId = assetIds[value.assetId.value] ?: value.assetId)
-        is ImageAbsentCondition -> value.copy(assetId = assetIds[value.assetId.value] ?: value.assetId)
+        is ImagePresentCondition -> value.copy(assetId = assetIds[value.assetId.value] ?: value.assetId, backgroundAssetId = value.backgroundAssetId?.let { assetIds[it.value] ?: it })
+        is ImageAbsentCondition -> value.copy(assetId = assetIds[value.assetId.value] ?: value.assetId, backgroundAssetId = value.backgroundAssetId?.let { assetIds[it.value] ?: it })
         is StepResultCondition -> value.copy(stepId = stepIds[value.stepId] ?: value.stepId)
         is AndCondition -> value.copy(conditions = value.conditions.map(::condition))
         is OrCondition -> value.copy(conditions = value.conditions.map(::condition))
@@ -185,7 +189,7 @@ internal fun remapClipboardSteps(steps: List<WorkflowStep>, assetIds: Map<String
             is com.veyarc.model.LaunchApp -> value.copy(id = id)
             is com.veyarc.model.Stop -> value.copy(id = id)
             is com.veyarc.model.SetVariable -> value.copy(id = id)
-        }
+        }.withBackgroundAsset(value.backgroundAssetId()?.let { assetIds[it.value] ?: it })
     }
     return steps.map(::step)
 }
