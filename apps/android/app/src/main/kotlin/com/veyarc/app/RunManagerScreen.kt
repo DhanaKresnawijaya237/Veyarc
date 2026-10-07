@@ -1,5 +1,6 @@
 package com.veyarc.app
 
+import android.content.res.Configuration
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
@@ -57,6 +58,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
@@ -307,12 +309,9 @@ internal fun RunManagerScreen(
         }
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        item {
+    val pinHeader = LocalConfiguration.current.orientation != Configuration.ORIENTATION_LANDSCAPE
+    val header: @Composable () -> Unit = {
+        Column(Modifier.fillMaxWidth().testTag("run-manager-header"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             CompactManagerHeader(
                 title = "Runs Manager",
                 searchActive = searchActive,
@@ -326,9 +325,7 @@ internal fun RunManagerScreen(
                     if (!enabled) selectedIds = emptyList()
                 },
             )
-        }
 
-        item {
             ReorderableFolderRow(
                 folders = folderItems,
                 selectedKey = selectedView,
@@ -337,9 +334,7 @@ internal fun RunManagerScreen(
                 onOrderChanged = ::persistFolderOrder,
                 onCreate = { creatingFolder = true },
             )
-        }
 
-        item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -393,19 +388,42 @@ internal fun RunManagerScreen(
                 }
             }
         }
-
-        item(key = "load-progress") {
-            Box(Modifier.fillMaxWidth().height(4.dp)) {
-                if (isBusy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+    }
+    Column(Modifier.fillMaxSize()) {
+        if (pinHeader) Box(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 20.dp)) { header() }
+        LazyColumn(
+            modifier = Modifier.weight(1f).fillMaxWidth().testTag("run-manager-list"),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = if (pinHeader) 14.dp else 20.dp, bottom = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            if (!pinHeader) item(key = "manager-header") { header() }
+            item(key = "load-progress") {
+                Box(Modifier.fillMaxWidth().height(4.dp)) {
+                    if (isBusy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
             }
-        }
-        message?.let { item { Text(it, color = MaterialTheme.colorScheme.primary) } }
-        if (pageState.loaded.value && !isBusy && visible.isEmpty()) item { Card { Text("No runs match these filters.", modifier = Modifier.padding(18.dp)) } }
+            message?.let { item { Text(it, color = MaterialTheme.colorScheme.primary) } }
+            if (pageState.loaded.value && !isBusy && visible.isEmpty()) item { Card { Text("No runs match these filters.", modifier = Modifier.padding(18.dp)) } }
 
-        if (selectedView == RUNS_BY_WORKFLOW_VIEW) {
-            visible.groupBy { it.record.workflowId }.forEach { (_, workflowRuns) ->
-                item { Text(workflowRuns.first().workflowName, style = MaterialTheme.typography.titleMedium) }
-                items(workflowRuns, key = { it.record.runId }) { managed ->
+            if (selectedView == RUNS_BY_WORKFLOW_VIEW) {
+                visible.groupBy { it.record.workflowId }.forEach { (_, workflowRuns) ->
+                    item { Text(workflowRuns.first().workflowName, style = MaterialTheme.typography.titleMedium) }
+                    items(workflowRuns, key = { it.record.runId }) { managed ->
+                        RunCard(
+                            run = managed,
+                            selectionMode = selectionMode,
+                            selected = managed.record.runId in selectedIds,
+                            isBusy = isBusy,
+                            onOpen = { selectedRunId = managed.record.runId },
+                            onDelete = { pendingRunDelete = listOf(managed.record) },
+                            onSelectedChange = { checked ->
+                                selectedIds = if (checked) (selectedIds + managed.record.runId).distinct() else selectedIds - managed.record.runId
+                            },
+                        )
+                    }
+                }
+            } else {
+                items(visible, key = { it.record.runId }) { managed ->
                     RunCard(
                         run = managed,
                         selectionMode = selectionMode,
@@ -418,20 +436,6 @@ internal fun RunManagerScreen(
                         },
                     )
                 }
-            }
-        } else {
-            items(visible, key = { it.record.runId }) { managed ->
-                RunCard(
-                    run = managed,
-                    selectionMode = selectionMode,
-                    selected = managed.record.runId in selectedIds,
-                    isBusy = isBusy,
-                    onOpen = { selectedRunId = managed.record.runId },
-                    onDelete = { pendingRunDelete = listOf(managed.record) },
-                    onSelectedChange = { checked ->
-                        selectedIds = if (checked) (selectedIds + managed.record.runId).distinct() else selectedIds - managed.record.runId
-                    },
-                )
             }
         }
     }

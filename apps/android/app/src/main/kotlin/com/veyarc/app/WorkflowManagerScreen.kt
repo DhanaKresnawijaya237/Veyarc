@@ -1,5 +1,6 @@
 package com.veyarc.app
 
+import android.content.res.Configuration
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
@@ -59,6 +60,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
@@ -273,13 +275,9 @@ internal fun WorkflowManagerScreen(
         onDispose { onSelectionBarChange(null) }
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        state = listState,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        item {
+    val pinHeader = LocalConfiguration.current.orientation != Configuration.ORIENTATION_LANDSCAPE
+    val header: @Composable () -> Unit = {
+        Column(Modifier.fillMaxWidth().testTag("workflow-manager-header"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             CompactManagerHeader(
                 title = "Workflow Manager",
                 searchActive = searchActive,
@@ -293,9 +291,7 @@ internal fun WorkflowManagerScreen(
                     if (!enabled) selectedIds = emptyList()
                 },
             )
-        }
 
-        item {
             ReorderableFolderRow(
                 folders = folderItems,
                 selectedKey = selectedView,
@@ -304,9 +300,7 @@ internal fun WorkflowManagerScreen(
                 onOrderChanged = ::persistFolderOrder,
                 onCreate = { creatingFolder = true },
             )
-        }
 
-        item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -375,49 +369,59 @@ internal fun WorkflowManagerScreen(
                 }
             }
         }
-
-        item(key = "load-progress") {
-            Box(Modifier.fillMaxWidth().height(4.dp)) {
-                if (isBusy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+    }
+    Column(Modifier.fillMaxSize()) {
+        if (pinHeader) Box(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 20.dp)) { header() }
+        LazyColumn(
+            modifier = Modifier.weight(1f).fillMaxWidth().testTag("workflow-manager-list"),
+            state = listState,
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = if (pinHeader) 14.dp else 20.dp, bottom = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            if (!pinHeader) item(key = "manager-header") { header() }
+            item(key = "load-progress") {
+                Box(Modifier.fillMaxWidth().height(4.dp)) {
+                    if (isBusy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
             }
-        }
-        error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.primary) } }
+            error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.primary) } }
 
-        if (pageState.loaded.value && !isBusy && visible.isEmpty()) {
-            item { EmptyWorkflowManagerCard(if (workflows.isEmpty()) "No workflows yet." else "No workflows match these filters.") }
-        }
+            if (pageState.loaded.value && !isBusy && visible.isEmpty()) {
+                item { EmptyWorkflowManagerCard(if (workflows.isEmpty()) "No workflows yet." else "No workflows match these filters.") }
+            }
 
-        items(visible, key = { it.summary.workflowId }) { workflow ->
-            WorkflowManagerCard(
-                workflow = workflow,
-                selectionMode = selectionMode,
-                selected = workflow.summary.workflowId in selectedIds,
-                enabled = !isBusy,
-                onSelectedChange = { selected ->
-                    selectedIds = if (selected) {
-                        (selectedIds + workflow.summary.workflowId).distinct()
-                    } else {
-                        selectedIds - workflow.summary.workflowId
-                    }
-                },
-                onFavorite = { toggleFavorite(workflow) },
-                onEdit = { onEditWorkflow(workflow.summary) },
-                onPlay = { onPlayWorkflow(workflow.summary) },
-                onRevisions = {
-                    scope.launch {
-                        runCatching {
-                            withContext(Dispatchers.IO) {
-                                repository.listRevisions(workflow.summary.workflowId)
-                            }
-                        }.onSuccess { revisions ->
-                            revisionDialog = workflow.summary to revisions
-                        }.onFailure {
-                            error = "Revision history could not be loaded."
+            items(visible, key = { it.summary.workflowId }) { workflow ->
+                WorkflowManagerCard(
+                    workflow = workflow,
+                    selectionMode = selectionMode,
+                    selected = workflow.summary.workflowId in selectedIds,
+                    enabled = !isBusy,
+                    onSelectedChange = { selected ->
+                        selectedIds = if (selected) {
+                            (selectedIds + workflow.summary.workflowId).distinct()
+                        } else {
+                            selectedIds - workflow.summary.workflowId
                         }
-                    }
-                },
-                onDelete = { pendingWorkflowDelete = listOf(workflow) },
-            )
+                    },
+                    onFavorite = { toggleFavorite(workflow) },
+                    onEdit = { onEditWorkflow(workflow.summary) },
+                    onPlay = { onPlayWorkflow(workflow.summary) },
+                    onRevisions = {
+                        scope.launch {
+                            runCatching {
+                                withContext(Dispatchers.IO) {
+                                    repository.listRevisions(workflow.summary.workflowId)
+                                }
+                            }.onSuccess { revisions ->
+                                revisionDialog = workflow.summary to revisions
+                            }.onFailure {
+                                error = "Revision history could not be loaded."
+                            }
+                        }
+                    },
+                    onDelete = { pendingWorkflowDelete = listOf(workflow) },
+                )
+            }
         }
     }
 
