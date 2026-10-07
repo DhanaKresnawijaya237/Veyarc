@@ -147,40 +147,45 @@ class AssistantPreviewNavigationTest {
             compose.waitUntil(10_000) { compose.activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE }
         }
         val owner = androidx.lifecycle.ViewModelProvider(compose.activity)[MainEditorSession::class.java]
-        val originalModel = owner.assistant.selectedModel
-        compose.waitUntil(10_000) { owner.assistant.canChange }
-        compose.onNodeWithContentDescription("Settings", useUnmergedTree = true).performClick()
-        compose.onNodeWithText("AI connection").performClick()
-        compose.onNodeWithTag("deepseek-logo").assertExists()
-        capture("connection-settings")
-        compose.onNodeWithText("Privacy and costs").performScrollTo().performClick()
-        compose.onNodeWithText("Done").assertDoesNotExist()
-        compose.onNodeWithText("Provider pricing").performScrollTo().assertIsDisplayed()
-        capture("connection-privacy")
-        compose.onNodeWithContentDescription("Close Privacy and costs").performClick()
-        compose.onNodeWithText("AI chat help").performScrollTo().performClick()
-        compose.onNode(hasScrollToIndexAction() and hasAnyAncestor(hasTestTag("assistant-panel-scroll")))
-            .performScrollToNode(hasText("See Privacy and costs for shared data and charges."))
-        val last = compose.onNodeWithText("See Privacy and costs for shared data and charges.").fetchSemanticsNode().boundsInRoot
-        val panel = compose.onNodeWithTag("assistant-panel").fetchSemanticsNode().boundsInRoot
-        val density = compose.activity.resources.displayMetrics.density
-        org.junit.Assert.assertTrue("Help must not reserve a blank footer: ${panel.bottom - last.bottom}", panel.bottom - last.bottom in 0f..24f * density)
-        capture("connection-help")
-        compose.onNodeWithContentDescription("Close AI chat help").performClick()
-        compose.onNodeWithText("Model").performScrollTo().performClick()
-        capture("connection-models")
-        compose.onNodeWithText("DeepSeek V4 Pro").assertIsEnabled().performClick()
-        compose.waitUntil(10_000) { owner.assistant.selectedModel == DeepSeekModel.PRO }
-        compose.waitUntil(10_000) {
-            kotlinx.coroutines.runBlocking { AppPreferences.observe(compose.activity).first().assistantModel == DeepSeekModel.PRO }
-        }
-        compose.activityRule.scenario.recreate()
-        compose.onNodeWithText("AI connection").performClick()
-        compose.onNodeWithText("V4 Pro").performScrollTo().assertIsDisplayed()
-        compose.waitUntil(10_000) { owner.assistant.canChange }
-        compose.runOnIdle { owner.assistant.setModel(originalModel) }
-        compose.waitUntil(10_000) {
-            kotlinx.coroutines.runBlocking { AppPreferences.observe(compose.activity).first().assistantModel == originalModel }
+        compose.waitUntil(10_000) { owner.assistant.canChange && owner.assistant.connectionsReady }
+        val originalConnections = owner.assistant.connections
+        try {
+            compose.onNodeWithContentDescription("Settings", useUnmergedTree = true).performClick()
+            compose.onNodeWithText("AI connection").performClick()
+            compose.onNodeWithTag("deepseek-logo", useUnmergedTree = true).assertExists()
+            capture("connection-settings")
+            compose.onNodeWithText("Privacy and costs").performScrollTo().performClick()
+            compose.onNodeWithText("Done").assertDoesNotExist()
+            compose.onNodeWithText("Provider pricing").performScrollTo().assertIsDisplayed()
+            capture("connection-privacy")
+            compose.onNodeWithContentDescription("Close Privacy and costs").performClick()
+            compose.onNodeWithText("AI chat help").performScrollTo().performClick()
+            compose.onNode(hasScrollToIndexAction() and hasAnyAncestor(hasTestTag("assistant-panel-scroll")))
+                .performScrollToNode(hasText("See Privacy and costs for shared data and charges."))
+            val last = compose.onNodeWithText("See Privacy and costs for shared data and charges.").fetchSemanticsNode().boundsInRoot
+            val panel = compose.onNodeWithTag("assistant-panel").fetchSemanticsNode().boundsInRoot
+            val density = compose.activity.resources.displayMetrics.density
+            org.junit.Assert.assertTrue("Help must not reserve a blank footer: ${panel.bottom - last.bottom}", panel.bottom - last.bottom in 0f..24f * density)
+            capture("connection-help")
+            compose.onNodeWithContentDescription("Close AI chat help").performClick()
+            val profile = owner.assistant.defaultConnection
+            val pro = profile.models.first { it.name.contains("Pro") }
+            compose.onNodeWithContentDescription("Expand DeepSeek").performScrollTo().performClick()
+            compose.onNodeWithTag("manage-models-${profile.id}").performScrollTo().performClick()
+            capture("connection-models")
+            compose.onNodeWithTag("managed-model-${pro.id}").assertIsEnabled().performClick()
+            compose.onNodeWithContentDescription("Close Models").performClick()
+            compose.waitUntil(10_000) { owner.assistant.defaultConnection.defaultModelId == pro.id }
+            val persisted = com.veyarc.data.storage.AssistantConnectionStore(compose.activity).loadOrMigrate()
+            assertEquals(pro.id, persisted.connections.first { it.id == profile.id }.defaultModelId)
+            compose.activityRule.scenario.recreate()
+            val recreated = androidx.lifecycle.ViewModelProvider(compose.activity)[MainEditorSession::class.java]
+            compose.waitUntil(10_000) { recreated.assistant.defaultConnection.defaultModelId == pro.id }
+        } finally {
+            val recreated = androidx.lifecycle.ViewModelProvider(compose.activity)[MainEditorSession::class.java]
+            kotlinx.coroutines.runBlocking {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { recreated.assistant.saveConnections(originalConnections) }
+            }
         }
     }
 
@@ -470,7 +475,7 @@ class AssistantPreviewUiTest {
     }
 
     @Test
-    fun replyBarBranchesAndFutureControlsStayHonest() {
+    fun replyBarBranchesAndUnavailableControlsStayHonest() {
         val state = AssistantPreviewState().apply {
             open(AssistantPreviewContext())
             compose("Explain a workflow")
@@ -512,8 +517,8 @@ class AssistantPreviewUiTest {
         compose.onNodeWithText("More").performClick()
         Espresso.pressBack()
         compose.onNodeWithContentDescription("Add attachment").performClick()
-        compose.onNodeWithText("Attachments coming soon").assertIsDisplayed()
         compose.onNodeWithText("Photos").assertIsNotEnabled()
+        compose.onNodeWithText("Files").assertIsNotEnabled()
         capture("attachments")
         Espresso.pressBack()
         compose.onNodeWithText("Sample").performClick()

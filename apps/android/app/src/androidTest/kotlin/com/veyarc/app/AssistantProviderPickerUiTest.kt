@@ -8,6 +8,9 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
+import androidx.compose.ui.test.swipeUp
 import androidx.test.platform.app.InstrumentationRegistry
 import com.veyarc.app.ui.theme.VeyarcTheme
 import com.veyarc.data.storage.AssistantConnection
@@ -23,6 +26,34 @@ import java.util.UUID
 
 class AssistantProviderPickerUiTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun singleModelSheetKeepsItsSizeAndStillDismissesByDragging() {
+        val preset = AssistantConnection.openAI()
+        val profile = preset.copy(models = listOf(preset.defaultModel))
+        val owner = kotlinx.coroutines.SupervisorJob()
+        val state = AssistantPreviewState(scope = kotlinx.coroutines.CoroutineScope(owner + kotlinx.coroutines.Dispatchers.Main), providerCall = { error("Picking a model must not send") })
+        try {
+            compose.runOnUiThread {
+                state.restoreConnections(AssistantConnections(listOf(profile), profile.id))
+                state.open(AssistantPreviewContext())
+            }
+            compose.setContent { VeyarcTheme { AssistantPreviewScreen(state) } }
+            compose.onNodeWithTag("assistant-model-picker").performClick()
+            val before = compose.onNodeWithTag("assistant-panel").fetchSemanticsNode().boundsInRoot
+            repeat(3) {
+                compose.onNodeWithTag("assistant-panel-scroll").performTouchInput { swipeUp(durationMillis = 100) }
+                compose.waitForIdle()
+                val after = compose.onNodeWithTag("assistant-panel").fetchSemanticsNode().boundsInRoot
+                org.junit.Assert.assertEquals(before.top, after.top, 2f)
+                org.junit.Assert.assertEquals(before.height, after.height, 2f)
+            }
+            compose.onNodeWithTag("assistant-panel-header").performTouchInput { swipeDown(durationMillis = 80) }
+            compose.onNodeWithTag("assistant-panel").assertDoesNotExist()
+        } finally {
+            compose.runOnUiThread { state.dispose() }
+            owner.cancel()
+        }
+    }
 
     @Test fun nativeOpenAIShowsExtraHighEffortAndAccurateSummaryLabel() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

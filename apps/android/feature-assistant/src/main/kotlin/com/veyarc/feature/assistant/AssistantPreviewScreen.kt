@@ -1050,12 +1050,13 @@ private fun DiffValue(label: String, value: String, added: Boolean, compact: Boo
 private fun ComposerOptions(sheet: String, state: AssistantPreviewState, onSelect: (String) -> Unit, onDismiss: () -> Unit, onAttachment: (String) -> Unit) {
     var modelSearch by remember { mutableStateOf("") }
     val modelList = rememberLazyListState()
+    val smallModelList = !state.usesProvider || state.connections.connections.sumOf { it.models.size } <= 2
     val title = when (sheet) {
         "attachments" -> "Add to chat"
         "effort" -> "Effort"
         else -> "Select model"
     }
-    AssistantPanel(title, onDismiss, onBack = if (sheet == "effort") ({ onSelect("model") }) else null, scrollBody = sheet != "model", bodyState = if (sheet == "model") modelList else null) {
+    AssistantPanel(title, onDismiss, onBack = if (sheet == "effort") ({ onSelect("model") }) else null, scrollBody = sheet != "model" || smallModelList, bodyState = if (sheet == "model" && !smallModelList) modelList else null) {
         when (sheet) {
             "attachments" -> {
                 BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -1091,23 +1092,33 @@ private fun ComposerOptions(sheet: String, state: AssistantPreviewState, onSelec
             }
 
             else -> {
-                Column(Modifier.fillMaxWidth().heightIn(max = 520.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.fillMaxWidth().then(if (smallModelList) Modifier else Modifier.heightIn(max = 520.dp)), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (state.usesProvider && state.connections.connections.sumOf { it.models.size } > 12) OutlinedTextField(modelSearch, { modelSearch = it }, singleLine = true, label = { Text("Search models") }, modifier = Modifier.fillMaxWidth())
-                    LazyColumn(state = modelList, modifier = Modifier.fillMaxWidth().weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        if (state.usesProvider) {
-                            val groups = state.connections.connections.map { profile -> profile to profile.models.filter { "${profile.name} ${it.name} ${it.id}".contains(modelSearch, true) } }.filter { it.second.isNotEmpty() }
-                            groups.forEach { (profile, models) ->
-                                item(key = "provider-${profile.id}") { Text(profile.name, Modifier.fillMaxWidth().padding(start = 6.dp, top = 12.dp, bottom = 4.dp).testTag("chat-model-provider-${profile.id}"), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface) }
-                                items(models, key = { "model-${profile.id}-${it.id}" }) { model ->
-                                    PanelOption(model.name, selected = state.selectedConnection?.id == profile.id && state.activeModel?.id == model.id, enabled = state.canChange && !state.isResponding && state.connectionsReady, disabledLabel = null, onClick = {
-                                        state.selectConnectionModel(profile.id, model.id)
-                                        onDismiss()
-                                    })
+                    if (smallModelList) {
+                        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (state.usesProvider) {
+                                state.connections.connections.forEach { profile ->
+                                    Text(profile.name, Modifier.fillMaxWidth().padding(start = 6.dp, top = 12.dp, bottom = 4.dp).testTag("chat-model-provider-${profile.id}"), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                                    profile.models.forEach { model -> ChatModelOption(state, profile, model, onDismiss) }
                                 }
+                            } else {
+                                PanelOption("Sample chat", subtitle = "Offline preview", selected = true)
                             }
-                            if (groups.isEmpty()) item { Text("No models found", Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                        } else {
-                            item { PanelOption("Sample chat", subtitle = "Offline preview", selected = true) }
+                        }
+                    } else {
+                        LazyColumn(state = modelList, modifier = Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (state.usesProvider) {
+                                val groups = state.connections.connections.map { profile -> profile to profile.models.filter { "${profile.name} ${it.name} ${it.id}".contains(modelSearch, true) } }.filter { it.second.isNotEmpty() }
+                                groups.forEach { (profile, models) ->
+                                    item(key = "provider-${profile.id}") { Text(profile.name, Modifier.fillMaxWidth().padding(start = 6.dp, top = 12.dp, bottom = 4.dp).testTag("chat-model-provider-${profile.id}"), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface) }
+                                    items(models, key = { "model-${profile.id}-${it.id}" }) { model ->
+                                        ChatModelOption(state, profile, model, onDismiss)
+                                    }
+                                }
+                                if (groups.isEmpty()) item { Text("No models found", Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            } else {
+                                item { PanelOption("Sample chat", subtitle = "Offline preview", selected = true) }
+                            }
                         }
                     }
                     if (state.availableEfforts.size > 1) {
@@ -1118,6 +1129,14 @@ private fun ComposerOptions(sheet: String, state: AssistantPreviewState, onSelec
             }
         }
     }
+}
+
+@Composable
+private fun ChatModelOption(state: AssistantPreviewState, profile: com.veyarc.data.storage.AssistantConnection, model: com.veyarc.data.storage.AssistantModelConfig, onDismiss: () -> Unit) {
+    PanelOption(model.name, selected = state.selectedConnection?.id == profile.id && state.activeModel?.id == model.id, enabled = state.canChange && !state.isResponding && state.connectionsReady, disabledLabel = null, onClick = {
+        state.selectConnectionModel(profile.id, model.id)
+        onDismiss()
+    })
 }
 
 @Composable

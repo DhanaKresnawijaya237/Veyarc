@@ -341,6 +341,7 @@ class AssistantConnectionSettingsTest {
             }
             compose.onNodeWithContentDescription("Edit Server").performScrollTo().performClick()
             compose.onNodeWithTag("connection-model").performTextReplacement("unseen-model")
+            closeKeyboard()
             compose.onNodeWithText("Advanced").performScrollTo().performClick()
             compose.onNodeWithTag("capability-Medium").performScrollTo().assertIsOff()
             compose.onNodeWithTag("capability-Images").performScrollTo().assertIsOff()
