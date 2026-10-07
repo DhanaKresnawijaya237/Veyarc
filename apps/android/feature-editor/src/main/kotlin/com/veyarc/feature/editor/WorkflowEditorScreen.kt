@@ -1327,7 +1327,7 @@ private fun WorkflowDraftCanvas(
                     TemplateAssetSection(
                         assets = draft.assetDescriptors,
                         assetNames = draft.assetNames,
-                        referencedAssetIds = draft.referencedAssetIds(),
+                        referencedAssetIds = remember(draft.steps) { draft.referencedAssetIds() },
                         onAddTemplate = onAddTemplate,
                         loadPreview = loadPreview,
                         onRemoveTemplate = { assetId ->
@@ -1657,31 +1657,33 @@ private fun TemplateAssetSection(
             if (assets.isEmpty()) {
                 Text("No templates added.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
-                assets.forEachIndexed { index, asset ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().clickable { renameTarget = asset.assetId },
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                assetNames[asset.assetId.value] ?: "Template ${index + 1}",
-                                color = if (asset.assetId.value in referencedAssetIds) {
-                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.82f)
-                                } else {
-                                    MaterialTheme.colorScheme.onSurface
-                                },
-                            )
-                            Text(
-                                listOfNotNull(
-                                    asset.addedAtMs?.let { "Added ${java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(it))}" },
-                                    asset.byteCount?.let { android.text.format.Formatter.formatShortFileSize(context, it) },
-                                ).joinToString(" · "),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        IconButton(onClick = { onRemoveTemplate(asset.assetId) }) {
-                            Icon(Icons.Outlined.Delete, contentDescription = "Remove image template")
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 288.dp).testTag("workflow-template-list"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    itemsIndexed(assets, key = { _, asset -> asset.assetId.value }) { index, asset ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable { renameTarget = asset.assetId },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    assetNames[asset.assetId.value] ?: "Template ${index + 1}",
+                                    color = if (asset.assetId.value in referencedAssetIds) {
+                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.82f)
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    },
+                                )
+                                Text(
+                                    listOfNotNull(
+                                        asset.addedAtMs?.let { "Added ${java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(it))}" },
+                                        asset.byteCount?.let { android.text.format.Formatter.formatShortFileSize(context, it) },
+                                    ).joinToString(" · "),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            IconButton(onClick = { onRemoveTemplate(asset.assetId) }) {
+                                Icon(Icons.Outlined.Delete, contentDescription = "Remove image template")
+                            }
                         }
                     }
                 }

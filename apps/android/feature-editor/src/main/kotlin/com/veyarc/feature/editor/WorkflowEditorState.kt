@@ -238,6 +238,16 @@ class WorkflowEditorSession {
             validatedDraft = draft
             return requireNotNull(validatedResult)
         }
+        val previous = validatedResult
+        if (previous?.document != null && draft.name.isNotBlank() && draft.name.length <= 128 &&
+            validatedDraft?.copy(name = draft.name, collapsedStepIds = draft.collapsedStepIds, recordingJournalFileName = draft.recordingJournalFileName) == draft
+        ) {
+            val document = previous.document.copy(name = draft.name.trim())
+            return previous.copy(document = document, bundle = previous.bundle?.copy(document = document)).also {
+                validatedDraft = draft
+                validatedResult = it
+            }
+        }
         return draft.buildBundle().also { result ->
             validatedDraft = draft
             validatedResult = result

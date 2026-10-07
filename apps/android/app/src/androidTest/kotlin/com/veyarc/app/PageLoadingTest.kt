@@ -12,6 +12,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToKey
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -33,6 +34,32 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class PageLoadingTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test
+    fun manyTemplatesStayLazyAndTheLastTemplateCanBeRenamed() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val repository = WorkflowRepository(context)
+        val draft = performanceEditorDraft(300, 200)
+        val session = WorkflowEditorSession()
+        session.open(draft.buildBundle().bundle!!)
+        try {
+            compose.setContent { VeyarcTheme(darkTheme = true) { WorkflowEditorScreen(repository, session, {}, {}) } }
+            val composed = compose.onAllNodes(hasText("Perf template", substring = true), useUnmergedTree = true).fetchSemanticsNodes().size
+            assertTrue("Only nearby templates should be composed, got $composed", composed in 1..20)
+            compose.onNodeWithTag("workflow-template-list").performScrollToKey(draft.assetDescriptors.last().assetId.value)
+            compose.onNodeWithText(draft.assetNames.getValue(draft.assetDescriptors.last().assetId.value)).performClick()
+            compose.onNodeWithText("Template name").performTextReplacement("Last template renamed")
+            compose.onNodeWithText("Rename").performClick()
+            compose.onNodeWithText("Last template renamed").assertExists()
+            compose.onNodeWithText("Image templates").performClick()
+            compose.onNodeWithText("Image templates").performClick()
+            compose.onNodeWithTag("workflow-block-list").performScrollToKey(draft.steps.last().id)
+            compose.onNodeWithText("300. Wait").assertExists()
+            assertEquals(200, session.draft!!.assetDescriptors.size)
+        } finally {
+            repository.close()
+        }
+    }
 
     @Test
     fun tabChangesKeepLoadedDataAndRefreshLaterChanges() {
