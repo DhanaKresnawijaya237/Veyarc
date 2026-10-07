@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Folder
@@ -26,6 +27,8 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 
 enum class VeyarcDestination(
     val label: String,
@@ -67,10 +70,11 @@ internal fun VeyarcAppShell(
                         Spacer(Modifier.weight(1f))
                         VeyarcDestination.entries.forEach { destination ->
                             NavigationRailItem(
+                                modifier = Modifier.width(80.dp),
                                 selected = selectedDestination == destination,
                                 onClick = { onDestinationSelected(destination) },
                                 icon = { DestinationIcon(destination) },
-                                label = { Text(destination.label) },
+                                label = { Text(destination.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             )
                             Spacer(Modifier.weight(1f))
                         }

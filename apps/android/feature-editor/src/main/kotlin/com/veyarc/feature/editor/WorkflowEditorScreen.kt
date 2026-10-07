@@ -850,7 +850,7 @@ private fun EmptyWorkflowEditorScreen(
                 modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(start = 20.dp, top = if (compact) 8.dp else 20.dp, end = 20.dp)
+                    .padding(start = 20.dp, top = 20.dp, end = 20.dp)
                     .heightIn(min = 48.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -1258,7 +1258,7 @@ private fun WorkflowDraftCanvas(
             if (scrollState.scrollBy(scrollDelta) == 0f) break
         }
     }
-    val horizontalPadding = 16.dp
+    val horizontalPadding = 20.dp
     val verticalPadding = 12.dp
     val itemSpacing = 12.dp
     val density = LocalDensity.current
@@ -1287,7 +1287,7 @@ private fun WorkflowDraftCanvas(
                             draft = draft,
                             onDraftChange = onDraftChange,
                             onAskAi = onAskAi,
-                            modifier = Modifier.padding(top = verticalPadding),
+                            modifier = Modifier.padding(top = 20.dp),
                         )
                         EditorToolbar(
                             draft = draft,

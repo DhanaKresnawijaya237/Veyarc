@@ -27,9 +27,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -129,7 +131,7 @@ internal fun CompactManagerHeader(
             if (query.isEmpty()) onSearchActiveChange(false)
         }
     }
-    BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(56.dp)) {
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
         val searchWidth by animateDpAsState(
             targetValue = if (searchActive) maxWidth else 48.dp,
             animationSpec = tween(transitionDurationMs),
@@ -261,11 +263,17 @@ internal fun ManagerSelectionBar(state: ManagerSelectionBarState) {
 @Composable
 internal fun ManagerSelectionRail(state: ManagerSelectionBarState) {
     NavigationRail {
+        Spacer(Modifier.weight(1f))
         ManagerSelectionRailAction(Icons.Filled.ContentCopy, "Copy", state.onCopy)
+        Spacer(Modifier.weight(1f))
         ManagerSelectionRailAction(Icons.Filled.Edit, "Rename", state.onRename)
+        Spacer(Modifier.weight(1f))
         ManagerSelectionRailAction(Icons.AutoMirrored.Filled.DriveFileMove, "Move", state.onMove.takeIf { state.selectedCount > 0 })
+        Spacer(Modifier.weight(1f))
         ManagerSelectionRailAction(Icons.Filled.Delete, "Delete", state.onDelete.takeIf { state.selectedCount > 0 })
+        Spacer(Modifier.weight(1f))
         ManagerSelectionRailAction(Icons.Filled.Info, "Details", state.onDetails)
+        Spacer(Modifier.weight(1f))
     }
 }
 
@@ -310,11 +318,12 @@ private fun androidx.compose.foundation.layout.ColumnScope.ManagerSelectionRailA
     action: (() -> Unit)?,
 ) {
     NavigationRailItem(
+        modifier = Modifier.width(80.dp),
         selected = false,
         onClick = { action?.invoke() },
         enabled = action != null,
         icon = { Icon(icon, contentDescription = label) },
-        label = { Text(label, maxLines = 1) },
+        label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
     )
 }
 

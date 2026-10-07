@@ -46,7 +46,7 @@ class RunDetailsUiTest {
         assertEquals(0, compose.onAllNodes(hasText(record.runId, substring = true)).fetchSemanticsNodes().size)
         compose.onNodeWithText("Open revision 3").performScrollTo().performClick()
         assertEquals(true, opened)
-        compose.onNodeWithContentDescription("Back to runs").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("Close run details").performScrollTo().performClick()
         assertEquals(true, back)
         assertEquals("Step $step started", record.eventHistory.first().message)
     }
