@@ -60,6 +60,7 @@ class MainActivity : ComponentActivity() {
     private var workflowToRun by mutableStateOf<WorkflowBundle?>(null)
     private var workflowToEdit by mutableStateOf<WorkflowBundle?>(null)
     private var storedWorkflowToEdit by mutableStateOf<Pair<String, Int>?>(null)
+    private var editorReturnToManager = false
     private var recordedJournalFileName by mutableStateOf<String?>(null)
     private var newWorkflowRequestId by mutableIntStateOf(0)
     private var newWorkflowFolderId by mutableStateOf<String?>(null)
@@ -94,6 +95,7 @@ class MainActivity : ComponentActivity() {
                 ?.getString(FULL_SCREEN_DESTINATION_KEY)
                 ?.let { saved -> FullScreenDestination.entries.firstOrNull { it.name == saved } }
         recordingFolderId = savedInstanceState?.getString(RECORDING_FOLDER_ID_KEY)
+        editorReturnToManager = savedInstanceState?.getBoolean(EDITOR_RETURN_TO_MANAGER_KEY) ?: false
         // Register the process-owned recording actions before the user leaves Veyarc. This lets
         // the fixed service-owned control center start a recording from a third-party app instead
         // of requiring the recorder screen to have been opened first.
@@ -156,6 +158,7 @@ class MainActivity : ComponentActivity() {
                                 fullScreenDestination = null
                             },
                             onEditWorkflow = { bundle, journalFileName ->
+                                editorReturnToManager = false
                                 workflowToEdit = bundle
                                 storedWorkflowToEdit = null
                                 recordedJournalFileName = journalFileName
@@ -229,6 +232,13 @@ class MainActivity : ComponentActivity() {
                                                 onOpenWorkflowManager = {
                                                     selectedDestination = VeyarcDestination.WORKFLOWS
                                                 },
+                                                onWorkflowClosed = {
+                                                    workflowToEdit = null
+                                                    storedWorkflowToEdit = null
+                                                    recordedJournalFileName = null
+                                                    if (editorReturnToManager) selectedDestination = VeyarcDestination.WORKFLOWS
+                                                    editorReturnToManager = false
+                                                },
                                                 initialBundle = workflowToEdit,
                                                 initialStoredWorkflowId = storedWorkflowToEdit?.first,
                                                 initialStoredRevision = storedWorkflowToEdit?.second,
@@ -297,6 +307,7 @@ class MainActivity : ComponentActivity() {
         outState.putString(SELECTED_DESTINATION_KEY, selectedDestination.name)
         fullScreenDestination?.let { outState.putString(FULL_SCREEN_DESTINATION_KEY, it.name) }
         recordingFolderId?.let { outState.putString(RECORDING_FOLDER_ID_KEY, it) }
+        outState.putBoolean(EDITOR_RETURN_TO_MANAGER_KEY, editorReturnToManager)
         super.onSaveInstanceState(outState)
     }
 
@@ -330,6 +341,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun editWorkflow(workflow: WorkflowSummary) {
+        editorReturnToManager = true
         workflowToEdit = null
         storedWorkflowToEdit = workflow.workflowId to workflow.latestRevision
         recordedJournalFileName = null
@@ -337,6 +349,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun editRunWorkflowRevision(run: StoredRunRecord) {
+        editorReturnToManager = false
         workflowToEdit = null
         storedWorkflowToEdit = run.workflowId to run.revision
         recordedJournalFileName = null
@@ -441,6 +454,7 @@ class MainActivity : ComponentActivity() {
         const val SELECTED_DESTINATION_KEY = "selected_destination"
         const val FULL_SCREEN_DESTINATION_KEY = "full_screen_destination"
         const val RECORDING_FOLDER_ID_KEY = "recording_folder_id"
+        const val EDITOR_RETURN_TO_MANAGER_KEY = "editor_return_to_manager"
     }
 }
 

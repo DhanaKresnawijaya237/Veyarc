@@ -189,6 +189,7 @@ fun WorkflowEditorScreen(
     newWorkflowRequestId: Int = 0,
     newWorkflowFolderId: String? = null,
     onNewWorkflowRequestConsumed: () -> Unit = {},
+    onWorkflowClosed: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -482,6 +483,7 @@ fun WorkflowEditorScreen(
         conditionTarget = null
         session.close()
         pendingClose = false
+        onWorkflowClosed()
     }
 
     fun requestCloseDraft() {
@@ -971,7 +973,6 @@ private fun WorkflowDraftScreen(
                 WorkflowTitleEditor(
                     draft = draft,
                     onDraftChange = onDraftChange,
-                    onAskAi = onAskAi,
                     modifier = Modifier.padding(start = 20.dp, top = 20.dp, end = 20.dp),
                 )
             }
@@ -1013,7 +1014,7 @@ private fun WorkflowDraftScreen(
                             onDraftChange = onDraftChange,
                             onEditGeometry = onEditGeometry,
                             onEditCondition = onEditCondition,
-                            modifier = Modifier.weight(0.38f),
+                            modifier = Modifier.weight(0.38f).padding(bottom = if (onAskAi != null) 84.dp else 0.dp),
                         )
                     }
                 } else {
@@ -1043,6 +1044,19 @@ private fun WorkflowDraftScreen(
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
+                if (onAskAi != null) {
+                    Surface(
+                        onClick = onAskAi,
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp).size(56.dp).testTag("workflow-ai-chat-button"),
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        shadowElevation = 4.dp,
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = "Ask AI", tint = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                }
             }
         }
     }
@@ -1052,7 +1066,6 @@ private fun WorkflowDraftScreen(
 private fun WorkflowTitleEditor(
     draft: WorkflowDraft,
     onDraftChange: (WorkflowDraft) -> Unit,
-    onAskAi: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -1072,13 +1085,6 @@ private fun WorkflowTitleEditor(
                 field()
             },
         )
-        if (onAskAi != null) {
-            Surface(onClick = onAskAi, shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-                Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = "Ask AI", tint = MaterialTheme.colorScheme.primary)
-                }
-            }
-        }
     }
 }
 
@@ -1282,7 +1288,7 @@ private fun WorkflowDraftCanvas(
                 start = horizontalPadding,
                 end = horizontalPadding,
                 top = if (scrollHeader) 0.dp else with(density) { toolbarHeight.toDp() },
-                bottom = verticalPadding,
+                bottom = if (onAskAi != null) 84.dp else verticalPadding,
             ),
             verticalArrangement = Arrangement.spacedBy(itemSpacing),
         ) {
@@ -1292,7 +1298,6 @@ private fun WorkflowDraftCanvas(
                         WorkflowTitleEditor(
                             draft = draft,
                             onDraftChange = onDraftChange,
-                            onAskAi = onAskAi,
                             modifier = Modifier.padding(top = 20.dp),
                         )
                         EditorToolbar(
