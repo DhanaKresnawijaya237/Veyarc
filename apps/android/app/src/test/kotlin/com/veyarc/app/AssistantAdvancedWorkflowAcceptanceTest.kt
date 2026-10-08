@@ -128,14 +128,14 @@ class AssistantAdvancedWorkflowAcceptanceTest {
         }
         changed("Variables / count / initialValue / value", "0.0", "1.0")
         changed("/ count", "2", "3")
-        val conditionDiff = diff.single { it.label == "Block ${branch.id} at Steps / 2 / bodySteps / 1 / condition / conditions" }
+        val conditionDiff = diff.single { it.label == "Block ${branch.id} at Steps / 1 / bodySteps / 1 / condition / conditions" }
         assertTrue(conditionDiff.before!!.contains("\"matchThreshold\":0.9"))
         assertEquals(conditionDiff.before!!.replace("\"matchThreshold\":0.9", "\"matchThreshold\":0.95"), conditionDiff.after)
         changed("/ maxIterations", "2", "3")
         changed("/ value / value", "2.0", "3.0")
         changed("/ maxVisits", "2", "3")
         changed("/ durationMs", "100", "250")
-        assertTrue(diff.any { it.label == "Moved block ${wait.id}" && it.before == "Steps / 2 / bodySteps / 1 / thenSteps / 1 / bodySteps / 2" && it.after == "Steps / 2 / bodySteps / 1 / elseSteps / 2" })
+        assertTrue(diff.any { it.label == "Moved block ${wait.id}" && it.before == "Steps / 1 / bodySteps / 1 / thenSteps / 1 / bodySteps / 2" && it.after == "Steps / 1 / bodySteps / 1 / elseSteps / 2" })
         assertEquals(source, editor.draft)
         assertTrue(bridge.apply(captured.localBindingId!!, snapshot, json))
         assertEquals(source.copy(steps = candidate.steps, variables = candidate.variables), editor.draft)

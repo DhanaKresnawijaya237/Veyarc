@@ -59,7 +59,7 @@ class RunEventFormatterTest {
     @Test
     fun neverSubstitutesTheThresholdWhenAnExactScoreIsUnavailable() {
         assertEquals(
-            "Screen state: false · match unavailable · threshold 90.0%",
+            "Screen state: false · image not found · score unavailable · threshold 90.0%",
             formatter.format(
                 RunEvent.ConditionEvaluated(
                     atMs = 20L,

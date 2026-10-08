@@ -233,7 +233,7 @@ class AssistantProviderStateTest {
     }
 
     @Test
-    fun failuresAreSanitizedAndDisableCloseClearAndOwnerLossCancelWithoutResending() = runBlocking {
+    fun failuresAreSanitizedAndClosingPreservesWorkButDisableClearAndOwnerLossCancel() = runBlocking {
         val owner = CoroutineScope(coroutineContext + SupervisorJob())
         val results = mutableListOf<CompletableDeferred<ByteArray>>()
         var calls = 0
@@ -263,6 +263,8 @@ class AssistantProviderStateTest {
             yield()
             state.open(AssistantPreviewContext())
             assertEquals(3, calls)
+            assertTrue(state.isResponding)
+            state.stop(PreviewReplyStatus.INTERRUPTED)
             state.retry()
             await { calls == 4 }
             state.clearHistory()
