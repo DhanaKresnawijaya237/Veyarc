@@ -13,6 +13,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.Closeable
 import java.io.File
+import java.io.InputStream
 import java.util.Collections
 
 data class WorkflowSummary(
@@ -864,16 +865,42 @@ class WorkflowRepository internal constructor(
         return database.workflowDao().listAllRunRecords(limit).map(::toStoredRunRecord)
     }
 
-    fun listRunSummaries(limit: Int = 100): List<StoredRunRecord> {
+    fun listRunSummaries(limit: Int = 100, offset: Int = 0): List<StoredRunRecord> {
         require(limit in 1..MAX_HISTORY_LIMIT) {
             "Run history limit must be between 1 and $MAX_HISTORY_LIMIT"
         }
-        return database.workflowDao().listRunSummaries(limit).map(::toStoredRunSummary)
+        require(offset >= 0) { "Run history offset must be nonnegative" }
+        return database.workflowDao().listRunSummaries(limit, offset).map(::toStoredRunSummary)
     }
 
     fun loadRunDetails(runId: String): StoredRunRecord = database.workflowDao().findRunRecord(runId)
         ?.let(::toStoredRunRecord)
         ?: throw WorkflowStorageException("Run record does not exist")
+
+    fun exportRun(runId: String): ByteArray = synchronized(this) {
+        val record = loadRunDetails(runId)
+        require(record.status != StoredRunStatus.RUNNING) { "Finish the run before exporting it." }
+        val workflow = database.workflowDao().findWorkflow(record.workflowId)
+        RunArchive.export(record, workflow?.name ?: record.name ?: "Workflow run")
+    }
+
+    /** Imports history only; workflow transfers remain separate and existing runs aren't overwritten. */
+    fun importRun(input: InputStream): Boolean = synchronized(this) {
+        val archive = RunArchive.import(input)
+        val record = archive.record
+        val dao = database.workflowDao()
+        if (dao.findRunRecord(record.runId) != null) return@synchronized false
+        dao.insertRunRecord(
+            RunRecordEntity(
+                runId = record.runId, workflowId = record.workflowId, revision = record.revision, status = record.status.name,
+                startedAtMs = record.startedAtMs, finishedAtMs = record.finishedAtMs, interruptionReason = record.interruptionReason,
+                completedSteps = record.completedSteps, totalSteps = record.totalSteps,
+                eventHistoryJson = if (record.hasStoredDetails) encodeRunEvents(record.eventHistory) else null,
+                name = record.name ?: archive.workflowName.takeIf { dao.findWorkflow(record.workflowId) == null },
+            ),
+        )
+        true
+    }
 
     fun loadRunDashboard(recentLimit: Int = 20): RunDashboardSummary = synchronized(this) {
         require(recentLimit in 1..MAX_HISTORY_LIMIT) {

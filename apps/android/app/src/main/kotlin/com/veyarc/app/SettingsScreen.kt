@@ -38,8 +38,11 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.DarkMode
+import androidx.compose.material.icons.outlined.FileDownload
+import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Info
@@ -67,6 +70,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -87,6 +91,8 @@ import com.veyarc.automation.android.AccessibilityGestureDispatcher
 import com.veyarc.automation.android.EdgeLatchPlayTarget
 import com.veyarc.automation.android.ReplayFloatingController
 import com.veyarc.automation.android.ShizukuTouchProbe
+import com.veyarc.data.storage.StoredRunRecord
+import com.veyarc.data.storage.StoredRunStatus
 import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowSummary
 import com.veyarc.feature.assistant.AssistantMarkdown
@@ -98,6 +104,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
+import java.text.DateFormat
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun SettingsScreen(
@@ -130,6 +140,13 @@ fun SettingsScreen(
     var confirmClearHistory by remember { mutableStateOf(false) }
     var chooseExportWorkflow by remember { mutableStateOf(false) }
     var pendingExportWorkflow by remember { mutableStateOf<WorkflowSummary?>(null) }
+    var chooseExportRun by remember { mutableStateOf(false) }
+    var exportRuns by remember { mutableStateOf<List<StoredRunRecord>>(emptyList()) }
+    var loadingExportRuns by remember { mutableStateOf(false) }
+    var moreExportRuns by remember { mutableStateOf(true) }
+    var exportRunRequest by remember { mutableIntStateOf(0) }
+    var exportRunOffset by remember { mutableIntStateOf(0) }
+    var pendingExportRun by remember { mutableStateOf<StoredRunRecord?>(null) }
     var expandedSection by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(assistantConnectionRequestId) {
         if (assistantConnectionRequestId > 0) {
@@ -141,6 +158,31 @@ fun SettingsScreen(
     var chooseShizukuSource by remember { mutableStateOf(false) }
     var openGuide by remember { mutableStateOf<Pair<String, String>?>(null) }
     var noticesVisible by remember { mutableStateOf(false) }
+
+    fun loadExportRuns(reset: Boolean) {
+        val request = ++exportRunRequest
+        val offset = if (reset) 0 else exportRunOffset
+        if (reset) exportRuns = emptyList()
+        loadingExportRuns = true
+        scope.launch {
+            try {
+                val page = withContext(Dispatchers.IO) { repository.listRunSummaries(100, offset) }
+                if (request == exportRunRequest) {
+                    exportRuns = if (reset) page else (exportRuns + page).distinctBy(StoredRunRecord::runId)
+                    exportRunOffset = offset + page.size
+                    moreExportRuns = page.size == 100
+                }
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                if (request == exportRunRequest) {
+                    message = "Run history could not be loaded."
+                    chooseExportRun = false
+                }
+            } finally {
+                if (request == exportRunRequest) loadingExportRuns = false
+            }
+        }
+    }
 
     fun refreshCapabilities() {
         accessibilityEnabled = AccessibilityGestureDispatcher.isEnabled(context)
@@ -220,6 +262,45 @@ fun SettingsScreen(
                 }
             storageOperation = null
             pendingExportWorkflow = null
+        }
+    }
+
+    val importRun = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            storageOperation = "Importing run…"
+            try {
+                val imported = withContext(Dispatchers.IO) {
+                    requireNotNull(context.contentResolver.openInputStream(uri)) { "Could not open the selected file" }.use(repository::importRun)
+                }
+                message = if (imported) "Run imported." else "This run is already stored."
+                refreshStorage()
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                message = "Import failed: ${error.message ?: error.javaClass.simpleName}"
+            } finally {
+                storageOperation = null
+            }
+        }
+    }
+    val exportRun = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        val run = pendingExportRun
+        pendingExportRun = null
+        if (uri == null || run == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            storageOperation = "Exporting run…"
+            try {
+                withContext(Dispatchers.IO) {
+                    val bytes = repository.exportRun(run.runId)
+                    requireNotNull(context.contentResolver.openOutputStream(uri)) { "Could not open the destination" }.use { it.write(bytes) }
+                }
+                message = "Run exported."
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                message = "Export failed: ${error.message ?: error.javaClass.simpleName}"
+            } finally {
+                storageOperation = null
+            }
         }
     }
 
@@ -391,27 +472,31 @@ fun SettingsScreen(
                     expanded = expandedSection == "data",
                     onToggle = { expandedSection = if (expandedSection == "data") null else "data" },
                 ) {
-                    Text("$workflowFolderCount workflow folders • $runFolderCount run folders")
                     Text(
-                        "Stored on this device. Revisions and journals are encrypted.",
+                        "Keep a copy of workflows and finished runs, or bring one back.",
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     storageOperation?.let { operation ->
                         androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
                         Text(operation, style = MaterialTheme.typography.bodySmall)
                     }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(modifier = Modifier.weight(1f), enabled = storageOperation == null, onClick = { importBundle.launch(arrayOf("application/zip", "application/octet-stream")) }) {
-                            Text("Import workflow", textAlign = TextAlign.Center)
-                        }
-                        OutlinedButton(
-                            modifier = Modifier.weight(1f),
-                            enabled = workflows.isNotEmpty() && storageOperation == null,
-                            onClick = { chooseExportWorkflow = true },
-                        ) { Text("Export workflow", textAlign = TextAlign.Center) }
-                    }
+                    LocalDataTransferRow(
+                        "Workflows", "${workflows.size} saved · $workflowFolderCount folders", Icons.Outlined.AccountTree,
+                        "Import workflow", "Export workflow", storageOperation == null, workflows.isNotEmpty(),
+                        { importBundle.launch(arrayOf("application/zip", "application/octet-stream")) }, { chooseExportWorkflow = true },
+                    )
+                    LocalDataTransferRow(
+                        "Runs", "$runCount saved · $runFolderCount folders", Icons.Outlined.History,
+                        "Import run", "Export run", storageOperation == null, runCount > 0,
+                        { importRun.launch(arrayOf("application/zip", "application/octet-stream")) }, {
+                            chooseExportRun = true
+                            loadExportRuns(reset = true)
+                        },
+                    )
                     TextButton(modifier = Modifier.align(Alignment.CenterHorizontally), enabled = runCount > 0 && storageOperation == null, onClick = { confirmClearHistory = true }) {
-                        Text("Clear finished run history")
+                        Icon(Icons.Outlined.RestartAlt, null, Modifier.padding(end = 8.dp).size(18.dp), tint = MaterialTheme.colorScheme.error)
+                        Text("Clear finished run history", color = MaterialTheme.colorScheme.error)
                     }
                 }
             }
@@ -496,6 +581,49 @@ fun SettingsScreen(
                 },
                 confirmButton = {},
                 dismissButton = { TextButton(onClick = { chooseExportWorkflow = false }) { Text("Cancel") } },
+            )
+        }
+        if (chooseExportRun) {
+            AlertDialog(
+                onDismissRequest = { chooseExportRun = false },
+                title = { Text("Export run") },
+                text = {
+                    val finishedRuns = exportRuns.filter { it.status != StoredRunStatus.RUNNING }
+                    if (loadingExportRuns && exportRuns.isEmpty()) {
+                        androidx.compose.material3.CircularProgressIndicator()
+                    } else {
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (finishedRuns.isEmpty()) item { Text("No finished runs yet.") }
+                            items(finishedRuns, key = StoredRunRecord::runId) { run ->
+                                val name = run.name ?: workflows.firstOrNull { it.workflowId == run.workflowId }?.name ?: "Workflow run"
+                                Surface(onClick = {
+                                    chooseExportRun = false
+                                    pendingExportRun = run
+                                    val time = SimpleDateFormat("yyyy-MM-dd HH-mm", Locale.ROOT).format(Date(run.startedAtMs))
+                                    exportRun.launch("${name.safeFileName()} $time.veyarc-run")
+                                }, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(name, style = MaterialTheme.typography.titleSmall)
+                                        Text(
+                                            "${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(run.startedAtMs))} · ${run.status.name.lowercase().replaceFirstChar(Char::uppercase)}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                            if (loadingExportRuns) {
+                                item { androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth()) }
+                            } else if (moreExportRuns) {
+                                item {
+                                    TextButton(onClick = { loadExportRuns(reset = false) }, modifier = Modifier.fillMaxWidth()) { Text("Load older runs") }
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = { TextButton(onClick = { chooseExportRun = false }) { Text("Cancel") } },
             )
         }
         if (confirmShizukuDownload) {
@@ -585,6 +713,41 @@ fun SettingsScreen(
 }
 
 @Composable
+private fun LocalDataTransferRow(
+    title: String,
+    detail: String,
+    icon: ImageVector,
+    importLabel: String,
+    exportLabel: String,
+    enabled: Boolean,
+    exportAvailable: Boolean,
+    onImport: () -> Unit,
+    onExport: () -> Unit,
+) {
+    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Icon(icon, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.primary)
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(title, style = MaterialTheme.typography.titleMedium)
+                    Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onImport, enabled = enabled, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Outlined.FileDownload, null, Modifier.size(18.dp).padding(end = 4.dp))
+                    Text(importLabel, textAlign = TextAlign.Center, style = MaterialTheme.typography.labelLarge)
+                }
+                TextButton(onClick = onExport, enabled = enabled && exportAvailable, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Outlined.FileUpload, null, Modifier.size(18.dp).padding(end = 4.dp))
+                    Text(exportLabel, textAlign = TextAlign.Center, style = MaterialTheme.typography.labelLarge)
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SettingsCard(
     title: String,
     summary: String?,
@@ -666,7 +829,7 @@ private data class StorageSnapshot(
     val runFolderCount: Int,
 )
 
-private fun String.safeFileName(): String = replace(Regex("[^A-Za-z0-9._-]+"), "_").trim('_').ifBlank { "workflow" }
+internal fun String.safeFileName(): String = replace(Regex("""[\\/:*?"<>|\p{Cntrl}]"""), "_").trim().trimEnd(' ', '.').ifBlank { "workflow" }
 
 private fun java.io.InputStream.readAtMost(maxBytes: Long): ByteArray {
     val output = ByteArrayOutputStream()
