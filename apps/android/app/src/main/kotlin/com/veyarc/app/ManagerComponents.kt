@@ -1,5 +1,6 @@
 package com.veyarc.app
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -33,6 +35,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imeAnimationTarget
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -88,6 +91,7 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
@@ -100,6 +104,7 @@ import androidx.compose.ui.zIndex
 import com.veyarc.data.storage.FolderSummary
 import com.veyarc.feature.assistant.RoundedSelectionCheckbox
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun CompactManagerHeader(
     title: String,
@@ -114,19 +119,32 @@ internal fun CompactManagerHeader(
     val transitionDurationMs = 180
     val searchFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val imeTargetVisible = WindowInsets.imeAnimationTarget.getBottom(LocalDensity.current) > 0
     var keyboardWasVisible by remember { mutableStateOf(false) }
+    BackHandler(enabled = LocalMainPageActive.current && (selectionMode || searchActive)) {
+        if (searchActive) {
+            onSearchActiveChange(false)
+            onQueryChange("")
+            focusManager.clearFocus()
+            keyboardController?.hide()
+        } else {
+            onSelectionModeChange(false)
+        }
+    }
     LaunchedEffect(searchActive) {
         if (searchActive) {
             searchFocusRequester.requestFocus()
             keyboardController?.show()
         } else {
             keyboardWasVisible = false
+            focusManager.clearFocus()
         }
     }
-    LaunchedEffect(imeVisible, searchActive) {
-        if (searchActive && imeVisible) keyboardWasVisible = true
-        if (searchActive && keyboardWasVisible && !imeVisible) {
+    LaunchedEffect(imeVisible, imeTargetVisible, searchActive) {
+        if (searchActive && imeVisible && imeTargetVisible) keyboardWasVisible = true
+        if (searchActive && keyboardWasVisible && !imeTargetVisible) {
             keyboardWasVisible = false
             if (query.isEmpty()) onSearchActiveChange(false)
         }
