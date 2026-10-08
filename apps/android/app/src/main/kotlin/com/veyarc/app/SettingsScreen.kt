@@ -41,8 +41,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.DarkMode
-import androidx.compose.material.icons.outlined.FileDownload
-import androidx.compose.material.icons.outlined.FileUpload
 import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Info
@@ -735,11 +733,9 @@ private fun LocalDataTransferRow(
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onImport, enabled = enabled, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Outlined.FileDownload, null, Modifier.size(18.dp).padding(end = 4.dp))
                     Text(importLabel, textAlign = TextAlign.Center, style = MaterialTheme.typography.labelLarge)
                 }
                 TextButton(onClick = onExport, enabled = enabled && exportAvailable, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Outlined.FileUpload, null, Modifier.size(18.dp).padding(end = 4.dp))
                     Text(exportLabel, textAlign = TextAlign.Center, style = MaterialTheme.typography.labelLarge)
                 }
             }
@@ -757,7 +753,7 @@ private fun SettingsCard(
     trailing: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Card(Modifier.fillMaxWidth().widthIn(max = 760.dp)) {
+    Card(Modifier.fillMaxWidth().widthIn(max = 760.dp), colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
         Column {
             Row(
                 modifier = Modifier

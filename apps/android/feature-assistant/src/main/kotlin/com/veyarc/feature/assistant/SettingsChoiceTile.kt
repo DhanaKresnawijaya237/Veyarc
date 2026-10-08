@@ -27,7 +27,7 @@ fun SettingsChoiceTile(label: String, icon: ImageVector, selected: Boolean, onCl
     Surface(
         modifier = modifier.selectable(selected = selected, enabled = enabled, role = Role.RadioButton, interactionSource = null, indication = null, onClick = onClick),
         shape = RoundedCornerShape(18.dp),
-        color = if (selected) colors.primaryContainer else colors.surfaceContainerLow,
+        color = if (selected) colors.primaryContainer else colors.surfaceContainerHigh,
         border = BorderStroke(1.dp, if (selected) colors.primary else colors.outlineVariant),
     ) {
         Column(Modifier.padding(horizontal = 6.dp, vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {

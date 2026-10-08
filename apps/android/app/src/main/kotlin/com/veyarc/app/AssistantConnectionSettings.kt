@@ -157,7 +157,7 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
         profiles.connections.forEach { profile ->
             val expanded = profile.id in expandedProviders
-            Surface(Modifier.fillMaxWidth().padding(bottom = 12.dp).testTag("connection-group-${profile.id}"), shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surfaceContainerLowest) {
+            Surface(Modifier.fillMaxWidth().padding(bottom = 12.dp).testTag("connection-group-${profile.id}"), shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(
                         Modifier.fillMaxWidth().semantics {
@@ -190,7 +190,7 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
                                         modelProfile = profile
                                     }.testTag("manage-models-${profile.id}"),
                                     shape = RoundedCornerShape(16.dp),
-                                    color = MaterialTheme.colorScheme.surfaceContainer,
+                                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
                                 ) {
                                     Row(Modifier.padding(horizontal = 14.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                                         Column(Modifier.weight(1f)) {
