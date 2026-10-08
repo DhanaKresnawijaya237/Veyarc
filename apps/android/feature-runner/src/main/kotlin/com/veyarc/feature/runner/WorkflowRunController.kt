@@ -17,6 +17,7 @@ import com.veyarc.automation.android.MediaProjectionDisplaySpec
 import com.veyarc.automation.android.ReplayControllerActions
 import com.veyarc.automation.android.ReplayFloatingController
 import com.veyarc.automation.android.currentRecordingViewport
+import com.veyarc.data.storage.STORED_RUN_EVENT_LIMIT
 import com.veyarc.data.storage.StoredRunEvent
 import com.veyarc.data.storage.StoredRunStatus
 import com.veyarc.data.storage.WorkflowRepository
@@ -109,6 +110,8 @@ class WorkflowRunController(
     private var control: MutableExecutionControl? = null
     private var mediaProjectionOwned = false
     private var mediaProjectionListener: Closeable? = null
+    private val savedEvents = ArrayDeque<RedactedRunEvent>()
+    private var savedEventCharacters = 0
 
     @Volatile private var closed = false
 
@@ -233,6 +236,10 @@ class WorkflowRunController(
         WorkflowRunRuntime.register(this)
         val executionControl = MutableExecutionControl()
         control = executionControl
+        synchronized(savedEvents) {
+            savedEvents.clear()
+            savedEventCharacters = 0
+        }
         _state.update {
             it.copy(
                 phase = WorkflowRunPhase.PREPARING,
@@ -353,6 +360,7 @@ class WorkflowRunController(
                 SystemClock.elapsedRealtime(),
                 "Preparation completed in $preparationDurationMs ms",
             )
+            rememberEvent(preparationEvent)
             _state.update {
                 it.copy(
                     review = it.review.copy(capabilities = capabilities, compilation = compilation),
@@ -446,6 +454,7 @@ class WorkflowRunController(
                 val status = terminalStatus
                 val reason = terminalReason
                 val terminalState = _state.value
+                val savedHistory = synchronized(savedEvents) { savedEvents.map { StoredRunEvent(it.atMs, it.message) } }
                 withContext(NonCancellable + Dispatchers.IO) {
                     runCatching {
                         repository.finishRun(
@@ -454,9 +463,7 @@ class WorkflowRunController(
                             interruptionReason = reason,
                             completedSteps = terminalState.completedSteps,
                             totalSteps = terminalState.review.plan?.analysis?.worstCaseStepCount,
-                            eventHistory = terminalState.eventHistory.map { event ->
-                                StoredRunEvent(event.atMs, event.message)
-                            },
+                            eventHistory = savedHistory,
                         )
                     }
                 }
@@ -504,8 +511,19 @@ class WorkflowRunController(
         return maxOf(1L, memoryClassMiB.toLong() / RUN_TEMPLATE_MEMORY_DIVISOR) * BYTES_PER_MIB
     }
 
+    private fun rememberEvent(event: RedactedRunEvent) = synchronized(savedEvents) {
+        // ponytail: Bound saved activity by count and text size; complete logs need streaming storage.
+        val saved = if (event.message.length > MAX_SAVED_EVENT_CHARACTERS) event.copy(message = event.message.take(MAX_SAVED_EVENT_CHARACTERS - 1) + "…") else event
+        while (savedEvents.isNotEmpty() && (savedEvents.size >= STORED_RUN_EVENT_LIMIT || savedEventCharacters + saved.message.length > MAX_SAVED_HISTORY_CHARACTERS)) {
+            savedEventCharacters -= savedEvents.removeFirst().message.length
+        }
+        savedEvents.addLast(saved)
+        savedEventCharacters += saved.message.length
+    }
+
     private fun onEvent(event: RunEvent) {
         val redacted = RedactedRunEvent(event.atMs, eventFormatter.format(event))
+        rememberEvent(redacted)
         _state.update { current ->
             val nextPhase = when (event) {
                 is RunEvent.Paused -> WorkflowRunPhase.PAUSED
@@ -580,6 +598,8 @@ class WorkflowRunController(
     private companion object {
         const val TAG = "Veyarc.WorkflowRun"
         const val MAX_EVENT_HISTORY = 50
+        const val MAX_SAVED_HISTORY_CHARACTERS = 128 * 1024
+        const val MAX_SAVED_EVENT_CHARACTERS = 4096
         const val RUN_TEMPLATE_MEMORY_DIVISOR = 8L
         const val BYTES_PER_MIB = 1024L * 1024L
         const val MEDIA_PROJECTION_START_TIMEOUT_MILLIS = 5_000L

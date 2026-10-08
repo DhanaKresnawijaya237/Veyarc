@@ -1,6 +1,7 @@
 package com.veyarc.feature.editor
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -25,7 +27,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -35,6 +41,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.veyarc.data.storage.StoredRunRecord
 import com.veyarc.data.storage.StoredRunStatus
+import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -48,6 +55,11 @@ fun StoredRunDetailScreen(
     workflowName: String = "Workflow run",
 ) {
     BackHandler(onBack = onBack)
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    // ponytail: Reveals saved events only; older discarded events need a separate retention change.
+    var visibleEvents by remember(record.runId, record.eventHistory) { mutableIntStateOf(minOf(12, record.eventHistory.size)) }
+    val firstEvent = record.eventHistory.size - visibleEvents
     val timestamp = remember(record.startedAtMs) { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(record.startedAtMs)) }
     val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     val statusColor = when (record.status) {
@@ -56,8 +68,8 @@ fun StoredRunDetailScreen(
         StoredRunStatus.INTERRUPTED -> if (dark) Color(0xFFD5AD75) else Color(0xFF8A5C17)
         else -> MaterialTheme.colorScheme.primary
     }
-    LazyColumn(modifier.fillMaxSize().testTag("run-details"), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item {
+    LazyColumn(modifier.fillMaxSize().testTag("run-details"), state = listState, contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        item(key = "title") {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f).padding(end = 4.dp)) {
                     Text(record.name ?: workflowName, style = MaterialTheme.typography.titleLarge)
@@ -66,7 +78,7 @@ fun StoredRunDetailScreen(
                 IconButton(onClick = onBack) { Icon(Icons.Outlined.Close, "Close run details") }
             }
         }
-        item {
+        item(key = "summary") {
             Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
                 Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     Surface(shape = RoundedCornerShape(12.dp), color = statusColor.copy(alpha = 0.12f)) {
@@ -88,14 +100,25 @@ fun StoredRunDetailScreen(
                 }
             }
         }
-        item {
+        item(key = "activity") {
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Activity", style = MaterialTheme.typography.titleMedium)
-                if (record.eventHistory.size > 1) Text("Time between events", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (record.eventHistory.size > 1) Text(if (firstEvent > 0) "$visibleEvents of ${record.eventHistory.size} events" else "Time between events", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        itemsIndexed(record.eventHistory) { index, event ->
-            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp).testTag("run-event-$index"), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (firstEvent > 0) {
+            item(key = "earlier") {
+                TextButton(onClick = {
+                    visibleEvents = minOf(record.eventHistory.size, visibleEvents + 20)
+                    scope.launch { listState.animateScrollToItem(3) }
+                }, modifier = Modifier.fillMaxWidth().testTag("run-earlier-activity")) {
+                    Text("Show earlier activity · $firstEvent")
+                }
+            }
+        }
+        itemsIndexed(record.eventHistory.drop(firstEvent), key = { offset, _ -> "event-${firstEvent + offset}" }) { offset, event ->
+            val index = firstEvent + offset
+            Row(Modifier.animateItem(fadeInSpec = tween(160), placementSpec = tween(180)).fillMaxWidth().padding(horizontal = 4.dp).testTag("run-event-$index"), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Box(Modifier.padding(top = 8.dp).size(6.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.65f), CircleShape))
                 Text(readableRunMessage(event.message), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                 if (index > 0) Text("+${formatEventGap(event.atMs - record.eventHistory[index - 1].atMs)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

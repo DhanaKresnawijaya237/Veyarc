@@ -133,6 +133,8 @@ data class StoredRunEvent(
     val message: String,
 )
 
+const val STORED_RUN_EVENT_LIMIT = 500
+
 data class RunDashboardSummary(
     val statusCounts: Map<StoredRunStatus, Long>,
     val averageFinishedRunDurationMs: Long?,
@@ -822,8 +824,8 @@ class WorkflowRepository internal constructor(
         require(totalSteps == null || totalSteps >= completedSteps) {
             "Total step count must not be less than completed steps"
         }
-        require(eventHistory.size <= MAX_STORED_RUN_EVENTS) {
-            "Run event history cannot exceed $MAX_STORED_RUN_EVENTS entries"
+        require(eventHistory.size <= STORED_RUN_EVENT_LIMIT) {
+            "Run event history cannot exceed $STORED_RUN_EVENT_LIMIT entries"
         }
         val updated = database.workflowDao().finishRun(
             runId = runId,
@@ -1350,7 +1352,6 @@ class WorkflowRepository internal constructor(
         const val DEFAULT_INTERRUPTION_REASON = "Run was interrupted when the process ended"
         const val MAX_REASON_LENGTH = 256
         const val MAX_HISTORY_LIMIT = 1_000
-        const val MAX_STORED_RUN_EVENTS = 50
         const val MAX_FOLDER_NAME_LENGTH = 80
         const val PREVIEW_CACHE_SIZE = 16
         const val MATCHER_OVERHEAD_BYTES_PER_TEMPLATE = (16L * 16L + 16L) * 4L * Int.SIZE_BYTES
