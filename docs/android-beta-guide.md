@@ -31,18 +31,18 @@
 
 ## Optional AI chat
 
-- In **AI connection**, add your DeepSeek API key and enable AI for the session.
+- In **AI connection**, add your provider and API key and enable AI for the session.
 - Messages and connection tests use your API balance. Saving a key alone sends nothing.
 - Chat shares your message, recent conversation, workflow text, and the photos or files you attach. Check **Workflow context** to see the shared workflow data.
 - Review proposed changes before applying them. Applying changes does not save or run the workflow.
 - **Stop** cancels an active reply, but the provider may still charge for work already done.
 - Keys and chats are encrypted on your phone. Deleting them locally does not delete the provider's records. Keep passwords and other secrets out of shared content.
-- AI chat is available in development builds. Recording, editing, and playback work offline.
+- Replies can continue while you use another page or app. Recording, editing, and playback work offline.
 
 ## Keep your work
 
-- Use **Local data** in Settings to import or export `.veyarc` workflow files.
-- Export important workflows before uninstalling. Uninstalling removes local workflows, images, and chats.
+- Use **Local data** in Settings to import or export `.veyarc` workflows and `.veyarc-run` run history.
+- Export important workflows and runs before uninstalling. Uninstalling removes local data, including images and chats.
 - Android cloud backup is disabled. Veyarc has no cloud sync or analytics.
 - Install updates from a source you trust. Updates need the same signing key as your installed version.
 

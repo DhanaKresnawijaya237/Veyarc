@@ -6,8 +6,8 @@ User-facing documentation:
 
 - [`docs/android-beta-guide.md`](../../docs/android-beta-guide.md): setup, permissions, emergency controls, privacy, and current limits
 - [`docs/android-device-compatibility.md`](../../docs/android-device-compatibility.md): verified devices and Android-version support
-- [`docs/android-v1.0.0-release-notes.md`](../../docs/android-v1.0.0-release-notes.md): v1 release notes
-- [`docs/ai-chat-guide.md`](../../docs/ai-chat-guide.md): debug AI chat setup, sharing, deletion, and troubleshooting; also available in Settings under AI connection
+- [`docs/android-v1.0.0-release-notes.md`](../../docs/android-v1.0.0-release-notes.md): current and previous release notes
+- [`docs/ai-chat-guide.md`](../../docs/ai-chat-guide.md): AI chat setup, sharing, deletion, and troubleshooting; also available in Settings under AI connection
 
 ## Local verification
 
@@ -71,15 +71,15 @@ Get-FileHash app\build\outputs\apk\release\app-release.apk -Algorithm SHA256
 
 The release build rejects missing values, relative or missing keystores, keystores inside the repository, and invocations that leave the Gradle configuration or build cache enabled. Debug and ordinary local verification do not require release credentials.
 
-## Accessibility test screen
+## Permissions and release checks
 
-The accessibility test screen is a manual diagnostic for Android gesture dispatch:
+Use **Settings → Connections and permissions** to open Android Accessibility settings and check the service, Shizuku, and notification status. The retired gesture diagnostic screen is no longer part of the app. The accessibility service dispatches gestures and checks the foreground package; it does not traverse child views or inspect semantic UI content.
 
-1. Install and open the debug APK.
-2. Select **Open accessibility settings**.
-3. Enable **Veyarc gesture control**, accept Android's warning, and return to Veyarc.
-4. Confirm that the setting is enabled and the service connection is ready.
-5. Use **Dispatch tap**, **Dispatch hold**, and **Dispatch rectangle**.
-6. Confirm that the test surface reports the corresponding received input and draws the rectangular path.
+Before publishing:
 
-The service can perform gestures and read the active window package for safety checks. Veyarc does not traverse child views or inspect semantic UI content.
+1. Run `verifyLocal` against the source being committed, then build the signed release with the cache flags above.
+2. Confirm the APK's version, `com.veyarc.app` application ID, non-debuggable flag, and signing certificate. Updates must match the published signing certificate.
+3. Check the release UI on an approved emulator, including AI connection settings and chat. AI is available in release builds and starts disabled; network requests require user action.
+4. Publish the verified APK and its SHA-256 hash with release notes. Keep signing credentials, local test fixtures, and personal device data out of commits and release assets.
+
+Debug and release builds use the same application ID but different signing keys. Do not uninstall a user's debug installation to test a release update; that would remove its local data.

@@ -1,6 +1,6 @@
 # Android device compatibility
 
-Status date: 2026-09-25
+Status date: 2026-10-09
 
 This document records what Veyarc has actually verified. An unlisted device may work, but it is not a supported claim.
 
@@ -11,7 +11,7 @@ This document records what Veyarc has actually verified. An unlisted device may 
 | vivo V50 | Android 16, OriginOS 6, model reported as vivo V50jr | Shizuku direct-touch discovery, cross-app single-pointer recording, encrypted recording journals, workflow conversion, same-orientation raw replay, portrait and landscape coordinate mapping, 180-degree replay, visual conditions, stop controls, repeated replay, and ordinary input after cleanup were manually verified. |
 | Android emulator | `Veyarc_API_37`, Android 17, 540 x 1196 logical display | Accessibility binding and tap, long-press, sampled-path dispatch pass. Host-mouse capture/replay and the current API 37 instrumentation suite pass. |
 
-The emulator result does not prove Shizuku or OEM input-device behavior. The vivo result does not imply support for other vivo builds.
+Recent API 37 checks also cover editor/chat layouts, run details, recording-to-editor navigation, and service cleanup. The refreshed foreground-app recording path still needs a physical check for OEM event timing. The emulator result does not prove Shizuku or OEM input-device behavior. The vivo result does not imply support for other vivo builds.
 
 ## Android version support
 
