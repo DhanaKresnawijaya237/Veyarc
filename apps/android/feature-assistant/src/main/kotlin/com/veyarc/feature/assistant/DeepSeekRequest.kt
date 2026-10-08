@@ -54,13 +54,17 @@ object DeepSeekRequest {
         snapshot?.validate()
         require(snapshot == null || snapshot.snapshotId == baseSnapshotId)
         val base = snapshot?.let(AssistantCandidateValidator::baseDraft)
+        val wireSnapshot = snapshot?.let(AssistantWireWorkflow::snapshot)
         val current = buildJsonObject {
             put("requestId", requestId)
             put("conversationId", conversationId)
             put("baseSnapshotId", baseSnapshotId)
             put("prompt", prompt)
             put("expectedRevision", base?.let(AssistantCandidateValidator::expectedRevision)?.let(::JsonPrimitive) ?: JsonNull)
-            put("snapshot", snapshot?.let(AssistantWireWorkflow::snapshot) ?: JsonNull)
+            put("snapshot", wireSnapshot ?: JsonNull)
+            if (wireSnapshot != null) {
+                put("editorBlockLabels", kotlinx.serialization.json.JsonObject(assistantStepNames(wireSnapshot["steps"] as? JsonArray).mapValues { JsonPrimitive(it.value) }))
+            }
         }
         require(selectedModel.vision || (attachments + history.flatMap { it.attachments }).all { it.images.isEmpty() })
         val budget = if ((attachments + history.flatMap { it.attachments }).any { it.images.isNotEmpty() }) MAX_VISION_BYTES else MAX_BYTES
@@ -178,6 +182,12 @@ object DeepSeekRequest {
             Write text for a nontechnical phone user. Match the amount of detail to the user's request, with Markdown headings, short bullets,
             bold emphasis, and code blocks only when useful. Markdown belongs inside the JSON text string.
             Refer to steps by position and action, such as "Step 2: Wait", and images by their names.
+            When a snapshot is present, editorBlockLabels maps block IDs to the numbers and labels shown in the editor.
+            Use these labels to resolve the user's block or step numbers, never raw steps-array positions or earlier reply numbering.
+            Stage boundaries have a separate Stage count and never increase block numbers. Block numbers continue across stages.
+            Bare block numbers refer to the top-level list unless the user is discussing a particular nested list.
+            Each nested list starts at block 1. Include its enclosing block and branch when referring to nested blocks.
+            If the nested list is unclear, ask which one. editorBlockLabels is context only; never copy it into candidate.
             Never expose internal block IDs, workflow IDs, snapshot hashes, request IDs, JSON field names,
             or package identifiers in text unless the user explicitly asks for technical details.
             Describe proposed changes in everyday language. Ask short, specific questions for missing details.

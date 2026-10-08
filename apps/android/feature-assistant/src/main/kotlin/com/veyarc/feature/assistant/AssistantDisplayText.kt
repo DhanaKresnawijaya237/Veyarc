@@ -44,7 +44,7 @@ private fun displayNames(snapshot: AssistantContextSnapshot?): Map<String, Strin
     buildMap {
         put(snapshot.workflowId, "this workflow")
         put(snapshot.snapshotId, "the captured draft")
-        putAll(stepNames(root["steps"] as? JsonArray))
+        putAll(assistantStepNames(root["steps"] as? JsonArray))
         (root["assets"] as? JsonArray)?.forEachIndexed { index, item ->
             val asset = item.jsonObject
             put(asset.getValue("assetId").jsonPrimitive.content, asset["displayName"]?.takeUnless { it == JsonNull }?.jsonPrimitive?.content ?: "Image ${index + 1}")
@@ -53,17 +53,20 @@ private fun displayNames(snapshot: AssistantContextSnapshot?): Map<String, Strin
 }.getOrDefault(emptyMap())
 
 private fun candidateNames(json: String?): Map<String, String> = runCatching {
-    json?.let { stepNames(WorkflowJson.format.parseToJsonElement(it).jsonObject["steps"] as? JsonArray) } ?: emptyMap()
+    json?.let { assistantStepNames(WorkflowJson.format.parseToJsonElement(it).jsonObject["steps"] as? JsonArray) } ?: emptyMap()
 }.getOrDefault(emptyMap())
 
-private fun stepNames(steps: JsonArray?): Map<String, String> = buildMap {
+internal fun assistantStepNames(steps: JsonArray?): Map<String, String> = buildMap {
     fun visit(items: JsonArray?, prefix: String) {
-        items?.forEachIndexed { index, item ->
+        var blockNumber = 0
+        var stageNumber = 0
+        items?.forEach { item ->
             val block = item.jsonObject
-            val position = "$prefix${index + 1}"
-            put(block.getValue("id").jsonPrimitive.content, "Step $position: ${friendlyField(block.getValue("type").jsonPrimitive.content)}")
-            listOf("bodySteps" to "repeat", "thenSteps" to "true", "elseSteps" to "false").forEach { (field, branch) ->
-                visit(block[field] as? JsonArray, "$position $branch / ")
+            val type = block.getValue("type").jsonPrimitive.content
+            val label = if (type == "stageBoundary") "Stage ${++stageNumber}" else "Step ${++blockNumber}: ${friendlyField(type)}"
+            put(block.getValue("id").jsonPrimitive.content, prefix + label)
+            listOf("bodySteps" to if (type == "while") "while" else "repeat", "thenSteps" to "true", "elseSteps" to "false").forEach { (field, branch) ->
+                visit(block[field] as? JsonArray, "${prefix}Step $blockNumber $branch / ")
             }
         }
     }

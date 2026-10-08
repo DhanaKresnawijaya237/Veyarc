@@ -54,7 +54,7 @@ object AssistantProposalReview {
                         val sameList = common.filter { old.getValue(it).parent == a.parent && new.getValue(it).parent == b.parent }.toSet()
                         val oldOrder = old.keys.filter { it in sameList }
                         val newOrder = new.keys.filter { it in sameList }
-                        if (a.parent != b.parent || (a.path != b.path && oldOrder.indexOf(id) != newOrder.indexOf(id))) {
+                        if (a.parent != b.parent || (a.index != b.index && oldOrder.indexOf(id) != newOrder.indexOf(id))) {
                             add(AssistantValueChange("Moved block $id", a.path, b.path))
                         }
                         values("Block $id at ${b.path}", a.fields, b.fields, this)
@@ -64,16 +64,23 @@ object AssistantProposalReview {
         }
     }
 
-    private data class Block(val parent: String, val path: String, val fields: JsonObject)
+    private data class Block(val parent: String, val path: String, val index: Int, val fields: JsonObject)
     private val children = setOf("bodySteps", "thenSteps", "elseSteps")
 
     private fun blocks(steps: JsonArray): Map<String, Block> = buildMap {
         fun visit(items: JsonArray, parent: String, path: String) {
+            var blockNumber = 0
+            var stageNumber = 0
             items.forEachIndexed { index, item ->
                 val block = item.jsonObject
                 val id = block.getValue("id").jsonPrimitive.content
-                val location = "$path / ${index + 1}"
-                put(id, Block(parent, location, JsonObject(block.filterKeys { it !in children && it != "id" })))
+                val position = if (block.getValue("type").jsonPrimitive.content == "stageBoundary") {
+                    "Stage ${++stageNumber} ${if (blockNumber == 0) "at start" else "after step $blockNumber"}"
+                } else {
+                    (++blockNumber).toString()
+                }
+                val location = "$path / $position"
+                put(id, Block(parent, location, index, JsonObject(block.filterKeys { it !in children && it != "id" })))
                 children.forEach { field ->
                     (block[field] as? JsonArray)?.let { visit(it, "$id/$field", "$location / $field") }
                 }
