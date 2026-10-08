@@ -545,16 +545,20 @@ fun WorkflowEditorScreen(
                 val current = session.draft ?: error("No workflow is open")
                 val existingIds = current.assetDescriptors.mapTo(mutableSetOf()) { it.assetId.value }
                 val required = pending.entry.steps.clipboardImageIds()
-                val imagesToImport = if (importImages) pending.entry.images.filter { it.id.value in required && it.id.value !in existingIds } else emptyList()
-                val ids = imagesToImport.associate { it.id.value to AssetId(WorkflowIds.newUuid()) }
-                val loaded = withContext(Dispatchers.IO) { imagesToImport.map { it to blockClipboard.importImage(it, requireNotNull(ids[it.id.value])) } }
-                var updated = current.insertSteps(pending.path, pending.index, remapClipboardSteps(pending.entry.steps, ids))
-                loaded.forEach { (image, asset) ->
+                val imagesToImport = if (importImages) pending.entry.images.filter { it.id.value in required } else emptyList()
+                val loaded = withContext(Dispatchers.IO) {
+                    blockClipboard.importImages(imagesToImport, current.assetDescriptors) { id ->
+                        current.assets.firstOrNull { it.assetId == id }
+                            ?: repository.loadRevisionAsset(current.workflowId, requireNotNull(current.lastSavedRevision), id)
+                    }
+                }
+                var updated = current.insertSteps(pending.path, pending.index, remapClipboardSteps(pending.entry.steps, loaded.assetIds))
+                loaded.assets.forEach { (image, asset) ->
                     updated = updated.addAsset(asset).renameAsset(asset.assetId, uniqueClipboardImageName(updated, image.name))
                 }
                 check(session.draft === current) { "The workflow changed while pasting. Try again." }
                 session.update(updated)
-                val omitted = required - existingIds - ids.keys
+                val omitted = required - existingIds - loaded.assetIds.keys
                 statusMessage = if (omitted.isEmpty()) "Pasted ${pending.entry.steps.size} blocks." else "Pasted blocks. Add the missing images before saving."
             }.onFailure { error -> statusMessage = "Could not paste blocks: ${error.userMessage()}" }
             isBusy = false
@@ -659,7 +663,7 @@ fun WorkflowEditorScreen(
                 text = {
                     Column {
                         if (pending.entry.orientation != draft.viewport.recordedOrientation) Text("These blocks were copied from a ${pending.entry.orientation.name.lowercase()} workflow. Check touch coordinates and images after pasting.")
-                        if (missing.isNotEmpty()) Text("Add ${missing.size} referenced image${if (missing.size == 1) "" else "s"} to this workflow?")
+                        if (missing.isNotEmpty()) Text("Include ${missing.size} referenced image${if (missing.size == 1) "" else "s"}? Identical images will be reused.")
                         Text("Packages, variables, and links to blocks outside the copied group may need review after pasting.")
                     }
                 },

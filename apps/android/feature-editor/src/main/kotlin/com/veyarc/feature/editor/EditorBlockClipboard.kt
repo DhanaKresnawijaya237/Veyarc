@@ -3,9 +3,11 @@ package com.veyarc.feature.editor
 import android.content.Context
 import com.veyarc.data.storage.AesGcmFileCodec
 import com.veyarc.data.storage.AndroidKeystoreKeySource
+import com.veyarc.data.storage.DecodedTemplate
 import com.veyarc.data.storage.EncryptedFileStore
 import com.veyarc.data.storage.EncryptedTemplateAssetCodec
 import com.veyarc.data.storage.TEMPLATE_ASSET_KEY_ALIAS
+import com.veyarc.data.storage.WorkflowAssetDescriptor
 import com.veyarc.model.AndCondition
 import com.veyarc.model.AssetId
 import com.veyarc.model.AssetKind
@@ -29,6 +31,7 @@ import com.veyarc.model.bundle.BundleAsset
 import com.veyarc.model.withBackgroundAsset
 import kotlinx.serialization.Serializable
 import java.io.File
+import java.security.MessageDigest
 
 @Serializable
 internal data class ClipboardImage(
@@ -93,19 +96,78 @@ internal class EditorBlockClipboard(context: Context) {
         if (previousFile != null) runCatching { files.delete(previousFile) }
     }
 
-    fun importImage(image: ClipboardImage, newId: AssetId): BundleAsset {
-        val encrypted = files.read(image.fileName, AAD)
-        val decoded = templateCodec.decrypt(image.id, encrypted)
-        return try {
-            BundleAsset(newId, image.kind, image.mimeType, templateCodec.encrypt(newId, decoded), true, image.widthPx, image.heightPx)
-        } finally {
-            decoded.clear()
-            encrypted.fill(0)
-        }
-    }
+    fun importImages(
+        images: List<ClipboardImage>,
+        existingAssets: List<WorkflowAssetDescriptor>,
+        loadAsset: (AssetId) -> BundleAsset,
+    ): ClipboardImageImport = importClipboardImages(images, existingAssets, templateCodec, { files.read(it.fileName, AAD) }, loadAsset)
 
     private companion object {
         val AAD = "editor-block-clipboard:v1".encodeToByteArray()
+    }
+}
+
+internal data class ClipboardImageImport(
+    val assetIds: Map<String, AssetId>,
+    val assets: List<Pair<ClipboardImage, BundleAsset>>,
+)
+
+internal fun importClipboardImages(
+    images: List<ClipboardImage>,
+    existingAssets: List<WorkflowAssetDescriptor>,
+    codec: EncryptedTemplateAssetCodec,
+    readImage: (ClipboardImage) -> ByteArray,
+    loadAsset: (AssetId) -> BundleAsset,
+): ClipboardImageImport {
+    val existingIds = existingAssets.mapTo(mutableSetOf()) { it.assetId }
+    val missing = images.filter { it.id !in existingIds }
+    val byContent = mutableMapOf<String, AssetId>()
+    existingAssets.filter { asset ->
+        missing.any { image ->
+            image.kind == asset.kind &&
+                (image.widthPx == null || asset.widthPx == null || image.widthPx == asset.widthPx) &&
+                (image.heightPx == null || asset.heightPx == null || image.heightPx == asset.heightPx)
+        }
+    }.forEach { descriptor ->
+        val asset = loadAsset(descriptor.assetId)
+        val decoded = codec.decrypt(asset.assetId, asset.bytes)
+        try {
+            byContent.putIfAbsent(decoded.contentKey(), asset.assetId)
+        } finally {
+            decoded.clear()
+        }
+    }
+    val ids = mutableMapOf<String, AssetId>()
+    val imported = mutableListOf<Pair<ClipboardImage, BundleAsset>>()
+    missing.forEach { image ->
+        val encrypted = readImage(image)
+        try {
+            val decoded = codec.decrypt(image.id, encrypted)
+            try {
+                val key = decoded.contentKey()
+                val id = byContent.getOrPut(key) {
+                    val newId = AssetId(WorkflowIds.newUuid())
+                    imported += image to BundleAsset(newId, image.kind, image.mimeType, codec.encrypt(newId, decoded), true, decoded.widthPx, decoded.heightPx)
+                    newId
+                }
+                ids[image.id.value] = id
+            } finally {
+                decoded.clear()
+            }
+        } finally {
+            encrypted.fill(0)
+        }
+    }
+    return ClipboardImageImport(ids, imported)
+}
+
+private fun DecodedTemplate.contentKey(): String {
+    val rgba = copyRgbaBytes()
+    return try {
+        // This fingerprint is only kept for the current paste; no image identity is persisted or shared.
+        "$widthPx:$heightPx:" + MessageDigest.getInstance("SHA-256").digest(rgba).joinToString("") { "%02x".format(it) }
+    } finally {
+        rgba.fill(0)
     }
 }
 
