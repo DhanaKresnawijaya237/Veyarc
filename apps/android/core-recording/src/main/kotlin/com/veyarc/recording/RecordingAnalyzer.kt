@@ -117,7 +117,7 @@ sealed interface RecordingAnalysisEvent {
             get() = elapsedMillis + durationMillis
     }
 
-    /** A review fact; only the first observed third-party package may become an automatic Launch app. */
+    /** A package-only transition used to insert launches and exclude system navigation. */
     data class ForegroundPackageTransition(
         override val elapsedMillis: Long,
         val previousPackage: PackageName?,

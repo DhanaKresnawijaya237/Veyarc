@@ -28,6 +28,14 @@ internal object ForegroundPackageTracker {
         return currentPackage
     }
 
+    /** Recording must never reuse a cached app underneath a system screen or missing service. */
+    fun currentForRecording(): PackageName? {
+        val service = attachedService ?: return null
+        return runCatching {
+            if (service.windows.any { isBlockingSystemWindow(it.type, it.isActive, it.isFocused) }) null else readActiveApplicationPackage(service, requireWindow = true)
+        }.getOrNull()
+    }
+
     /** True only for a focused or active TYPE_SYSTEM window, not keyboards or Veyarc overlays. */
     internal fun hasActiveSystemWindow(): Boolean {
         val service = attachedService ?: return false
@@ -125,12 +133,12 @@ internal object ForegroundPackageTracker {
         }
     }
 
-    private fun readActiveApplicationPackage(service: AccessibilityService): PackageName? {
+    private fun readActiveApplicationPackage(service: AccessibilityService, requireWindow: Boolean = false): PackageName? {
         val root = runCatching { service.rootInActiveWindow }.getOrNull() ?: return null
         val packageName = packageNameOf(root.packageName) ?: return null
         val window = runCatching { root.window }.getOrNull()
             ?: runCatching { service.windows.firstOrNull { it.id == root.windowId } }.getOrNull()
-        return packageName.takeIf { window == null || isApplicationWindow(window.type) }
+        return packageName.takeIf { (!requireWindow && window == null) || isApplicationWindow(window?.type) }
     }
 
     private fun packageNameOf(value: CharSequence?): PackageName? = value

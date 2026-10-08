@@ -41,41 +41,68 @@ object RecordingWorkflowConverter {
         allowedPackages: List<PackageName>,
         workflowId: String = WorkflowIds.newUuid(),
         name: String = DEFAULT_NAME,
+        excludedControlTransitions: Set<Long> = emptySet(),
     ): RecordingWorkflowDraft {
         val packages = allowedPackages.distinct()
         require(packages.isNotEmpty()) {
             "The recording did not observe a third-party application package."
         }
-        val recordedSteps = analysis.events.mapNotNull { event ->
+        val steps = mutableListOf<WorkflowStep>()
+        var foreground = analysis.initialForegroundPackage?.takeIf { it in packages }
+        foreground?.let { steps += launchApp(it) }
+        var foregroundSince: Long? = null
+        val waitsByEnd = analysis.inferredWaits.associateBy { it.endElapsedMillis }
+        var pendingWait: RecordingAnalysisEvent.InferredWait? = null
+        var lastGestureIndex: Int? = null
+        var lastGestureEnd = 0L
+        var skippedNavigationTouch = false
+        analysis.events.sortedWith(compareBy<RecordingAnalysisEvent> { it.elapsedMillis }.thenBy { if (it is RecordingAnalysisEvent.ForegroundPackageTransition) 0 else 1 }).forEach { event ->
             when (event) {
-                is RecordingAnalysisEvent.Gesture -> event.gesture.toWorkflowStep(analysis.header.viewport)
+                is RecordingAnalysisEvent.Gesture -> {
+                    if (foreground == null) return@forEach
+                    if (steps.lastOrNull() is LaunchApp) {
+                        foregroundSince?.let { since ->
+                            waitsByEnd[event.gesture.startElapsedMillis]?.let { wait ->
+                                val duration = wait.endElapsedMillis - max(wait.elapsedMillis, since)
+                                if (duration > 0) steps += Wait(WorkflowIds.newUuid(), DurationMillis(duration))
+                            }
+                        }
+                    } else {
+                        pendingWait?.let { steps += Wait(WorkflowIds.newUuid(), DurationMillis(it.durationMillis)) }
+                    }
+                    pendingWait = null
+                    lastGestureIndex = steps.size
+                    lastGestureEnd = event.gesture.endElapsedMillis
+                    steps += event.gesture.toWorkflowStep(analysis.header.viewport)
+                }
 
-                is RecordingAnalysisEvent.InferredWait -> Wait(
-                    id = WorkflowIds.newUuid(),
-                    durationMs = DurationMillis(event.durationMillis),
-                )
+                is RecordingAnalysisEvent.InferredWait -> if (foreground != null) pendingWait = event
 
-                is RecordingAnalysisEvent.ForegroundPackageTransition -> null
+                is RecordingAnalysisEvent.ForegroundPackageTransition -> {
+                    val target = event.currentPackage?.takeIf { it in packages }
+                    if (target == null && event.elapsedMillis !in excludedControlTransitions) {
+                        // ponytail: keep older touches; widen this grace only for measured OEM window delays.
+                        lastGestureIndex?.takeIf { event.elapsedMillis - lastGestureEnd <= SYSTEM_TRANSITION_GRACE_MILLIS }?.let { index ->
+                            steps.removeAt(index)
+                            skippedNavigationTouch = true
+                            if (steps.lastOrNull() is Wait) steps.removeAt(steps.lastIndex)
+                            if (steps.lastOrNull() is LaunchApp) steps.removeAt(steps.lastIndex)
+                        }
+                        lastGestureIndex = null
+                    }
+                    if (foreground != target || target == null) {
+                        target?.let { steps += launchApp(it) }
+                        pendingWait = null
+                        lastGestureIndex = null
+                        foregroundSince = target?.let { event.elapsedMillis }
+                    }
+                    foreground = target
+                }
             }
         }
-        require(analysis.gestures.isNotEmpty()) {
-            "The recording did not contain a complete touch gesture to import."
+        require(steps.isNotEmpty() && (analysis.gestures.isNotEmpty() || analysis.foregroundTransitions.any { it.currentPackage in packages })) {
+            "No app actions were recorded."
         }
-        // A recorded workflow must be able to establish the same target app when it
-        // starts from Veyarc or another controller surface. The raw journal can begin
-        // with a controller package, so prefer it only when it is one of the observed
-        // third-party packages; otherwise the recorder's insertion order identifies
-        // the first third-party target.
-        val launchPackage = analysis.initialForegroundPackage
-            ?.takeIf { it in packages }
-            ?: packages.first()
-        val steps = listOf(
-            LaunchApp(
-                id = WorkflowIds.newUuid(),
-                packageName = launchPackage,
-                foregroundTimeoutMs = DurationMillis(DEFAULT_LAUNCH_FOREGROUND_TIMEOUT_MILLIS),
-            ),
-        ) + recordedSteps
 
         val document = WorkflowDocument(
             schemaVersion = WorkflowDocument.CURRENT_SCHEMA_VERSION,
@@ -98,12 +125,7 @@ object RecordingWorkflowConverter {
             if (analysis.incompleteTouchIgnored) {
                 add("The final incomplete touch was not imported.")
             }
-            if (analysis.foregroundTransitions.isNotEmpty()) {
-                add(
-                    "The first observed third-party app is launched automatically. Later foreground " +
-                        "app changes are suggestions only; add Launch app steps for additional app switches.",
-                )
-            }
+            if (skippedNavigationTouch) add("The touch that opened a system screen was left out.")
         }
         return RecordingWorkflowDraft(
             bundle = WorkflowBundle(
@@ -115,6 +137,10 @@ object RecordingWorkflowConverter {
             warnings = warnings,
         )
     }
+
+    private const val SYSTEM_TRANSITION_GRACE_MILLIS = 750L
+
+    private fun launchApp(packageName: PackageName) = LaunchApp(WorkflowIds.newUuid(), packageName, DurationMillis(DEFAULT_LAUNCH_FOREGROUND_TIMEOUT_MILLIS))
 
     private fun ClassifiedTouchGesture.toWorkflowStep(viewport: com.veyarc.model.ViewportSpec): WorkflowStep {
         val id = WorkflowIds.newUuid()
