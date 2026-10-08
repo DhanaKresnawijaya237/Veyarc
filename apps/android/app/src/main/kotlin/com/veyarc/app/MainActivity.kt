@@ -36,7 +36,6 @@ import com.veyarc.feature.editor.WorkflowEditorScreen
 import com.veyarc.feature.editor.WorkflowEditorSession
 import com.veyarc.feature.recorder.CoordinateRecorderScreen
 import com.veyarc.feature.recorder.CoordinateRecordingRuntime
-import com.veyarc.feature.runner.AccessibilitySpikeScreen
 import com.veyarc.feature.runner.WorkflowRunController
 import com.veyarc.feature.runner.WorkflowRunScreen
 import com.veyarc.model.bundle.WorkflowBundle
@@ -94,6 +93,7 @@ class MainActivity : ComponentActivity() {
             savedInstanceState
                 ?.getString(FULL_SCREEN_DESTINATION_KEY)
                 ?.let { saved -> FullScreenDestination.entries.firstOrNull { it.name == saved } }
+        if (savedInstanceState?.getString(FULL_SCREEN_DESTINATION_KEY) == "ACCESSIBILITY") selectedDestination = VeyarcDestination.SETTINGS
         recordingFolderId = savedInstanceState?.getString(RECORDING_FOLDER_ID_KEY)
         editorReturnToManager = savedInstanceState?.getBoolean(EDITOR_RETURN_TO_MANAGER_KEY) ?: false
         // Register the process-owned recording actions before the user leaves Veyarc. This lets
@@ -105,9 +105,7 @@ class MainActivity : ComponentActivity() {
             this,
             object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
-                    if (fullScreenDestination == FullScreenDestination.ACCESSIBILITY) {
-                        fullScreenDestination = null
-                    } else if (fullScreenDestination == FullScreenDestination.RECORDER) {
+                    if (fullScreenDestination == FullScreenDestination.RECORDER) {
                         recordingSession.controller.stop()
                         fullScreenDestination = null
                     } else if (workflowToRun != null) {
@@ -142,15 +140,6 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val bundle = workflowToRun
                     when (fullScreenDestination) {
-                        FullScreenDestination.ACCESSIBILITY -> AccessibilitySpikeScreen(
-                            resumeGeneration = resumeGeneration,
-                            onBack = { fullScreenDestination = null },
-                            onStartRecording = {
-                                recordingFolderId = null
-                                fullScreenDestination = FullScreenDestination.RECORDER
-                            },
-                        )
-
                         FullScreenDestination.RECORDER -> CoordinateRecorderScreen(
                             controller = recordingSession.controller,
                             onBack = {
@@ -200,6 +189,7 @@ class MainActivity : ComponentActivity() {
                                             repository = workflowRepository,
                                             refreshGeneration = resumeGeneration,
                                             onRecord = {
+                                                recordingSession.controller.dismissReview()
                                                 recordingFolderId = null
                                                 fullScreenDestination = FullScreenDestination.RECORDER
                                             },
@@ -461,7 +451,6 @@ class MainActivity : ComponentActivity() {
 internal fun shouldHandleControllerRequest(action: String?): Boolean = action == ReplayFloatingController.ACTION_OPEN_WORKFLOW
 
 private enum class FullScreenDestination {
-    ACCESSIBILITY,
     RECORDER,
 }
 

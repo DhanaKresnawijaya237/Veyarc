@@ -355,7 +355,7 @@ object ReplayFloatingController {
     private var recordingActions: RecordingControllerActions? = null
     private var edgeLoaded = false
     private var edge = DEFAULT_EDGE
-    private var edgeOffset = 0f
+    private var edgeOffset = 0.5f
     private var dragState: DragState? = null
 
     @Volatile
@@ -892,9 +892,9 @@ object ReplayFloatingController {
             ?.takeIf { it == EdgeLatchSide.LEFT || it == EdgeLatchSide.RIGHT }
         edge = persisted ?: legacyEdge(preferences)
         edgeOffset = if (preferences.contains(PREF_EDGE_OFFSET)) {
-            preferences.getFloat(PREF_EDGE_OFFSET, 0f)
+            preferences.getFloat(PREF_EDGE_OFFSET, 0.5f)
         } else {
-            preferences.getFloat(PREF_LEGACY_ANCHOR_Y, 0.82f)
+            preferences.getFloat(PREF_LEGACY_ANCHOR_Y, 0.5f)
         }.coerceIn(0f, 1f)
         edgeLoaded = true
     }

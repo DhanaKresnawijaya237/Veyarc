@@ -1328,13 +1328,6 @@ private fun WorkflowDraftCanvas(
                             )
                         },
                     )
-                    draft.recordingJournalFileName?.let { journalFileName ->
-                        Text(
-                            "Imported from encrypted recording: $journalFileName",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
                     TemplateAssetSection(
                         assets = draft.assetDescriptors,
                         assetNames = draft.assetNames,
