@@ -2613,16 +2613,9 @@ private fun JumpTargetPicker(
         targetLists.flatMapIndexed { depth, steps ->
             var stageNumber = 0
             var blockNumber = 0
-            val scope = if (depth == 0) {
-                ""
-            } else if (depth == targetLists.lastIndex) {
-                " · Workflow"
-            } else {
-                " · Outer level $depth"
-            }
             steps.mapNotNull { step ->
                 val label = if (step is StageBoundary) "Stage ${++stageNumber}" else "${++blockNumber}. ${step.displayName()}"
-                if (step.id == excludedId) null else VeyarcChoice(step.id, label + scope)
+                if (step.id == excludedId) null else VeyarcChoice(step.id, label, group = depth)
             }
         }
     }
