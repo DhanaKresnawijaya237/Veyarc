@@ -53,13 +53,15 @@ fun StoredRunDetailScreen(
     onOpenWorkflowRevision: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     workflowName: String = "Workflow run",
+    statusLabel: String? = null,
+    controls: (@Composable () -> Unit)? = null,
 ) {
     BackHandler(onBack = onBack)
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     // ponytail: Reveals saved events only; older discarded events need a separate retention change.
-    var visibleEvents by remember(record.runId, record.eventHistory) { mutableIntStateOf(minOf(12, record.eventHistory.size)) }
-    val firstEvent = record.eventHistory.size - visibleEvents
+    var visibleEvents by remember(record.runId) { mutableIntStateOf(12) }
+    val firstEvent = (record.eventHistory.size - visibleEvents).coerceAtLeast(0)
     val timestamp = remember(record.startedAtMs) { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(record.startedAtMs)) }
     val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     val statusColor = when (record.status) {
@@ -82,7 +84,7 @@ fun StoredRunDetailScreen(
             Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
                 Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     Surface(shape = RoundedCornerShape(12.dp), color = statusColor.copy(alpha = 0.12f)) {
-                        Text(runTitle(record.status), Modifier.padding(horizontal = 12.dp, vertical = 7.dp), color = statusColor, style = MaterialTheme.typography.titleSmall)
+                        Text(statusLabel ?: runTitle(record.status), Modifier.padding(horizontal = 12.dp, vertical = 7.dp), color = statusColor, style = MaterialTheme.typography.titleSmall)
                     }
                     Text(timestamp, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -97,6 +99,7 @@ fun StoredRunDetailScreen(
                     onOpenWorkflowRevision?.let { open ->
                         TextButton(onClick = open, modifier = Modifier.fillMaxWidth()) { Text("Open revision ${record.revision}") }
                     }
+                    controls?.invoke()
                 }
             }
         }

@@ -91,6 +91,8 @@ data class WorkflowRunUiState(
     val failureMessage: String? = null,
     val eventHistory: List<RedactedRunEvent> = emptyList(),
     val notificationReady: Boolean,
+    val startedAtMs: Long = System.currentTimeMillis(),
+    val finishedAtMs: Long? = null,
 )
 
 /** Coordinates review, deterministic execution, safety controls, notification, and run metadata. */
@@ -249,6 +251,8 @@ class WorkflowRunController(
                 message = "Preparing workflow…",
                 failureMessage = null,
                 eventHistory = emptyList(),
+                startedAtMs = System.currentTimeMillis(),
+                finishedAtMs = null,
             )
         }
         runJob = scope.launch {
@@ -503,7 +507,7 @@ class WorkflowRunController(
     }
 
     private fun updateTerminal(phase: WorkflowRunPhase, message: String?) {
-        _state.update { it.copy(phase = phase, message = message, failureMessage = if (phase == WorkflowRunPhase.FAILED) message else null) }
+        _state.update { it.copy(phase = phase, message = message, failureMessage = if (phase == WorkflowRunPhase.FAILED) message else null, finishedAtMs = System.currentTimeMillis()) }
     }
 
     private fun runTemplateMemoryBudgetBytes(): Long {

@@ -53,6 +53,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.veyarc.automation.android.AccessibilityGestureDispatcher
 import com.veyarc.automation.android.MediaProjectionConsent
+import com.veyarc.data.storage.StoredRunEvent
+import com.veyarc.data.storage.StoredRunRecord
+import com.veyarc.data.storage.StoredRunStatus
+import com.veyarc.feature.editor.StoredRunDetailScreen
 import com.veyarc.model.bundle.WorkflowBundle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -137,32 +141,43 @@ fun WorkflowRunScreen(
         return
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .windowInsetsPadding(WindowInsets.safeDrawing)
-            .verticalScroll(rememberScrollState())
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text(state.workflowName, style = MaterialTheme.typography.headlineSmall)
-        Text(
-            text = phaseTitle(state.phase),
-            style = MaterialTheme.typography.headlineSmall,
-        )
-        state.message?.let { message ->
-            Text(message, color = if (state.phase == WorkflowRunPhase.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
-        }
-
-        RunContent(state = state, onPause = controller::pause, onResume = controller::resume, onStop = controller::stop, onBack = onBack)
-
-        if (permissionRequestPending) {
-            Text("Waiting for notification permission…", style = MaterialTheme.typography.labelMedium)
-        }
-        if (projectionRequestPending) {
-            Text("Waiting for screen-capture consent…", style = MaterialTheme.typography.labelMedium)
-        }
-    }
+    StoredRunDetailScreen(
+        record = StoredRunRecord(
+            runId = state.runId.orEmpty(),
+            workflowId = bundle.document.id,
+            revision = state.revision,
+            status = when (state.phase) {
+                WorkflowRunPhase.COMPLETED -> StoredRunStatus.COMPLETED
+                WorkflowRunPhase.FAILED -> StoredRunStatus.FAILED
+                WorkflowRunPhase.CANCELLED -> StoredRunStatus.CANCELLED
+                WorkflowRunPhase.STOPPED -> StoredRunStatus.STOPPED
+                else -> StoredRunStatus.RUNNING
+            },
+            startedAtMs = state.startedAtMs,
+            finishedAtMs = state.finishedAtMs,
+            interruptionReason = state.failureMessage ?: state.message?.takeUnless { it == state.eventHistory.lastOrNull()?.message || it == "Running" || it == "Workflow completed" },
+            completedSteps = state.completedSteps,
+            totalSteps = state.review.plan?.analysis?.worstCaseStepCount,
+            eventHistory = state.eventHistory.map { StoredRunEvent(it.atMs, it.message) },
+            hasStoredDetails = true,
+            folderId = null,
+        ),
+        onBack = onBack,
+        modifier = modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
+        workflowName = state.workflowName,
+        statusLabel = phaseTitle(state.phase),
+        controls = if (state.phase == WorkflowRunPhase.PREPARING || state.phase == WorkflowRunPhase.RUNNING || state.phase == WorkflowRunPhase.PAUSED) {
+            {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (state.phase == WorkflowRunPhase.RUNNING) Button(onClick = controller::pause, modifier = Modifier.weight(1f)) { Text("Pause") }
+                    if (state.phase == WorkflowRunPhase.PAUSED) Button(onClick = controller::resume, modifier = Modifier.weight(1f)) { Text("Resume") }
+                    OutlinedButton(onClick = controller::stop, modifier = Modifier.weight(1f)) { Text("Stop") }
+                }
+            }
+        } else {
+            null
+        },
+    )
 }
 
 @Composable
@@ -313,53 +328,6 @@ private fun ReviewCheckRow(title: String, ready: Boolean, detail: String) {
         Icon(if (ready) Icons.Outlined.CheckCircle else Icons.Outlined.WarningAmber, contentDescription = null, tint = color, modifier = Modifier.size(20.dp))
         Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
         Text(detail, style = MaterialTheme.typography.labelLarge, color = color)
-    }
-}
-
-@Composable
-private fun RunContent(
-    state: WorkflowRunUiState,
-    onPause: () -> Unit,
-    onResume: () -> Unit,
-    onStop: () -> Unit,
-    onBack: () -> Unit,
-) {
-    val total = state.review.plan?.analysis?.worstCaseStepCount
-    Text(
-        text = if (total == null) "Completed steps: ${state.completedSteps}" else "Completed steps: ${state.completedSteps} / $total",
-        style = MaterialTheme.typography.titleMedium,
-    )
-    state.preparationDurationMs?.let { duration ->
-        Text("Preparation: $duration ms", style = MaterialTheme.typography.bodySmall)
-    }
-    if (state.phase == WorkflowRunPhase.RUNNING || state.phase == WorkflowRunPhase.PAUSED || state.phase == WorkflowRunPhase.PREPARING) {
-        Text("The Veyarc edge-latch control center provides replay controls when enabled. The persistent notification remains an independent Pause, Resume, and Stop fallback.")
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        when (state.phase) {
-            WorkflowRunPhase.RUNNING -> Button(onClick = onPause) { Text("Pause") }
-            WorkflowRunPhase.PAUSED -> Button(onClick = onResume) { Text("Resume") }
-            else -> Unit
-        }
-        if (state.phase == WorkflowRunPhase.RUNNING || state.phase == WorkflowRunPhase.PAUSED || state.phase == WorkflowRunPhase.PREPARING) {
-            OutlinedButton(onClick = onStop) { Text("Stop") }
-        }
-        if (state.phase == WorkflowRunPhase.COMPLETED ||
-            state.phase == WorkflowRunPhase.FAILED ||
-            state.phase == WorkflowRunPhase.CANCELLED ||
-            state.phase == WorkflowRunPhase.STOPPED
-        ) {
-            OutlinedButton(onClick = onBack) { Text("Back to editor") }
-        }
-    }
-    HorizontalDivider()
-    Text("Run events", style = MaterialTheme.typography.titleMedium)
-    if (state.eventHistory.isEmpty()) {
-        Text("No events yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-    } else {
-        state.eventHistory.forEach { event ->
-            Text("${event.atMs} ms · ${event.message}", style = MaterialTheme.typography.bodySmall)
-        }
     }
 }
 
