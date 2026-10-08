@@ -2,7 +2,6 @@ package com.veyarc.app
 
 import android.app.Application
 import android.content.Intent
-import android.content.pm.ApplicationInfo
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -51,8 +50,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
-    private val assistantPreviewEnabled: Boolean
-        get() = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
     private var resumeGeneration by mutableIntStateOf(0)
     private var selectedDestination by mutableStateOf(VeyarcDestination.HOME)
     private var fullScreenDestination by mutableStateOf<FullScreenDestination?>(null)
@@ -181,7 +178,7 @@ class MainActivity : ComponentActivity() {
                                         selectedDestination = it
                                     },
                                     selectionBar = managerSelectionBar,
-                                    showNavigation = !(assistantPreviewEnabled && selectedDestination == VeyarcDestination.EDITOR && editorSession.assistant.isOpen),
+                                    showNavigation = !(selectedDestination == VeyarcDestination.EDITOR && editorSession.assistant.isOpen),
                                 ) { destination ->
                                     when (destination) {
                                         VeyarcDestination.HOME -> HomeDashboardScreen(
@@ -206,7 +203,7 @@ class MainActivity : ComponentActivity() {
                                         )
 
                                         VeyarcDestination.EDITOR -> AssistantPreviewHost(
-                                            enabled = assistantPreviewEnabled,
+                                            enabled = true,
                                             state = editorSession.assistant,
                                             context = editorSession.state.assistantContext(),
                                             onOpenSettings = {
@@ -257,7 +254,7 @@ class MainActivity : ComponentActivity() {
 
                                         VeyarcDestination.SETTINGS -> SettingsScreen(
                                             storageState = pageState.settings,
-                                            assistant = if (assistantPreviewEnabled) editorSession.assistant else null,
+                                            assistant = editorSession.assistant,
                                             assistantConnectionRequestId = assistantSettingsRequest,
                                             onAssistantConnectionRequestConsumed = { assistantSettingsRequest = 0 },
                                             repository = workflowRepository,

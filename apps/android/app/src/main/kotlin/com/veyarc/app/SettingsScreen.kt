@@ -332,17 +332,15 @@ fun SettingsScreen(
                     Text("Settings", style = MaterialTheme.typography.headlineSmall)
                 }
             }
-            if (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
-                item {
-                    SettingsCard(
-                        title = "AI connection",
-                        summary = if (assistant?.providerEnabled == true) "Enabled for this session" else "Disabled",
-                        summaryActive = assistant?.providerEnabled == true,
-                        expanded = expandedSection == "assistant",
-                        onToggle = { expandedSection = if (expandedSection == "assistant") null else "assistant" },
-                    ) {
-                        AssistantConnectionSettings(assistantKeys, assistant, onHelp = { openGuide = "AI chat help" to "ai-chat-guide.md" })
-                    }
+            item {
+                SettingsCard(
+                    title = "AI connection",
+                    summary = if (assistant?.providerEnabled == true) "Enabled for this session" else "Disabled",
+                    summaryActive = assistant?.providerEnabled == true,
+                    expanded = expandedSection == "assistant",
+                    onToggle = { expandedSection = if (expandedSection == "assistant") null else "assistant" },
+                ) {
+                    AssistantConnectionSettings(assistantKeys, assistant, onHelp = { openGuide = "AI chat help" to "ai-chat-guide.md" })
                 }
             }
             item {

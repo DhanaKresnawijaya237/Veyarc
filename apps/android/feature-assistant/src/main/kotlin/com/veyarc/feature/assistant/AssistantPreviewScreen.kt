@@ -155,7 +155,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
-/** Debug entry is supplied by the app. Network dispatch requires explicit consent; this module has no automation access. */
+/** Network dispatch requires explicit consent; this module has no automation access. */
 @Composable
 fun AssistantPreviewHost(
     enabled: Boolean,
