@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
@@ -78,6 +79,7 @@ class MainActivity : ComponentActivity() {
     }
     private val catalogScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var assistantSettingsRequest by mutableIntStateOf(0)
+    private var runSettingsSection by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -93,6 +95,7 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState?.getString(FULL_SCREEN_DESTINATION_KEY) == "ACCESSIBILITY") selectedDestination = VeyarcDestination.SETTINGS
         recordingFolderId = savedInstanceState?.getString(RECORDING_FOLDER_ID_KEY)
         editorReturnToManager = savedInstanceState?.getBoolean(EDITOR_RETURN_TO_MANAGER_KEY) ?: false
+        runSettingsSection = savedInstanceState?.getString(RUN_SETTINGS_SECTION_KEY)?.takeIf { runSession.bundle != null }
         // Register the process-owned recording actions before the user leaves Veyarc. This lets
         // the fixed service-owned control center start a recording from a third-party app instead
         // of requiring the recorder screen to have been opened first.
@@ -105,6 +108,8 @@ class MainActivity : ComponentActivity() {
                     if (fullScreenDestination == FullScreenDestination.RECORDER) {
                         recordingSession.controller.stop()
                         fullScreenDestination = null
+                    } else if (runSettingsSection != null) {
+                        returnToRunReview()
                     } else if (workflowToRun != null) {
                         leaveRunScreen()
                     } else if (selectedDestination != VeyarcDestination.HOME) {
@@ -135,7 +140,8 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    val bundle = workflowToRun
+                    BackHandler(enabled = runSettingsSection != null, onBack = ::returnToRunReview)
+                    val bundle = workflowToRun.takeIf { runSettingsSection == null }
                     when (fullScreenDestination) {
                         FullScreenDestination.RECORDER -> CoordinateRecorderScreen(
                             controller = recordingSession.controller,
@@ -168,17 +174,22 @@ class MainActivity : ComponentActivity() {
                                         startBlockMessage = recoveryState.message,
                                         onStart = ::startRunAndRemember,
                                         onBack = ::leaveRunScreen,
+                                        onOpenConnectionSettings = { openRunSettings("connections") },
+                                        onOpenLatchSettings = { openRunSettings("latch") },
                                     )
                                 }
                             } else {
                                 VeyarcAppShell(
-                                    selectedDestination = selectedDestination,
+                                    selectedDestination = if (runSettingsSection == null) selectedDestination else VeyarcDestination.SETTINGS,
                                     onDestinationSelected = {
-                                        managerSelectionBar = null
-                                        selectedDestination = it
+                                        if (runSettingsSection == null || it != VeyarcDestination.SETTINGS) {
+                                            if (runSettingsSection != null) leaveRunScreen()
+                                            managerSelectionBar = null
+                                            selectedDestination = it
+                                        }
                                     },
                                     selectionBar = managerSelectionBar,
-                                    showNavigation = !(selectedDestination == VeyarcDestination.EDITOR && editorSession.assistant.isOpen),
+                                    showNavigation = runSettingsSection != null || !(selectedDestination == VeyarcDestination.EDITOR && editorSession.assistant.isOpen),
                                 ) { destination ->
                                     when (destination) {
                                         VeyarcDestination.HOME -> HomeDashboardScreen(
@@ -255,6 +266,7 @@ class MainActivity : ComponentActivity() {
 
                                         VeyarcDestination.SETTINGS -> SettingsScreen(
                                             storageState = pageState.settings,
+                                            requestedSection = runSettingsSection,
                                             assistant = editorSession.assistant,
                                             assistantConnectionRequestId = assistantSettingsRequest,
                                             onAssistantConnectionRequestConsumed = { assistantSettingsRequest = 0 },
@@ -297,6 +309,7 @@ class MainActivity : ComponentActivity() {
         fullScreenDestination?.let { outState.putString(FULL_SCREEN_DESTINATION_KEY, it.name) }
         recordingFolderId?.let { outState.putString(RECORDING_FOLDER_ID_KEY, it) }
         outState.putBoolean(EDITOR_RETURN_TO_MANAGER_KEY, editorReturnToManager)
+        runSettingsSection?.let { outState.putString(RUN_SETTINGS_SECTION_KEY, it) }
         super.onSaveInstanceState(outState)
     }
 
@@ -384,6 +397,17 @@ class MainActivity : ComponentActivity() {
     private fun leaveRunScreen() {
         runSession.leave()
         workflowToRun = null
+        runSettingsSection = null
+    }
+
+    private fun openRunSettings(section: String) {
+        runSettingsSection = section
+        managerSelectionBar = null
+    }
+
+    private fun returnToRunReview() {
+        runSession.controller?.refreshReview()
+        runSettingsSection = null
     }
 
     private fun refreshReplayWorkflowCatalog() {
@@ -457,6 +481,7 @@ class MainActivity : ComponentActivity() {
         const val FULL_SCREEN_DESTINATION_KEY = "full_screen_destination"
         const val RECORDING_FOLDER_ID_KEY = "recording_folder_id"
         const val EDITOR_RETURN_TO_MANAGER_KEY = "editor_return_to_manager"
+        const val RUN_SETTINGS_SECTION_KEY = "run_settings_section"
     }
 }
 

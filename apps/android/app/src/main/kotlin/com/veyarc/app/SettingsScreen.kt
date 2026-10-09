@@ -118,6 +118,7 @@ fun SettingsScreen(
     onThemePreferenceChange: (ThemePreference) -> Unit,
     modifier: Modifier = Modifier,
     storageState: SettingsStorageState = remember { SettingsStorageState() },
+    requestedSection: String? = null,
 ) {
     val context = LocalContext.current
     val assistantKeys = remember(context) { com.veyarc.data.storage.AssistantKeyStore(context.applicationContext) }
@@ -146,6 +147,13 @@ fun SettingsScreen(
     var exportRunOffset by remember { mutableIntStateOf(0) }
     var pendingExportRun by remember { mutableStateOf<StoredRunRecord?>(null) }
     var expandedSection by remember { mutableStateOf<String?>(null) }
+    val settingsListState = rememberLazyListState()
+    LaunchedEffect(requestedSection) {
+        if (requestedSection != null) {
+            expandedSection = requestedSection
+            settingsListState.animateScrollToItem(if (requestedSection == "latch") 4 else 2)
+        }
+    }
     LaunchedEffect(assistantConnectionRequestId) {
         if (assistantConnectionRequestId > 0) {
             expandedSection = "assistant"
@@ -320,6 +328,7 @@ fun SettingsScreen(
     CompositionLocalProvider(LocalRippleConfiguration provides null) {
         LazyColumn(
             modifier = modifier.fillMaxSize(),
+            state = settingsListState,
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(14.dp),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp, vertical = 20.dp),
