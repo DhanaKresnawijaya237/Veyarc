@@ -282,6 +282,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         resumeGeneration += 1
+        runSession.controller?.refreshReview()
         refreshReplayWorkflowCatalog()
     }
 

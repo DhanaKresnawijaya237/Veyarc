@@ -41,6 +41,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,6 +54,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.veyarc.automation.android.AccessibilityGestureDispatcher
 import com.veyarc.automation.android.MediaProjectionConsent
+import com.veyarc.automation.android.ReplayFloatingController
 import com.veyarc.data.storage.StoredRunEvent
 import com.veyarc.data.storage.StoredRunRecord
 import com.veyarc.data.storage.StoredRunStatus
@@ -74,6 +76,12 @@ fun WorkflowRunScreen(
     BackHandler(onBack = onBack)
     val context = LocalContext.current
     val state by controller.state.collectAsState()
+    DisposableEffect(context, controller) {
+        val stopObserving = ReplayFloatingController.observeEnabled(context) { enabled ->
+            if (controller.state.value.review.latchEnabled != enabled) controller.refreshReview()
+        }
+        onDispose { stopObserving() }
+    }
     var permissionRequestPending by remember { mutableStateOf(false) }
     var projectionRequestPending by remember { mutableStateOf(false) }
     lateinit var requestStart: () -> Unit
@@ -217,11 +225,12 @@ private fun ReviewContent(
                     WorkflowReviewSummary(bundle, state, requiresMediaProjectionConsent, Modifier.fillMaxWidth())
                     WorkflowReviewChecks(state, onOpenNotificationSettings, Modifier.fillMaxWidth())
                 }
-                if (state.review.compilation.errors.isNotEmpty()) {
+                val compilationErrors = state.review.visibleCompilationErrors
+                if (compilationErrors.isNotEmpty()) {
                     Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.errorContainer) {
                         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Fix these before running", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onErrorContainer)
-                            state.review.compilation.errors.forEach { error ->
+                            compilationErrors.forEach { error ->
                                 Text(error.message, color = MaterialTheme.colorScheme.onErrorContainer)
                                 Text(error.path, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
                             }
@@ -308,6 +317,8 @@ private fun WorkflowReviewChecks(state: WorkflowRunUiState, onOpenNotificationSe
             if (!accessibilityReady) {
                 TextButton(onClick = { AccessibilityGestureDispatcher.openAccessibilitySettings(context) }) { Text("Open accessibility settings") }
             }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+            ReviewCheckRow("Edge latch", review.latchEnabled, if (review.latchEnabled) "On" else "Off")
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
             ReviewCheckRow("Orientation", review.orientationBlockReason == null, review.currentOrientation?.name?.lowercase()?.replaceFirstChar { it.titlecase() } ?: "Unknown")
             review.orientationBlockReason?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
