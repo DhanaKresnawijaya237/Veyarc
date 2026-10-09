@@ -580,15 +580,7 @@ private fun ConversationBody(state: AssistantPreviewState, onContext: (PreviewTu
     }
     Box(modifier.fillMaxWidth()) {
         if (chat.turns.isEmpty()) {
-            Column(Modifier.align(Alignment.Center).padding(24.dp).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("How can I help?", style = MaterialTheme.typography.headlineSmall)
-                Text("Explain, create or edit a workflow.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (state.context.needsSetup) Text("Choose an app and orientation in the editor first.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                val suggestions = if (state.context.needsSetup || state.context.workflowId == null) listOf("Help me create a workflow", "What details do you need?") else listOf("Explain this workflow", "Suggest an improvement", "Describe a change")
-                suggestions.forEach { suggestion ->
-                    OutlinedButton(onClick = { state.compose(suggestion) }, shape = RoundedCornerShape(24.dp)) { Text(suggestion) }
-                }
-            }
+            AssistantWelcome(state)
         }
         if (chat.turns.isNotEmpty()) {
             LazyColumn(state = list, modifier = Modifier.fillMaxSize().testTag("assistant-messages"), verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.Bottom)) {
