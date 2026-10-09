@@ -78,6 +78,7 @@ import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.WorkflowIds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.DateFormat
@@ -110,6 +111,7 @@ internal fun WorkflowManagerScreen(
     onPlayWorkflow: (WorkflowSummary) -> Unit,
     onSelectionBarChange: (ManagerSelectionBarState?) -> Unit = {},
     pageState: WorkflowManagerState = remember { WorkflowManagerState() },
+    onWorkflowDeleted: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -489,7 +491,13 @@ internal fun WorkflowManagerScreen(
                 TextButton(onClick = {
                     pendingWorkflowDelete = emptyList()
                     mutate("${targets.size} workflow${if (targets.size == 1) "" else "s"} deleted.") {
-                        targets.forEach { repository.deleteWorkflow(it.summary.workflowId) }
+                        targets.forEach { target ->
+                            // Close the deleted draft even if navigation cancels this screen.
+                            withContext(NonCancellable) {
+                                repository.deleteWorkflow(target.summary.workflowId)
+                                withContext(Dispatchers.Main) { onWorkflowDeleted(target.summary.workflowId) }
+                            }
+                        }
                     }
                 }) { Text("Delete") }
             },

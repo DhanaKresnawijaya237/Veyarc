@@ -200,6 +200,7 @@ class MainActivity : ComponentActivity() {
                                             onEditWorkflow = ::editWorkflow,
                                             onPlayWorkflow = ::playWorkflow,
                                             onSelectionBarChange = { if (selectedDestination == VeyarcDestination.WORKFLOWS) managerSelectionBar = it },
+                                            onWorkflowDeleted = ::workflowDeleted,
                                         )
 
                                         VeyarcDestination.EDITOR -> AssistantPreviewHost(
@@ -325,6 +326,19 @@ class MainActivity : ComponentActivity() {
             }.getOrNull() ?: return@launch
             openStoredRunScreen(revision, autoStart = true)
         }
+    }
+
+    private fun workflowDeleted(workflowId: String) {
+        if (workflowToEdit?.document?.id == workflowId) workflowToEdit = null
+        if (storedWorkflowToEdit?.first == workflowId) storedWorkflowToEdit = null
+        if (editorSession.assistant.context.workflowId == workflowId) {
+            editorSession.assistant.stop()
+            editorSession.assistant.close()
+        }
+        if (editorSession.state.draft?.workflowId != workflowId) return
+        editorSession.state.close()
+        recordedJournalFileName = null
+        editorReturnToManager = false
     }
 
     private fun editWorkflow(workflow: WorkflowSummary) {
