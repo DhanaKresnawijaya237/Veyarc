@@ -1,5 +1,6 @@
 package com.veyarc.feature.assistant
 
+import androidx.compose.animation.core.withInfiniteAnimationFrameNanos
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -22,103 +23,96 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.flow.collectLatest
-import kotlin.math.abs
-import kotlin.random.Random
-
-private data class WelcomeWave(val origin: Offset, val startedAt: Float)
+import kotlin.math.sin
 
 @Composable
 internal fun AssistantWelcome(state: AssistantPreviewState) {
-    val waves = remember { mutableStateListOf<WelcomeWave>() }
-    var time by remember { mutableFloatStateOf(0f) }
-    val particles = remember {
-        val random = Random(29)
-        List(96) { Offset(random.nextFloat(), random.nextFloat()) }
-    }
+    val field = remember { WelcomeParticleField() }
+    var frame by remember { mutableIntStateOf(0) }
+    val density = LocalDensity.current.density
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
     val colors = MaterialTheme.colorScheme
-    LaunchedEffect(Unit) {
-        // Only interaction animates. Reading the clock in Canvas avoids recomposing the chat.
-        snapshotFlow { waves.isNotEmpty() }.collectLatest { active ->
-            if (active) {
-                var previous = withFrameNanos { it }
-                while (waves.isNotEmpty()) {
-                    val durationScale = coroutineContext[MotionDurationScale]?.scaleFactor ?: 1f
-                    if (durationScale == 0f) {
-                        waves.clear()
-                        break
+    val particleColors = remember(colors) { field.depth.map { lerp(colors.primary, colors.onSurface, 0.35f + it * 0.5f) } }
+    LaunchedEffect(lifecycle) {
+        val motionScale = coroutineContext[MotionDurationScale]
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            try {
+                snapshotFlow { motionScale?.scaleFactor ?: 1f }.collectLatest { scale ->
+                    field.settle()
+                    frame++
+                    if (scale > 0f) {
+                        var previous = withInfiniteAnimationFrameNanos { it }
+                        while (true) {
+                            val now = withInfiniteAnimationFrameNanos { it }
+                            field.advance((now - previous) / (1_000_000_000f * scale))
+                            previous = now
+                            // Only Canvas reads this state; the composer and suggestions do not recompose.
+                            frame++
+                        }
                     }
-                    val now = withFrameNanos { it }
-                    time += ((now - previous) / (1_000_000_000f * durationScale)).coerceAtMost(0.05f)
-                    previous = now
-                    waves.removeAll { time - it.startedAt >= 1.6f }
                 }
+            } finally {
+                field.release()
             }
         }
     }
     BoxWithConstraints(
         Modifier.fillMaxSize().clipToBounds().testTag("assistant-welcome")
-            .pointerInput(Unit) {
-                fun ripple(point: Offset) {
-                    if (waves.size == 12) waves.removeAt(0)
-                    waves.add(WelcomeWave(point, time))
-                }
+            .onSizeChanged {
+                field.resize(it.width / density, it.height / density)
+                frame++
+            }
+            .pointerInput(field, density) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                    ripple(down.position)
-                    var last = down.position
-                    do {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        val pointer = event.changes.firstOrNull { it.id == down.id } ?: break
-                        if (pointer.pressed && (pointer.position - last).getDistance() >= 14.dp.toPx()) {
-                            ripple(pointer.position)
-                            last = pointer.position
-                        }
-                        // Observe without consuming: suggestions and scrolling keep their gestures.
-                    } while (event.changes.any { it.pressed })
+                    field.touch(down.position.x / density, down.position.y / density)
+                    try {
+                        do {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val pointer = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (pointer.pressed) field.touch(pointer.position.x / density, pointer.position.y / density)
+                            // Observe without consuming: suggestions and scrolling keep their gestures.
+                        } while (pointer.pressed)
+                    } finally {
+                        field.release()
+                    }
                 }
             },
     ) {
         val compact = maxHeight < 280.dp
         Canvas(Modifier.fillMaxSize().testTag("assistant-welcome-particles")) {
-            val center = Offset(size.width / 2, size.height * 0.42f)
-            drawRect(Brush.radialGradient(listOf(colors.primary.copy(alpha = 0.09f), Color.Transparent), center, size.minDimension.coerceAtLeast(1f) * 0.7f))
-            waves.forEach { wave ->
-                val age = time - wave.startedAt
-                drawCircle(colors.primary.copy(alpha = (1f - age / 1.6f) * 0.12f), (age * 180.dp.toPx()).coerceAtLeast(1f), wave.origin, style = Stroke(1.dp.toPx()))
-            }
-            particles.forEachIndexed { index, normalized ->
-                val origin = Offset(normalized.x * size.width, normalized.y * size.height)
-                var position = origin
-                var brightness = 0f
-                waves.forEach { wave ->
-                    val age = time - wave.startedAt
-                    val direction = origin - wave.origin
-                    val distance = direction.getDistance()
-                    val crest = (1f - abs(distance - age * 180.dp.toPx()) / 60.dp.toPx()).coerceAtLeast(0f) * (1f - age / 1.6f)
-                    if (distance > 0f) position += direction / distance * (crest * 22.dp.toPx())
-                    brightness = maxOf(brightness, crest)
-                }
-                drawCircle(colors.primary.copy(alpha = (0.2f + brightness * 0.6f).coerceAtMost(0.8f)), (if (index % 4 == 0) 2f else 1.2f).dp.toPx(), position)
+            val tick = frame
+            val edge = 32.dp.toPx()
+            for (i in field.x.indices) {
+                val position = Offset(field.x[i] * density, field.y[i] * density)
+                val fade = (minOf(position.x, size.width - position.x) / edge).coerceIn(0f, 1f)
+                val shimmer = 0.88f + sin(tick * 0.012f + i) * 0.12f
+                val alpha = (0.16f + field.depth[i] * 0.44f) * fade * shimmer
+                val radius = (0.65f + field.depth[i] * 0.9f) * density
+                val color = particleColors[i]
+                if (i % 9 == 0) drawCircle(color.copy(alpha = alpha * 0.1f), radius * 3f, position)
+                drawCircle(color.copy(alpha = alpha), radius, position)
             }
         }
         Column(
