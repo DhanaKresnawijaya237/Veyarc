@@ -1,5 +1,7 @@
 package com.veyarc.app
 
+import android.content.Context
+import android.content.SharedPreferences
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -30,11 +32,11 @@ import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -46,16 +48,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.veyarc.automation.android.ReplayFloatingController
+import com.veyarc.automation.android.ReplayWorkflowCatalog
 import com.veyarc.data.storage.RunDashboardSummary
 import com.veyarc.data.storage.StoredRunRecord
 import com.veyarc.data.storage.StoredRunStatus
@@ -78,27 +82,43 @@ fun HomeDashboardScreen(
 ) {
     var dashboard by pageState.dashboard
     var workflows by pageState.workflows
-    var latestRecording by pageState.latestRecording
+    var quickPlayWorkflow by pageState.quickPlayWorkflow
     var error by remember { mutableStateOf<String?>(null) }
 
     val pageActive = LocalMainPageActive.current
+    val context = LocalContext.current
+    DisposableEffect(context, workflows, pageActive) {
+        val preferences = context.getSharedPreferences("replay_controller", Context.MODE_PRIVATE)
+        fun refreshPlayTarget() {
+            ReplayWorkflowCatalog.load(context)
+            val target = ReplayWorkflowCatalog.selected(ReplayFloatingController.playTarget(context))
+            quickPlayWorkflow = target?.let { selected ->
+                workflows.firstOrNull { it.workflowId == selected.workflowId }?.copy(latestRevision = selected.revision)
+            }
+        }
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == null || key in setOf("play_target", "workflow_catalog", "most_recently_played", "most_recently_favorited")) refreshPlayTarget()
+        }
+        if (pageActive) {
+            refreshPlayTarget()
+            preferences.registerOnSharedPreferenceChangeListener(listener)
+        }
+        onDispose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
     LaunchedEffect(repository, refreshGeneration, pageActive) {
         if (!pageActive) return@LaunchedEffect
         error = null
         runCatching {
             withContext(Dispatchers.IO) {
                 val storedWorkflows = repository.listWorkflowSummaries()
-                Triple(
+                Pair(
                     repository.loadRunDashboard(recentLimit = 100),
                     storedWorkflows,
-                    storedWorkflows.firstOrNull { it.producerVersion == RECORDER_PRODUCER_VERSION }
-                        ?: storedWorkflows.firstOrNull(),
                 )
             }
-        }.onSuccess { (loadedDashboard, loadedWorkflows, loadedRecording) ->
+        }.onSuccess { (loadedDashboard, loadedWorkflows) ->
             dashboard = loadedDashboard
             workflows = loadedWorkflows
-            latestRecording = loadedRecording
         }.onFailure {
             if (it is CancellationException) throw it
 
@@ -121,7 +141,7 @@ fun HomeDashboardScreen(
                 if (dashboard != null) Text("${workflows.size} ${if (workflows.size == 1) "workflow" else "workflows"}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        item(key = "quick-start") { HomeQuickStart(latestRecording, onRecord, onPlayWorkflow) }
+        item(key = "quick-start") { HomeQuickStart(quickPlayWorkflow, onRecord, onPlayWorkflow) }
 
         error?.let { message ->
             item { Text(message, color = MaterialTheme.colorScheme.error) }
@@ -169,7 +189,7 @@ fun HomeDashboardScreen(
 }
 
 @Composable
-private fun HomeQuickStart(latest: WorkflowSummary?, onRecord: () -> Unit, onPlay: (WorkflowSummary) -> Unit) {
+private fun HomeQuickStart(target: WorkflowSummary?, onRecord: () -> Unit, onPlay: (WorkflowSummary) -> Unit) {
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.colorScheme.surfaceContainerLow))).padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -183,11 +203,11 @@ private fun HomeQuickStart(latest: WorkflowSummary?, onRecord: () -> Unit, onPla
                     Text("Capture a workflow", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            Surface(onClick = { latest?.let(onPlay) }, enabled = latest != null, modifier = Modifier.weight(1f).fillMaxHeight(), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f)) {
+            Surface(onClick = { target?.let(onPlay) }, enabled = target != null, modifier = Modifier.weight(1f).fillMaxHeight(), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(Icons.Filled.PlayArrow, null, Modifier.size(28.dp), tint = if (latest == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary)
-                    Text("Play", style = MaterialTheme.typography.titleLarge, color = if (latest == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
-                    Text(latest?.name ?: "No workflow yet", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Icon(Icons.Filled.PlayArrow, null, Modifier.size(28.dp), tint = if (target == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary)
+                    Text("Play", style = MaterialTheme.typography.titleLarge, color = if (target == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
+                    Text(target?.name ?: "No matching workflow", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -360,29 +380,43 @@ private fun RunOutcomeChart(
 
 @Composable
 private fun StatusDistribution(dashboard: RunDashboardSummary, modifier: Modifier = Modifier) {
+    val counts = remember(dashboard.statusCounts) { dashboard.statusCounts.entries.filter { it.value > 0 }.sortedByDescending { it.value } }
+    val colors = MaterialTheme.colorScheme
+    val statusColors = mapOf(
+        StoredRunStatus.COMPLETED to colors.primary,
+        StoredRunStatus.FAILED to colors.error,
+        StoredRunStatus.RUNNING to colors.tertiary,
+        StoredRunStatus.STOPPED to colors.secondary,
+        StoredRunStatus.CANCELLED to colors.outline,
+        StoredRunStatus.INTERRUPTED to colors.error.copy(alpha = 0.65f),
+    )
     Surface(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
-        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Run status", style = MaterialTheme.typography.titleMedium)
+        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Run status", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                Text("${dashboard.totalRuns} ${if (dashboard.totalRuns == 1L) "run" else "runs"}", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+            }
             if (dashboard.totalRuns == 0L) {
                 Text("No run history yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
-                dashboard.statusCounts.entries
-                    .sortedByDescending { it.value }
-                    .forEach { (status, count) ->
-                        val progress by animateFloatAsState(count.toFloat() / dashboard.totalRuns, tween(220), label = "Run status count")
-                        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Row(modifier = Modifier.fillMaxWidth()) {
-                                Text(status.displayName(), modifier = Modifier.weight(1f))
-                                Text(count.toString(), fontWeight = FontWeight.SemiBold)
-                            }
-                            LinearProgressIndicator(
-                                progress = { progress },
-                                modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small),
-                                strokeCap = StrokeCap.Round,
-                                drawStopIndicator = {},
-                            )
+                Canvas(Modifier.fillMaxWidth().height(12.dp).clip(CircleShape)) {
+                    var start = 0f
+                    counts.forEach { (status, count) ->
+                        val width = size.width * count.toFloat() / dashboard.totalRuns
+                        drawRect(statusColors.getValue(status), androidx.compose.ui.geometry.Offset(start, 0f), androidx.compose.ui.geometry.Size(width, size.height))
+                        start += width
+                    }
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    counts.forEach { (status, count) ->
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Spacer(Modifier.size(8.dp).clip(CircleShape).background(statusColors.getValue(status)))
+                            Text(status.displayName(), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                            Text(count.toString(), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Text("${(count * 100.0 / dashboard.totalRuns).roundToInt()}%", Modifier.width(44.dp), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.End)
                         }
                     }
+                }
             }
         }
     }
@@ -431,5 +465,3 @@ internal fun formatDuration(durationMs: Long?): String {
     val seconds = durationMs / 1000
     return if (seconds < 60) "${seconds}s" else "${seconds / 60}m ${seconds % 60}s"
 }
-
-private const val RECORDER_PRODUCER_VERSION = "android-recorder"
