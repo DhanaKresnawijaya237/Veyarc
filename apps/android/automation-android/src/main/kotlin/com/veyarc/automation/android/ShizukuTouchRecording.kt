@@ -177,7 +177,7 @@ class ShizukuTouchRecording(
                 }
             }
             if (!current) {
-                runCatching { Shizuku.unbindUserService(userServiceArgs, this, true) }
+                // Cleanup already removed this binding; another unbind could kill its replacement.
                 return
             }
             try {
@@ -253,9 +253,17 @@ class ShizukuTouchRecording(
         }
     }
 
-    /** Requests a cooperative stop; the helper still sends Completed through the callback. */
-    fun stop() {
-        runCatching { remoteService?.stopObservation() }
+    /** Ends observation, including a pending bind, before reporting completion. */
+    fun stop(): Boolean {
+        val generation = bindingGeneration.get()
+        if (closed || !isCurrentGeneration(generation)) return false
+        mainHandler.post {
+            if (closed || !isCurrentGeneration(generation)) return@post
+            val completedListener = listener
+            finishServiceOnMain(generation)
+            completedListener?.invoke(ShizukuTouchRecordingEvent.Completed)
+        }
+        return true
     }
 
     /**
