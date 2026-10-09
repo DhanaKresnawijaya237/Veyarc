@@ -23,6 +23,7 @@ sealed interface WorkflowStep {
 data class TapPoint(
     override val id: String,
     val point: NormalizedCoordinate,
+    val backgroundAssetId: AssetId? = null,
 ) : WorkflowStep {
     init {
         ContractChecks.requireStableId(id, "Step id")
@@ -35,6 +36,7 @@ data class TapRegion(
     override val id: String,
     val region: NormalizedRect,
     val anchor: RegionAnchor = RegionAnchor.Center,
+    val backgroundAssetId: AssetId? = null,
 ) : WorkflowStep {
     init {
         ContractChecks.requireStableId(id, "Step id")
@@ -57,6 +59,7 @@ data class LongPress(
     override val id: String,
     val point: NormalizedCoordinate,
     val durationMs: DurationMillis,
+    val backgroundAssetId: AssetId? = null,
 ) : WorkflowStep {
     init {
         ContractChecks.requireStableId(id, "Step id")
@@ -70,6 +73,7 @@ data class SwipePath(
     override val id: String,
     val durationMs: DurationMillis,
     val points: List<TimedPoint>,
+    val backgroundAssetId: AssetId? = null,
 ) : WorkflowStep {
     init {
         ContractChecks.requireStableId(id, "Step id")
@@ -236,6 +240,7 @@ data class ImagePresentCondition(
     val region: NormalizedRect,
     val matchThreshold: Double,
     val matchMode: ImageMatchMode = ImageMatchMode.APPEARS_WITHIN_REGION,
+    val backgroundAssetId: AssetId? = null,
 ) : Condition {
     init {
         ContractChecks.requireFinite(matchThreshold, "matchThreshold")
@@ -258,6 +263,7 @@ data class ImageAbsentCondition(
     val assetId: AssetId,
     val region: NormalizedRect,
     val matchThreshold: Double,
+    val backgroundAssetId: AssetId? = null,
 ) : Condition {
     init {
         ContractChecks.requireFinite(matchThreshold, "matchThreshold")
@@ -303,3 +309,26 @@ data class OrCondition(val conditions: List<Condition>) : Condition
 @Serializable
 @SerialName("not")
 data class NotCondition(val condition: Condition) : Condition
+
+/** Reference images belong to the editor; they never change touch coordinates or image matching. */
+fun WorkflowStep.backgroundAssetId(): AssetId? = when (this) {
+    is TapPoint -> backgroundAssetId
+    is TapRegion -> backgroundAssetId
+    is LongPress -> backgroundAssetId
+    is SwipePath -> backgroundAssetId
+    else -> null
+}
+
+fun WorkflowStep.withBackgroundAsset(id: AssetId?): WorkflowStep = when (this) {
+    is TapPoint -> copy(backgroundAssetId = id)
+    is TapRegion -> copy(backgroundAssetId = id)
+    is LongPress -> copy(backgroundAssetId = id)
+    is SwipePath -> copy(backgroundAssetId = id)
+    else -> this
+}
+
+fun Condition.backgroundAssetId(): AssetId? = when (this) {
+    is ImagePresentCondition -> backgroundAssetId
+    is ImageAbsentCondition -> backgroundAssetId
+    else -> null
+}

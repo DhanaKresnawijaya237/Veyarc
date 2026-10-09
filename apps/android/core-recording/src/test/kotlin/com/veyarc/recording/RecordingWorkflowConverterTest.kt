@@ -73,22 +73,22 @@ class RecordingWorkflowConverterTest {
         )
         val steps = converted.bundle.document.steps
 
-        assertEquals(5, steps.size)
+        assertEquals(6, steps.size)
         assertTrue(steps[0] is LaunchApp)
         assertEquals(PackageName("com.example.app"), (steps[0] as LaunchApp).packageName)
         assertEquals(5_000L, (steps[0] as LaunchApp).foregroundTimeoutMs.value)
         assertTrue(steps[1] is TapPoint)
         assertTrue(steps[2] is Wait)
         assertTrue(steps[3] is LongPress)
-        assertTrue(steps[4] is SwipePath)
+        assertTrue(steps[4] is LaunchApp)
+        assertEquals(PackageName("com.example.other"), (steps[4] as LaunchApp).packageName)
+        assertTrue(steps[5] is SwipePath)
         assertEquals(100.0 / 999.0, (steps[1] as TapPoint).point.x, 0.000001)
         assertEquals(200.0 / 1_999.0, (steps[1] as TapPoint).point.y, 0.000001)
         assertEquals(700L, (steps[3] as LongPress).durationMs.value)
-        assertEquals(1.0, (steps[4] as SwipePath).points.last().point.x, 0.0001)
-        assertEquals(1.0, (steps[4] as SwipePath).points.last().point.y, 0.0001)
-        assertEquals(1, converted.foregroundPackageSuggestions.size)
+        assertEquals(1.0, (steps[5] as SwipePath).points.last().point.x, 0.0001)
+        assertEquals(1.0, (steps[5] as SwipePath).points.last().point.y, 0.0001)
         assertTrue(converted.warnings.any { it.contains("incomplete", ignoreCase = true) })
-        assertTrue(converted.warnings.any { it.contains("Launch app", ignoreCase = true) })
     }
 
     @Test
@@ -102,6 +102,7 @@ class RecordingWorkflowConverterTest {
                     viewport = viewport(),
                 ),
                 events = listOf(
+                    RecordingAnalysisEvent.ForegroundPackageTransition(0L, PackageName("com.veyarc.app"), targetPackage),
                     RecordingAnalysisEvent.Gesture(
                         ClassifiedTouchGesture(
                             startElapsedMillis = 0L,

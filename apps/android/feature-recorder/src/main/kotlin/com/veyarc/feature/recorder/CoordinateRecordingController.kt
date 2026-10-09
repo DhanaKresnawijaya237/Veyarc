@@ -9,7 +9,9 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.ViewConfiguration
 import android.widget.Toast
+import com.veyarc.automation.android.AndroidDeviceSafety
 import com.veyarc.automation.android.AndroidForegroundPackage
+import com.veyarc.automation.android.AndroidUnsafeDeviceState
 import com.veyarc.automation.android.ControlCenterRecordingState
 import com.veyarc.automation.android.RecordingControllerActions
 import com.veyarc.automation.android.ReplayControllerWorkflow
@@ -94,6 +96,10 @@ class CoordinateRecordingController(
     private var lastThirdPartyForegroundPackage: PackageName? = null
     private val observedThirdPartyPackages = LinkedHashSet<PackageName>()
     private var hasForegroundObservation = false
+    private var controlPackages = emptySet<String>()
+
+    // ponytail: exclusion boundaries are session-only; persist them if journal re-import is added.
+    private val excludedControlTransitions = mutableSetOf<Long>()
 
     /** False until a complete touch starts after the session source is armed. */
     private var captureReady = false
@@ -140,6 +146,11 @@ class CoordinateRecordingController(
 
     /** True while the journal remains open but raw-input observation is paused. */
     fun isSessionPaused(): Boolean = active && paused && !stopRequested
+
+    /** A completed recording is opened in the editor, not retained as a second review page. */
+    fun dismissReview() {
+        if (!active && _state.value is CoordinateRecordingState.Review) _state.value = CoordinateRecordingState.Idle
+    }
 
     private val timerRunnable = object : Runnable {
         override fun run() {
@@ -190,7 +201,12 @@ class CoordinateRecordingController(
             if (!active || stopRequested || paused || pauseRequested) return
             enqueue {
                 if (!active || stopRequested || paused || pauseRequested) return@enqueue
-                observeForeground(AndroidForegroundPackage.current())
+                observeForeground(AndroidForegroundPackage.currentForRecording())
+                val safety = AndroidDeviceSafety.current(appContext)
+                if (safety == AndroidUnsafeDeviceState.ACCESSIBILITY_DISABLED || safety == AndroidUnsafeDeviceState.ACCESSIBILITY_DISCONNECTED) {
+                    failSession("Recording stopped because Accessibility disconnected.")
+                    return@enqueue
+                }
                 if (active && isKeyguardLocked()) {
                     failSession("Recording stopped because the lock screen became active.")
                     return@enqueue
@@ -224,6 +240,16 @@ class CoordinateRecordingController(
 
     fun start(destinationFolderId: String?) {
         if (active) return
+        AndroidDeviceSafety.current(appContext)?.takeUnless { it == AndroidUnsafeDeviceState.SYSTEM_WINDOW_ACTIVE }?.let {
+            showUnavailable("Recording unavailable: ${it.reason}.")
+            return
+        }
+        val sessionControlPackages = runCatching {
+            setOf(appContext.packageName, SYSTEM_UI_PACKAGE, "android") + appContext.packageManager.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), PackageManager.MATCH_DEFAULT_ONLY).map { it.activityInfo.packageName }
+        }.getOrElse {
+            showUnavailable("Android's Home screen could not be identified safely.")
+            return
+        }
         val notificationUnavailableReason = RecordingForegroundService.notificationUnavailableReason(appContext)
         if (notificationUnavailableReason != null) {
             showUnavailable(notificationUnavailableReason)
@@ -275,6 +301,8 @@ class CoordinateRecordingController(
         firstThirdPartyForegroundPackage = null
         lastThirdPartyForegroundPackage = null
         observedThirdPartyPackages.clear()
+        excludedControlTransitions.clear()
+        controlPackages = sessionControlPackages
         hasForegroundObservation = false
         captureReady = false
         recordingStartReceivedTimestampMicros = null
@@ -373,6 +401,10 @@ class CoordinateRecordingController(
     /** Resumes raw observation using the same encrypted journal and session clock. */
     fun resume() {
         if (!active || stopRequested || !paused || pauseRequested) return
+        if (isKeyguardLocked()) {
+            failSession("Recording stopped because the lock screen became active.")
+            return
+        }
         if (!isCurrentSessionRotation()) {
             failSession("Recording stopped because the display rotated while recording was paused.")
             return
@@ -429,7 +461,7 @@ class CoordinateRecordingController(
     private fun onSourceEvent(event: ShizukuTouchRecordingEvent) {
         when (event) {
             is ShizukuTouchRecordingEvent.Started -> enqueue {
-                if (!active) return@enqueue
+                if (!active || stopRequested) return@enqueue
                 if (pauseRequested || paused) return@enqueue
                 recordingStartReceivedTimestampMicros = event.receivedTimestampMicros
                 minX = event.minX
@@ -440,7 +472,7 @@ class CoordinateRecordingController(
                     failSession("The raw-input helper returned an invalid touchscreen range.")
                     return@enqueue
                 }
-                observeForeground(AndroidForegroundPackage.current())
+                observeForeground(AndroidForegroundPackage.currentForRecording())
                 if (!active) return@enqueue
                 _state.value = CoordinateRecordingState.Recording(
                     foregroundPackage = lastThirdPartyForegroundPackage?.value,
@@ -467,6 +499,7 @@ class CoordinateRecordingController(
                     pauseRequested = false
                     paused = true
                     settlePendingTouchBeforeClose(preservePartialTouch = false)
+                    observeForeground(null, isPause = true)
                     _state.value = CoordinateRecordingState.Paused(
                         foregroundPackage = lastThirdPartyForegroundPackage?.value,
                         elapsedMillis = elapsedMillis(),
@@ -492,14 +525,14 @@ class CoordinateRecordingController(
 
     private fun processFrame(event: ShizukuTouchRecordingEvent.Frame) {
         if (stopRequested || paused || pauseRequested) return
-        val foreground = AndroidForegroundPackage.current()
+        val foreground = AndroidForegroundPackage.currentForRecording()
         observeForeground(foreground)
         if (!active) return
         if (isKeyguardLocked()) {
             failSession("Recording stopped because the lock screen became active.")
             return
         }
-        val startTimestamp = recordingStartReceivedTimestampMicros ?: return
+        if (recordingStartReceivedTimestampMicros == null) return
         val currentViewport = viewport ?: return
         val startingTouch = pendingTouchLines == null && event.action == ShizukuTouchRecordingEvent.Action.DOWN
         val rotation = currentDisplayRotation(appContext)?.let(TouchDisplayRotation::fromAndroidRotation)
@@ -523,7 +556,7 @@ class CoordinateRecordingController(
         // The helper's kernel timestamp and the app process can use different clock domains on
         // OEM builds. The wrapper captures an app-process monotonic timestamp for every callback,
         // so journal timing remains ordered and reflects the real gesture duration.
-        val elapsed = ((event.receivedTimestampMicros - startTimestamp) / 1_000L).coerceAtLeast(0L)
+        val elapsed = (event.receivedTimestampMicros / 1_000L - sessionStartedElapsedRealtime).coerceAtLeast(0L)
         val monotonicElapsed = appendElapsed(elapsed)
         val xRange = maxX - minX
         val yRange = maxY - minY
@@ -610,12 +643,13 @@ class CoordinateRecordingController(
         }
     }
 
-    private fun observeForeground(packageName: PackageName?) {
+    private fun observeForeground(packageName: PackageName?, isPause: Boolean = false) {
         if (hasForegroundObservation && packageName == lastForegroundPackage) return
         val line = RecordingJournalLine.ForegroundPackage(
             elapsedMillis = appendElapsed(elapsedMillis()),
             packageName = packageName,
         )
+        if (isPause) excludedControlTransitions += line.elapsedMillis
         lastForegroundPackage = packageName
         if (!isControlSurface(packageName)) {
             if (firstThirdPartyForegroundPackage == null) {
@@ -654,7 +688,10 @@ class CoordinateRecordingController(
     /** Preserves metadata but never persists touch frames from a control-surface gesture. */
     private fun appendForegroundTransitions(lines: List<RecordingJournalLine>) {
         try {
-            lines.filterIsInstance<RecordingJournalLine.ForegroundPackage>().forEach { journal?.append(it) }
+            lines.filterIsInstance<RecordingJournalLine.ForegroundPackage>().forEach {
+                if (isControlSurface(it.packageName)) excludedControlTransitions += it.elapsedMillis
+                journal?.append(it)
+            }
         } catch (error: Throwable) {
             failSession("Recording could not append a foreground transition safely: ${error.message ?: error.javaClass.simpleName}")
         }
@@ -729,6 +766,7 @@ class CoordinateRecordingController(
                     RecordingWorkflowConverter.convert(
                         analysis = recordingAnalysis,
                         allowedPackages = observedThirdPartyPackages.toList(),
+                        excludedControlTransitions = excludedControlTransitions,
                     )
                 }
             }
@@ -874,6 +912,7 @@ class CoordinateRecordingController(
         firstThirdPartyForegroundPackage = null
         lastThirdPartyForegroundPackage = null
         observedThirdPartyPackages.clear()
+        excludedControlTransitions.clear()
         hasForegroundObservation = false
         captureReady = false
         recordingStartReceivedTimestampMicros = null
@@ -915,6 +954,7 @@ class CoordinateRecordingController(
             lines
         }
         retainedLines.forEach { line ->
+            if (sawControlSurface && line is RecordingJournalLine.ForegroundPackage && isControlSurface(line.packageName)) excludedControlTransitions += line.elapsedMillis
             journal?.append(line)
             if (line is RecordingJournalLine.Touch) frameCount += 1L
         }
@@ -944,24 +984,9 @@ class CoordinateRecordingController(
         }
     }
 
-    private fun isKeyguardLocked(): Boolean = appContext.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
+    private fun isKeyguardLocked(): Boolean = appContext.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked != false
 
-    private fun isControlSurface(packageName: PackageName?): Boolean {
-        if (packageName == null ||
-            packageName.value == appContext.packageName ||
-            packageName.value == SYSTEM_UI_PACKAGE ||
-            packageName.value == "android"
-        ) {
-            return true
-        }
-        val homePackage = runCatching {
-            appContext.packageManager.resolveActivity(
-                Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),
-                PackageManager.MATCH_DEFAULT_ONLY,
-            )?.activityInfo?.packageName
-        }.getOrNull()
-        return packageName.value == homePackage
-    }
+    private fun isControlSurface(packageName: PackageName?): Boolean = packageName == null || packageName.value in controlPackages
 
     private fun notificationText(foregroundPackage: String?, elapsedMillis: Long): String = if (foregroundPackage == null) {
         "Global recording ${elapsedMillis / 1_000}s · foreground unknown"

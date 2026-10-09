@@ -44,6 +44,7 @@ import com.veyarc.model.WorkflowDocument
 import com.veyarc.model.WorkflowIds
 import com.veyarc.model.WorkflowStep
 import com.veyarc.model.WorkflowValidator
+import com.veyarc.model.backgroundAssetId
 import com.veyarc.model.bundle.BundleAsset
 import com.veyarc.model.bundle.WorkflowBundle
 
@@ -97,6 +98,19 @@ data class DraftBuildResult(
 )
 
 class WorkflowEditorSession {
+    var isSaving by mutableStateOf(false)
+        private set
+
+    fun beginSave(): Boolean {
+        if (isSaving) return false
+        isSaving = true
+        return true
+    }
+
+    fun finishSave() {
+        isSaving = false
+    }
+
     var draft by mutableStateOf<WorkflowDraft?>(null)
         private set
     var destinationFolderId by mutableStateOf<String?>(null)
@@ -136,18 +150,19 @@ class WorkflowEditorSession {
         clearHistory()
     }
 
+    fun createForAssistant(viewport: ViewportSpec) {
+        create(viewport)
+        // Start without guessed targets or gestures. Setup uses the existing editor controls.
+        draft = requireNotNull(draft).copy(allowedPackagesText = "", steps = emptyList(), collapsedStepIds = emptySet())
+    }
+
     fun open(
         bundle: WorkflowBundle,
         recordingJournalFileName: String? = null,
         latestKnownRevision: Int = bundle.document.revision,
     ) {
-        dismissEditors()
         val opened = WorkflowDraft.fromBundle(bundle, recordingJournalFileName, latestKnownRevision)
-        draft = opened
-        destinationFolderId = null
-        savedDraft = opened
-        prepareRevisionCache(opened.workflowId)
-        clearHistory()
+        openPrepared(opened)
     }
 
     fun open(
@@ -155,13 +170,19 @@ class WorkflowEditorSession {
         recordingJournalFileName: String? = null,
         latestKnownRevision: Int = revision.revision.document.revision,
     ) {
-        dismissEditors()
         val opened = WorkflowDraft.fromRevision(revision, recordingJournalFileName, latestKnownRevision)
+        openPrepared(opened)
+    }
+
+    internal fun openPrepared(opened: WorkflowDraft, validation: DraftBuildResult? = null) {
+        dismissEditors()
         draft = opened
         destinationFolderId = null
         savedDraft = opened
         prepareRevisionCache(opened.workflowId)
         clearHistory()
+        validatedDraft = opened.takeIf { validation != null }
+        validatedResult = validation
     }
 
     fun update(updated: WorkflowDraft) {
@@ -210,6 +231,24 @@ class WorkflowEditorSession {
 
     fun validationFor(draft: WorkflowDraft): DraftBuildResult {
         if (validatedDraft === draft) return requireNotNull(validatedResult)
+        if (validatedDraft?.copy(
+                collapsedStepIds = draft.collapsedStepIds,
+                recordingJournalFileName = draft.recordingJournalFileName,
+            ) == draft
+        ) {
+            validatedDraft = draft
+            return requireNotNull(validatedResult)
+        }
+        val previous = validatedResult
+        if (previous?.document != null && draft.name.isNotBlank() && draft.name.length <= 128 &&
+            validatedDraft?.copy(name = draft.name, collapsedStepIds = draft.collapsedStepIds, recordingJournalFileName = draft.recordingJournalFileName) == draft
+        ) {
+            val document = previous.document.copy(name = draft.name.trim())
+            return previous.copy(document = document, bundle = previous.bundle?.copy(document = document)).also {
+                validatedDraft = draft
+                validatedResult = it
+            }
+        }
         return draft.buildBundle().also { result ->
             validatedDraft = draft
             validatedResult = result
@@ -326,7 +365,8 @@ data class WorkflowDraft(
             if (error.code == ValidationErrorCode.MISSING_ASSET) {
                 val missingId = missingAssetIds.firstOrNull { it in error.message }
                 val displayName = missingId?.let(assetNames::get) ?: "Deleted image"
-                DraftIssue(error.path, "$displayName is still used")
+                val numbers = missingId?.let { assetUsageNumbers()[it] }.orEmpty()
+                DraftIssue(error.path, "$displayName is still used" + if (numbers.isEmpty()) "" else " · ${numbers.joinToString(", ")}")
             } else {
                 DraftIssue(error.path, error.message)
             }
@@ -353,11 +393,16 @@ data class WorkflowDraft(
 
     fun stepsAt(path: StepListPath): List<WorkflowStep> = readSteps(steps, path.segments)
 
+    fun jumpTargetLists(path: StepListPath): List<List<WorkflowStep>> = (path.segments.size downTo 0).map { depth ->
+        stepsAt(StepListPath(path.segments.take(depth)))
+    }
+
     fun addStep(path: StepListPath, kind: WorkflowStepKind, defaultPackage: String): WorkflowDraft = insertStep(path, stepsAt(path).size, kind, defaultPackage)
 
     fun insertStep(path: StepListPath, index: Int, kind: WorkflowStepKind, defaultPackage: String): WorkflowDraft {
         val current = stepsAt(path)
         val jumpTargetId = current.getOrNull((index - 1).coerceAtLeast(0))?.id
+            ?: jumpTargetLists(path).drop(1).firstOrNull()?.firstOrNull()?.id
         val step = newStep(kind, defaultPackage, jumpTargetId)
         return updateList(path) { current ->
             current.toMutableList().apply { add(index.coerceIn(0, size), step) }
@@ -432,6 +477,42 @@ data class WorkflowDraft(
 
     fun referencedAssetIds(): Set<String> = buildSet { steps.forEach { addStepAssetReferences(it) } }
 
+    fun assetUsageNumbers(): Map<String, List<String>> {
+        val uses = linkedMapOf<String, MutableList<String>>()
+        fun visit(items: List<WorkflowStep>, prefix: String) {
+            var number = 0
+            items.forEach { step ->
+                if (step is StageBoundary) return@forEach
+                number++
+                val label = "$prefix$number"
+                val ownReferences = buildSet {
+                    step.backgroundAssetId()?.let { add(it.value) }
+                    when (step) {
+                        is WaitUntil -> addConditionAssetReferences(step.condition)
+                        is IfElse -> addConditionAssetReferences(step.condition)
+                        is WhileStep -> addConditionAssetReferences(step.condition)
+                        else -> Unit
+                    }
+                }
+                ownReferences.forEach { uses.getOrPut(it) { mutableListOf() }.add(label) }
+                when (step) {
+                    is IfElse -> {
+                        visit(step.thenSteps, "$label.")
+                        visit(step.elseSteps, "$label.")
+                    }
+
+                    is Repeat -> visit(step.bodySteps, "$label.")
+
+                    is WhileStep -> visit(step.bodySteps, "$label.")
+
+                    else -> Unit
+                }
+            }
+        }
+        visit(steps, "")
+        return uses.mapValues { (_, numbers) -> numbers.distinct() }
+    }
+
     fun addAsset(asset: BundleAsset, defaultNamePrefix: String = "Template"): WorkflowDraft {
         val usedNames = activeAssetNames().mapTo(mutableSetOf()) { it.lowercase() }
         var index = 1
@@ -439,7 +520,7 @@ data class WorkflowDraft(
         return copy(
             assets = (assets.filterNot { it.assetId == asset.assetId } + asset).sortedBy { it.assetId.value },
             assetDescriptors = (
-                assetDescriptors.filterNot { it.assetId == asset.assetId } + asset.toDescriptor()
+                assetDescriptors.filterNot { it.assetId == asset.assetId } + asset.toDescriptor(addedAtMs = System.currentTimeMillis())
                 ).sortedBy { it.assetId.value },
             assetNames = assetNames + (asset.assetId.value to "$defaultNamePrefix $index"),
         )
@@ -448,7 +529,7 @@ data class WorkflowDraft(
     fun replaceAsset(asset: BundleAsset): WorkflowDraft = copy(
         assets = (assets.filterNot { it.assetId == asset.assetId } + asset).sortedBy { it.assetId.value },
         assetDescriptors = assetDescriptors.map { existing ->
-            if (existing.assetId == asset.assetId) asset.toDescriptor(existing.displayName) else existing
+            if (existing.assetId == asset.assetId) asset.toDescriptor(existing.displayName, existing.addedAtMs) else existing
         },
     )
 
@@ -621,13 +702,15 @@ private fun WorkflowDraft.persistedContent(): WorkflowDraft = copy(
     recordingJournalFileName = null,
 )
 
-private fun BundleAsset.toDescriptor(displayName: String? = null) = WorkflowAssetDescriptor(
+private fun BundleAsset.toDescriptor(displayName: String? = null, addedAtMs: Long? = null) = WorkflowAssetDescriptor(
     assetId = assetId,
     kind = kind,
     displayName = displayName,
     mimeType = mimeType,
     widthPx = widthPx,
     heightPx = heightPx,
+    addedAtMs = addedAtMs,
+    byteCount = bytes.size.toLong(),
 )
 
 private fun WorkflowStep.childrenFor(branch: NestedBranch): List<WorkflowStep>? = when (branch) {
@@ -673,7 +756,7 @@ fun newStep(kind: WorkflowStepKind, defaultPackage: String, jumpTargetId: String
 
         WorkflowStepKind.JUMP -> Jump(
             id = id,
-            targetStepId = requireNotNull(jumpTargetId) { "A jump needs another block or boundary in its stage" },
+            targetStepId = requireNotNull(jumpTargetId) { "Go to needs another block or boundary" },
             maxVisits = 5,
         )
 
@@ -706,6 +789,7 @@ fun newStep(kind: WorkflowStepKind, defaultPackage: String, jumpTargetId: String
 }
 
 private fun MutableSet<String>.addStepAssetReferences(step: WorkflowStep) {
+    step.backgroundAssetId()?.let { add(it.value) }
     when (step) {
         is WaitUntil -> addConditionAssetReferences(step.condition)
 
@@ -727,6 +811,7 @@ private fun MutableSet<String>.addStepAssetReferences(step: WorkflowStep) {
 }
 
 private fun MutableSet<String>.addConditionAssetReferences(condition: Condition) {
+    condition.backgroundAssetId()?.let { add(it.value) }
     when (condition) {
         is ImagePresentCondition -> add(condition.assetId.value)
         is ImageAbsentCondition -> add(condition.assetId.value)

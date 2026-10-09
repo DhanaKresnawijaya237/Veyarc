@@ -1,5 +1,6 @@
 package com.veyarc.app
 
+import android.content.res.Configuration
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
@@ -9,17 +10,20 @@ import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckBox
@@ -28,16 +32,17 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -55,7 +60,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.veyarc.automation.android.ReplayControllerWorkflow
@@ -69,6 +76,7 @@ import com.veyarc.feature.editor.VeyarcChoice
 import com.veyarc.feature.editor.VeyarcChoicePicker
 import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.WorkflowIds
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -101,11 +109,12 @@ internal fun WorkflowManagerScreen(
     onEditWorkflow: (WorkflowSummary) -> Unit,
     onPlayWorkflow: (WorkflowSummary) -> Unit,
     onSelectionBarChange: (ManagerSelectionBarState?) -> Unit = {},
+    pageState: WorkflowManagerState = remember { WorkflowManagerState() },
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var workflows by remember { mutableStateOf<List<ManagedWorkflow>>(emptyList()) }
-    var folders by remember { mutableStateOf<List<FolderSummary>>(emptyList()) }
+    var workflows by pageState.workflows
+    var folders by pageState.folders
     var folderOrder by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var selectedView by rememberSaveable { mutableStateOf(ALL_VIEW) }
     var query by rememberSaveable { mutableStateOf("") }
@@ -130,7 +139,9 @@ internal fun WorkflowManagerScreen(
     var orientationMenuOpen by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
-    LaunchedEffect(repository, refreshGeneration, localRefresh) {
+    val pageActive = LocalMainPageActive.current
+    LaunchedEffect(repository, refreshGeneration, localRefresh, pageActive) {
+        if (!pageActive) return@LaunchedEffect
         isBusy = true
         error = null
         runCatching {
@@ -149,6 +160,7 @@ internal fun WorkflowManagerScreen(
         }.onSuccess { (loadedWorkflows, loadedFolders, savedOrder) ->
             workflows = loadedWorkflows
             folders = loadedFolders
+            pageState.loaded.value = true
             val availableKeys = listOf(ALL_VIEW, FAVORITES_VIEW, UNFILED_VIEW) + loadedFolders.map(FolderSummary::folderId)
             folderOrder = reconcileFolderOrder(savedOrder, availableKeys)
             selectedIds = selectedIds.filter { id -> loadedWorkflows.any { it.summary.workflowId == id } }
@@ -158,6 +170,8 @@ internal fun WorkflowManagerScreen(
                 selectedView = ALL_VIEW
             }
         }.onFailure {
+            if (it is CancellationException) throw it
+
             error = "Workflows could not be loaded."
         }
         isBusy = false
@@ -261,13 +275,9 @@ internal fun WorkflowManagerScreen(
         onDispose { onSelectionBarChange(null) }
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        state = listState,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        item {
+    val pinHeader = LocalConfiguration.current.orientation != Configuration.ORIENTATION_LANDSCAPE
+    val header: @Composable () -> Unit = {
+        Column(Modifier.fillMaxWidth().testTag("workflow-manager-header"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             CompactManagerHeader(
                 title = "Workflow Manager",
                 searchActive = searchActive,
@@ -281,9 +291,7 @@ internal fun WorkflowManagerScreen(
                     if (!enabled) selectedIds = emptyList()
                 },
             )
-        }
 
-        item {
             ReorderableFolderRow(
                 folders = folderItems,
                 selectedKey = selectedView,
@@ -292,9 +300,7 @@ internal fun WorkflowManagerScreen(
                 onOrderChanged = ::persistFolderOrder,
                 onCreate = { creatingFolder = true },
             )
-        }
 
-        item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -353,57 +359,69 @@ internal fun WorkflowManagerScreen(
                         selectionMode = !selectionMode
                         if (!selectionMode) selectedIds = emptyList()
                     }) {
-                        Icon(
-                            if (selectionMode) Icons.Filled.Close else Icons.Filled.CheckBox,
-                            contentDescription = if (selectionMode) "Leave selection mode" else "Select items",
-                        )
+                        androidx.compose.animation.AnimatedContent(selectionMode, label = "workflow selection toggle") { selecting ->
+                            Icon(
+                                if (selecting) Icons.Filled.Close else Icons.Filled.CheckBox,
+                                contentDescription = if (selecting) "Leave selection mode" else "Select items",
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+    Column(Modifier.fillMaxSize()) {
+        if (pinHeader) Box(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 20.dp)) { header() }
+        LazyColumn(
+            modifier = Modifier.weight(1f).fillMaxWidth().testTag("workflow-manager-list"),
+            state = listState,
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = if (pinHeader) 14.dp else 20.dp, bottom = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            if (!pinHeader) item(key = "manager-header") { header() }
+            item(key = "load-progress") {
+                Box(Modifier.fillMaxWidth().height(4.dp)) {
+                    if (isBusy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+            }
+            error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.primary) } }
 
-        if (isBusy) item { LinearProgressIndicator(modifier = Modifier.fillMaxWidth()) }
-        error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.primary) } }
+            if (pageState.loaded.value && !isBusy && visible.isEmpty()) {
+                item { EmptyWorkflowManagerCard(if (workflows.isEmpty()) "No workflows yet." else "No workflows match these filters.") }
+            }
 
-        if (!isBusy && visible.isEmpty()) {
-            item { EmptyWorkflowManagerCard(if (workflows.isEmpty()) "No workflows yet." else "No workflows match these filters.") }
-        }
-
-        items(visible, key = { it.summary.workflowId }) { workflow ->
-            WorkflowManagerCard(
-                workflow = workflow,
-                selectionMode = selectionMode,
-                selected = workflow.summary.workflowId in selectedIds,
-                enabled = !isBusy,
-                onSelectedChange = { selected ->
-                    selectedIds = if (selected) {
-                        (selectedIds + workflow.summary.workflowId).distinct()
-                    } else {
-                        selectedIds - workflow.summary.workflowId
-                    }
-                },
-                onLongPress = {
-                    selectionMode = true
-                    selectedIds = (selectedIds + workflow.summary.workflowId).distinct()
-                },
-                onFavorite = { toggleFavorite(workflow) },
-                onEdit = { onEditWorkflow(workflow.summary) },
-                onPlay = { onPlayWorkflow(workflow.summary) },
-                onRevisions = {
-                    scope.launch {
-                        runCatching {
-                            withContext(Dispatchers.IO) {
-                                repository.listRevisions(workflow.summary.workflowId)
-                            }
-                        }.onSuccess { revisions ->
-                            revisionDialog = workflow.summary to revisions
-                        }.onFailure {
-                            error = "Revision history could not be loaded."
+            items(visible, key = { it.summary.workflowId }) { workflow ->
+                WorkflowManagerCard(
+                    workflow = workflow,
+                    selectionMode = selectionMode,
+                    selected = workflow.summary.workflowId in selectedIds,
+                    enabled = !isBusy,
+                    onSelectedChange = { selected ->
+                        selectedIds = if (selected) {
+                            (selectedIds + workflow.summary.workflowId).distinct()
+                        } else {
+                            selectedIds - workflow.summary.workflowId
                         }
-                    }
-                },
-                onDelete = { pendingWorkflowDelete = listOf(workflow) },
-            )
+                    },
+                    onFavorite = { toggleFavorite(workflow) },
+                    onEdit = { onEditWorkflow(workflow.summary) },
+                    onPlay = { onPlayWorkflow(workflow.summary) },
+                    onRevisions = {
+                        scope.launch {
+                            runCatching {
+                                withContext(Dispatchers.IO) {
+                                    repository.listRevisions(workflow.summary.workflowId)
+                                }
+                            }.onSuccess { revisions ->
+                                revisionDialog = workflow.summary to revisions
+                            }.onFailure {
+                                error = "Revision history could not be loaded."
+                            }
+                        }
+                    },
+                    onDelete = { pendingWorkflowDelete = listOf(workflow) },
+                )
+            }
         }
     }
 
@@ -466,7 +484,7 @@ internal fun WorkflowManagerScreen(
         AlertDialog(
             onDismissRequest = { pendingWorkflowDelete = emptyList() },
             title = { Text(if (targets.size == 1) "Delete ${targets.single().summary.name}?" else "Delete ${targets.size} workflows?") },
-            text = { Text("This permanently removes the selected workflows, their revisions, and run history from this phone.") },
+            text = { Text("This permanently removes the selected workflows, their revisions, run history, and associated chats from this phone.") },
             confirmButton = {
                 TextButton(onClick = {
                     pendingWorkflowDelete = emptyList()
@@ -625,7 +643,6 @@ private fun WorkflowManagerCard(
     selected: Boolean,
     enabled: Boolean,
     onSelectedChange: (Boolean) -> Unit,
-    onLongPress: () -> Unit,
     onFavorite: () -> Unit,
     onEdit: () -> Unit,
     onPlay: () -> Unit,
@@ -633,59 +650,56 @@ private fun WorkflowManagerCard(
     onDelete: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        modifier =
-        Modifier
-            .fillMaxWidth()
-            .combinedClickable(
-                enabled = enabled,
-                onClick = { if (selectionMode) onSelectedChange(!selected) else onEdit() },
-                onLongClick = onLongPress,
-            ),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
+    Box(Modifier.fillMaxWidth().testTag("workflow-card-${workflow.summary.workflowId}")) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+            modifier =
+            Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    enabled = enabled,
+                    onClick = { if (selectionMode) onSelectedChange(!selected) else onEdit() },
+                    onLongClick = { if (!selectionMode) menuOpen = true },
+                ),
         ) {
-            if (selectionMode) {
-                Checkbox(checked = selected, onCheckedChange = onSelectedChange, enabled = enabled)
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(workflow.summary.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    "Revision ${workflow.summary.latestRevision} · ${workflow.orientation?.displayName() ?: "Unknown"} · ${workflow.activity.runCount} runs",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            IconButton(onClick = onFavorite, enabled = enabled) {
-                Icon(
-                    if (workflow.summary.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                    contentDescription = if (workflow.summary.isFavorite) "Remove from favorites" else "Add to favorites",
-                    tint = if (workflow.summary.isFavorite) Color(0xFFE53935) else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            IconButton(onClick = onPlay, enabled = enabled) {
-                Icon(Icons.Filled.PlayArrow, contentDescription = "Play ${workflow.summary.name}")
-            }
-            Column {
-                IconButton(onClick = { menuOpen = true }, enabled = enabled) {
-                    Icon(Icons.Filled.MoreVert, contentDescription = "More workflow actions")
-                }
-                if (menuOpen) {
-                    VeyarcChoicePicker(
-                        title = workflow.summary.name,
-                        options = listOf(VeyarcChoice("history", "Revision history"), VeyarcChoice("delete", "Delete", destructive = true)),
-                        onDismiss = { menuOpen = false },
-                        onSelect = { choice ->
-                            menuOpen = false
-                            if (choice.id == "history") onRevisions() else onDelete()
-                        },
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ManagerSelectionCheckbox(selectionMode, selected, enabled, onSelectedChange)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(workflow.summary.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        "Revision ${workflow.summary.latestRevision} · ${workflow.orientation?.displayName() ?: "Unknown"} · ${workflow.activity.runCount} runs",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
+                IconButton(onClick = onFavorite, enabled = enabled) {
+                    Icon(
+                        if (workflow.summary.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                        contentDescription = if (workflow.summary.isFavorite) "Remove from favorites" else "Add to favorites",
+                        tint = if (workflow.summary.isFavorite) Color(0xFFE53935) else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        Box(Modifier.align(Alignment.TopEnd)) {
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }, shape = RoundedCornerShape(16.dp), containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 0.dp) {
+                DropdownMenuItem(text = { Text("Run") }, leadingIcon = { Icon(Icons.Filled.PlayArrow, null) }, enabled = enabled, onClick = {
+                    menuOpen = false
+                    onPlay()
+                })
+                DropdownMenuItem(text = { Text("Revision history") }, leadingIcon = { Icon(Icons.Filled.History, null) }, enabled = enabled, onClick = {
+                    menuOpen = false
+                    onRevisions()
+                })
+                DropdownMenuItem(text = { Text("Delete") }, leadingIcon = { Icon(Icons.Filled.Delete, null) }, colors = MenuDefaults.itemColors(textColor = MaterialTheme.colorScheme.error, leadingIconColor = MaterialTheme.colorScheme.error), enabled = enabled, onClick = {
+                    menuOpen = false
+                    onDelete()
+                })
             }
         }
     }

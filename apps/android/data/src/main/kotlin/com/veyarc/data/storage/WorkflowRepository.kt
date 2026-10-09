@@ -13,6 +13,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.Closeable
 import java.io.File
+import java.io.InputStream
 import java.util.Collections
 
 data class WorkflowSummary(
@@ -50,6 +51,8 @@ data class WorkflowAssetDescriptor(
     val mimeType: String,
     val widthPx: Int?,
     val heightPx: Int?,
+    val addedAtMs: Long? = null,
+    val byteCount: Long? = null,
 )
 
 enum class WorkflowAssetRole {
@@ -130,6 +133,8 @@ data class StoredRunEvent(
     val message: String,
 )
 
+const val STORED_RUN_EVENT_LIMIT = 500
+
 data class RunDashboardSummary(
     val statusCounts: Map<StoredRunStatus, Long>,
     val averageFinishedRunDurationMs: Long?,
@@ -156,6 +161,7 @@ class WorkflowRepository internal constructor(
         AndroidKeystoreKeySource(TEMPLATE_ASSET_KEY_ALIAS),
     ),
     private val assetStore: WorkflowAssetBlobStore? = null,
+    private val chatFiles: EncryptedFileStore? = null,
 ) {
     private val previewCache = object : LinkedHashMap<String, BundleAsset>(PREVIEW_CACHE_SIZE + 1, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, BundleAsset>?): Boolean = size > PREVIEW_CACHE_SIZE
@@ -178,6 +184,7 @@ class WorkflowRepository internal constructor(
         ),
         nowMs = nowMs,
         assetStore = WorkflowAssetBlobStore.create(context, database, nowMs),
+        chatFiles = ChatRepository.createFiles(context),
     )
 
     fun saveRevision(
@@ -817,8 +824,8 @@ class WorkflowRepository internal constructor(
         require(totalSteps == null || totalSteps >= completedSteps) {
             "Total step count must not be less than completed steps"
         }
-        require(eventHistory.size <= MAX_STORED_RUN_EVENTS) {
-            "Run event history cannot exceed $MAX_STORED_RUN_EVENTS entries"
+        require(eventHistory.size <= STORED_RUN_EVENT_LIMIT) {
+            "Run event history cannot exceed $STORED_RUN_EVENT_LIMIT entries"
         }
         val updated = database.workflowDao().finishRun(
             runId = runId,
@@ -860,16 +867,42 @@ class WorkflowRepository internal constructor(
         return database.workflowDao().listAllRunRecords(limit).map(::toStoredRunRecord)
     }
 
-    fun listRunSummaries(limit: Int = 100): List<StoredRunRecord> {
+    fun listRunSummaries(limit: Int = 100, offset: Int = 0): List<StoredRunRecord> {
         require(limit in 1..MAX_HISTORY_LIMIT) {
             "Run history limit must be between 1 and $MAX_HISTORY_LIMIT"
         }
-        return database.workflowDao().listAllRunRecords(limit).map(::toStoredRunSummary)
+        require(offset >= 0) { "Run history offset must be nonnegative" }
+        return database.workflowDao().listRunSummaries(limit, offset).map(::toStoredRunSummary)
     }
 
     fun loadRunDetails(runId: String): StoredRunRecord = database.workflowDao().findRunRecord(runId)
         ?.let(::toStoredRunRecord)
         ?: throw WorkflowStorageException("Run record does not exist")
+
+    fun exportRun(runId: String): ByteArray = synchronized(this) {
+        val record = loadRunDetails(runId)
+        require(record.status != StoredRunStatus.RUNNING) { "Finish the run before exporting it." }
+        val workflow = database.workflowDao().findWorkflow(record.workflowId)
+        RunArchive.export(record, workflow?.name ?: record.name ?: "Workflow run")
+    }
+
+    /** Imports history only; workflow transfers remain separate and existing runs aren't overwritten. */
+    fun importRun(input: InputStream): Boolean = synchronized(this) {
+        val archive = RunArchive.import(input)
+        val record = archive.record
+        val dao = database.workflowDao()
+        if (dao.findRunRecord(record.runId) != null) return@synchronized false
+        dao.insertRunRecord(
+            RunRecordEntity(
+                runId = record.runId, workflowId = record.workflowId, revision = record.revision, status = record.status.name,
+                startedAtMs = record.startedAtMs, finishedAtMs = record.finishedAtMs, interruptionReason = record.interruptionReason,
+                completedSteps = record.completedSteps, totalSteps = record.totalSteps,
+                eventHistoryJson = if (record.hasStoredDetails) encodeRunEvents(record.eventHistory) else null,
+                name = record.name ?: archive.workflowName.takeIf { dao.findWorkflow(record.workflowId) == null },
+            ),
+        )
+        true
+    }
 
     fun loadRunDashboard(recentLimit: Int = 20): RunDashboardSummary = synchronized(this) {
         require(recentLimit in 1..MAX_HISTORY_LIMIT) {
@@ -880,7 +913,7 @@ class WorkflowRepository internal constructor(
             RunDashboardSummary(
                 statusCounts = dao.countRunsByStatus().associate { runStatus(it.status) to it.count },
                 averageFinishedRunDurationMs = dao.averageFinishedRunDurationMs()?.toLong(),
-                recentRuns = dao.listAllRunRecords(recentLimit).map(::toStoredRunSummary),
+                recentRuns = dao.listRunSummaries(recentLimit).map(::toStoredRunSummary),
             )
         }
     }
@@ -910,15 +943,18 @@ class WorkflowRepository internal constructor(
         ) { "Cannot delete a workflow while a run is active" }
 
         val revisions = dao.listRevisions(workflowId)
+        val chats = database.chatDao().list().filter { it.scopeId == workflowId }
         try {
             database.runInTransaction {
                 dao.deleteRunsForWorkflow(workflowId)
+                database.chatDao().deleteForWorkflow(workflowId)
                 dao.deleteRevisionsForWorkflow(workflowId)
                 check(dao.deleteWorkflow(workflowId) == 1) {
                     "Workflow disappeared while it was being deleted"
                 }
             }
             revisions.forEach { revision -> files.delete(revision.encryptedFileName) }
+            chats.forEach { chat -> runCatching { chatFiles?.delete(chat.encryptedFileName) } }
             previewCache.keys.removeAll { it.startsWith("$workflowId:") }
             runCatching { assetStore?.collectGarbage() }
         } catch (error: Exception) {
@@ -947,7 +983,7 @@ class WorkflowRepository internal constructor(
         name = record.name,
     )
 
-    private fun toStoredRunSummary(record: RunRecordEntity): StoredRunRecord = StoredRunRecord(
+    private fun toStoredRunSummary(record: RunSummaryRow): StoredRunRecord = StoredRunRecord(
         runId = record.runId,
         workflowId = record.workflowId,
         revision = record.revision,
@@ -958,7 +994,7 @@ class WorkflowRepository internal constructor(
         completedSteps = record.completedSteps,
         totalSteps = record.totalSteps,
         eventHistory = emptyList(),
-        hasStoredDetails = record.eventHistoryJson != null,
+        hasStoredDetails = record.hasStoredDetails,
         folderId = record.folderId,
         name = record.name,
     )
@@ -1014,11 +1050,12 @@ class WorkflowRepository internal constructor(
     private fun loadEditorData(workflowId: String, revision: Int): WorkflowRevisionEditorData {
         val metadata = ensureManifestRevision(requireRevision(workflowId, revision))
         val manifest = readStoredManifest(metadata)
-        val mappings = database.workflowAssetDao().listRevisionAssets(workflowId, revision)
+        val details = database.workflowAssetDao().listRevisionAssetDetails(workflowId, revision)
+        val mappings = details.map { it.asset }
         validateManifestMappings(manifest, mappings)
         val result = WorkflowRevisionEditorData(
             WorkflowRevisionDocument(manifest.document, manifest.producerVersion),
-            mappings.map { it.toDescriptor() },
+            details.map { it.asset.toDescriptor().copy(addedAtMs = it.addedAtMs, byteCount = it.byteCount) },
         )
         verifyRevisionIdentity(workflowId, revision, result.revision.document)
         updateLatestOrientation(workflowId, revision, result.revision.document)
@@ -1315,10 +1352,9 @@ class WorkflowRepository internal constructor(
         const val DEFAULT_INTERRUPTION_REASON = "Run was interrupted when the process ended"
         const val MAX_REASON_LENGTH = 256
         const val MAX_HISTORY_LIMIT = 1_000
-        const val MAX_STORED_RUN_EVENTS = 50
         const val MAX_FOLDER_NAME_LENGTH = 80
         const val PREVIEW_CACHE_SIZE = 16
-        const val MATCHER_OVERHEAD_BYTES_PER_TEMPLATE = 16L * 16L * 4L * Int.SIZE_BYTES
+        const val MATCHER_OVERHEAD_BYTES_PER_TEMPLATE = (16L * 16L + 16L) * 4L * Int.SIZE_BYTES
         const val DEFAULT_MAINTENANCE_LIMIT = 256
         val MIGRATION_LOCK = Any()
 

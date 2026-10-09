@@ -12,7 +12,8 @@
 - ADB executable on Windows: `$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe`; use `connect <host:port>` and `install -r <apk>`.
 - Close emulators when they are no longer needed.
 - Before editing or committing, check `git branch --show-current` and `git status --short`. Keep commits scoped; do not include `My Examples/`, `.codex/`, `graphify-out/`, generated `bin/` directories, or handoff files unless explicitly requested.
-- Do not create a Git commit unless the user explicitly requests one.
+- Commit on the current task branch when a significant, cohesive implementation checkpoint is complete and its required checks pass; no additional user permission is needed. Group related changes rather than committing every small edit. Use Conventional Commits with a concise imperative subject, for example `feat(assistant): add reviewed workflow editing`, `fix(assistant): cancel interrupted requests`, or `docs(repo): clarify checkpoint rules`. Keep unrelated work out of the commit. This authorizes local commits only; pushing, merging, and publishing still require user direction.
+- Do not commit documentation unless the user explicitly requests or names it for inclusion in commits.
 - After code changes, run the smallest relevant tests, `git diff --check`, and `graphify update .`.
 
 ## Device and accessibility safety

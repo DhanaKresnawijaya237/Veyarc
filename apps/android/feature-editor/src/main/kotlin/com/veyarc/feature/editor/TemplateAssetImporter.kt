@@ -18,6 +18,8 @@ import com.veyarc.model.AssetKind
 import com.veyarc.model.NormalizedRect
 import com.veyarc.model.WorkflowIds
 import com.veyarc.model.bundle.BundleAsset
+import com.veyarc.ui.AnnotationStroke
+import com.veyarc.ui.annotateCroppedImage
 import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
@@ -73,6 +75,7 @@ internal fun importTemplateAsset(
     uri: Uri,
     crop: NormalizedRect,
     rotationQuarterTurns: Int = 0,
+    strokes: List<AnnotationStroke> = emptyList(),
 ): BundleAsset {
     val (sourceWidth, sourceHeight) = readImageBounds(contentResolver, uri)
     val turns = rotationQuarterTurns.mod(4)
@@ -92,7 +95,13 @@ internal fun importTemplateAsset(
         throw error
     }
     if (rotated !== bitmap) bitmap.recycle()
-    return encryptTemplateBitmap(rotated)
+    if (strokes.isEmpty()) return encryptTemplateBitmap(rotated)
+    val annotated = try {
+        annotateCroppedImage(rotated, crop, strokes)
+    } finally {
+        rotated.recycle()
+    }
+    return encryptTemplateBitmap(annotated)
 }
 
 /** Rotates an existing encrypted crop while preserving its asset id and references. */
@@ -265,13 +274,12 @@ internal class ByteLimitInputStream(
     }
 }
 
-private fun encryptTemplateBitmap(bitmap: Bitmap): BundleAsset = try {
+private fun encryptTemplateBitmap(bitmap: Bitmap, assetId: AssetId = AssetId("template-${WorkflowIds.newUuid()}")): BundleAsset = try {
     val pixelCount = bitmap.width.toLong() * bitmap.height
     if (pixelCount > DecodedTemplate.MAX_TEMPLATE_PIXELS) {
         throw TemplateAssetImportException("The selected image is too large to use as a template")
     }
     val rgba = bitmap.toRgbaBytes()
-    val assetId = AssetId("template-${WorkflowIds.newUuid()}")
     val decoded = DecodedTemplate(bitmap.width, bitmap.height, rgba)
     val encrypted = try {
         EncryptedTemplateAssetCodec(
@@ -295,6 +303,30 @@ private fun encryptTemplateBitmap(bitmap: Bitmap): BundleAsset = try {
     )
 } finally {
     bitmap.recycle()
+}
+
+/** App bridge only: imports a reviewed crop from an immutable, locally submitted PNG. */
+fun importAssistantTemplate(bytes: ByteArray, assetId: AssetId, crop: NormalizedRect, background: Boolean): BundleAsset {
+    require(bytes.size in 1..32 * 1024 * 1024)
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    require(bounds.outWidth > 0 && bounds.outHeight > 0 && bounds.outWidth.toLong() * bounds.outHeight <= 4_194_304)
+    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: error("Image could not be read")
+    val region = crop.toPixelBounds(bitmap.width, bitmap.height)
+    val cropped = try {
+        Bitmap.createBitmap(bitmap, region.left, region.top, region.width(), region.height())
+    } catch (error: Exception) {
+        bitmap.recycle()
+        throw error
+    }
+    if (cropped !== bitmap) bitmap.recycle()
+    if (background && cropped.width.toLong() * cropped.height > DecodedTemplate.MAX_TEMPLATE_PIXELS) {
+        val scale = kotlin.math.sqrt(DecodedTemplate.MAX_TEMPLATE_PIXELS.toDouble() / (cropped.width.toDouble() * cropped.height))
+        val scaled = Bitmap.createScaledBitmap(cropped, (cropped.width * scale).toInt().coerceAtLeast(1), (cropped.height * scale).toInt().coerceAtLeast(1), true)
+        if (scaled !== cropped) cropped.recycle()
+        return encryptTemplateBitmap(scaled, assetId)
+    }
+    return encryptTemplateBitmap(cropped, assetId)
 }
 
 private fun NormalizedRect.toPixelBounds(widthPx: Int, heightPx: Int): Rect {

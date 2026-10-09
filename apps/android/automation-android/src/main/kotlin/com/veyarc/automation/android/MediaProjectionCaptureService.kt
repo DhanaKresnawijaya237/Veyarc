@@ -240,10 +240,10 @@ object MediaProjectionCaptureRuntime {
     val lastError: String?
         get() = synchronized(lock) { lastTerminationReason }
 
-    fun captureLatestFrame(): EphemeralScreenFrame? {
+    fun captureLatestFrame(area: ScreenCaptureArea = ScreenCaptureArea.FullScreen): EphemeralScreenFrame? {
         val capture = synchronized(lock) { activeCapture }
             ?: throw MediaProjectionCaptureException("MediaProjection capture is not active")
-        return capture.captureLatestFrame()
+        return capture.captureLatestFrame(area)
     }
 
     /** Waits for the service to attach its session without allowing a run to race service startup. */

@@ -137,7 +137,7 @@ internal class BundleImageTemplateSource private constructor(
             }
         }
 
-        private const val MATCHER_OVERHEAD_BYTES = 16L * 16L * 4L * Int.SIZE_BYTES
+        private const val MATCHER_OVERHEAD_BYTES = (16L * 16L + 16L) * 4L * Int.SIZE_BYTES
     }
 }
 

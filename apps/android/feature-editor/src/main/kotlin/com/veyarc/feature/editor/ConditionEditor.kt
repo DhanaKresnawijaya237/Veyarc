@@ -65,6 +65,7 @@ import com.veyarc.model.PackageName
 import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.StepResultCondition
 import com.veyarc.model.VariableComparisonCondition
+import com.veyarc.model.backgroundAssetId
 import com.veyarc.model.bundle.BundleAsset
 import kotlin.math.roundToInt
 
@@ -390,7 +391,7 @@ private fun ImageConditionFields(
     }
     val isScreenState = condition is ImagePresentCondition && condition.matchMode == ImageMatchMode.SCREEN_STATE
     var pickerMode by rememberSaveable { mutableStateOf<ImagePickerMode?>(null) }
-    var backgroundAssetId by rememberSaveable { mutableStateOf<String?>(null) }
+    val backgroundAssetId = condition.backgroundAssetId()?.value
     val backgroundAsset by produceState<BundleAsset?>(null, backgroundAssetId) {
         value = backgroundAssetId?.let(::AssetId)?.let { loadAsset(it) }
     }
@@ -471,7 +472,13 @@ private fun ImageConditionFields(
             onDismiss = { pickerMode = null },
             onSelect = { selected ->
                 when (mode) {
-                    ImagePickerMode.BACKGROUND -> backgroundAssetId = selected?.value
+                    ImagePickerMode.BACKGROUND -> onChange(
+                        when (condition) {
+                            is ImagePresentCondition -> condition.copy(backgroundAssetId = selected)
+                            is ImageAbsentCondition -> condition.copy(backgroundAssetId = selected)
+                            else -> condition
+                        },
+                    )
 
                     ImagePickerMode.SCREEN,
                     ImagePickerMode.TARGET,

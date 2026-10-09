@@ -26,7 +26,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -34,6 +34,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -71,6 +72,7 @@ data class VeyarcChoice(
     val label: String,
     val detail: String? = null,
     val destructive: Boolean = false,
+    val group: Int = 0,
 )
 
 /** A bounded, searchable picker that stays usable in portrait, landscape, and long lists. */
@@ -158,7 +160,8 @@ fun VeyarcChoicePicker(
                         .heightIn(max = maxHeight)
                         .animateContentSize(tween(160)),
                     shape = RoundedCornerShape(24.dp),
-                    tonalElevation = 8.dp,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    tonalElevation = 0.dp,
                     shadowElevation = 12.dp,
                 ) {
                     Column(
@@ -234,30 +237,35 @@ fun VeyarcChoicePicker(
                             state = listState,
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
-                            items(filtered, key = VeyarcChoice::id) { option ->
-                                val selected = option.id == selectedId
-                                Surface(
-                                    onClick = { onSelect(option) },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(14.dp),
-                                    color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 14.dp, vertical = 8.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
+                            itemsIndexed(filtered, key = { _, option -> option.id }) { index, option ->
+                                Column {
+                                    if (index > 0 && option.group != filtered[index - 1].group) {
+                                        HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                                    }
+                                    val selected = option.id == selectedId
+                                    Surface(
+                                        onClick = { onSelect(option) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
                                     ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                option.label,
-                                                color = if (option.destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                                                maxLines = 2,
-                                                overflow = TextOverflow.Ellipsis,
-                                            )
-                                            option.detail?.let { detail ->
-                                                Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 14.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    option.label,
+                                                    color = if (option.destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                )
+                                                option.detail?.let { detail ->
+                                                    Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                }
                                             }
+                                            if (selected) Icon(Icons.Outlined.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
                                         }
-                                        if (selected) Icon(Icons.Outlined.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
                                     }
                                 }
                             }

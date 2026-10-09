@@ -11,8 +11,30 @@ import org.junit.Test
 
 class StepDragCoordinatorTest {
     @Test
+    fun lazyDropKeepsTheIndicesOfOffscreenBlocksAndDropsStaleBounds() {
+        val initial = WorkflowDraft.newDefault()
+        val draft = initial.copy(steps = List(100) { TapPoint(WorkflowIds.newUuid(), NormalizedCoordinate(0.2, 0.3)) })
+        val root = StepListPath()
+        val coordinator = StepDragCoordinator()
+        coordinator.updatePipeline(root, Rect(0f, 0f, 400f, 800f), draft)
+        coordinator.updateStep(root, draft.steps[0].id, StepBounds(-1000f, 80), draft)
+        coordinator.updateStep(root, draft.steps[50].id, StepBounds(200f, 80), draft)
+        coordinator.updateStep(root, draft.steps[51].id, StepBounds(300f, 80), draft)
+        coordinator.updateStep(root, draft.steps[52].id, StepBounds(400f, 80), draft)
+        coordinator.start(root, draft.steps[0].id, Offset(100f, 260f), draft)
+        assertEquals(50, coordinator.target?.index)
+        coordinator.drag(Offset(0f, 300f), draft)
+        assertEquals(52, coordinator.target?.index)
+        coordinator.removeStep(root, draft.steps[50].id)
+        coordinator.removeStep(root, draft.steps[51].id)
+        coordinator.drag(Offset(0f, -400f), draft)
+        assertEquals(51, coordinator.target?.index)
+    }
+
+    @Test
     fun pointerDeltaUpdatesTheDropPosition() {
-        val draft = WorkflowDraft.newDefault().addStep(StepListPath(), WorkflowStepKind.WAIT, "com.veyarc.app")
+        val initial = WorkflowDraft.newDefault()
+        val draft = initial.copy(steps = initial.steps.take(1)).addStep(StepListPath(), WorkflowStepKind.WAIT, "com.veyarc.app")
         val root = StepListPath()
         val first = draft.steps.first()
         val second = draft.steps.last()

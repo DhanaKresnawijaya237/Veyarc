@@ -104,8 +104,8 @@ android {
         applicationId = "com.veyarc.app"
         minSdk = libs.versions.min.sdk.get().toInt()
         targetSdk = libs.versions.compile.sdk.get().toInt()
-        versionCode = 2
-        versionName = "1.0.0"
+        versionCode = 3
+        versionName = "1.1.0"
     }
 
     signingConfigs {
@@ -178,6 +178,8 @@ dependencies {
     implementation(project(":automation-android"))
     implementation(project(":data"))
     implementation(project(":core-model"))
+    implementation(project(":core-ui"))
+    implementation(project(":core-engine"))
     implementation(project(":feature-editor"))
     implementation(project(":feature-recorder"))
     implementation(project(":feature-runner"))

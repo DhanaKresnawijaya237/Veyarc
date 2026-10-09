@@ -18,12 +18,17 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -68,6 +73,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntSize
@@ -84,7 +90,9 @@ import com.veyarc.model.TapPoint
 import com.veyarc.model.TapRegion
 import com.veyarc.model.ViewportSpec
 import com.veyarc.model.WorkflowStep
+import com.veyarc.model.backgroundAssetId
 import com.veyarc.model.bundle.BundleAsset
+import com.veyarc.model.withBackgroundAsset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -103,7 +111,8 @@ internal fun GeometryEditorDialog(
     onApply: (WorkflowStep) -> Unit,
 ) {
     var pickerOpen by rememberSaveable { mutableStateOf(false) }
-    var selectedAssetId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedAssetId by rememberSaveable(step.id) { mutableStateOf(step.backgroundAssetId()?.value) }
+    fun apply(value: WorkflowStep) = onApply(value.withBackgroundAsset(selectedAssetId?.let(::AssetId)))
     var referenceImage by remember { mutableStateOf<ImageBitmap?>(null) }
     val configuration = LocalConfiguration.current
     val compactLandscape = configuration.screenWidthDp < configuration.screenHeightDp &&
@@ -135,7 +144,7 @@ internal fun GeometryEditorDialog(
                     compact = compactLandscape,
                     background = referenceImage,
                     onToggleReference = { pickerOpen = !pickerOpen },
-                    onApply = { point -> onApply(step.copy(point = point)) },
+                    onApply = { point -> apply(step.copy(point = point)) },
                 )
 
                 is LongPress -> LongPressGeometryEditor(
@@ -144,7 +153,7 @@ internal fun GeometryEditorDialog(
                     compact = compactLandscape,
                     background = referenceImage,
                     onToggleReference = { pickerOpen = !pickerOpen },
-                    onApply = onApply,
+                    onApply = ::apply,
                 )
 
                 is TapRegion -> RegionGeometryEditor(
@@ -153,7 +162,7 @@ internal fun GeometryEditorDialog(
                     compact = compactLandscape,
                     background = referenceImage,
                     onToggleReference = { pickerOpen = !pickerOpen },
-                    onApply = onApply,
+                    onApply = ::apply,
                 )
 
                 is SwipePath -> PathGeometryEditor(
@@ -163,7 +172,7 @@ internal fun GeometryEditorDialog(
                     compact = compactLandscape,
                     background = referenceImage,
                     onToggleReference = { pickerOpen = !pickerOpen },
-                    onApply = onApply,
+                    onApply = ::apply,
                 )
 
                 else -> onDismiss()
@@ -220,13 +229,15 @@ internal fun TemplatePickerSheet(
     val sheetGesturesEnabled = rememberEditorSheetGesturesEnabled(gridState)
     val configuration = LocalConfiguration.current
     ModalBottomSheet(
+        modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         sheetGesturesEnabled = sheetGesturesEnabled,
         dragHandle = { CompactEditorSheetDragHandle() },
         shape = RoundedCornerShape(24.dp),
-        containerColor = MaterialTheme.colorScheme.surface,
-        tonalElevation = 6.dp,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        tonalElevation = 0.dp,
+        contentWindowInsets = { WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom) },
     ) {
         Column(
             Modifier
@@ -264,6 +275,7 @@ internal fun TemplatePickerSheet(
                 )
             } else {
                 LazyVerticalGrid(
+                    modifier = Modifier.weight(1f).testTag("template-picker-list"),
                     state = gridState,
                     overscrollEffect = null,
                     columns = GridCells.Fixed(2),
@@ -317,6 +329,9 @@ private fun TemplatePickerItem(
         fullScreenOnly = fullScreenOnly,
     )
     Surface(
+        onClick = onSelect,
+        enabled = correctSize == true,
+        modifier = Modifier.testTag("template-picker-${asset.assetId.value}"),
         color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant,
         shape = MaterialTheme.shapes.medium,
     ) {
@@ -324,7 +339,6 @@ private fun TemplatePickerItem(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(enabled = correctSize == true, onClick = onSelect)
                     .aspectRatio(
                         if (fullScreenOnly) {
                             displayWidthPx.toFloat() / displayHeightPx

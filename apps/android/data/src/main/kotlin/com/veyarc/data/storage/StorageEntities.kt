@@ -184,6 +184,22 @@ internal data class RunStatusCountRow(
     val count: Long,
 )
 
+/** Browsing history must not load the potentially large event log. */
+internal data class RunSummaryRow(
+    val runId: String,
+    val workflowId: String,
+    val revision: Int,
+    val status: String,
+    val startedAtMs: Long,
+    val finishedAtMs: Long?,
+    val interruptionReason: String?,
+    val completedSteps: Int,
+    val totalSteps: Long?,
+    val hasStoredDetails: Boolean,
+    val folderId: String?,
+    val name: String?,
+)
+
 internal data class WorkflowRunActivityRow(
     val workflowId: String,
     val runCount: Long,

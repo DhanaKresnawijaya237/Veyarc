@@ -1,25 +1,50 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
-
 package com.veyarc.feature.editor
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.veyarc.data.storage.StoredRunRecord
 import com.veyarc.data.storage.StoredRunStatus
+import kotlinx.coroutines.launch
+import java.text.DateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun StoredRunDetailScreen(
@@ -27,102 +52,113 @@ fun StoredRunDetailScreen(
     onBack: () -> Unit,
     onOpenWorkflowRevision: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
+    workflowName: String = "Workflow run",
+    statusLabel: String? = null,
+    controls: (@Composable () -> Unit)? = null,
 ) {
     BackHandler(onBack = onBack)
-    LazyColumn(
-        modifier = modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item { Text("Recorded workflow", style = MaterialTheme.typography.headlineSmall) }
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(runTitle(record.status), style = MaterialTheme.typography.headlineSmall)
-                Text(
-                    runMessage(record),
-                    color = if (record.status == StoredRunStatus.FAILED) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.primary
-                    },
-                )
-                Text(
-                    completedStepsText(record),
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                record.finishedAtMs?.let { finishedAtMs ->
-                    Text(
-                        "Duration: ${formatDuration(finishedAtMs - record.startedAtMs)}",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    // ponytail: Reveals saved events only; older discarded events need a separate retention change.
+    var visibleEvents by remember(record.runId) { mutableIntStateOf(12) }
+    val firstEvent = (record.eventHistory.size - visibleEvents).coerceAtLeast(0)
+    val timestamp = remember(record.startedAtMs) { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(record.startedAtMs)) }
+    val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val statusColor = when (record.status) {
+        StoredRunStatus.COMPLETED -> if (dark) Color(0xFF83BF9A) else Color(0xFF2E7D32)
+        StoredRunStatus.FAILED -> MaterialTheme.colorScheme.error
+        StoredRunStatus.INTERRUPTED -> if (dark) Color(0xFFD5AD75) else Color(0xFF8A5C17)
+        else -> MaterialTheme.colorScheme.primary
+    }
+    LazyColumn(modifier.fillMaxSize().testTag("run-details"), state = listState, contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        item(key = "title") {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f).padding(end = 4.dp)) {
+                    Text(record.name ?: workflowName, style = MaterialTheme.typography.titleLarge)
+                    if (record.name != null && record.name != workflowName) Text(workflowName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Text(
-                    "Revision ${record.revision} · run ${record.runId}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    OutlinedButton(onClick = onBack) { Text("Back to runs") }
-                    onOpenWorkflowRevision?.let { openRevision ->
-                        OutlinedButton(onClick = openRevision) { Text("Open revision ${record.revision}") }
-                    }
-                }
-                HorizontalDivider()
-                Text("Run events", style = MaterialTheme.typography.titleMedium)
+                IconButton(onClick = onBack) { Icon(Icons.Outlined.Close, "Close run details") }
             }
         }
-
-        if (record.eventHistory.isNotEmpty()) {
-            items(record.eventHistory) { event ->
-                Text(
-                    "${event.atMs} ms · ${event.message}",
-                    style = MaterialTheme.typography.bodySmall,
-                )
+        item(key = "summary") {
+            Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Surface(shape = RoundedCornerShape(12.dp), color = statusColor.copy(alpha = 0.12f)) {
+                        Text(statusLabel ?: runTitle(record.status), Modifier.padding(horizontal = 12.dp, vertical = 7.dp), color = statusColor, style = MaterialTheme.typography.titleSmall)
+                    }
+                    Text(timestamp, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        RunFact(record.completedSteps.toString(), "Steps finished", Modifier.weight(1f))
+                        RunFact(record.finishedAtMs?.let { formatDuration(it - record.startedAtMs) } ?: "In progress", "Duration", Modifier.weight(1f))
+                        RunFact(record.revision.toString(), "Revision", Modifier.weight(1f))
+                    }
+                    record.interruptionReason?.takeIf { it.isNotBlank() }?.let {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                        Text(readableRunMessage(it), style = MaterialTheme.typography.bodyMedium, color = if (record.status == StoredRunStatus.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+                    }
+                    onOpenWorkflowRevision?.let { open ->
+                        TextButton(onClick = open, modifier = Modifier.fillMaxWidth()) { Text("Open revision ${record.revision}") }
+                    }
+                    controls?.invoke()
+                }
             }
-        } else {
+        }
+        item(key = "activity") {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Activity", style = MaterialTheme.typography.titleMedium)
+                if (record.eventHistory.size > 1) Text(if (firstEvent > 0) "$visibleEvents of ${record.eventHistory.size} events" else "Time between events", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (firstEvent > 0) {
+            item(key = "earlier") {
+                TextButton(onClick = {
+                    visibleEvents = minOf(record.eventHistory.size, visibleEvents + 20)
+                    scope.launch { listState.animateScrollToItem(3) }
+                }, modifier = Modifier.fillMaxWidth().testTag("run-earlier-activity")) {
+                    Text("Show earlier activity · $firstEvent")
+                }
+            }
+        }
+        itemsIndexed(record.eventHistory.drop(firstEvent), key = { offset, _ -> "event-${firstEvent + offset}" }) { offset, event ->
+            val index = firstEvent + offset
+            Row(Modifier.animateItem(fadeInSpec = tween(160), placementSpec = tween(180)).fillMaxWidth().padding(horizontal = 4.dp).testTag("run-event-$index"), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(Modifier.padding(top = 8.dp).size(6.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.65f), CircleShape))
+                Text(readableRunMessage(event.message), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                if (index > 0) Text("+${formatEventGap(event.atMs - record.eventHistory[index - 1].atMs)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (record.eventHistory.isEmpty()) {
             item {
-                Text(
-                    if (record.hasStoredDetails) {
-                        "No events were recorded for this run."
-                    } else {
-                        "Detailed events were not saved for this older run. Its summary remains available above."
-                    },
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Text(if (record.hasStoredDetails) "No activity recorded." else "Activity wasn't saved for this older run.", Modifier.padding(horizontal = 4.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
 }
 
+@Composable
+private fun RunFact(value: String, label: String, modifier: Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
 private fun runTitle(status: StoredRunStatus): String = when (status) {
-    StoredRunStatus.RUNNING -> "Run in progress"
-    StoredRunStatus.COMPLETED -> "Run completed"
-    StoredRunStatus.FAILED -> "Run failed"
-    StoredRunStatus.CANCELLED -> "Run cancelled"
-    StoredRunStatus.STOPPED -> "Run stopped"
-    StoredRunStatus.INTERRUPTED -> "Run interrupted"
+    StoredRunStatus.RUNNING -> "In progress"
+    StoredRunStatus.COMPLETED -> "Completed"
+    StoredRunStatus.FAILED -> "Failed"
+    StoredRunStatus.CANCELLED -> "Cancelled"
+    StoredRunStatus.STOPPED -> "Stopped"
+    StoredRunStatus.INTERRUPTED -> "Interrupted"
 }
 
-private fun runMessage(record: StoredRunRecord): String = record.interruptionReason ?: when (record.status) {
-    StoredRunStatus.RUNNING -> "This run has not reached a terminal state."
-    StoredRunStatus.COMPLETED -> "Workflow completed"
-    StoredRunStatus.FAILED -> "Workflow failed"
-    StoredRunStatus.CANCELLED -> "Stopped by user"
-    StoredRunStatus.STOPPED -> "Workflow stopped"
-    StoredRunStatus.INTERRUPTED -> "The run ended unexpectedly"
-}
+// Historical messages remain intact in storage; technical identifiers aren't useful in this view.
+internal fun readableRunMessage(message: String): String = message.replace(runIdentifier, "").replace(Regex(" {2,}"), " ").trim()
+private val runIdentifier = Regex("(?i)\\b(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{64})\\b")
 
-private fun completedStepsText(record: StoredRunRecord): String = record.totalSteps?.let { total ->
-    "Completed steps: ${record.completedSteps} / $total"
-} ?: "Completed steps: ${record.completedSteps}"
+internal fun formatEventGap(durationMs: Long): String = String.format(Locale.getDefault(), "%.1fs", durationMs.coerceAtLeast(0L) / 1000.0)
 
 private fun formatDuration(durationMs: Long): String {
-    val safeDurationMs = durationMs.coerceAtLeast(0L)
-    val totalSeconds = safeDurationMs / 1_000L
-    val minutes = totalSeconds / 60L
-    val seconds = totalSeconds % 60L
-    return "%02d:%02d".format(minutes, seconds)
+    val seconds = durationMs.coerceAtLeast(0L) / 1_000
+    return String.format(Locale.getDefault(), "%d:%02d", seconds / 60, seconds % 60)
 }

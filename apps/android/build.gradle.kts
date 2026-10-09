@@ -19,8 +19,8 @@ plugins {
 
 spotless {
     kotlin {
-        target("**/src/**/*.kt")
-        targetExclude("**/build/**")
+        target("*/src/**/*.kt")
+        targetExclude("*/build/**")
         ktlint(libs.versions.ktlint.get()).editorConfigOverride(
             mapOf("ktlint_function_naming_ignore_when_annotated_with" to "Composable"),
         )
@@ -42,6 +42,7 @@ val androidProjectPaths =
         ":app",
         ":automation-android",
         ":data",
+        ":core-ui",
         ":feature-assistant",
         ":feature-editor",
         ":feature-recorder",
@@ -85,7 +86,7 @@ subprojects {
 tasks.register("verifyLocal") {
     group = "verification"
     description = "Runs formatting, Android lint, and local JVM tests."
-    dependsOn("spotlessCheck")
+    dependsOn("spotlessCheck", ":feature-assistant:verifyAssistantIsolation")
     dependsOn(subprojects.map { "${it.path}:test" })
     dependsOn(androidProjectPaths.map { "$it:lint" })
 }

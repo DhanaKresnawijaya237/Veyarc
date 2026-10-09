@@ -33,8 +33,15 @@ class WorkflowEditorStateTest {
         val first = session.validationFor(draft)
 
         assertSame(first, session.validationFor(draft))
+        session.update(draft.toggleCollapsed(draft.steps.first().id))
+        assertSame(first, session.validationFor(session.draft!!))
         session.update(draft.copy(name = "Changed"))
         assertNotSame(first, session.validationFor(session.draft!!))
+        val changed = session.validationFor(session.draft!!)
+        assertEquals("Changed", changed.bundle!!.document.name)
+        session.update(session.draft!!.copy(latestKnownRevision = 9))
+        assertNotSame(changed, session.validationFor(session.draft!!))
+        assertEquals(10, session.validationFor(session.draft!!).document!!.revision)
     }
 
     @Test
@@ -47,6 +54,27 @@ class WorkflowEditorStateTest {
         assertEquals(10, session.draft!!.nextRevision)
         assertEquals(10, session.draft!!.buildBundle().bundle!!.document.revision)
         assertTrue(session.requiresRevisionSave)
+    }
+
+    @Test
+    fun renamedValidationKeepsNameErrorsAndStructuralChecks() {
+        val session = WorkflowEditorSession()
+        session.create(WorkflowDraft.newDefault().viewport)
+        val draft = session.draft!!
+        session.validationFor(draft)
+        listOf("", " ", "x".repeat(129)).forEach { name ->
+            assertTrue(session.validationFor(draft.copy(name = name)).issues.any { it.path == "/name" })
+            val restored = session.validationFor(draft.copy(name = "  Restored  "))
+            assertTrue(restored.issues.isEmpty())
+            assertEquals("Restored", restored.document!!.name)
+        }
+        assertTrue(session.validationFor(draft.copy(name = "Valid name", allowedPackagesText = "")).issues.any { it.path == "/allowedPackages" })
+        val metadataOnly = draft.copy(assets = emptyList(), assetDescriptors = listOf(WorkflowAssetDescriptor(com.veyarc.model.AssetId("image"), com.veyarc.model.AssetKind.IMAGE_TEMPLATE, null, "image/png", 2, 2)))
+        assertNull(session.validationFor(metadataOnly).bundle)
+        val renamed = session.validationFor(metadataOnly.copy(name = "Metadata rename"))
+        assertNull(renamed.bundle)
+        assertTrue(renamed.issues.isEmpty())
+        assertEquals("Metadata rename", renamed.document!!.name)
     }
 
     @Test
@@ -339,7 +367,7 @@ class WorkflowEditorStateTest {
             )
             .removeAsset(assetId)
 
-        assertEquals("Full screen 3 is still used", draft.buildBundle().issues.single().message)
+        assertEquals("Full screen 3 is still used · 1", draft.buildBundle().issues.single().message)
     }
 
     @Test

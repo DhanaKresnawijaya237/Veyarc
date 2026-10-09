@@ -3,31 +3,36 @@ package com.veyarc.app
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -39,20 +44,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.veyarc.data.storage.RunDashboardSummary
 import com.veyarc.data.storage.StoredRunRecord
 import com.veyarc.data.storage.StoredRunStatus
 import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowSummary
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.DateFormat
@@ -65,13 +74,16 @@ fun HomeDashboardScreen(
     refreshGeneration: Int,
     onRecord: () -> Unit,
     onPlayWorkflow: (WorkflowSummary) -> Unit,
+    pageState: HomeDashboardState = remember { HomeDashboardState() },
 ) {
-    var dashboard by remember { mutableStateOf<RunDashboardSummary?>(null) }
-    var workflows by remember { mutableStateOf<List<WorkflowSummary>>(emptyList()) }
-    var latestRecording by remember { mutableStateOf<WorkflowSummary?>(null) }
+    var dashboard by pageState.dashboard
+    var workflows by pageState.workflows
+    var latestRecording by pageState.latestRecording
     var error by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(repository, refreshGeneration) {
+    val pageActive = LocalMainPageActive.current
+    LaunchedEffect(repository, refreshGeneration, pageActive) {
+        if (!pageActive) return@LaunchedEffect
         error = null
         runCatching {
             withContext(Dispatchers.IO) {
@@ -88,12 +100,14 @@ fun HomeDashboardScreen(
             workflows = loadedWorkflows
             latestRecording = loadedRecording
         }.onFailure {
+            if (it is CancellationException) throw it
+
             error = "Dashboard data could not be loaded."
         }
     }
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().testTag("home-dashboard"),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
@@ -104,26 +118,17 @@ fun HomeDashboardScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("Home", style = MaterialTheme.typography.headlineSmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = onRecord) { Text("Record") }
-                    OutlinedButton(
-                        onClick = { latestRecording?.let(onPlayWorkflow) },
-                        enabled = latestRecording != null,
-                    ) {
-                        Icon(Icons.Filled.PlayArrow, contentDescription = null)
-                        Spacer(Modifier.width(4.dp))
-                        Text("Play")
-                    }
-                }
+                if (dashboard != null) Text("${workflows.size} ${if (workflows.size == 1) "workflow" else "workflows"}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+        item(key = "quick-start") { HomeQuickStart(latestRecording, onRecord, onPlayWorkflow) }
 
         error?.let { message ->
             item { Text(message, color = MaterialTheme.colorScheme.error) }
         }
 
         val loaded = dashboard
-        if (loaded == null) {
+        if (loaded == null && error == null) {
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth().height(160.dp),
@@ -133,11 +138,24 @@ fun HomeDashboardScreen(
                     CircularProgressIndicator()
                 }
             }
-        } else {
-            item { DashboardMetrics(loaded) }
+        } else if (loaded != null) {
+            item(key = "metrics") { DashboardMetrics(loaded) }
             val names = workflows.associate { it.workflowId to it.name }
-            item { RunOutcomeChart(loaded.recentRuns, names) }
-            item { StatusDistribution(loaded) }
+            item(key = "activity") {
+                BoxWithConstraints {
+                    if (maxWidth >= 720.dp) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            RunOutcomeChart(loaded.recentRuns, names, Modifier.weight(1.3f))
+                            StatusDistribution(loaded, Modifier.weight(1f))
+                        }
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            RunOutcomeChart(loaded.recentRuns, names)
+                            StatusDistribution(loaded)
+                        }
+                    }
+                }
+            }
 
             val favorites = workflows.filter { it.isFavorite }
             if (favorites.isNotEmpty()) {
@@ -151,24 +169,47 @@ fun HomeDashboardScreen(
 }
 
 @Composable
-private fun DashboardMetrics(dashboard: RunDashboardSummary) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            MetricCard("Total runs", dashboard.totalRuns.toString(), Modifier.weight(1f))
-            MetricCard(
-                "Completion rate",
-                "${(dashboard.completionRate * 100).roundToInt()}%",
-                Modifier.weight(1f),
-            )
+private fun HomeQuickStart(latest: WorkflowSummary?, onRecord: () -> Unit, onPlay: (WorkflowSummary) -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.colorScheme.surfaceContainerLow))).padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Text("Quick start", style = MaterialTheme.typography.titleMedium)
+        Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Surface(onClick = onRecord, modifier = Modifier.weight(1f).fillMaxHeight(), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Filled.FiberManualRecord, null, Modifier.size(28.dp), tint = MaterialTheme.colorScheme.error)
+                    Text("Record", style = MaterialTheme.typography.titleLarge)
+                    Text("Capture a workflow", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Surface(onClick = { latest?.let(onPlay) }, enabled = latest != null, modifier = Modifier.weight(1f).fillMaxHeight(), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Filled.PlayArrow, null, Modifier.size(28.dp), tint = if (latest == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary)
+                    Text("Play", style = MaterialTheme.typography.titleLarge, color = if (latest == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
+                    Text(latest?.name ?: "No workflow yet", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            val failed = dashboard.statusCounts.getOrDefault(StoredRunStatus.FAILED, 0L)
-            MetricCard("Failed", failed.toString(), Modifier.weight(1f))
-            MetricCard(
-                "Average duration",
-                formatDuration(dashboard.averageFinishedRunDurationMs),
-                Modifier.weight(1f),
-            )
+    }
+}
+
+@Composable
+private fun DashboardMetrics(dashboard: RunDashboardSummary) {
+    val metrics = listOf(
+        "Total runs" to dashboard.totalRuns.toString(),
+        "Completion rate" to "${(dashboard.completionRate * 100).roundToInt()}%",
+        "Failed" to dashboard.statusCounts.getOrDefault(StoredRunStatus.FAILED, 0L).toString(),
+        "Average duration" to formatDuration(dashboard.averageFinishedRunDurationMs),
+    )
+    BoxWithConstraints {
+        val columns = if (maxWidth >= 600.dp) 4 else 2
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            metrics.chunked(columns).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    row.forEach { (label, value) -> MetricCard(label, value, Modifier.weight(1f)) }
+                }
+            }
         }
     }
 }
@@ -179,10 +220,10 @@ private fun MetricCard(
     value: String,
     modifier: Modifier,
 ) {
-    Card(modifier = modifier) {
+    Surface(modifier = modifier, shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(value, style = MaterialTheme.typography.headlineMedium)
+            Text(value, style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
+            Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -191,6 +232,7 @@ private fun MetricCard(
 private fun RunOutcomeChart(
     runs: List<StoredRunRecord>,
     workflowNames: Map<String, String>,
+    modifier: Modifier = Modifier,
 ) {
     var selectedIndex by remember(runs) { mutableStateOf<Int?>(null) }
     var tooltipVisible by remember(runs) { mutableStateOf(false) }
@@ -201,7 +243,10 @@ private fun RunOutcomeChart(
     )
     var chartWidthPx by remember { mutableIntStateOf(0) }
     val chartScroll = rememberScrollState()
-    Card(modifier = Modifier.fillMaxWidth()) {
+    var revealed by remember(runs) { mutableStateOf(false) }
+    val reveal by animateFloatAsState(if (revealed) 1f else 0f, tween(220), label = "Run chart reveal")
+    LaunchedEffect(runs) { revealed = true }
+    Surface(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
         Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("Recent run duration", style = MaterialTheme.typography.titleMedium)
             if (runs.isEmpty()) {
@@ -211,6 +256,7 @@ private fun RunOutcomeChart(
                 val failedColor = MaterialTheme.colorScheme.error
                 val otherColor = MaterialTheme.colorScheme.secondary
                 val plottedRuns = runs.reversed()
+                val maximum = remember(runs) { runs.maxOf { runDuration(it).coerceAtLeast(1L) }.toFloat() }
                 val description = plottedRuns.joinToString { "${it.status.name.lowercase()} ${runDuration(it)} ms" }
                 LaunchedEffect(chartScroll.maxValue, plottedRuns.size) {
                     chartScroll.scrollTo(chartScroll.maxValue)
@@ -251,12 +297,11 @@ private fun RunOutcomeChart(
                                     contentDescription = "Recent run duration chart: $description. Long press a bar for details."
                                 },
                         ) {
-                            val maximum = plottedRuns.maxOf { runDuration(it).coerceAtLeast(1L) }.toFloat()
                             val slotWidth = size.width / plottedRuns.size
                             val barWidth = (slotWidth * 0.58f).coerceAtMost(28.dp.toPx())
                             plottedRuns.forEachIndexed { index, run ->
                                 val ratio = runDuration(run).coerceAtLeast(1L) / maximum
-                                val height = (size.height * ratio).coerceAtLeast(8.dp.toPx())
+                                val height = (size.height * ratio).coerceAtLeast(8.dp.toPx()) * reveal
                                 val color = when (run.status) {
                                     StoredRunStatus.COMPLETED -> completedColor
                                     StoredRunStatus.FAILED, StoredRunStatus.INTERRUPTED -> failedColor
@@ -307,14 +352,15 @@ private fun RunOutcomeChart(
                         }
                     }
                 }
+                Text("Hold a bar for details", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
 }
 
 @Composable
-private fun StatusDistribution(dashboard: RunDashboardSummary) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+private fun StatusDistribution(dashboard: RunDashboardSummary, modifier: Modifier = Modifier) {
+    Surface(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
         Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Run status", style = MaterialTheme.typography.titleMedium)
             if (dashboard.totalRuns == 0L) {
@@ -323,13 +369,14 @@ private fun StatusDistribution(dashboard: RunDashboardSummary) {
                 dashboard.statusCounts.entries
                     .sortedByDescending { it.value }
                     .forEach { (status, count) ->
+                        val progress by animateFloatAsState(count.toFloat() / dashboard.totalRuns, tween(220), label = "Run status count")
                         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                             Row(modifier = Modifier.fillMaxWidth()) {
                                 Text(status.displayName(), modifier = Modifier.weight(1f))
                                 Text(count.toString(), fontWeight = FontWeight.SemiBold)
                             }
                             LinearProgressIndicator(
-                                progress = { count.toFloat() / dashboard.totalRuns },
+                                progress = { progress },
                                 modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small),
                                 strokeCap = StrokeCap.Round,
                                 drawStopIndicator = {},
@@ -346,7 +393,7 @@ private fun WorkflowQuickPlayCard(
     workflow: WorkflowSummary,
     onPlayWorkflow: (WorkflowSummary) -> Unit,
 ) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -359,10 +406,10 @@ private fun WorkflowQuickPlayCard(
                 )
             }
             Spacer(Modifier.width(12.dp))
-            OutlinedButton(onClick = { onPlayWorkflow(workflow) }) {
-                Icon(Icons.Filled.PlayArrow, contentDescription = null)
-                Spacer(Modifier.width(6.dp))
-                Text("Play")
+            Surface(onClick = { onPlayWorkflow(workflow) }, shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                androidx.compose.foundation.layout.Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.PlayArrow, contentDescription = "Play ${workflow.name}", tint = MaterialTheme.colorScheme.primary)
+                }
             }
         }
     }

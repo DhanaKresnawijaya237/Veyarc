@@ -28,6 +28,32 @@ import javax.crypto.spec.SecretKeySpec
 @RunWith(AndroidJUnit4::class)
 class WorkflowRepositoryTest {
     @Test
+    fun runSummaryQueryLeavesLargeEventPayloadsInTheDatabase() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val queries = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val database = Room.inMemoryDatabaseBuilder(context, VeyarcDatabase::class.java)
+            .setQueryCallback({ sql, _ -> queries.add(sql) }, java.util.concurrent.Executor { it.run() })
+            .build()
+        try {
+            database.workflowDao().insertRunRecord(
+                RunRecordEntity(
+                    RUN_ID, WORKFLOW_ID, 1, StoredRunStatus.COMPLETED.name, 100L, 200L, null,
+                    completedSteps = 10, totalSteps = 10, eventHistoryJson = "x".repeat(1_000_000), name = "Large log",
+                ),
+            )
+            val summary = database.workflowDao().listRunSummaries(100).single()
+            assertEquals("Large log", summary.name)
+            assertTrue(summary.hasStoredDetails)
+            val query = queries.last { it.contains("FROM run_records ORDER BY startedAtMs", ignoreCase = true) }
+            assertFalse(query.contains("SELECT *", ignoreCase = true))
+            assertTrue(query.contains("eventHistoryJson IS NOT NULL AS hasStoredDetails", ignoreCase = true))
+            assertEquals(1_000_000, database.workflowDao().findRunRecord(RUN_ID)!!.eventHistoryJson!!.length)
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test
     fun legacyRevisionMigratesLazilyAndExportsPortableBundle() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val database = Room.inMemoryDatabaseBuilder(context, VeyarcDatabase::class.java)
@@ -99,6 +125,14 @@ class WorkflowRepositoryTest {
             assertEquals(base.document.id, editorData.revision.document.id)
             assertEquals("Reference", editorData.assets.single().displayName)
             assertEquals(1, editorData.assets.single().widthPx)
+            assertEquals(1L, editorData.assets.single().addedAtMs)
+            assertEquals(database.workflowAssetDao().listBlobs().single().encryptedByteLength, editorData.assets.single().byteCount)
+            assertEquals(1L, repository.loadRevisionForEditor(WORKFLOW_ID, 2).assets.single().addedAtMs)
+            // Reusing the same blob in another workflow must use that workflow's added date.
+            val copiedId = "00000000-0000-0000-0000-000000000088"
+            repository.saveRevision(bundle.copy(document = bundle.document.copy(id = copiedId)))
+            assertEquals(1000L, repository.loadRevisionForEditor(copiedId, 1).assets.single().addedAtMs)
+            assertEquals(1, database.workflowAssetDao().listBlobs().size)
             assertArrayEquals(pixels, loadedPixels.copyRgbaBytes())
             assertArrayEquals(pixels, previewPixels.copyRgbaBytes())
             assertArrayEquals(pixels, exportedPixels.copyRgbaBytes())

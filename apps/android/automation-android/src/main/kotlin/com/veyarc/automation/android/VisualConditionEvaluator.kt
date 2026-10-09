@@ -7,13 +7,11 @@ import com.veyarc.model.Condition
 import com.veyarc.model.ImageAbsentCondition
 import com.veyarc.model.ImageMatchMode
 import com.veyarc.model.ImagePresentCondition
-import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.NormalizedRect
 import com.veyarc.model.PixelColorCondition
+import java.io.Closeable
 import kotlin.math.abs
-import kotlin.math.ceil
-import kotlin.math.floor
-import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 /** Supplies a decoded, user-selected template without exposing how it is stored or decrypted. */
 fun interface ImageTemplateSource {
@@ -32,8 +30,6 @@ class RgbaTemplate private constructor(
     val heightPx: Int,
     private val rgbaBytes: ByteArray,
 ) {
-    internal val prefilterData = TemplatePrefilterData.create(widthPx, heightPx, rgbaBytes)
-
     init {
         require(widthPx > 0) { "Template width must be positive" }
         require(heightPx > 0) { "Template height must be positive" }
@@ -45,6 +41,8 @@ class RgbaTemplate private constructor(
         }
     }
 
+    internal val prefilterData = TemplatePrefilterData.create(widthPx, heightPx, rgbaBytes)
+
     /** Returns a defensive copy so callers cannot mutate the evaluator's template. */
     fun copyRgbaBytes(): ByteArray = rgbaBytes.copyOf()
 
@@ -52,6 +50,7 @@ class RgbaTemplate private constructor(
     fun clear() {
         rgbaBytes.fill(0)
         prefilterData.cellSums.fill(0)
+        prefilterData.bandSums.fill(0)
     }
 
     internal fun <T> withRgbaBytes(block: (ByteArray) -> T): T = block(rgbaBytes)
@@ -72,6 +71,7 @@ internal data class TemplatePrefilterData(
     val xBandCount: Int,
     val yBandCount: Int,
     val cellSums: IntArray,
+    val bandSums: IntArray,
 ) {
     companion object {
         fun create(widthPx: Int, heightPx: Int, bytes: ByteArray): TemplatePrefilterData {
@@ -82,18 +82,21 @@ internal data class TemplatePrefilterData(
             val yStarts = partitionStarts(heightPx, yBandCount)
             val yEnds = partitionEnds(heightPx, yBandCount)
             val sums = IntArray(xBandCount * yBandCount * CHANNEL_COUNT)
-            repeat(heightPx) { y ->
-                val yBand = bandFor(y, yStarts, yEnds)
-                repeat(widthPx) { x ->
-                    val xBand = bandFor(x, xStarts, xEnds)
+            val bands = IntArray(yBandCount * CHANNEL_COUNT)
+            for (yBand in 0 until yBandCount) {
+                for (xBand in 0 until xBandCount) {
                     val cellOffset = (yBand * xBandCount + xBand) * CHANNEL_COUNT
-                    val pixelOffset = rgbaOffset(x, y, widthPx)
-                    repeat(CHANNEL_COUNT) { channel ->
-                        sums[cellOffset + channel] += channelValue(bytes, pixelOffset + channel)
+                    for (y in yStarts[yBand] until yEnds[yBand]) {
+                        var offset = rgbaOffset(xStarts[xBand], y, widthPx)
+                        for (x in xStarts[xBand] until xEnds[xBand]) {
+                            for (channel in 0 until CHANNEL_COUNT) sums[cellOffset + channel] += channelValue(bytes, offset + channel)
+                            offset += CHANNEL_COUNT
+                        }
                     }
+                    for (channel in 0 until CHANNEL_COUNT) bands[yBand * CHANNEL_COUNT + channel] += sums[cellOffset + channel]
                 }
             }
-            return TemplatePrefilterData(xBandCount, yBandCount, sums)
+            return TemplatePrefilterData(xBandCount, yBandCount, sums, bands)
         }
     }
 }
@@ -106,7 +109,7 @@ internal data class TemplatePrefilterData(
  * templates after the later encrypted-asset layer has authenticated and decrypted them.
  */
 class VisualConditionEvaluator(
-    private val frameSource: () -> EphemeralScreenFrame?,
+    private val frameSource: (ScreenCaptureArea) -> EphemeralScreenFrame?,
     private val templateSource: ImageTemplateSource,
     private val maxComparisons: Long = DEFAULT_MAX_COMPARISONS,
     private val maxSearchOrigins: Long = DEFAULT_MAX_SEARCH_ORIGINS,
@@ -144,20 +147,10 @@ class VisualConditionEvaluator(
     }
 
     private fun evaluatePixelColor(condition: PixelColorCondition): Boolean {
-        val frame = frameSource.invoke() ?: return false
+        val frame = requireFrame(ScreenCaptureArea.Pixel(condition.point))
         return try {
-            frame.withRgbaBytes { bytes ->
-                val (x, y) = mapPoint(condition.point, frame.widthPx, frame.heightPx)
-                val offset = rgbaOffset(x, y, frame.widthPx)
-                val actual = RgbaColor(
-                    red = bytes[offset].toInt() and 0xFF,
-                    green = bytes[offset + 1].toInt() and 0xFF,
-                    blue = bytes[offset + 2].toInt() and 0xFF,
-                    alpha = bytes[offset + 3].toInt() and 0xFF,
-                )
-                val expected = argbColor(condition.expectedArgb)
-                withinTolerance(actual, expected, condition.tolerance)
-            }
+            val point = FramePixelBounds.pixel(condition.point, frame.widthPx, frame.heightPx)
+            withinTolerance(frame.pixelAt(point.left, point.top), argbColor(condition.expectedArgb), condition.tolerance)
         } finally {
             frame.close()
         }
@@ -174,10 +167,8 @@ class VisualConditionEvaluator(
             ?: throw VisualConditionEvaluationException(
                 "Image template asset ${assetId.value} is unavailable",
             )
-        val frame = frameSource.invoke() ?: return ConditionObservation(
-            result = false,
-            threshold = threshold,
-        )
+        val area = if (matchMode == ImageMatchMode.SCREEN_STATE) ScreenCaptureArea.FullScreen else ScreenCaptureArea.Region(region)
+        val frame = requireFrame(area)
         return try {
             val match = template.withRgbaBytes { templateBytes ->
                 frame.withRgbaBytes { frameBytes ->
@@ -211,6 +202,9 @@ class VisualConditionEvaluator(
         }
     }
 
+    private fun requireFrame(area: ScreenCaptureArea): EphemeralScreenFrame = frameSource.invoke(area)
+        ?: throw VisualConditionEvaluationException("No screen capture frame arrived. Restart the run and allow screen capture.")
+
     /** Measures the full fixed-position screen similarity so diagnostics never substitute the threshold. */
     private fun matchesScreenState(
         frame: EphemeralScreenFrame,
@@ -219,12 +213,12 @@ class VisualConditionEvaluator(
         templateBytes: ByteArray,
         threshold: Double,
     ): ImageMatchResult {
-        if (template.widthPx != frame.widthPx || template.heightPx != frame.heightPx) {
+        if (template.widthPx != frame.widthPx || template.heightPx != frame.heightPx || frame.capturedBounds != FramePixelBounds(0, 0, frame.widthPx, frame.heightPx)) {
             return ImageMatchResult.Unmatched
         }
         val maxError = (1.0 - threshold) * MAX_CHANNEL_ERROR * template.widthPx.toLong() * template.heightPx
         return scoreAt(
-            frameWidth = frame.widthPx,
+            frameWidth = frame.capturedBounds.width,
             frameBytes = frameBytes,
             template = template,
             templateBytes = templateBytes,
@@ -275,7 +269,7 @@ class VisualConditionEvaluator(
         region: NormalizedRect,
         threshold: Double,
     ): ImageMatchResult {
-        val bounds = PixelBounds.from(region, frame.widthPx, frame.heightPx)
+        val bounds = FramePixelBounds.from(region, frame.widthPx, frame.heightPx).relativeTo(frame.capturedBounds)
         if (template.widthPx > bounds.width || template.heightPx > bounds.height) {
             return ImageMatchResult.Unmatched
         }
@@ -297,72 +291,101 @@ class VisualConditionEvaluator(
         )
         val preferredOriginX = bounds.left + (bounds.width - template.widthPx) / 2
         val preferredOriginY = bounds.top + (bounds.height - template.heightPx) / 2
-        val preferredPrefilter = TemplateWindowPrefilter(
-            frameWidth = frame.widthPx,
+        // The preferred candidate needs only its own window, not a second region-wide buffer.
+        TemplateWindowPrefilter(
+            frameWidth = frame.capturedBounds.width,
             frameBytes = frameBytes,
             template = template,
-            bounds = bounds,
-            initialOriginX = preferredOriginX,
-            initialOriginY = preferredOriginY,
-        )
-        if (preferredPrefilter.mayMatch(maxError)) {
-            val preferredMatch = matchesAt(
-                frameWidth = frame.widthPx,
-                frameBytes = frameBytes,
-                template = template,
-                templateBytes = templateBytes,
-                originX = preferredOriginX,
-                originY = preferredOriginY,
-                maxError = maxError,
-                budget = budget,
-            )
-            if (preferredMatch.matched) return preferredMatch
-        }
-        val prefilter = TemplateWindowPrefilter(
-            frameWidth = frame.widthPx,
-            frameBytes = frameBytes,
-            template = template,
-            bounds = bounds,
-        )
-
-        for (originY in bounds.top until maxOriginY + 1) {
-            if (originY > bounds.top) prefilter.moveDown()
-            for (originX in bounds.left until maxOriginX + 1) {
-                val isPreferredOrigin = originX == preferredOriginX && originY == preferredOriginY
-                if (!isPreferredOrigin && prefilter.mayMatch(maxError)) {
-                    val match = matchesAt(
-                        frameWidth = frame.widthPx,
-                        frameBytes = frameBytes,
-                        template = template,
-                        templateBytes = templateBytes,
-                        originX = originX,
-                        originY = originY,
-                        maxError = maxError,
-                        budget = budget,
-                    )
-                    if (match.matched) return match
-                }
-                if (originX < maxOriginX) prefilter.moveRight()
+            bounds = FramePixelBounds(preferredOriginX, preferredOriginY, preferredOriginX + template.widthPx, preferredOriginY + template.heightPx),
+        ).use { preferred ->
+            if (preferred.mayMatch(maxError)) {
+                val match = matchesAt(frame.capturedBounds.width, frameBytes, template, templateBytes, preferredOriginX, preferredOriginY, maxError, budget)
+                if (match.matched) return match
             }
         }
-        return ImageMatchResult.Unmatched
+        TemplateWindowPrefilter(frame.capturedBounds.width, frameBytes, template, bounds).use { prefilter ->
+            for (originY in bounds.top..maxOriginY) {
+                if (originY > bounds.top) prefilter.moveDown()
+                for (originX in bounds.left..maxOriginX) {
+                    val isPreferredOrigin = originX == preferredOriginX && originY == preferredOriginY
+                    if (!isPreferredOrigin && prefilter.mayMatch(maxError)) {
+                        val match = matchesAt(frame.capturedBounds.width, frameBytes, template, templateBytes, originX, originY, maxError, budget)
+                        if (match.matched) return match
+                    }
+                    if (originX < maxOriginX) prefilter.moveRight()
+                }
+            }
+        }
+        return closestCheckedMatch(frame.capturedBounds.width, frameBytes, template, templateBytes, bounds, maxError, budget)
+    }
+
+    /** Scores rejected searches without changing their result or exceeding the remaining work budget. */
+    private fun closestCheckedMatch(
+        frameWidth: Int,
+        frameBytes: ByteArray,
+        template: RgbaTemplate,
+        templateBytes: ByteArray,
+        bounds: FramePixelBounds,
+        maxError: Double,
+        budget: ComparisonBudget,
+    ): ImageMatchResult {
+        val pixels = template.widthPx.toLong() * template.heightPx
+        if (budget.remaining < pixels || Thread.currentThread().isInterrupted) return ImageMatchResult.Unmatched
+        var closestX = bounds.left
+        var closestY = bounds.top
+        var leastBound = Long.MAX_VALUE
+        TemplateWindowPrefilter(frameWidth, frameBytes, template, bounds).use { prefilter ->
+            for (y in bounds.top..bounds.bottomExclusive - template.heightPx) {
+                if (Thread.currentThread().isInterrupted) return ImageMatchResult.Unmatched
+                if (y > bounds.top) prefilter.moveDown()
+                for (x in bounds.left..bounds.rightExclusive - template.widthPx) {
+                    val lowerBound = prefilter.minimumError(leastBound.toDouble() - 1.0)
+                    if (lowerBound < leastBound) {
+                        leastBound = lowerBound
+                        closestX = x
+                        closestY = y
+                    }
+                    if (x < bounds.rightExclusive - template.widthPx) prefilter.moveRight()
+                }
+            }
+        }
+        var best = scoreAt(frameWidth, frameBytes, template, templateBytes, closestX, closestY, maxError, budget)
+        val maximumError = MAX_CHANNEL_ERROR.toDouble() * pixels
+        val measuredError = ((1.0 - best.score!!) * maximumError).roundToLong()
+        if (measuredError == leastBound) return best
+        var bestError = measuredError - 1.0
+        // ponytail: bounded nearest-candidate search; report "best checked" if the budget stops it early.
+        TemplateWindowPrefilter(frameWidth, frameBytes, template, bounds).use { prefilter ->
+            for (y in bounds.top..bounds.bottomExclusive - template.heightPx) {
+                if (budget.remaining < pixels || Thread.currentThread().isInterrupted) return best
+                if (y > bounds.top) prefilter.moveDown()
+                for (x in bounds.left..bounds.rightExclusive - template.widthPx) {
+                    if ((x != closestX || y != closestY) && prefilter.mayMatch(bestError)) {
+                        if (budget.remaining < pixels) return best
+                        val candidate = matchesAt(frameWidth, frameBytes, template, templateBytes, x, y, bestError, budget)
+                        if (candidate.score != null && candidate.score > best.score!!) {
+                            best = ImageMatchResult(matched = false, score = candidate.score)
+                            bestError = ((1.0 - candidate.score) * maximumError).roundToLong() - 1.0
+                        }
+                    }
+                    if (x < bounds.rightExclusive - template.widthPx) prefilter.moveRight()
+                }
+            }
+        }
+        return best
     }
 
     /**
-     * Rejects impossible origins using channel sums over up to sixteen spatial cells before the expensive
-     * pixel-by-pixel comparison. The triangle inequality makes this a safe lower bound: a cell's
-     * absolute channel-sum difference cannot exceed its total per-pixel channel error, so a lower
-     * bound above [maxError] can never be a match. Rolling sums keep the prefilter bounded without
-     * allocating a full-frame integral-image buffer.
+     * Each cell's channel-sum difference is a lower bound on its exact pixel error. Prefix sums
+     * across rolling vertical bands provide those same bounds without updating every horizontal
+     * cell for every search position. Memory depends on region width, not screen pixel count.
      */
     private class TemplateWindowPrefilter(
         private val frameWidth: Int,
         private val frameBytes: ByteArray,
         template: RgbaTemplate,
-        private val bounds: PixelBounds,
-        initialOriginX: Int = bounds.left,
-        initialOriginY: Int = bounds.top,
-    ) {
+        private val bounds: FramePixelBounds,
+    ) : Closeable {
         private val xBandCount = template.prefilterData.xBandCount
         private val yBandCount = template.prefilterData.yBandCount
         private val xStarts = partitionStarts(template.widthPx, xBandCount)
@@ -370,106 +393,92 @@ class VisualConditionEvaluator(
         private val yStarts = partitionStarts(template.heightPx, yBandCount)
         private val yEnds = partitionEnds(template.heightPx, yBandCount)
         private val templateCellSums = template.prefilterData.cellSums
-        private val columnSums = IntArray(yBandCount * frameWidth * CHANNEL_COUNT)
-        private val windowSums = IntArray(yBandCount * xBandCount * CHANNEL_COUNT)
-        private var originY = initialOriginY
-        private var originX = initialOriginX
+        private val templateBandSums = template.prefilterData.bandSums
+        private val templateWidth = template.widthPx
+        private val prefixStride = (bounds.width + 1) * CHANNEL_COUNT
+
+        // Capture dimensions cap a band's per-channel prefix below Int.MAX_VALUE.
+        private val prefixes = IntArray(yBandCount * prefixStride)
+        private var originY = bounds.top
+        private var originX = bounds.left
 
         init {
-            require(originX in bounds.left..bounds.rightExclusive - template.widthPx)
-            require(originY in bounds.top..bounds.bottomExclusive - template.heightPx)
-            initializeColumns()
-            rebuildWindowSums()
+            for (yBand in 0 until yBandCount) {
+                for (y in yStarts[yBand] until yEnds[yBand]) {
+                    var frameOffset = rgbaOffset(bounds.left, originY + y, frameWidth)
+                    var prefixOffset = yBand * prefixStride + CHANNEL_COUNT
+                    for (x in bounds.left until bounds.rightExclusive) {
+                        for (channel in 0 until CHANNEL_COUNT) prefixes[prefixOffset + channel] += channelValue(frameBytes, frameOffset + channel)
+                        prefixOffset += CHANNEL_COUNT
+                        frameOffset += CHANNEL_COUNT
+                    }
+                }
+                val end = (yBand + 1) * prefixStride
+                for (offset in yBand * prefixStride + CHANNEL_COUNT until end) prefixes[offset] += prefixes[offset - CHANNEL_COUNT]
+            }
         }
 
-        fun mayMatch(maxError: Double): Boolean {
+        fun mayMatch(maxError: Double): Boolean = minimumError(maxError).toDouble() <= maxError
+
+        fun minimumError(maxError: Double): Long {
             var lowerBound = 0L
+            val relativeX = originX - bounds.left
+            // Whole-band bounds cheaply reject unrelated backgrounds before the finer cells.
+            if (xBandCount > 1) {
+                for (yBand in 0 until yBandCount) {
+                    val left = yBand * prefixStride + relativeX * CHANNEL_COUNT
+                    val right = left + templateWidth * CHANNEL_COUNT
+                    for (channel in 0 until CHANNEL_COUNT) lowerBound += abs(prefixes[right + channel] - prefixes[left + channel] - templateBandSums[yBand * CHANNEL_COUNT + channel]).toLong()
+                    if (lowerBound.toDouble() > maxError) return lowerBound
+                }
+                lowerBound = 0L
+            }
             for (yBand in 0 until yBandCount) {
                 for (xBand in 0 until xBandCount) {
-                    val cellOffset = cellOffset(yBand, xBand)
-                    for (channel in 0 until CHANNEL_COUNT) {
-                        val difference = windowSums[cellOffset + channel] - templateCellSums[cellOffset + channel]
-                        lowerBound += abs(difference).toLong()
-                    }
-                    if (lowerBound.toDouble() > maxError) return false
+                    val left = yBand * prefixStride + (relativeX + xStarts[xBand]) * CHANNEL_COUNT
+                    val right = yBand * prefixStride + (relativeX + xEnds[xBand]) * CHANNEL_COUNT
+                    val cell = (yBand * xBandCount + xBand) * CHANNEL_COUNT
+                    for (channel in 0 until CHANNEL_COUNT) lowerBound += abs(prefixes[right + channel] - prefixes[left + channel] - templateCellSums[cell + channel]).toLong()
+                    if (lowerBound.toDouble() > maxError) return lowerBound
                 }
             }
-            return true
+            return lowerBound
         }
 
         fun moveRight() {
-            check(originX < bounds.rightExclusive) { "Template prefilter moved beyond its region" }
-            val previousOriginX = originX
             originX++
-            for (yBand in 0 until yBandCount) {
-                for (xBand in 0 until xBandCount) {
-                    val removeX = previousOriginX + xStarts[xBand]
-                    val addX = previousOriginX + xEnds[xBand]
-                    val windowOffset = cellOffset(yBand, xBand)
-                    val columnOffset = columnOffset(yBand, removeX)
-                    val addedColumnOffset = columnOffset(yBand, addX)
-                    for (channel in 0 until CHANNEL_COUNT) {
-                        windowSums[windowOffset + channel] +=
-                            columnSums[addedColumnOffset + channel] - columnSums[columnOffset + channel]
-                    }
-                }
-            }
         }
 
         fun moveDown() {
-            check(originY < bounds.bottomExclusive) { "Template prefilter moved beyond its region" }
-            val previousOriginY = originY
-            originY++
+            val previousY = originY++
             for (yBand in 0 until yBandCount) {
-                val removeY = previousOriginY + yStarts[yBand]
-                val addY = previousOriginY + yEnds[yBand]
+                var removeOffset = rgbaOffset(bounds.left, previousY + yStarts[yBand], frameWidth)
+                var addOffset = rgbaOffset(bounds.left, previousY + yEnds[yBand], frameWidth)
+                var prefixOffset = yBand * prefixStride + CHANNEL_COUNT
+                var redDelta = 0
+                var greenDelta = 0
+                var blueDelta = 0
+                var alphaDelta = 0
                 for (x in bounds.left until bounds.rightExclusive) {
-                    val removeOffset = rgbaOffset(x, removeY, frameWidth)
-                    val addOffset = rgbaOffset(x, addY, frameWidth)
-                    val columnOffset = columnOffset(yBand, x)
-                    for (channel in 0 until CHANNEL_COUNT) {
-                        columnSums[columnOffset + channel] +=
-                            channelValue(frameBytes, addOffset + channel) - channelValue(frameBytes, removeOffset + channel)
-                    }
+                    redDelta += channelValue(frameBytes, addOffset) - channelValue(frameBytes, removeOffset)
+                    greenDelta += channelValue(frameBytes, addOffset + 1) - channelValue(frameBytes, removeOffset + 1)
+                    blueDelta += channelValue(frameBytes, addOffset + 2) - channelValue(frameBytes, removeOffset + 2)
+                    alphaDelta += channelValue(frameBytes, addOffset + 3) - channelValue(frameBytes, removeOffset + 3)
+                    prefixes[prefixOffset] += redDelta
+                    prefixes[prefixOffset + 1] += greenDelta
+                    prefixes[prefixOffset + 2] += blueDelta
+                    prefixes[prefixOffset + 3] += alphaDelta
+                    prefixOffset += CHANNEL_COUNT
+                    removeOffset += CHANNEL_COUNT
+                    addOffset += CHANNEL_COUNT
                 }
             }
             originX = bounds.left
-            rebuildWindowSums()
         }
 
-        private fun initializeColumns() {
-            for (yBand in 0 until yBandCount) {
-                for (y in yStarts[yBand] until yEnds[yBand]) {
-                    val frameY = originY + y
-                    for (x in bounds.left until bounds.rightExclusive) {
-                        val frameOffset = rgbaOffset(x, frameY, frameWidth)
-                        val columnOffset = columnOffset(yBand, x)
-                        for (channel in 0 until CHANNEL_COUNT) {
-                            columnSums[columnOffset + channel] += channelValue(frameBytes, frameOffset + channel)
-                        }
-                    }
-                }
-            }
+        override fun close() {
+            prefixes.fill(0)
         }
-
-        private fun rebuildWindowSums() {
-            windowSums.fill(0)
-            for (yBand in 0 until yBandCount) {
-                for (xBand in 0 until xBandCount) {
-                    val windowOffset = cellOffset(yBand, xBand)
-                    for (x in xStarts[xBand] until xEnds[xBand]) {
-                        val columnOffset = columnOffset(yBand, originX + x)
-                        for (channel in 0 until CHANNEL_COUNT) {
-                            windowSums[windowOffset + channel] += columnSums[columnOffset + channel]
-                        }
-                    }
-                }
-            }
-        }
-
-        private fun columnOffset(yBand: Int, x: Int): Int = (yBand * frameWidth + x) * CHANNEL_COUNT
-
-        private fun cellOffset(yBand: Int, xBand: Int): Int = (yBand * xBandCount + xBand) * CHANNEL_COUNT
     }
 
     /** Compares a candidate exactly until it either meets the threshold or cannot meet it. */
@@ -517,6 +526,8 @@ class VisualConditionEvaluator(
     ) {
         private var comparisons = 0L
 
+        val remaining: Long get() = limit - comparisons
+
         fun consume() {
             comparisons++
             if (comparisons > limit) {
@@ -528,35 +539,12 @@ class VisualConditionEvaluator(
         }
     }
 
-    private data class PixelBounds(
-        val left: Int,
-        val top: Int,
-        val rightExclusive: Int,
-        val bottomExclusive: Int,
-    ) {
-        val width: Int get() = rightExclusive - left
-        val height: Int get() = bottomExclusive - top
-
-        companion object {
-            fun from(region: NormalizedRect, frameWidth: Int, frameHeight: Int): PixelBounds {
-                val left = floor(region.x * frameWidth).toInt().coerceIn(0, frameWidth - 1)
-                val top = floor(region.y * frameHeight).toInt().coerceIn(0, frameHeight - 1)
-                val right = ceil((region.x + region.width) * frameWidth).toInt().coerceIn(left + 1, frameWidth)
-                val bottom = ceil((region.y + region.height) * frameHeight).toInt().coerceIn(top + 1, frameHeight)
-                return PixelBounds(left, top, right, bottom)
-            }
-        }
-    }
-
     companion object {
         /** Limits worst-case CPU work for a single image-condition observation. */
         const val DEFAULT_MAX_COMPARISONS = 12_000_000L
         const val DEFAULT_MAX_SEARCH_ORIGINS = 1_000_000L
         private const val MAX_CHANNEL_ERROR = 255L * 4L
         private const val BYTES_PER_PIXEL = 4
-
-        private fun mapPoint(point: NormalizedCoordinate, widthPx: Int, heightPx: Int): Pair<Int, Int> = (point.x * (widthPx - 1)).roundToInt().coerceIn(0, widthPx - 1) to
-            (point.y * (heightPx - 1)).roundToInt().coerceIn(0, heightPx - 1)
 
         private fun argbColor(value: Long): RgbaColor = RgbaColor(
             red = ((value shr 16) and 0xFF).toInt(),
@@ -575,11 +563,12 @@ class VisualConditionEvaluator(
             firstOffset: Int,
             second: ByteArray,
             secondOffset: Int,
-        ): Long = (0 until BYTES_PER_PIXEL).sumOf { component ->
-            abs(
-                (first[firstOffset + component].toInt() and 0xFF) -
-                    (second[secondOffset + component].toInt() and 0xFF),
-            ).toLong()
+        ): Long {
+            var error = 0L
+            for (component in 0 until BYTES_PER_PIXEL) {
+                error += abs((first[firstOffset + component].toInt() and 0xFF) - (second[secondOffset + component].toInt() and 0xFF))
+            }
+            return error
         }
     }
 }
@@ -593,10 +582,6 @@ private fun partitionStarts(size: Int, bands: Int): IntArray = IntArray(bands) {
 
 private fun partitionEnds(size: Int, bands: Int): IntArray = IntArray(bands) { band ->
     (band + 1) * size / bands
-}
-
-private fun bandFor(value: Int, starts: IntArray, ends: IntArray): Int = starts.indices.first { band ->
-    value in starts[band] until ends[band]
 }
 
 private fun channelValue(bytes: ByteArray, offset: Int): Int = bytes[offset].toInt() and 0xFF

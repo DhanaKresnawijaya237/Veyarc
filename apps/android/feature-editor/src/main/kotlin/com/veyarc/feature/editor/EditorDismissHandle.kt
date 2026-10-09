@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -54,6 +55,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -71,7 +73,7 @@ internal fun EditorSheetDialog(
 ) {
     val contentScrollState = rememberScrollState()
     val configuration = LocalConfiguration.current
-    val sheetColor = MaterialTheme.colorScheme.surface
+    val sheetColor = MaterialTheme.colorScheme.surfaceContainerLow
     val landscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val useCompactPage = compact && !landscape
     if (!useCompactPage) {
@@ -96,7 +98,7 @@ internal fun EditorSheetDialog(
             },
             shape = RoundedCornerShape(24.dp),
             containerColor = sheetColor,
-            tonalElevation = 6.dp,
+            tonalElevation = 0.dp,
         ) {
             if (contentScrollable) {
                 AdaptiveLargeEditorSheetContent(
@@ -151,7 +153,7 @@ internal fun EditorSheetDialog(
                     .pointerInput(Unit) { detectTapGestures { } },
                 shape = RoundedCornerShape(24.dp),
                 color = sheetColor,
-                tonalElevation = 6.dp,
+                tonalElevation = 0.dp,
                 shadowElevation = 8.dp,
             ) {
                 Box(
@@ -270,6 +272,25 @@ private object PreventUpwardSheetOverscrollConnection : NestedScrollConnection {
     } else {
         Offset.Zero
     }
+}
+
+/** A gesture that starts inside the list stops there; a fresh outward drag at an edge can leave it. */
+internal class TemplateListScroll(private val list: LazyListState) : NestedScrollConnection {
+    private var keepInside: Boolean? = null
+
+    fun startGesture() {
+        keepInside = null
+    }
+
+    override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+        if (source == NestedScrollSource.UserInput && keepInside == null && available.y != 0f) {
+            keepInside = if (available.y > 0f) list.canScrollBackward else list.canScrollForward
+        }
+        return Offset.Zero
+    }
+
+    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource) = if (keepInside != false) Offset(0f, available.y) else Offset.Zero
+    override suspend fun onPostFling(consumed: Velocity, available: Velocity) = if (keepInside != false) Velocity(0f, available.y) else Velocity.Zero
 }
 
 internal fun upwardOverscrollConsumption(availableY: Float): Float = if (availableY < 0f) availableY else 0f

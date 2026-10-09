@@ -12,10 +12,55 @@ import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.NormalizedRect
 import java.io.Closeable
+import java.nio.ByteBuffer
 import kotlin.math.ceil
 import kotlin.math.floor
+import kotlin.math.roundToInt
+
+private const val MAX_CAPTURE_DIMENSION_PX = 16_384
+private const val MAX_CAPTURE_PIXEL_COUNT = 16_777_216L
+
+/** Selects pixels to copy without changing the projection or its full-resolution surface. */
+sealed interface ScreenCaptureArea {
+    data object FullScreen : ScreenCaptureArea
+    data class Region(val rect: NormalizedRect) : ScreenCaptureArea
+    data class Pixel(val point: NormalizedCoordinate) : ScreenCaptureArea
+}
+
+internal data class FramePixelBounds(val left: Int, val top: Int, val rightExclusive: Int, val bottomExclusive: Int) {
+    val width: Int get() = rightExclusive - left
+    val height: Int get() = bottomExclusive - top
+
+    fun relativeTo(captured: FramePixelBounds): FramePixelBounds {
+        require(left >= captured.left && top >= captured.top && rightExclusive <= captured.rightExclusive && bottomExclusive <= captured.bottomExclusive) {
+            "The captured frame does not contain the requested pixels"
+        }
+        return FramePixelBounds(left - captured.left, top - captured.top, rightExclusive - captured.left, bottomExclusive - captured.top)
+    }
+
+    companion object {
+        fun from(region: NormalizedRect, width: Int, height: Int): FramePixelBounds {
+            val left = floor(region.x * width).toInt().coerceIn(0, width - 1)
+            val top = floor(region.y * height).toInt().coerceIn(0, height - 1)
+            return FramePixelBounds(
+                left,
+                top,
+                ceil((region.x + region.width) * width).toInt().coerceIn(left + 1, width),
+                ceil((region.y + region.height) * height).toInt().coerceIn(top + 1, height),
+            )
+        }
+
+        fun pixel(point: NormalizedCoordinate, width: Int, height: Int): FramePixelBounds {
+            val x = (point.x * (width - 1)).roundToInt().coerceIn(0, width - 1)
+            val y = (point.y * (height - 1)).roundToInt().coerceIn(0, height - 1)
+            return FramePixelBounds(x, y, x + 1, y + 1)
+        }
+    }
+}
 
 /** Display dimensions used to size a temporary MediaProjection virtual display. */
 data class MediaProjectionDisplaySpec(
@@ -24,17 +69,15 @@ data class MediaProjectionDisplaySpec(
     val densityDpi: Int,
 ) {
     init {
-        require(widthPx in 1..MAX_DIMENSION_PX) { "Projection width is outside the safe range" }
-        require(heightPx in 1..MAX_DIMENSION_PX) { "Projection height is outside the safe range" }
-        require(widthPx.toLong() * heightPx <= MAX_PIXEL_COUNT) {
+        require(widthPx in 1..MAX_CAPTURE_DIMENSION_PX) { "Projection width is outside the safe range" }
+        require(heightPx in 1..MAX_CAPTURE_DIMENSION_PX) { "Projection height is outside the safe range" }
+        require(widthPx.toLong() * heightPx <= MAX_CAPTURE_PIXEL_COUNT) {
             "Projection frame is too large"
         }
         require(densityDpi in 1..MAX_DENSITY_DPI) { "Projection density is outside the safe range" }
     }
 
     companion object {
-        private const val MAX_DIMENSION_PX = 16_384
-        private const val MAX_PIXEL_COUNT = 16_777_216L
         private const val MAX_DENSITY_DPI = 1_000
 
         fun fromContext(context: Context): MediaProjectionDisplaySpec {
@@ -63,16 +106,23 @@ data class RgbaColor(
 }
 
 /**
- * A copied in-memory frame. The underlying Image is closed before this object is returned, and
- * [close] clears the copied pixels so callers cannot accidentally retain a screenshot.
+ * An independent in-memory copy of selected screen pixels. [close] clears the copied pixels
+ * so callers cannot accidentally retain a screenshot.
  */
 class EphemeralScreenFrame internal constructor(
     val widthPx: Int,
     val heightPx: Int,
     val timestampNanos: Long,
     private var rgbaBytes: ByteArray,
+    internal val capturedBounds: FramePixelBounds = FramePixelBounds(0, 0, widthPx, heightPx),
 ) : Closeable {
     private var closed = false
+
+    init {
+        require(widthPx in 1..MAX_CAPTURE_DIMENSION_PX && heightPx in 1..MAX_CAPTURE_DIMENSION_PX && widthPx.toLong() * heightPx <= MAX_CAPTURE_PIXEL_COUNT) { "Projection frame dimensions are invalid" }
+        require(capturedBounds.left >= 0 && capturedBounds.top >= 0 && capturedBounds.rightExclusive <= widthPx && capturedBounds.bottomExclusive <= heightPx && capturedBounds.width > 0 && capturedBounds.height > 0) { "Captured region is outside the frame" }
+        require(rgbaBytes.size.toLong() == capturedBounds.width.toLong() * capturedBounds.height * BYTES_PER_PIXEL) { "Captured pixels do not match their dimensions" }
+    }
 
     val isClosed: Boolean
         get() = closed
@@ -81,7 +131,10 @@ class EphemeralScreenFrame internal constructor(
         check(!closed) { "The ephemeral frame has already been released" }
         require(x in 0 until widthPx) { "Pixel x is outside the frame" }
         require(y in 0 until heightPx) { "Pixel y is outside the frame" }
-        val offset = (y * widthPx + x) * BYTES_PER_PIXEL
+        require(x in capturedBounds.left until capturedBounds.rightExclusive && y in capturedBounds.top until capturedBounds.bottomExclusive) {
+            "Pixel is outside the captured region"
+        }
+        val offset = ((y - capturedBounds.top) * capturedBounds.width + x - capturedBounds.left) * BYTES_PER_PIXEL
         return RgbaColor(
             red = rgbaBytes[offset].toInt() and 0xFF,
             green = rgbaBytes[offset + 1].toInt() and 0xFF,
@@ -97,19 +150,16 @@ class EphemeralScreenFrame internal constructor(
      */
     fun copyRegion(region: NormalizedRect): RgbaTemplate {
         check(!closed) { "The ephemeral frame has already been released" }
-        val left = floor(region.x * widthPx).toInt().coerceIn(0, widthPx - 1)
-        val top = floor(region.y * heightPx).toInt().coerceIn(0, heightPx - 1)
-        val right = ceil((region.x + region.width) * widthPx).toInt().coerceIn(left + 1, widthPx)
-        val bottom = ceil((region.y + region.height) * heightPx).toInt().coerceIn(top + 1, heightPx)
-        val cropWidth = right - left
-        val cropHeight = bottom - top
+        val bounds = FramePixelBounds.from(region, widthPx, heightPx).relativeTo(capturedBounds)
+        val cropWidth = bounds.width
+        val cropHeight = bounds.height
         require(cropWidth.toLong() * cropHeight <= RgbaTemplate.MAX_TEMPLATE_PIXELS) {
             "Template crop is too large to store safely"
         }
         val output = ByteArray(cropWidth * cropHeight * BYTES_PER_PIXEL)
         withRgbaBytes { bytes ->
             for (row in 0 until cropHeight) {
-                val sourceOffset = ((top + row) * widthPx + left) * BYTES_PER_PIXEL
+                val sourceOffset = ((bounds.top + row) * capturedBounds.width + bounds.left) * BYTES_PER_PIXEL
                 val destinationOffset = row * cropWidth * BYTES_PER_PIXEL
                 bytes.copyInto(
                     destination = output,
@@ -154,6 +204,8 @@ internal interface MediaProjectionSession : Closeable {
     val isActive: Boolean
 
     fun captureLatestFrame(): EphemeralScreenFrame?
+
+    fun captureLatestFrame(area: ScreenCaptureArea): EphemeralScreenFrame? = captureLatestFrame()
 }
 
 /** Builds the one-shot consent request required for each capture session. */
@@ -182,7 +234,7 @@ class MediaProjectionFrameCapture(
     private var projection: MediaProjection? = null
     private var projectionCallback: MediaProjection.Callback? = null
     private var virtualDisplay: VirtualDisplay? = null
-    private var imageReader: ImageReader? = null
+    private var frames: ProjectionFrames? = null
     private var state = State.NEW
 
     override val isActive: Boolean
@@ -202,12 +254,17 @@ class MediaProjectionFrameCapture(
                 ?: throw MediaProjectionCaptureException("Android MediaProjection is unavailable")
             val mediaProjection = manager.getMediaProjection(resultCode, resultData)
                 ?: throw MediaProjectionCaptureException("Android did not return a MediaProjection")
-            val reader = ImageReader.newInstance(
-                displaySpec.widthPx,
-                displaySpec.heightPx,
-                PixelFormat.RGBA_8888,
-                MAX_RETAINED_IMAGES,
-            )
+            val reader = try {
+                ImageReader.newInstance(
+                    displaySpec.widthPx,
+                    displaySpec.heightPx,
+                    PixelFormat.RGBA_8888,
+                    ProjectionFrames.MAX_IMAGES,
+                )
+            } catch (error: Throwable) {
+                runCatching { mediaProjection.stop() }
+                throw MediaProjectionCaptureException("MediaProjection capture buffers could not be created", error)
+            }
             val callback = object : MediaProjection.Callback() {
                 override fun onStop() {
                     handleRevocation("MediaProjection consent was revoked or the capture stopped")
@@ -228,11 +285,11 @@ class MediaProjectionFrameCapture(
                 projection = mediaProjection
                 projectionCallback = callback
                 virtualDisplay = display
-                imageReader = reader
+                frames = ProjectionFrames(reader)
                 state = State.ACTIVE
             } catch (error: Throwable) {
                 runCatching { mediaProjection.unregisterCallback(callback) }
-                reader.close()
+                runCatching { reader.close() }
                 runCatching { mediaProjection.stop() }
                 throw if (error is MediaProjectionCaptureException) {
                     error
@@ -243,19 +300,12 @@ class MediaProjectionFrameCapture(
         }
     }
 
-    /** Copies the newest frame, closes Android's Image immediately, and returns memory-only data. */
-    override fun captureLatestFrame(): EphemeralScreenFrame? = synchronized(lock) {
+    /** Copies requested pixels from the latest image, including when the screen has not changed. */
+    override fun captureLatestFrame(): EphemeralScreenFrame? = captureLatestFrame(ScreenCaptureArea.FullScreen)
+
+    override fun captureLatestFrame(area: ScreenCaptureArea): EphemeralScreenFrame? = synchronized(lock) {
         check(state == State.ACTIVE) { "MediaProjection capture is not active" }
-        val image = try {
-            imageReader?.acquireLatestImage()
-        } catch (error: IllegalStateException) {
-            throw MediaProjectionCaptureException("MediaProjection frame capture is unavailable", error)
-        } ?: return@synchronized null
-        try {
-            copyImage(image)
-        } finally {
-            image.close()
-        }
+        checkNotNull(frames).capture(area)
     }
 
     override fun close() {
@@ -282,52 +332,18 @@ class MediaProjectionFrameCapture(
     private fun releaseLocked(stopProjection: Boolean) {
         val currentProjection = projection
         val currentCallback = projectionCallback
+        val currentDisplay = virtualDisplay
+        val currentFrames = frames
         projection = null
         projectionCallback = null
-        virtualDisplay?.release()
         virtualDisplay = null
-        imageReader?.close()
-        imageReader = null
+        frames = null
+        runCatching { currentDisplay?.release() }
+        runCatching { currentFrames?.close() }
         if (currentProjection != null && currentCallback != null) {
             runCatching { currentProjection.unregisterCallback(currentCallback) }
         }
         if (stopProjection) runCatching { currentProjection?.stop() }
-    }
-
-    private fun copyImage(image: Image): EphemeralScreenFrame {
-        require(image.format == PixelFormat.RGBA_8888) {
-            "MediaProjection returned an unsupported pixel format"
-        }
-        val plane = image.planes.singleOrNull()
-            ?: throw MediaProjectionCaptureException("MediaProjection returned an unexpected image layout")
-        val pixelStride = plane.pixelStride
-        val rowStride = plane.rowStride
-        require(pixelStride >= BYTES_PER_PIXEL && rowStride > 0) {
-            "MediaProjection returned invalid pixel strides"
-        }
-        val width = image.width
-        val height = image.height
-        val output = ByteArray(width * height * BYTES_PER_PIXEL)
-        val buffer = plane.buffer.duplicate()
-        for (y in 0 until height) {
-            val rowStart = y * rowStride
-            for (x in 0 until width) {
-                val sourceStart = rowStart + x * pixelStride
-                val destinationStart = (y * width + x) * BYTES_PER_PIXEL
-                require(sourceStart >= 0 && sourceStart + BYTES_PER_PIXEL <= buffer.limit()) {
-                    "MediaProjection returned a truncated image buffer"
-                }
-                repeat(BYTES_PER_PIXEL) { component ->
-                    output[destinationStart + component] = buffer.get(sourceStart + component)
-                }
-            }
-        }
-        return EphemeralScreenFrame(
-            widthPx = width,
-            heightPx = height,
-            timestampNanos = image.timestamp,
-            rgbaBytes = output,
-        )
     }
 
     private enum class State {
@@ -338,8 +354,100 @@ class MediaProjectionFrameCapture(
     }
 
     private companion object {
-        const val BYTES_PER_PIXEL = 4
-        const val MAX_RETAINED_IMAGES = 2
         const val VIRTUAL_DISPLAY_NAME = "Veyarc ephemeral workflow frame"
+    }
+}
+
+/** Retains one native image only until replacement or capture teardown, without a full-screen heap copy. */
+internal class ProjectionFrames(private val reader: ImageReader) : Closeable {
+    private var latest: Image? = null
+    private var closed = false
+
+    init {
+        require(reader.maxImages >= MAX_IMAGES) { "Capture needs one retained image and two acquisition slots" }
+    }
+
+    @Synchronized
+    fun capture(area: ScreenCaptureArea): EphemeralScreenFrame? {
+        check(!closed) { "MediaProjection capture is closed" }
+        val deadline = SystemClock.elapsedRealtime() + FIRST_FRAME_TIMEOUT_MS
+        do {
+            val image = try {
+                reader.acquireLatestImage()
+            } catch (error: IllegalStateException) {
+                throw MediaProjectionCaptureException("MediaProjection frame capture is unavailable", error)
+            }
+            if (image != null) {
+                val previous = latest
+                latest = image
+                previous?.close()
+            }
+            if (latest != null) break
+            if (SystemClock.elapsedRealtime() >= deadline) return null
+            Thread.sleep(10)
+        } while (true)
+        val image = checkNotNull(latest)
+        return try {
+            require(image.format == PixelFormat.RGBA_8888) { "MediaProjection returned an unsupported pixel format" }
+            val plane = image.planes.singleOrNull()
+                ?: throw MediaProjectionCaptureException("MediaProjection returned an unexpected image layout")
+            copyRgbaFrame(image.width, image.height, image.timestamp, plane.buffer, plane.pixelStride, plane.rowStride, area)
+        } catch (error: Throwable) {
+            latest = null
+            image.close()
+            throw error
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        if (closed) return
+        closed = true
+        val image = latest
+        latest = null
+        try {
+            image?.close()
+        } finally {
+            reader.close()
+        }
+    }
+
+    companion object {
+        // acquireLatestImage needs two free slots to discard old queued frames while one is held.
+        const val MAX_IMAGES = 3
+        private const val FIRST_FRAME_TIMEOUT_MS = 1_000L
+    }
+}
+
+/** Copies only needed pixels, using bulk row reads for the usual tightly packed RGBA layout. */
+internal fun copyRgbaFrame(width: Int, height: Int, timestampNanos: Long, source: ByteBuffer, pixelStride: Int, rowStride: Int, area: ScreenCaptureArea = ScreenCaptureArea.FullScreen): EphemeralScreenFrame {
+    require(width in 1..MAX_CAPTURE_DIMENSION_PX && height in 1..MAX_CAPTURE_DIMENSION_PX && width.toLong() * height <= MAX_CAPTURE_PIXEL_COUNT) { "Projection frame is too large or invalid" }
+    require(pixelStride >= 4 && rowStride.toLong() >= (width - 1L) * pixelStride + 4) { "MediaProjection returned invalid pixel strides" }
+    val bounds = when (area) {
+        ScreenCaptureArea.FullScreen -> FramePixelBounds(0, 0, width, height)
+        is ScreenCaptureArea.Region -> FramePixelBounds.from(area.rect, width, height)
+        is ScreenCaptureArea.Pixel -> FramePixelBounds.pixel(area.point, width, height)
+    }
+    val lastPixelEnd = (height - 1L) * rowStride + (width - 1L) * pixelStride + 4
+    require(lastPixelEnd <= source.limit()) { "MediaProjection returned a truncated image buffer" }
+    val output = ByteArray(bounds.width * bounds.height * 4)
+    try {
+        val buffer = source.duplicate()
+        for (row in 0 until bounds.height) {
+            buffer.position(((bounds.top + row).toLong() * rowStride + bounds.left.toLong() * pixelStride).toInt())
+            val destination = row * bounds.width * 4
+            if (pixelStride == 4) {
+                buffer.get(output, destination, bounds.width * 4)
+            } else {
+                for (column in 0 until bounds.width) {
+                    buffer.position(((bounds.top + row).toLong() * rowStride + (bounds.left + column).toLong() * pixelStride).toInt())
+                    buffer.get(output, destination + column * 4, 4)
+                }
+            }
+        }
+        return EphemeralScreenFrame(width, height, timestampNanos, output, bounds)
+    } catch (error: Throwable) {
+        output.fill(0)
+        throw error
     }
 }

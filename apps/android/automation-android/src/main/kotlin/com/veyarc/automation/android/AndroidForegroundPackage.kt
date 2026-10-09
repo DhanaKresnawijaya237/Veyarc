@@ -5,4 +5,6 @@ import com.veyarc.model.PackageName
 /** Public, package-only view of the accessibility service's active application tracker. */
 object AndroidForegroundPackage {
     fun current(): PackageName? = ForegroundPackageTracker.current()
+
+    fun currentForRecording(): PackageName? = ForegroundPackageTracker.currentForRecording()
 }

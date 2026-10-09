@@ -16,7 +16,19 @@ It works with coordinates and screen images. It does not read an app's buttons, 
 
 The app has five main areas: **Home** for run statistics, recording, and favorite workflows; **Workflows** for folders and saved workflows; **Editor** for blocks and revisions; **Runs** for history and details; and **Settings** for permissions, appearance, the edge latch, and local data. The left or right edge latch offers quick recording and replay controls without opening the app.
 
-Workflow revisions, image templates, and recording journals are encrypted locally. Identical image data can be shared across revisions instead of stored repeatedly. Veyarc has no account, cloud sync, analytics, or internet permission. Settings supports local `.veyarc` workflow import and export.
+Workflow revisions, image templates, recording journals, and AI chats are encrypted locally. Identical image data can be shared across revisions. Veyarc has no account, cloud sync, or analytics. Recording, editing, and replay work offline. Settings supports `.veyarc` workflow and `.veyarc-run` run import and export.
+
+## Optional AI chat
+
+- Connect your own API key for DeepSeek, OpenAI, Anthropic, Google, or another listed provider. Custom connections support HTTPS endpoints using Chat Completions, Responses, Anthropic Messages, or Google Generative AI.
+- Configure multiple models, choose a default model and effort, then enable AI for the app session. Saving a key or enabling AI sends nothing. Sending messages, testing connections, or fetching models contacts your chosen endpoint.
+- Ask questions, create workflows, or propose edits. Replies and supported thinking stream into the chat; active replies can continue while you use another page or app.
+- Attach camera photos, images, PDFs, DOCX, Markdown, or text files. Images support cropping, rotation, and annotation. Image and PDF input requires a model configured for vision.
+- Review changes before applying them to the draft. Saving and running remain separate actions. AI cannot start recording, change device permissions, or run workflows.
+- Requests include your message, recent completed chat exchanges, the current workflow text, attachments, and Veyarc's workflow schema and instructions. They go directly to your configured provider, without a Veyarc server.
+- API usage is billed by the provider; a ChatGPT Plus or Claude Pro subscription is not an API key. Stop cancels the local request, but charges may still apply. Keys and chats stay out of workflow exports and Android backup; local deletion does not delete provider records.
+
+See [AI chat help](docs/ai-chat-guide.md), also available in **Settings → AI connection**, for setup, privacy, and troubleshooting. Provider presets describe available integrations; not every provider/model has been tested with a funded account.
 
 ## Device support and limits
 
@@ -29,7 +41,7 @@ Workflow revisions, image templates, and recording journals are encrypted locall
 
 Recording and replay use one pointer. Multitouch, pressure, and finger contact area are not reproduced. Portrait and landscape are separate workflow variants; rotating during a run stops it. Split-screen and freeform windows are unsupported. **Replay does not freeze the screen**: human touches can interfere, so leave the target app untouched while it runs. Notifications provide an independent stop control.
 
-Other devices may work, but they are not yet verified. See [device compatibility](docs/android-device-compatibility.md) for the evidence, [the Android guide](docs/android-beta-guide.md) for setup and recovery, and [v1.0.0 release notes](docs/android-v1.0.0-release-notes.md) for the v1 version.
+Other devices may work, but they are not yet verified. See [device compatibility](docs/android-device-compatibility.md) for the evidence, [the Android guide](docs/android-beta-guide.md) for setup and recovery, and [release notes](docs/android-v1.0.0-release-notes.md) for version 1.1.0.
 
 ## Repository and build
 

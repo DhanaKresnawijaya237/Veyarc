@@ -1,5 +1,6 @@
 package com.veyarc.app
 
+import android.content.res.Configuration
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
@@ -9,16 +10,19 @@ import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -30,11 +34,13 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -52,7 +58,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -64,6 +72,7 @@ import com.veyarc.data.storage.WorkflowSummary
 import com.veyarc.feature.editor.StoredRunDetailScreen
 import com.veyarc.feature.editor.VeyarcChoice
 import com.veyarc.feature.editor.VeyarcChoicePicker
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -97,12 +106,13 @@ internal fun RunManagerScreen(
     refreshGeneration: Int,
     onOpenWorkflowRevision: (StoredRunRecord) -> Unit,
     onSelectionBarChange: (ManagerSelectionBarState?) -> Unit = {},
+    pageState: RunManagerState = remember { RunManagerState() },
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var runs by remember { mutableStateOf<List<ManagedRun>>(emptyList()) }
-    var workflows by remember { mutableStateOf<List<WorkflowSummary>>(emptyList()) }
-    var folders by remember { mutableStateOf<List<FolderSummary>>(emptyList()) }
+    var runs by pageState.runs
+    var workflows by pageState.workflows
+    var folders by pageState.folders
     var folderOrder by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var selectedView by rememberSaveable { mutableStateOf(RUNS_ALL_VIEW) }
     var selectedRunId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -132,7 +142,9 @@ internal fun RunManagerScreen(
     var dateMenuOpen by remember { mutableStateOf(false) }
     var filtersOpen by remember { mutableStateOf(false) }
 
-    LaunchedEffect(repository, refreshGeneration, localRefresh) {
+    val pageActive = LocalMainPageActive.current
+    LaunchedEffect(repository, refreshGeneration, localRefresh, pageActive) {
+        if (!pageActive) return@LaunchedEffect
         isBusy = true
         message = null
         runCatching {
@@ -157,6 +169,7 @@ internal fun RunManagerScreen(
             runs = loadedRuns
             workflows = loadedWorkflows
             folders = loadedFolders
+            pageState.loaded.value = true
             val availableKeys = listOf(RUNS_ALL_VIEW, RUNS_BY_WORKFLOW_VIEW, RUNS_UNFILED_VIEW) + loadedFolders.map { it.viewKey() }
             folderOrder = reconcileFolderOrder(savedOrder, availableKeys)
             selectedIds = terminalRunIds(selectedIds.toSet(), loadedRuns).toList()
@@ -165,14 +178,22 @@ internal fun RunManagerScreen(
                 selectedView = RUNS_ALL_VIEW
             }
             if (workflowFilter != null && loadedWorkflows.none { it.workflowId == workflowFilter }) workflowFilter = null
-        }.onFailure { message = "Runs could not be loaded." }
+        }.onFailure {
+            if (it is CancellationException) throw it
+            message = "Runs could not be loaded."
+        }
         isBusy = false
     }
 
     LaunchedEffect(repository, selectedRunId) {
+        selectedRunDetails = null
         selectedRunDetails = selectedRunId?.let { runId ->
             runCatching { withContext(Dispatchers.IO) { repository.loadRunDetails(runId) } }
-                .onFailure { message = "Run details could not be loaded." }
+                .onFailure { failure ->
+                    if (failure is kotlinx.coroutines.CancellationException) throw failure
+                    message = "Run details could not be loaded."
+                    selectedRunId = null
+                }
                 .getOrNull()
         }
     }
@@ -216,6 +237,7 @@ internal fun RunManagerScreen(
         val managedRun = runs.firstOrNull { it.record.runId == run.runId } ?: return@let
         StoredRunDetailScreen(
             record = run,
+            workflowName = managedRun.workflowName,
             onBack = {
                 selectedRunId = null
                 selectedRunDetails = null
@@ -224,6 +246,16 @@ internal fun RunManagerScreen(
                 { onOpenWorkflowRevision(run) }
             },
         )
+        return
+    }
+    if (selectedRunId != null) {
+        androidx.activity.compose.BackHandler { selectedRunId = null }
+        androidx.compose.foundation.layout.Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                androidx.compose.material3.CircularProgressIndicator()
+                Text("Loading run…")
+            }
+        }
         return
     }
 
@@ -277,12 +309,9 @@ internal fun RunManagerScreen(
         }
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        item {
+    val pinHeader = LocalConfiguration.current.orientation != Configuration.ORIENTATION_LANDSCAPE
+    val header: @Composable () -> Unit = {
+        Column(Modifier.fillMaxWidth().testTag("run-manager-header"), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             CompactManagerHeader(
                 title = "Runs Manager",
                 searchActive = searchActive,
@@ -296,9 +325,7 @@ internal fun RunManagerScreen(
                     if (!enabled) selectedIds = emptyList()
                 },
             )
-        }
 
-        item {
             ReorderableFolderRow(
                 folders = folderItems,
                 selectedKey = selectedView,
@@ -307,9 +334,7 @@ internal fun RunManagerScreen(
                 onOrderChanged = ::persistFolderOrder,
                 onCreate = { creatingFolder = true },
             )
-        }
 
-        item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -353,59 +378,64 @@ internal fun RunManagerScreen(
                         selectionMode = !selectionMode
                         if (!selectionMode) selectedIds = emptyList()
                     }) {
-                        Icon(
-                            if (selectionMode) Icons.Filled.Close else Icons.Filled.CheckBox,
-                            contentDescription = if (selectionMode) "Leave selection mode" else "Select items",
-                        )
+                        androidx.compose.animation.AnimatedContent(selectionMode, label = "run selection toggle") { selecting ->
+                            Icon(
+                                if (selecting) Icons.Filled.Close else Icons.Filled.CheckBox,
+                                contentDescription = if (selecting) "Leave selection mode" else "Select items",
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+    Column(Modifier.fillMaxSize()) {
+        if (pinHeader) Box(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 20.dp)) { header() }
+        LazyColumn(
+            modifier = Modifier.weight(1f).fillMaxWidth().testTag("run-manager-list"),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = if (pinHeader) 14.dp else 20.dp, bottom = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            if (!pinHeader) item(key = "manager-header") { header() }
+            item(key = "load-progress") {
+                Box(Modifier.fillMaxWidth().height(4.dp)) {
+                    if (isBusy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+            }
+            message?.let { item { Text(it, color = MaterialTheme.colorScheme.primary) } }
+            if (pageState.loaded.value && !isBusy && visible.isEmpty()) item { Card { Text("No runs match these filters.", modifier = Modifier.padding(18.dp)) } }
 
-        if (isBusy) item { LinearProgressIndicator(modifier = Modifier.fillMaxWidth()) }
-        message?.let { item { Text(it, color = MaterialTheme.colorScheme.primary) } }
-        if (!isBusy && visible.isEmpty()) item { Card { Text("No runs match these filters.", modifier = Modifier.padding(18.dp)) } }
-
-        if (selectedView == RUNS_BY_WORKFLOW_VIEW) {
-            visible.groupBy { it.record.workflowId }.forEach { (_, workflowRuns) ->
-                item { Text(workflowRuns.first().workflowName, style = MaterialTheme.typography.titleMedium) }
-                items(workflowRuns, key = { it.record.runId }) { managed ->
+            if (selectedView == RUNS_BY_WORKFLOW_VIEW) {
+                visible.groupBy { it.record.workflowId }.forEach { (_, workflowRuns) ->
+                    item { Text(workflowRuns.first().workflowName, style = MaterialTheme.typography.titleMedium) }
+                    items(workflowRuns, key = { it.record.runId }) { managed ->
+                        RunCard(
+                            run = managed,
+                            selectionMode = selectionMode,
+                            selected = managed.record.runId in selectedIds,
+                            isBusy = isBusy,
+                            onOpen = { selectedRunId = managed.record.runId },
+                            onDelete = { pendingRunDelete = listOf(managed.record) },
+                            onSelectedChange = { checked ->
+                                selectedIds = if (checked) (selectedIds + managed.record.runId).distinct() else selectedIds - managed.record.runId
+                            },
+                        )
+                    }
+                }
+            } else {
+                items(visible, key = { it.record.runId }) { managed ->
                     RunCard(
                         run = managed,
                         selectionMode = selectionMode,
                         selected = managed.record.runId in selectedIds,
                         isBusy = isBusy,
                         onOpen = { selectedRunId = managed.record.runId },
-                        onLongPress = {
-                            if (managed.record.status != StoredRunStatus.RUNNING) {
-                                selectionMode = true
-                                selectedIds = (selectedIds + managed.record.runId).distinct()
-                            }
-                        },
+                        onDelete = { pendingRunDelete = listOf(managed.record) },
                         onSelectedChange = { checked ->
                             selectedIds = if (checked) (selectedIds + managed.record.runId).distinct() else selectedIds - managed.record.runId
                         },
                     )
                 }
-            }
-        } else {
-            items(visible, key = { it.record.runId }) { managed ->
-                RunCard(
-                    run = managed,
-                    selectionMode = selectionMode,
-                    selected = managed.record.runId in selectedIds,
-                    isBusy = isBusy,
-                    onOpen = { selectedRunId = managed.record.runId },
-                    onLongPress = {
-                        if (managed.record.status != StoredRunStatus.RUNNING) {
-                            selectionMode = true
-                            selectedIds = (selectedIds + managed.record.runId).distinct()
-                        }
-                    },
-                    onSelectedChange = { checked ->
-                        selectedIds = if (checked) (selectedIds + managed.record.runId).distinct() else selectedIds - managed.record.runId
-                    },
-                )
             }
         }
     }
@@ -648,42 +678,47 @@ private fun RunCard(
     selected: Boolean,
     isBusy: Boolean,
     onOpen: () -> Unit,
-    onLongPress: () -> Unit,
+    onDelete: () -> Unit,
     onSelectedChange: (Boolean) -> Unit,
 ) {
     val active = run.record.status == StoredRunStatus.RUNNING
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        modifier = Modifier.fillMaxWidth().combinedClickable(
-            enabled = !isBusy,
-            onClick = { if (selectionMode && !active) onSelectedChange(!selected) else onOpen() },
-            onLongClick = onLongPress,
-        ),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
+    var menuOpen by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxWidth().testTag("run-card-${run.record.runId}")) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+            modifier = Modifier.fillMaxWidth().combinedClickable(
+                enabled = !isBusy,
+                onClick = { if (selectionMode && !active) onSelectedChange(!selected) else onOpen() },
+                onLongClick = { if (!selectionMode) menuOpen = true },
+            ),
         ) {
-            if (selectionMode) {
-                Checkbox(
-                    checked = selected,
-                    onCheckedChange = onSelectedChange,
-                    enabled = !active && !isBusy,
-                )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ManagerSelectionCheckbox(selectionMode, selected, !active && !isBusy, onSelectedChange)
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(run.record.name ?: run.workflowName, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        "${run.record.status.label()} · revision ${run.record.revision} · ${run.record.durationText()}",
+                        color = if (run.record.status == StoredRunStatus.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        formatRunTimestamp(run.record.startedAtMs),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(run.record.name ?: run.workflowName, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    "${run.record.status.label()} · revision ${run.record.revision} · ${run.record.durationText()}",
-                    color = if (run.record.status == StoredRunStatus.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    formatRunTimestamp(run.record.startedAtMs),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+        }
+        Box(Modifier.align(Alignment.TopEnd)) {
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }, shape = RoundedCornerShape(16.dp), containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 0.dp) {
+                DropdownMenuItem(text = { Text("Delete") }, leadingIcon = { Icon(Icons.Filled.Delete, null) }, colors = MenuDefaults.itemColors(textColor = MaterialTheme.colorScheme.error, leadingIconColor = MaterialTheme.colorScheme.error), enabled = !active && !isBusy, onClick = {
+                    menuOpen = false
+                    onDelete()
+                })
             }
         }
     }

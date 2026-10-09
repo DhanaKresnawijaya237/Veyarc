@@ -152,7 +152,8 @@
       "required": ["assetId", "kind"],
       "properties": {
         "assetId": { "$ref": "#/$defs/assetId" },
-        "kind": { "const": "imageTemplate" }
+        "kind": { "const": "imageTemplate" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 64 }
       }
     },
     "scalarValue": {
@@ -236,9 +237,14 @@
           "required": ["type", "assetId", "region", "matchThreshold"],
           "properties": {
             "type": { "const": "imagePresent" },
+            "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor background reference. Does not change replay or image matching. Omit to remove." },
             "assetId": { "$ref": "#/$defs/assetId" },
             "region": { "$ref": "#/$defs/rect" },
-            "matchThreshold": { "type": "number", "minimum": 0, "maximum": 1 }
+            "matchThreshold": { "type": "number", "minimum": 0, "maximum": 1 },
+            "matchMode": {
+              "enum": ["appearsWithinRegion", "screenState"],
+              "default": "appearsWithinRegion"
+            }
           }
         },
         {
@@ -247,6 +253,7 @@
           "required": ["type", "assetId", "region", "matchThreshold"],
           "properties": {
             "type": { "const": "imageAbsent" },
+            "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor background reference. Does not change replay or image matching. Omit to remove." },
             "assetId": { "$ref": "#/$defs/assetId" },
             "region": { "$ref": "#/$defs/rect" },
             "matchThreshold": { "type": "number", "minimum": 0, "maximum": 1 }
@@ -319,7 +326,7 @@
               "type": "object",
               "additionalProperties": false,
               "required": ["type", "id", "point"],
-              "properties": { "type": { "const": "tapPoint" }, "id": { "$ref": "#/$defs/uuid" }, "point": { "$ref": "#/$defs/coordinate" } }
+              "properties": { "type": { "const": "tapPoint" }, "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor background reference. Does not change replay or image matching. Omit to remove." }, "id": { "$ref": "#/$defs/uuid" }, "point": { "$ref": "#/$defs/coordinate" } }
             }
           ]
         },
@@ -327,19 +334,19 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["type", "id", "region", "anchor"],
-          "properties": { "type": { "const": "tapRegion" }, "id": { "$ref": "#/$defs/uuid" }, "region": { "$ref": "#/$defs/rect" }, "anchor": { "$ref": "#/$defs/anchor" } }
+          "properties": { "type": { "const": "tapRegion" }, "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor background reference. Does not change replay or image matching. Omit to remove." }, "id": { "$ref": "#/$defs/uuid" }, "region": { "$ref": "#/$defs/rect" }, "anchor": { "$ref": "#/$defs/anchor" } }
         },
         {
           "type": "object",
           "additionalProperties": false,
           "required": ["type", "id", "point", "durationMs"],
-          "properties": { "type": { "const": "longPress" }, "id": { "$ref": "#/$defs/uuid" }, "point": { "$ref": "#/$defs/coordinate" }, "durationMs": { "type": "integer", "exclusiveMinimum": 0 } }
+          "properties": { "type": { "const": "longPress" }, "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor background reference. Does not change replay or image matching. Omit to remove." }, "id": { "$ref": "#/$defs/uuid" }, "point": { "$ref": "#/$defs/coordinate" }, "durationMs": { "type": "integer", "exclusiveMinimum": 0 } }
         },
         {
           "type": "object",
           "additionalProperties": false,
           "required": ["type", "id", "durationMs", "points"],
-          "properties": { "type": { "const": "swipePath" }, "id": { "$ref": "#/$defs/uuid" }, "durationMs": { "type": "integer", "exclusiveMinimum": 0 }, "points": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/timedPoint" } } }
+          "properties": { "type": { "const": "swipePath" }, "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor background reference. Does not change replay or image matching. Omit to remove." }, "id": { "$ref": "#/$defs/uuid" }, "durationMs": { "type": "integer", "exclusiveMinimum": 0 }, "points": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/timedPoint" } } }
         },
         {
           "type": "object",
@@ -357,6 +364,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["type", "id", "targetStepId", "maxVisits"],
+          "description": "Continue at another block or boundary in the same list or any enclosing list. A jump outside a nest exits all intervening branches and loops. It cannot enter a child nest or another branch. Counts are shared across the run; the jump is taken while its visit count is below maxVisits, then execution continues after it.",
           "properties": { "type": { "const": "jump" }, "id": { "$ref": "#/$defs/uuid" }, "targetStepId": { "$ref": "#/$defs/uuid" }, "maxVisits": { "type": "integer", "exclusiveMinimum": 0 } }
         },
         {

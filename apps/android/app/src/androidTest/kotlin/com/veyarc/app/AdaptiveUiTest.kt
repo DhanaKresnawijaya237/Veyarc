@@ -14,7 +14,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertHeightIsEqualTo
-import androidx.compose.ui.test.doubleClick
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
@@ -203,7 +202,7 @@ class MainActivityNavigationTest {
     }
 
     @Test
-    fun workflowLongPressEntersSelectionMode() {
+    fun workflowLongPressOpensActionsAndSelectionUsesTheToggle() {
         val repository = WorkflowRepository(composeRule.activity)
         val draft = WorkflowDraft.newDefault().copy(name = "Selection mode test ${System.nanoTime()}")
         val bundle = draft.buildBundle().bundle ?: error("Expected valid workflow")
@@ -213,6 +212,13 @@ class MainActivityNavigationTest {
             composeRule.onNodeWithContentDescription("Workflows", useUnmergedTree = true).performClick()
             composeRule.waitForText(draft.name)
             composeRule.onNode(hasText(draft.name) and hasClickAction()).performTouchInput { longClick() }
+            composeRule.onNodeWithText("Run", substring = false).assertExists()
+            composeRule.onNodeWithText("Revision history").assertExists()
+            composeRule.onNodeWithText("Delete", substring = false).assertExists()
+            composeRule.onNodeWithText("1 selected").assertDoesNotExist()
+            androidx.test.espresso.Espresso.pressBack()
+            composeRule.onNodeWithContentDescription("Select items", useUnmergedTree = true).performClick()
+            composeRule.onNode(hasText(draft.name) and hasClickAction()).performClick()
             composeRule.waitForText("1 selected")
             composeRule.onNodeWithContentDescription("Leave selection mode", useUnmergedTree = true).assertExists()
         } finally {
@@ -229,7 +235,7 @@ class MainActivityNavigationTest {
         try {
             composeRule.onNodeWithContentDescription("Workflows", useUnmergedTree = true).performClick()
             composeRule.waitForText(folder.name)
-            composeRule.onNode(hasText(folder.name) and hasClickAction()).performTouchInput { doubleClick() }
+            composeRule.onNode(hasText(folder.name) and hasClickAction()).performTouchInput { longClick() }
             composeRule.onNodeWithContentDescription("Delete ${folder.name}").performClick()
 
             composeRule.onNodeWithText("Delete ${folder.name}?").assertExists()

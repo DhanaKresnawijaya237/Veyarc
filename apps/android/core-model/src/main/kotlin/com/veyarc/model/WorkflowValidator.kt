@@ -151,6 +151,7 @@ object WorkflowValidator {
         declaredAssets: Map<String, AssetReference>,
         referencedAssets: MutableSet<String>,
         errors: MutableList<ValidationError>,
+        enclosingStepIds: Set<String> = emptySet(),
     ) {
         if (depth > document.runLimits.maxNestingDepth) {
             errors += error(
@@ -159,9 +160,10 @@ object WorkflowValidator {
                 "Workflow nesting depth exceeds maxNestingDepth",
             )
         }
-        val siblingStepIds = steps.mapTo(linkedSetOf()) { it.id }
+        val availableJumpTargets = enclosingStepIds + steps.map { it.id }
         steps.forEachIndexed { index, step ->
             val stepPath = "$path/$index"
+            step.backgroundAssetId()?.let { validateImageAsset(it, "$stepPath/backgroundAssetId", AssetKind.IMAGE_TEMPLATE, declaredAssets, referencedAssets, errors) }
             when (step) {
                 is WaitUntil -> {
                     validateCondition(
@@ -218,11 +220,11 @@ object WorkflowValidator {
                 }
 
                 is Jump -> {
-                    if (step.targetStepId == step.id || step.targetStepId !in siblingStepIds) {
+                    if (step.targetStepId == step.id || step.targetStepId !in availableJumpTargets) {
                         errors += error(
                             ValidationErrorCode.UNKNOWN_STEP_REFERENCE,
                             "$stepPath/targetStepId",
-                            "Jump target must be another block or boundary in this stage",
+                            "Go to must target another block or boundary in this nest or an enclosing level",
                         )
                     }
                     if (step.maxVisits > document.runLimits.maxLoopIterations) {
@@ -266,6 +268,7 @@ object WorkflowValidator {
                         declaredAssets,
                         referencedAssets,
                         errors,
+                        availableJumpTargets,
                     )
                     validateSteps(
                         step.elseSteps,
@@ -277,6 +280,7 @@ object WorkflowValidator {
                         declaredAssets,
                         referencedAssets,
                         errors,
+                        availableJumpTargets,
                     )
                 }
 
@@ -290,6 +294,7 @@ object WorkflowValidator {
                     declaredAssets,
                     referencedAssets,
                     errors,
+                    availableJumpTargets,
                 )
 
                 is WhileStep -> validateSteps(
@@ -302,6 +307,7 @@ object WorkflowValidator {
                     declaredAssets,
                     referencedAssets,
                     errors,
+                    availableJumpTargets,
                 )
 
                 else -> Unit
@@ -319,6 +325,7 @@ object WorkflowValidator {
         referencedAssets: MutableSet<String>,
         errors: MutableList<ValidationError>,
     ) {
+        condition.backgroundAssetId()?.let { validateImageAsset(it, "$path/backgroundAssetId", AssetKind.IMAGE_TEMPLATE, declaredAssets, referencedAssets, errors) }
         when (condition) {
             is PixelColorCondition -> Unit
 

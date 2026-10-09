@@ -20,6 +20,7 @@ include(
     ":automation-android",
     ":core-engine",
     ":core-model",
+    ":core-ui",
     ":core-recording",
     ":data",
     ":feature-assistant",

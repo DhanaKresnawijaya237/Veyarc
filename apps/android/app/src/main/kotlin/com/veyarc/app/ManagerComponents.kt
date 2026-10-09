@@ -1,13 +1,16 @@
 package com.veyarc.app
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
@@ -24,11 +27,15 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imeAnimationTarget
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -84,6 +91,7 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
@@ -94,7 +102,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.veyarc.data.storage.FolderSummary
+import com.veyarc.feature.assistant.RoundedSelectionCheckbox
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun CompactManagerHeader(
     title: String,
@@ -109,24 +119,37 @@ internal fun CompactManagerHeader(
     val transitionDurationMs = 180
     val searchFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val imeTargetVisible = WindowInsets.imeAnimationTarget.getBottom(LocalDensity.current) > 0
     var keyboardWasVisible by remember { mutableStateOf(false) }
+    BackHandler(enabled = LocalMainPageActive.current && (selectionMode || searchActive)) {
+        if (searchActive) {
+            onSearchActiveChange(false)
+            onQueryChange("")
+            focusManager.clearFocus()
+            keyboardController?.hide()
+        } else {
+            onSelectionModeChange(false)
+        }
+    }
     LaunchedEffect(searchActive) {
         if (searchActive) {
             searchFocusRequester.requestFocus()
             keyboardController?.show()
         } else {
             keyboardWasVisible = false
+            focusManager.clearFocus()
         }
     }
-    LaunchedEffect(imeVisible, searchActive) {
-        if (searchActive && imeVisible) keyboardWasVisible = true
-        if (searchActive && keyboardWasVisible && !imeVisible) {
+    LaunchedEffect(imeVisible, imeTargetVisible, searchActive) {
+        if (searchActive && imeVisible && imeTargetVisible) keyboardWasVisible = true
+        if (searchActive && keyboardWasVisible && !imeTargetVisible) {
             keyboardWasVisible = false
             if (query.isEmpty()) onSearchActiveChange(false)
         }
     }
-    BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(56.dp)) {
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
         val searchWidth by animateDpAsState(
             targetValue = if (searchActive) maxWidth else 48.dp,
             animationSpec = tween(transitionDurationMs),
@@ -169,10 +192,12 @@ internal fun CompactManagerHeader(
                 enabled = !searchActive,
                 modifier = Modifier.graphicsLayer { alpha = headingAlpha },
             ) {
-                Icon(
-                    if (selectionMode) Icons.Filled.Close else Icons.Filled.CheckBox,
-                    contentDescription = if (selectionMode) "Leave selection mode" else "Select items",
-                )
+                AnimatedContent(selectionMode, label = "manager selection toggle") { selecting ->
+                    Icon(
+                        if (selecting) Icons.Filled.Close else Icons.Filled.CheckBox,
+                        contentDescription = if (selecting) "Leave selection mode" else "Select items",
+                    )
+                }
             }
         }
         if (!selectionMode || searchActive) {
@@ -236,6 +261,13 @@ internal data class ManagerSelectionBarState(
 )
 
 @Composable
+internal fun ManagerSelectionCheckbox(visible: Boolean, selected: Boolean, enabled: Boolean, onSelectedChange: (Boolean) -> Unit) {
+    AnimatedVisibility(visible, enter = expandHorizontally(tween(220), expandFrom = Alignment.Start) + fadeIn(tween(150)), exit = shrinkHorizontally(tween(220), shrinkTowards = Alignment.Start) + fadeOut(tween(100))) {
+        RoundedSelectionCheckbox(checked = selected, onCheckedChange = onSelectedChange, enabled = enabled)
+    }
+}
+
+@Composable
 internal fun ManagerSelectionBar(state: ManagerSelectionBarState) {
     NavigationBar {
         ManagerSelectionAction(Icons.Filled.ContentCopy, "Copy", state.onCopy)
@@ -249,11 +281,17 @@ internal fun ManagerSelectionBar(state: ManagerSelectionBarState) {
 @Composable
 internal fun ManagerSelectionRail(state: ManagerSelectionBarState) {
     NavigationRail {
+        Spacer(Modifier.weight(1f))
         ManagerSelectionRailAction(Icons.Filled.ContentCopy, "Copy", state.onCopy)
+        Spacer(Modifier.weight(1f))
         ManagerSelectionRailAction(Icons.Filled.Edit, "Rename", state.onRename)
+        Spacer(Modifier.weight(1f))
         ManagerSelectionRailAction(Icons.AutoMirrored.Filled.DriveFileMove, "Move", state.onMove.takeIf { state.selectedCount > 0 })
+        Spacer(Modifier.weight(1f))
         ManagerSelectionRailAction(Icons.Filled.Delete, "Delete", state.onDelete.takeIf { state.selectedCount > 0 })
+        Spacer(Modifier.weight(1f))
         ManagerSelectionRailAction(Icons.Filled.Info, "Details", state.onDetails)
+        Spacer(Modifier.weight(1f))
     }
 }
 
@@ -298,11 +336,12 @@ private fun androidx.compose.foundation.layout.ColumnScope.ManagerSelectionRailA
     action: (() -> Unit)?,
 ) {
     NavigationRailItem(
+        modifier = Modifier.width(80.dp),
         selected = false,
         onClick = { action?.invoke() },
         enabled = action != null,
         icon = { Icon(icon, contentDescription = label) },
-        label = { Text(label, maxLines = 1) },
+        label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
     )
 }
 

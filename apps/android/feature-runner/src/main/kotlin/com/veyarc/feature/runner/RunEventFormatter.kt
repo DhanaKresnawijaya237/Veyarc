@@ -67,8 +67,20 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
         val threshold = event.threshold ?: condition?.matchThresholdOrNull()
         if (threshold == null) return "$base: ${event.result}"
 
-        val match = event.matchScore?.let(::formatPercent) ?: "unavailable"
-        return "$base: ${event.result} · match $match · threshold ${formatPercent(threshold)}"
+        val score = event.matchScore
+        val imageNotFound = (condition is ImageAbsentCondition && event.result) ||
+            (condition is ImagePresentCondition && !event.result)
+        val match = when {
+            score != null && imageNotFound && (condition as? ImagePresentCondition)?.matchMode != ImageMatchMode.SCREEN_STATE ->
+                "best checked match ${formatPercent(score)}"
+
+            score != null -> "match ${formatPercent(score)}"
+
+            imageNotFound -> "image not found · score unavailable"
+
+            else -> "score not reported"
+        }
+        return "$base: ${event.result} · $match · threshold ${formatPercent(threshold)}"
     }
 
     private fun stepDescription(stepId: String): String = when (val step = stepsById[stepId]) {
@@ -102,7 +114,7 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
 
         is SetVariable -> "Set variable ${step.name.value}"
 
-        null -> "Step $stepId"
+        null -> "Workflow step"
     }
 
     private fun stepName(stepId: String): String = when (stepsById[stepId]) {
