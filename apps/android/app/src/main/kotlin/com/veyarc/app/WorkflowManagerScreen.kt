@@ -26,13 +26,13 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -363,7 +363,7 @@ internal fun WorkflowManagerScreen(
                     }) {
                         androidx.compose.animation.AnimatedContent(selectionMode, label = "workflow selection toggle") { selecting ->
                             Icon(
-                                if (selecting) Icons.Filled.Close else Icons.Filled.CheckBox,
+                                if (selecting) Icons.Filled.Close else Icons.Outlined.Checklist,
                                 contentDescription = if (selecting) "Leave selection mode" else "Select items",
                             )
                         }

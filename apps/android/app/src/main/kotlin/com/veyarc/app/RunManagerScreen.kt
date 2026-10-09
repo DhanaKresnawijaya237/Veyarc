@@ -26,10 +26,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -380,7 +380,7 @@ internal fun RunManagerScreen(
                     }) {
                         androidx.compose.animation.AnimatedContent(selectionMode, label = "run selection toggle") { selecting ->
                             Icon(
-                                if (selecting) Icons.Filled.Close else Icons.Filled.CheckBox,
+                                if (selecting) Icons.Filled.Close else Icons.Outlined.Checklist,
                                 contentDescription = if (selecting) "Leave selection mode" else "Select items",
                             )
                         }
@@ -406,8 +406,10 @@ internal fun RunManagerScreen(
             if (pageState.loaded.value && !isBusy && visible.isEmpty()) item { Card { Text("No runs match these filters.", modifier = Modifier.padding(18.dp)) } }
 
             if (selectedView == RUNS_BY_WORKFLOW_VIEW) {
-                visible.groupBy { it.record.workflowId }.forEach { (_, workflowRuns) ->
-                    item { Text(workflowRuns.first().workflowName, style = MaterialTheme.typography.titleMedium) }
+                visible.groupBy { it.record.workflowId }.entries.forEachIndexed { index, (workflowId, workflowRuns) ->
+                    item(key = "workflow-heading-$workflowId") {
+                        Text(workflowRuns.first().workflowName, Modifier.padding(top = if (index == 0) 0.dp else 16.dp), style = MaterialTheme.typography.titleMedium)
+                    }
                     items(workflowRuns, key = { it.record.runId }) { managed ->
                         RunCard(
                             run = managed,
