@@ -1,14 +1,15 @@
 package com.veyarc.feature.assistant
 
+import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.sin
 import kotlin.random.Random
 
-internal class WelcomeParticleField {
-    private val random = Random(29)
-    private val originsX = FloatArray(560) { random.nextFloat() }
-    private val originsY = FloatArray(560) { (it % 6 + 0.5f) / 6f + (random.nextFloat() - 0.5f) * 0.1f }
+internal class WelcomeParticleField(random: Random = Random.Default) {
+    private val originsX = FloatArray(560) { (it % 20 + random.nextFloat()) / 20f }
+    private val originsY = FloatArray(560) { (it / 20 + random.nextFloat()) / 28f }
     val depth = FloatArray(560) { random.nextFloat() }
+    private val phases = FloatArray(560) { random.nextFloat() * 6.283185f }
     val x = FloatArray(560)
     val y = FloatArray(560)
     private val displacementX = FloatArray(560)
@@ -70,16 +71,15 @@ internal class WelcomeParticleField {
         val dt = seconds.coerceIn(0f, 1f / 30f)
         time += dt
         val damping = exp(-5f * dt)
-        val amplitude = (height * 0.09f).coerceAtMost(56f)
+        val amplitude = minOf(width, height, 360f) * 0.12f
         val pullX = dragX.coerceIn(-48f, 48f) * 18f
         val pullY = dragY.coerceIn(-48f, 48f) * 18f
         for (i in x.indices) {
-            val along = (originsX[i] + time * (0.014f + depth[i] * 0.009f)) % 1f
-            val baseX = along * (width + 96f) - 48f
-            val baseY = originsY[i] * height + amplitude * (
-                sin(along * 6f + originsY[i] * 3f - time * 0.42f) +
-                    sin(along * 11f - originsY[i] * 4f + time * 0.27f) * 0.32f
-                )
+            val phase = phases[i]
+            val pace = 0.16f + depth[i] * 0.22f
+            val travel = amplitude * (0.55f + depth[i] * 0.45f)
+            val baseX = reflect(originsX[i] * width + travel * (sin(time * pace + phase) + sin(time * pace * 0.61f + phase * 1.73f) * 0.45f), width)
+            val baseY = reflect(originsY[i] * height + travel * (cos(time * pace * 0.83f + phase * 1.31f) + sin(time * pace * 1.13f + phase) * 0.35f), height)
             if (pressed) {
                 val dx = baseX + displacementX[i] - pointerX
                 val dy = baseY + displacementY[i] - pointerY
@@ -97,5 +97,12 @@ internal class WelcomeParticleField {
         }
         dragX = 0f
         dragY = 0f
+    }
+
+    // Reflect at the viewport edges instead of letting whole bands leave the screen.
+    private fun reflect(position: Float, length: Float): Float {
+        val period = length * 2f
+        val wrapped = ((position % period) + period) % period
+        return if (wrapped <= length) wrapped else period - wrapped
     }
 }

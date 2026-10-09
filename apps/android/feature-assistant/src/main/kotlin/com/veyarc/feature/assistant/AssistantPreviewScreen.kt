@@ -578,7 +578,7 @@ private fun ConversationBody(state: AssistantPreviewState, onContext: (PreviewTu
         withFrameNanos { }
         if (followLatest && chat.turns.isNotEmpty()) list.scrollToItem((list.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
     }
-    Box(modifier.fillMaxWidth()) {
+    AssistantParticles(interactive = chat.turns.isEmpty(), modifier = modifier.fillMaxWidth()) {
         if (chat.turns.isEmpty()) {
             AssistantWelcome(state)
         }
