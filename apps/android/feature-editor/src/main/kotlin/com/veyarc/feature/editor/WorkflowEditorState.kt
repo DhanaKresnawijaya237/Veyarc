@@ -97,6 +97,13 @@ data class DraftBuildResult(
     val document: WorkflowDocument? = bundle?.document,
 )
 
+data class TemplateUsageNumbers(val crop: List<String>, val background: List<String>) {
+    fun subtitle(): String = listOfNotNull(
+        crop.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "Crop: "),
+        background.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "Background: "),
+    ).joinToString(" · ")
+}
+
 class WorkflowEditorSession {
     var isSaving by mutableStateOf(false)
         private set
@@ -365,8 +372,8 @@ data class WorkflowDraft(
             if (error.code == ValidationErrorCode.MISSING_ASSET) {
                 val missingId = missingAssetIds.firstOrNull { it in error.message }
                 val displayName = missingId?.let(assetNames::get) ?: "Deleted image"
-                val numbers = missingId?.let { assetUsageNumbers()[it] }.orEmpty()
-                DraftIssue(error.path, "$displayName is still used" + if (numbers.isEmpty()) "" else " · ${numbers.joinToString(", ")}")
+                val usage = missingId?.let { assetUsageNumbers()[it]?.subtitle() }
+                DraftIssue(error.path, "$displayName is still used" + usage?.takeIf { it.isNotEmpty() }?.let { " · $it" }.orEmpty())
             } else {
                 DraftIssue(error.path, error.message)
             }
@@ -477,24 +484,33 @@ data class WorkflowDraft(
 
     fun referencedAssetIds(): Set<String> = buildSet { steps.forEach { addStepAssetReferences(it) } }
 
-    fun assetUsageNumbers(): Map<String, List<String>> {
-        val uses = linkedMapOf<String, MutableList<String>>()
+    fun assetUsageNumbers(): Map<String, TemplateUsageNumbers> {
+        val crops = linkedMapOf<String, MutableSet<String>>()
+        val backgrounds = linkedMapOf<String, MutableSet<String>>()
+        fun conditionUses(condition: Condition, label: String) {
+            condition.backgroundAssetId()?.let { backgrounds.getOrPut(it.value) { linkedSetOf() }.add(label) }
+            when (condition) {
+                is ImagePresentCondition -> crops.getOrPut(condition.assetId.value) { linkedSetOf() }.add(label)
+                is ImageAbsentCondition -> crops.getOrPut(condition.assetId.value) { linkedSetOf() }.add(label)
+                is AndCondition -> condition.conditions.forEach { conditionUses(it, label) }
+                is OrCondition -> condition.conditions.forEach { conditionUses(it, label) }
+                is NotCondition -> conditionUses(condition.condition, label)
+                else -> Unit
+            }
+        }
         fun visit(items: List<WorkflowStep>, prefix: String) {
             var number = 0
             items.forEach { step ->
                 if (step is StageBoundary) return@forEach
                 number++
                 val label = "$prefix$number"
-                val ownReferences = buildSet {
-                    step.backgroundAssetId()?.let { add(it.value) }
-                    when (step) {
-                        is WaitUntil -> addConditionAssetReferences(step.condition)
-                        is IfElse -> addConditionAssetReferences(step.condition)
-                        is WhileStep -> addConditionAssetReferences(step.condition)
-                        else -> Unit
-                    }
+                step.backgroundAssetId()?.let { backgrounds.getOrPut(it.value) { linkedSetOf() }.add(label) }
+                when (step) {
+                    is WaitUntil -> conditionUses(step.condition, label)
+                    is IfElse -> conditionUses(step.condition, label)
+                    is WhileStep -> conditionUses(step.condition, label)
+                    else -> Unit
                 }
-                ownReferences.forEach { uses.getOrPut(it) { mutableListOf() }.add(label) }
                 when (step) {
                     is IfElse -> {
                         visit(step.thenSteps, "$label.")
@@ -510,7 +526,9 @@ data class WorkflowDraft(
             }
         }
         visit(steps, "")
-        return uses.mapValues { (_, numbers) -> numbers.distinct() }
+        return (crops.keys + backgrounds.keys).associateWith { id ->
+            TemplateUsageNumbers(crops[id]?.toList().orEmpty(), backgrounds[id]?.toList().orEmpty())
+        }
     }
 
     fun addAsset(asset: BundleAsset, defaultNamePrefix: String = "Template"): WorkflowDraft {

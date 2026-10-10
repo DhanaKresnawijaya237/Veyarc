@@ -1649,7 +1649,7 @@ private fun TemplateAssetSection(
     assets: List<com.veyarc.data.storage.WorkflowAssetDescriptor>,
     assetNames: Map<String, String>,
     referencedAssetIds: Set<String>,
-    usageNumbers: Map<String, List<String>>,
+    usageNumbers: Map<String, TemplateUsageNumbers>,
     onAddTemplate: () -> Unit,
     loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
     onRemoveTemplate: (com.veyarc.model.AssetId) -> Unit,
@@ -1694,7 +1694,7 @@ private fun TemplateAssetSection(
                                     listOfNotNull(
                                         asset.addedAtMs?.let { "Added ${java.text.SimpleDateFormat("dd/MM/yy HH:mm", java.util.Locale.ROOT).format(java.util.Date(it))}" },
                                         asset.byteCount?.let { android.text.format.Formatter.formatShortFileSize(context, it) },
-                                        usageNumbers[asset.assetId.value]?.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "Steps: "),
+                                        usageNumbers[asset.assetId.value]?.subtitle()?.takeIf { it.isNotEmpty() },
                                     ).joinToString(" · "),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
