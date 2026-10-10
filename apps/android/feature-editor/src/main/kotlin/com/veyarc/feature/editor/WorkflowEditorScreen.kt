@@ -171,6 +171,8 @@ import com.veyarc.model.WorkflowIds
 import com.veyarc.model.WorkflowStep
 import com.veyarc.model.bundle.WorkflowBundle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -194,7 +196,8 @@ fun WorkflowEditorScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var isBusy by remember { mutableStateOf(false) }
+    var isWorking by remember { mutableStateOf(false) }
+    val isBusy = isWorking || session.isSaving
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var isOpening by remember { mutableStateOf(false) }
     var initialLoadFinished by remember(initialBundle, initialStoredWorkflowId, initialStoredRevision) { mutableStateOf(false) }
@@ -215,7 +218,7 @@ fun WorkflowEditorScreen(
     val templatePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
-            isBusy = true
+            isWorking = true
             statusMessage = null
             runCatching {
                 withContext(Dispatchers.Default) {
@@ -227,7 +230,7 @@ fun WorkflowEditorScreen(
             }.onFailure { error ->
                 statusMessage = "Could not open image: ${error.userMessage()}"
             }
-            isBusy = false
+            isWorking = false
         }
     }
     val appPicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -304,7 +307,7 @@ fun WorkflowEditorScreen(
             onInitialBundleConsumed()
             return@LaunchedEffect
         }
-        isBusy = true
+        isWorking = true
         isOpening = true
         try {
             val revisions = withContext(Dispatchers.IO) { repository.listRevisions(bundle.document.id) }
@@ -317,7 +320,7 @@ fun WorkflowEditorScreen(
             statusMessage = "Could not open workflow: ${error.userMessage()}"
             onInitialBundleConsumed()
         } finally {
-            isBusy = false
+            isWorking = false
             isOpening = false
             initialLoadFinished = true
         }
@@ -332,7 +335,7 @@ fun WorkflowEditorScreen(
             onInitialBundleConsumed()
             return@LaunchedEffect
         }
-        isBusy = true
+        isWorking = true
         isOpening = true
         try {
             val request = loadStoredRevision(workflowId, revision, initialRecordingJournalFileName, true)
@@ -343,7 +346,7 @@ fun WorkflowEditorScreen(
             statusMessage = "Could not open workflow: ${error.userMessage()}"
             onInitialBundleConsumed()
         } finally {
-            isBusy = false
+            isWorking = false
             isOpening = false
             initialLoadFinished = true
         }
@@ -372,7 +375,7 @@ fun WorkflowEditorScreen(
         val current = session.draft ?: return
         if (isBusy || current.lastSavedRevision == revision) return
         scope.launch {
-            isBusy = true
+            isWorking = true
             isOpening = true
             statusMessage = null
             try {
@@ -383,7 +386,7 @@ fun WorkflowEditorScreen(
             } catch (error: Exception) {
                 statusMessage = "Could not open revision: ${error.userMessage()}"
             } finally {
-                isBusy = false
+                isWorking = false
                 isOpening = false
             }
         }
@@ -409,13 +412,13 @@ fun WorkflowEditorScreen(
             pendingOrientationSave = PendingOrientationSave(draft, afterSave)
             return
         }
-        val sourceJournalFileName = session.draft?.recordingJournalFileName
+        val destinationFolderId = session.destinationFolderId
         if (isBusy || !session.beginSave()) return
-        isBusy = true
+        isWorking = true
         scope.launch {
             try {
                 statusMessage = null
-                runCatching {
+                val stored = session.persistSave(draft) {
                     withContext(Dispatchers.IO) {
                         val latest = repository.listRevisions(draft.workflowId).maxOfOrNull { it.revision }
                         if (latest != null && latest > (draft.latestKnownRevision ?: 0)) {
@@ -425,35 +428,36 @@ fun WorkflowEditorScreen(
                         if (sourceRevision == null) {
                             val bundle = build.bundle
                                 ?: throw WorkflowStorageException("Unsaved workflow assets are incomplete")
-                            repository.saveRevision(bundle, session.destinationFolderId)
+                            repository.saveRevision(bundle, destinationFolderId)
                         } else {
                             repository.saveRevisionFromAssetChanges(
                                 sourceWorkflowId = draft.workflowId,
                                 sourceRevision = sourceRevision,
                                 document = document,
                                 changedAssets = draft.assets,
-                                destinationFolderId = session.destinationFolderId,
+                                destinationFolderId = destinationFolderId,
                             )
                         }
                         repository.loadRevisionForEditor(document.id, document.revision)
                     }
-                }.onSuccess { stored ->
-                    session.markSaved(WorkflowDraft.fromRevision(stored, sourceJournalFileName))
-                    ReplayWorkflowCatalog.addOrReplace(
-                        context,
-                        ReplayControllerWorkflow(
-                            workflowId = stored.revision.document.id,
-                            revision = stored.revision.document.revision,
-                            name = stored.revision.document.name,
-                        ),
-                    )
-                    statusMessage = "Saved revision ${stored.revision.document.revision}."
-                    afterSave?.invoke(stored.revision)
-                }.onFailure { error ->
-                    statusMessage = "Could not save revision: ${error.userMessage()}"
                 }
+                ReplayWorkflowCatalog.addOrReplace(
+                    context.applicationContext,
+                    ReplayControllerWorkflow(
+                        workflowId = stored.revision.document.id,
+                        revision = stored.revision.document.revision,
+                        name = stored.revision.document.name,
+                    ),
+                )
+                currentCoroutineContext().ensureActive()
+                statusMessage = "Saved revision ${stored.revision.document.revision}."
+                afterSave?.invoke(stored.revision)
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                statusMessage = "Could not save revision: ${error.userMessage()}"
             } finally {
-                isBusy = false
+                isWorking = false
             }
         }.invokeOnCompletion { session.finishSave() }
     }
@@ -462,7 +466,7 @@ fun WorkflowEditorScreen(
         val revision = draft.lastSavedRevision
         if (!session.isDirty && revision != null) {
             scope.launch {
-                isBusy = true
+                isWorking = true
                 statusMessage = null
                 runCatching {
                     withContext(Dispatchers.IO) {
@@ -471,7 +475,7 @@ fun WorkflowEditorScreen(
                 }.onSuccess(onRunWorkflow).onFailure { error ->
                     statusMessage = "Could not open workflow: ${error.userMessage()}"
                 }
-                isBusy = false
+                isWorking = false
             }
         } else {
             saveWorkflow(draft, afterSave = onRunWorkflow)
@@ -506,7 +510,7 @@ fun WorkflowEditorScreen(
         val selected = current.stepsAt(path).filter { it.id in ids }
         if (selected.isEmpty()) return
         scope.launch {
-            isBusy = true
+            isWorking = true
             statusMessage = null
             runCatching {
                 val images = selected.clipboardImageIds().map { id ->
@@ -519,7 +523,7 @@ fun WorkflowEditorScreen(
                 clipboardAvailable = true
                 statusMessage = "Copied ${selected.size} block${if (selected.size == 1) "" else "s"}."
             }.onFailure { error -> statusMessage = "Could not copy blocks: ${error.userMessage()}" }
-            isBusy = false
+            isWorking = false
         }
     }
 
@@ -541,7 +545,7 @@ fun WorkflowEditorScreen(
         val pending = pendingBlockPaste ?: return
         pendingBlockPaste = null
         scope.launch {
-            isBusy = true
+            isWorking = true
             statusMessage = null
             runCatching {
                 val current = session.draft ?: error("No workflow is open")
@@ -563,7 +567,7 @@ fun WorkflowEditorScreen(
                 val omitted = required - existingIds - loaded.assetIds.keys
                 statusMessage = if (omitted.isEmpty()) "Pasted ${pending.entry.steps.size} blocks." else "Pasted blocks. Add the missing images before saving."
             }.onFailure { error -> statusMessage = "Could not paste blocks: ${error.userMessage()}" }
-            isBusy = false
+            isWorking = false
         }
     }
 
@@ -733,7 +737,7 @@ fun WorkflowEditorScreen(
             onDismiss = { pendingTemplateCrop = null },
             onApply = { crop, rotationQuarterTurns, requestedName, strokes ->
                 scope.launch {
-                    isBusy = true
+                    isWorking = true
                     statusMessage = null
                     runCatching {
                         withContext(Dispatchers.Default) {
@@ -752,7 +756,7 @@ fun WorkflowEditorScreen(
                     }.onFailure { error ->
                         statusMessage = "Could not add image crop: ${error.userMessage()}"
                     }
-                    isBusy = false
+                    isWorking = false
                 }
             },
         )

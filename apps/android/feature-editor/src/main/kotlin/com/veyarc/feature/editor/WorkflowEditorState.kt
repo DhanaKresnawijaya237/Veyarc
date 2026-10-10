@@ -47,6 +47,8 @@ import com.veyarc.model.WorkflowValidator
 import com.veyarc.model.backgroundAssetId
 import com.veyarc.model.bundle.BundleAsset
 import com.veyarc.model.bundle.WorkflowBundle
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 enum class WorkflowStepKind {
     TAP_POINT,
@@ -116,6 +118,16 @@ class WorkflowEditorSession {
 
     fun finishSave() {
         isSaving = false
+    }
+
+    suspend fun persistSave(expected: WorkflowDraft, persist: suspend () -> WorkflowRevisionEditorData): WorkflowRevisionEditorData {
+        check(isSaving && draft === expected)
+        // A committed revision must reach the retained editor even if its screen is recreated.
+        return withContext(NonCancellable) {
+            persist().also { stored ->
+                if (draft === expected) markSaved(WorkflowDraft.fromRevision(stored, expected.recordingJournalFileName))
+            }
+        }
     }
 
     var draft by mutableStateOf<WorkflowDraft?>(null)
@@ -193,6 +205,7 @@ class WorkflowEditorSession {
     }
 
     fun update(updated: WorkflowDraft) {
+        if (isSaving) return
         val current = draft ?: return
         if (current.persistedContent() != updated.persistedContent()) {
             undoStack = (undoStack + current).takeLast(MAX_HISTORY_ENTRIES)
@@ -202,6 +215,7 @@ class WorkflowEditorSession {
     }
 
     fun undo() {
+        if (isSaving) return
         val current = draft ?: return
         val previous = undoStack.lastOrNull() ?: return
         undoStack = undoStack.dropLast(1)
@@ -210,6 +224,7 @@ class WorkflowEditorSession {
     }
 
     fun redo() {
+        if (isSaving) return
         val current = draft ?: return
         val next = redoStack.lastOrNull() ?: return
         redoStack = redoStack.dropLast(1)
