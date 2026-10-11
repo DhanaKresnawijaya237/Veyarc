@@ -175,6 +175,15 @@ internal interface WorkflowDao {
     )
     fun listRunSummaries(limit: Int, offset: Int = 0): List<RunSummaryRow>
 
+    @Query(
+        "SELECT runId, workflowId, revision, status, startedAtMs, finishedAtMs, " +
+            "interruptionReason, completedSteps, totalSteps, folderId, name, " +
+            "eventHistoryJson IS NOT NULL AS hasStoredDetails FROM run_records " +
+            "WHERE startedAtMs < :beforeMs OR (startedAtMs = :beforeMs AND runId < :beforeId) " +
+            "ORDER BY startedAtMs DESC, runId DESC LIMIT :limit",
+    )
+    fun listEarlierRunSummaries(beforeMs: Long, beforeId: String, limit: Int): List<RunSummaryRow>
+
     @Query("SELECT status, COUNT(*) AS count FROM run_records GROUP BY status")
     fun countRunsByStatus(): List<RunStatusCountRow>
 

@@ -879,6 +879,11 @@ class WorkflowRepository internal constructor(
         ?.let(::toStoredRunRecord)
         ?: throw WorkflowStorageException("Run record does not exist")
 
+    fun listEarlierRunSummaries(before: StoredRunRecord, limit: Int): List<StoredRunRecord> {
+        require(limit in 1..MAX_HISTORY_LIMIT) { "Run history limit must be between 1 and $MAX_HISTORY_LIMIT" }
+        return database.workflowDao().listEarlierRunSummaries(before.startedAtMs, before.runId, limit).map(::toStoredRunSummary)
+    }
+
     fun exportRun(runId: String): ByteArray = synchronized(this) {
         val record = loadRunDetails(runId)
         require(record.status != StoredRunStatus.RUNNING) { "Finish the run before exporting it." }

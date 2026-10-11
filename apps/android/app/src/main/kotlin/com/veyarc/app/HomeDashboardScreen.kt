@@ -30,8 +30,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.ChevronLeft
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -42,6 +44,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +55,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -67,6 +71,7 @@ import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowSummary
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
@@ -123,7 +128,7 @@ fun HomeDashboardScreen(
             withContext(Dispatchers.IO) {
                 val storedWorkflows = repository.listWorkflowSummaries()
                 Pair(
-                    repository.loadRunDashboard(recentLimit = 100),
+                    repository.loadRunDashboard(recentLimit = 20),
                     storedWorkflows,
                 )
             }
@@ -173,16 +178,24 @@ fun HomeDashboardScreen(
         } else if (loaded != null) {
             item(key = "metrics") { DashboardMetrics(loaded) }
             val names = workflows.associate { it.workflowId to it.name }
+            val loadEarlier: suspend (Int) -> Int = { count ->
+                val expected = dashboard ?: throw CancellationException()
+                val oldest = expected.recentRuns.lastOrNull() ?: throw CancellationException()
+                val earlier = withContext(Dispatchers.IO) { repository.listEarlierRunSummaries(oldest, count) }
+                if (dashboard !== expected) throw CancellationException()
+                dashboard = expected.copy(recentRuns = expected.recentRuns + earlier)
+                earlier.size
+            }
             item(key = "activity") {
                 BoxWithConstraints {
                     if (maxWidth >= 720.dp) {
                         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            RunOutcomeChart(loaded.recentRuns, names, Modifier.weight(1.3f))
+                            RunOutcomeChart(loaded.recentRuns, names, Modifier.weight(1.3f), loaded.recentRuns.size < loaded.totalRuns, loadEarlier)
                             StatusDistribution(loaded, Modifier.weight(1f))
                         }
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                            RunOutcomeChart(loaded.recentRuns, names)
+                            RunOutcomeChart(loaded.recentRuns, names, hasEarlier = loaded.recentRuns.size < loaded.totalRuns, onLoadEarlier = loadEarlier)
                             StatusDistribution(loaded)
                         }
                     }
@@ -261,11 +274,21 @@ private fun MetricCard(
 }
 
 @Composable
-private fun RunOutcomeChart(
+internal fun RunOutcomeChart(
     runs: List<StoredRunRecord>,
     workflowNames: Map<String, String>,
     modifier: Modifier = Modifier,
+    hasEarlier: Boolean = false,
+    onLoadEarlier: suspend (Int) -> Int = { 0 },
 ) {
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    var viewportPx by remember { mutableIntStateOf(0) }
+    var loading by remember { mutableStateOf(false) }
+    var exhausted by remember(runs.firstOrNull()?.runId) { mutableStateOf(false) }
+    var pageError by remember { mutableStateOf(false) }
+    var shownOldest by remember { mutableStateOf<String?>(null) }
+    var shownLatest by remember { mutableStateOf<String?>(null) }
     var selectedIndex by remember(runs) { mutableStateOf<Int?>(null) }
     var tooltipVisible by remember(runs) { mutableStateOf(false) }
     val tooltipAlpha by animateFloatAsState(
@@ -280,7 +303,29 @@ private fun RunOutcomeChart(
     LaunchedEffect(runs) { revealed = true }
     Surface(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
         Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("Recent run duration", style = MaterialTheme.typography.titleMedium)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (hasEarlier && !exhausted) {
+                    IconButton(enabled = !loading, onClick = {
+                        loading = true
+                        pageError = false
+                        scope.launch {
+                            try {
+                                val count = (viewportPx / with(density) { 42.dp.toPx() }).toInt().coerceAtLeast(1)
+                                exhausted = onLoadEarlier(count) < count
+                            } catch (error: Exception) {
+                                if (error is CancellationException) throw error
+                                pageError = true
+                            } finally {
+                                loading = false
+                            }
+                        }
+                    }) {
+                        if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Icon(Icons.Outlined.ChevronLeft, "Show earlier runs")
+                    }
+                }
+                Text("Recent run duration", style = MaterialTheme.typography.titleMedium)
+            }
+            if (pageError) Text("Earlier runs could not be loaded. Try again.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             if (runs.isEmpty()) {
                 Text("Run a workflow to start the chart.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
@@ -289,11 +334,19 @@ private fun RunOutcomeChart(
                 val otherColor = MaterialTheme.colorScheme.secondary
                 val plottedRuns = runs.reversed()
                 val maximum = remember(runs) { runs.maxOf { runDuration(it).coerceAtLeast(1L) }.toFloat() }
-                val description = plottedRuns.joinToString { "${it.status.name.lowercase()} ${runDuration(it)} ms" }
-                LaunchedEffect(chartScroll.maxValue, plottedRuns.size) {
-                    chartScroll.scrollTo(chartScroll.maxValue)
+                val description = remember(runs) { plottedRuns.joinToString { "${it.status.name.lowercase()} ${runDuration(it)} ms" } }
+                LaunchedEffect(chartScroll.maxValue, runs.first().runId, runs.last().runId) {
+                    if (shownLatest == runs.first().runId && shownOldest != runs.last().runId) {
+                        chartScroll.animateScrollTo(0, tween(200))
+                    } else if (shownLatest != runs.first().runId) {
+                        chartScroll.scrollTo(chartScroll.maxValue)
+                    }
+                    if (chartScroll.maxValue > 0 || runs.size <= 1) {
+                        shownLatest = runs.first().runId
+                        shownOldest = runs.last().runId
+                    }
                 }
-                BoxWithConstraints(modifier = Modifier.fillMaxWidth().horizontalScroll(chartScroll)) {
+                BoxWithConstraints(modifier = Modifier.fillMaxWidth().onSizeChanged { viewportPx = it.width }.horizontalScroll(chartScroll).testTag("recent-run-bars")) {
                     BoxWithConstraints(modifier = Modifier.width(42.dp * plottedRuns.size).height(150.dp)) {
                         Canvas(
                             modifier =
@@ -331,7 +384,10 @@ private fun RunOutcomeChart(
                         ) {
                             val slotWidth = size.width / plottedRuns.size
                             val barWidth = (slotWidth * 0.58f).coerceAtMost(28.dp.toPx())
-                            plottedRuns.forEachIndexed { index, run ->
+                            val visibleStart = (chartScroll.value / slotWidth).toInt().coerceIn(plottedRuns.indices)
+                            val visibleEnd = ((chartScroll.value + viewportPx) / slotWidth).toInt().coerceIn(plottedRuns.indices)
+                            for (index in visibleStart..visibleEnd) {
+                                val run = plottedRuns[index]
                                 val ratio = runDuration(run).coerceAtLeast(1L) / maximum
                                 val height = (size.height * ratio).coerceAtLeast(8.dp.toPx()) * reveal
                                 val color = when (run.status) {
