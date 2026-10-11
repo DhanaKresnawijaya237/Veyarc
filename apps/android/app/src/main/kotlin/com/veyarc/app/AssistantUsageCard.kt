@@ -92,7 +92,7 @@ internal fun AssistantUsageCard(rows: List<AssistantUsageSummary>) {
                     else -> row.totalTokens?.toDouble()
                 }
             }
-            val maximum = values.values.filterNotNull().maxOrNull()?.coerceAtLeast(1.0) ?: 1.0
+            val maximum = values.values.filterNotNull().maxOrNull()?.takeIf { it > 0.0 } ?: 1.0
             rows.groupBy { it.providerId }.forEach { (providerId, models) ->
                 val providerName = AssistantProviderCatalog.providers.firstOrNull { it.id == providerId }?.name ?: models.first().providerName
                 val color = usageColor(providerId)

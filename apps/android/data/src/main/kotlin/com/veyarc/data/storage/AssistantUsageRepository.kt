@@ -17,11 +17,11 @@ data class AssistantTokenUsage(
     val output: Long,
     val cached: Long = 0,
     val cacheWrite: Long = 0,
-    val reasoning: Long = 0,
+    val reasoning: Long? = null,
 ) {
     fun validate() {
         require(input in 0..1_000_000_000_000 && output in 0..1_000_000_000_000)
-        require(cached in 0..input && cacheWrite in 0..(input - cached) && reasoning in 0..output)
+        require(cached in 0..input && cacheWrite in 0..(input - cached) && (reasoning == null || reasoning in 0..output))
     }
 }
 
@@ -63,7 +63,8 @@ data class AssistantUsageSummary(
             (input - (cached ?: 0) - (cacheWrite ?: 0)) * price.input +
                 (cached ?: 0) * price.cached + (cacheWrite ?: 0) * price.cacheWrite + output * price.output
             ) / 1_000_000.0
-        return minimum to minimum * price.maximumMultiplier
+        val maximum = minimum * price.maximumMultiplier
+        return if (minimum.isFinite() && maximum.isFinite()) minimum to maximum else null
     }
 }
 

@@ -24,22 +24,22 @@ internal fun decodeTokenUsage(fields: JsonObject?, protocol: AssistantProtocol):
             }
 
             AssistantProtocol.GOOGLE_GENERATIVE_AI -> {
-                val thoughts = fields.count("thoughtsTokenCount") ?: 0
-                AssistantTokenUsage(fields.count("promptTokenCount") ?: return null, (fields.count("candidatesTokenCount") ?: return null) + thoughts, fields.count("cachedContentTokenCount") ?: 0, reasoning = thoughts)
+                val thoughts = fields.count("thoughtsTokenCount")
+                AssistantTokenUsage(fields.count("promptTokenCount") ?: return null, (fields.count("candidatesTokenCount") ?: return null) + (thoughts ?: 0), fields.count("cachedContentTokenCount") ?: 0, reasoning = thoughts)
             }
 
             AssistantProtocol.OPENAI_RESPONSES -> AssistantTokenUsage(
                 fields.count("input_tokens") ?: return null,
                 fields.count("output_tokens") ?: return null,
                 detail("input_tokens_details").count("cached_tokens") ?: 0,
-                reasoning = detail("output_tokens_details").count("reasoning_tokens") ?: 0,
+                reasoning = detail("output_tokens_details").count("reasoning_tokens"),
             )
 
             else -> AssistantTokenUsage(
                 fields.count("prompt_tokens") ?: return null,
                 fields.count("completion_tokens") ?: return null,
                 fields.count("prompt_cache_hit_tokens") ?: detail("prompt_tokens_details").count("cached_tokens") ?: 0,
-                reasoning = detail("completion_tokens_details").count("reasoning_tokens") ?: 0,
+                reasoning = detail("completion_tokens_details").count("reasoning_tokens"),
             )
         }
         usage.also(AssistantTokenUsage::validate)

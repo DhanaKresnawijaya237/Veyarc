@@ -310,6 +310,26 @@ fun SettingsScreen(
         }
     }
 
+    val exportStatistics = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            storageOperation = "Exporting statistics…"
+            try {
+                withContext(Dispatchers.IO) {
+                    val statistics = repository.loadAggregateStatistics()
+                    val prices = com.veyarc.data.storage.AssistantUsagePrices(context)
+                    requireNotNull(context.contentResolver.openOutputStream(uri)) { "Could not open the destination" }.bufferedWriter(Charsets.UTF_8).use { statistics.writeCsv(it, prices::price) }
+                }
+                message = "Statistics exported."
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                message = "Export failed: ${error.message ?: error.javaClass.simpleName}"
+            } finally {
+                storageOperation = null
+            }
+        }
+    }
+
     DisposableEffect(shizukuProbe) {
         shizukuProbe.setCallback { shizuku = it }
         val stopLatchObservation = ReplayFloatingController.observeEnabled(context) { latchEnabled = it }
@@ -478,7 +498,7 @@ fun SettingsScreen(
                     onToggle = { expandedSection = if (expandedSection == "data") null else "data" },
                 ) {
                     Text(
-                        "Keep a copy of workflows and finished runs, or bring one back.",
+                        "Transfer workflows and runs, or export usage and statistics.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -499,6 +519,7 @@ fun SettingsScreen(
                             loadExportRuns(reset = true)
                         },
                     )
+                    TextButton(modifier = Modifier.align(Alignment.CenterHorizontally), enabled = storageOperation == null, onClick = { exportStatistics.launch("Veyarc statistics.csv") }) { Text("Export statistics (CSV)") }
                     TextButton(modifier = Modifier.align(Alignment.CenterHorizontally), enabled = runCount > 0 && storageOperation == null, onClick = { confirmClearHistory = true }) {
                         Icon(Icons.Outlined.RestartAlt, null, Modifier.padding(end = 8.dp).size(18.dp), tint = MaterialTheme.colorScheme.error)
                         Text("Clear finished run history", color = MaterialTheme.colorScheme.error)

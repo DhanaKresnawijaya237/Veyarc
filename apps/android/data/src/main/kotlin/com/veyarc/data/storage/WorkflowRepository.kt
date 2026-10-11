@@ -923,6 +923,10 @@ class WorkflowRepository internal constructor(
         }
     }
 
+    fun loadAggregateStatistics(): AggregateStatistics = database.runInTransaction<AggregateStatistics> {
+        AggregateStatistics(listWorkflowSummaries(), database.workflowDao().storageStatistics(), database.workflowDao().runAggregates(), database.assistantUsageDao().summaries())
+    }
+
     /** Deletes a terminal run record. Running records stay protected until they finish. */
     fun deleteRun(runId: String) = synchronized(this) {
         val deleted = database.workflowDao().deleteRun(
