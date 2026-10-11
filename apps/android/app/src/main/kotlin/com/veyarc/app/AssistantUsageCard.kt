@@ -4,6 +4,8 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,11 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -43,7 +41,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -105,7 +102,15 @@ internal fun AssistantUsageCard(rows: List<AssistantUsageSummary>) {
                         val modelColor = usageColor(providerId, row.modelId)
                         val fraction by animateFloatAsState(((values[row.key] ?: 0.0) / maximum).toFloat(), tween(180), label = "Usage amount")
                         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                Modifier.fillMaxWidth().clickable(
+                                    enabled = mode == "Cost" && ratesReady,
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClickLabel = "Rates for $providerName ${row.modelName}",
+                                ) { editing = row },
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
                                 Text(row.modelName, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(
                                     when (mode) {
@@ -116,18 +121,22 @@ internal fun AssistantUsageCard(rows: List<AssistantUsageSummary>) {
                                     style = MaterialTheme.typography.labelLarge,
                                     color = modelColor,
                                 )
-                                if (mode == "Cost") IconButton(onClick = { editing = row }, enabled = ratesReady, modifier = Modifier.size(36.dp)) { Icon(Icons.Outlined.Edit, "Rates for $providerName ${row.modelName}", Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) }
                             }
-                            if (mode == "Tokens") row.input?.let { input -> Text("${usageNumber(input)} in · ${usageNumber(row.output ?: 0)} out", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            val replyCoverage = if (row.measuredReplies == row.replies) "${usageNumber(row.replies)} replies" else "${usageNumber(row.measuredReplies)}/${usageNumber(row.replies)} replies"
+                            Text(
+                                "${row.input?.let(::usageNumber) ?: "—"} in · ${row.output?.let(::usageNumber) ?: "—"} out" + if (mode == "Tokens") " · $replyCoverage" else "",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                             Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(modelColor.copy(alpha = 0.12f))) {
                                 Box(Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).height(4.dp).background(modelColor))
                             }
-                            if (mode != "Replies" && row.measuredReplies < row.replies) Text("Usage available for ${row.measuredReplies} of ${row.replies} replies", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
             }
-            Text(if (mode == "Cost") "Estimated USD · catalog or custom rates" else "Completed replies only", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
     editing?.let { row ->
