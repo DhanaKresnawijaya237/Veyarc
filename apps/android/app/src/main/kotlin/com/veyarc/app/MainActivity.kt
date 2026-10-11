@@ -23,6 +23,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.veyarc.app.ui.theme.VeyarcTheme
+import com.veyarc.automation.android.AndroidDeviceSafety
 import com.veyarc.automation.android.ReplayControllerWorkflow
 import com.veyarc.automation.android.ReplayFloatingController
 import com.veyarc.automation.android.ReplayWorkflowCatalog
@@ -49,6 +50,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.Closeable
 
 class MainActivity : ComponentActivity() {
     private var resumeGeneration by mutableIntStateOf(0)
@@ -80,6 +82,7 @@ class MainActivity : ComponentActivity() {
     private val catalogScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var assistantSettingsRequest by mutableIntStateOf(0)
     private var runSettingsSection by mutableStateOf<String?>(null)
+    private var runReadinessObserver: Closeable? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -292,11 +295,28 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        runReadinessObserver = AndroidDeviceSafety.observeWindowChanges { runSession.controller?.refreshReview() }
+    }
+
+    override fun onStop() {
+        runReadinessObserver?.close()
+        runReadinessObserver = null
+        super.onStop()
+    }
+
     override fun onResume() {
         super.onResume()
         resumeGeneration += 1
         runSession.controller?.refreshReview()
         refreshReplayWorkflowCatalog()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // onResume can run before Android has dismissed its screen-capture dialog.
+        if (hasFocus) runSession.controller?.refreshReview()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -506,7 +526,7 @@ class MainRunSession(application: Application) : AndroidViewModel(application) {
     val recoveryState: StateFlow<RunRecoveryState> = _recoveryState.asStateFlow()
     var bundle: WorkflowBundle? = null
         private set
-    var controller: WorkflowRunController? = null
+    var controller by mutableStateOf<WorkflowRunController?>(null)
         private set
 
     init {

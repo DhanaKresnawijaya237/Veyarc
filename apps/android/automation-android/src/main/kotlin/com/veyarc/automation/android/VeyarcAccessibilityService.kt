@@ -14,6 +14,7 @@ class VeyarcAccessibilityService : AccessibilityService() {
         AccessibilityEmergencyOverlay.attach(this)
         ReplayFloatingController.attach(this)
         ForegroundPackageTracker.attach(this)
+        AndroidDeviceSafety.notifyWindowChanges()
     }
 
     /**
@@ -31,6 +32,9 @@ class VeyarcAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         ForegroundPackageTracker.onAccessibilityEvent(event)
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || event?.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+            AndroidDeviceSafety.notifyWindowChanges()
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -51,6 +55,7 @@ class VeyarcAccessibilityService : AccessibilityService() {
         AccessibilityEmergencyOverlay.detach(this)
         ReplayFloatingController.detach(this)
         AccessibilityGestureDispatcher.detach(this)
+        AndroidDeviceSafety.notifyWindowChanges()
         return super.onUnbind(intent)
     }
 
@@ -59,6 +64,7 @@ class VeyarcAccessibilityService : AccessibilityService() {
         AccessibilityEmergencyOverlay.detach(this)
         ReplayFloatingController.detach(this)
         AccessibilityGestureDispatcher.detach(this)
+        AndroidDeviceSafety.notifyWindowChanges()
         super.onDestroy()
     }
 }

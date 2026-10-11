@@ -158,10 +158,11 @@ class WorkflowRunController(
     }
 
     fun refreshReview() {
-        if (_state.value.phase != WorkflowRunPhase.REVIEW) return
+        if (closed || _state.value.phase != WorkflowRunPhase.REVIEW) return
         val capabilities = AndroidAutomationCapabilities.snapshot(appContext)
         val latchEnabled = ReplayFloatingController.isEnabled(appContext)
-        val compilation = WorkflowCompiler.compile(document, capabilities.engineCapabilities)
+        val previousReview = _state.value.review
+        val compilation = if (capabilities.engineCapabilities == previousReview.capabilities.engineCapabilities) previousReview.compilation else WorkflowCompiler.compile(document, capabilities.engineCapabilities)
         val currentOrientation = currentRecordingViewport(appContext)?.recordedOrientation
         val orientationBlockReason = workflowOrientationBlockReason(
             required = document.viewport.recordedOrientation,
@@ -186,6 +187,8 @@ class WorkflowRunController(
 
     /** Handles the one-shot ActivityResult returned by Android's screen-capture consent dialog. */
     fun startAfterMediaProjectionConsent(resultCode: Int, data: Intent?) {
+        if (closed) return
+        refreshReview()
         if (!MediaProjectionConsent.wasGranted(resultCode, data)) {
             _state.update {
                 it.copy(message = "Screen-capture consent was denied. The workflow did not start.")
@@ -283,10 +286,7 @@ class WorkflowRunController(
 
     private fun isStartReady(): Boolean {
         if (closed) return false
-        if (!ReplayFloatingController.isEnabled(appContext)) {
-            refreshReview()
-            return false
-        }
+        refreshReview()
         val current = _state.value
         return current.phase == WorkflowRunPhase.REVIEW &&
             current.review.isRunnable &&
