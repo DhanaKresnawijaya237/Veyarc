@@ -49,8 +49,7 @@ class RgbaTemplate private constructor(
     /** Clears the decoded template after the run releases its condition assets. */
     fun clear() {
         rgbaBytes.fill(0)
-        prefilterData.cellSums.fill(0)
-        prefilterData.bandSums.fill(0)
+        prefilterData.clear()
     }
 
     internal fun <T> withRgbaBytes(block: (ByteArray) -> T): T = block(rgbaBytes)
@@ -70,13 +69,20 @@ class RgbaTemplate private constructor(
 internal data class TemplatePrefilterData(
     val xBandCount: Int,
     val yBandCount: Int,
+    val xStarts: IntArray,
+    val xEnds: IntArray,
     val cellSums: IntArray,
     val bandSums: IntArray,
 ) {
+    fun clear() {
+        cellSums.fill(0)
+        bandSums.fill(0)
+    }
+
     companion object {
-        fun create(widthPx: Int, heightPx: Int, bytes: ByteArray): TemplatePrefilterData {
-            val xBandCount = minOf(PREFILTER_BANDS, widthPx)
-            val yBandCount = minOf(PREFILTER_BANDS, heightPx)
+        fun create(widthPx: Int, heightPx: Int, bytes: ByteArray, bandLimit: Int = PREFILTER_BANDS): TemplatePrefilterData {
+            val xBandCount = minOf(bandLimit, widthPx)
+            val yBandCount = minOf(bandLimit, heightPx)
             val xStarts = partitionStarts(widthPx, xBandCount)
             val xEnds = partitionEnds(widthPx, xBandCount)
             val yStarts = partitionStarts(heightPx, yBandCount)
@@ -96,7 +102,7 @@ internal data class TemplatePrefilterData(
                     for (channel in 0 until CHANNEL_COUNT) bands[yBand * CHANNEL_COUNT + channel] += sums[cellOffset + channel]
                 }
             }
-            return TemplatePrefilterData(xBandCount, yBandCount, sums, bands)
+            return TemplatePrefilterData(xBandCount, yBandCount, xStarts, xEnds, sums, bands)
         }
     }
 }
@@ -303,12 +309,12 @@ class VisualConditionEvaluator(
                 if (match.matched) return match
             }
         }
-        TemplateWindowPrefilter(frame.capturedBounds.width, frameBytes, template, bounds).use { prefilter ->
+        TemplateWindowPrefilter(frame.capturedBounds.width, frameBytes, template, bounds, budget = ComparisonBudget(maxComparisons, "pattern filter")).use { prefilter ->
             for (originY in bounds.top..maxOriginY) {
                 if (originY > bounds.top) prefilter.moveDown()
                 for (originX in bounds.left..maxOriginX) {
                     val isPreferredOrigin = originX == preferredOriginX && originY == preferredOriginY
-                    if (!isPreferredOrigin && prefilter.mayMatch(maxError)) {
+                    if (!isPreferredOrigin && prefilter.mayMatch(maxError, detailed = true)) {
                         val match = matchesAt(frame.capturedBounds.width, frameBytes, template, templateBytes, originX, originY, maxError, budget)
                         if (match.matched) return match
                     }
@@ -383,24 +389,26 @@ class VisualConditionEvaluator(
     private class TemplateWindowPrefilter(
         private val frameWidth: Int,
         private val frameBytes: ByteArray,
-        template: RgbaTemplate,
+        private val template: RgbaTemplate,
         private val bounds: FramePixelBounds,
+        private val data: TemplatePrefilterData = template.prefilterData,
+        initialOriginX: Int = bounds.left,
+        initialOriginY: Int = bounds.top,
+        private val ownsData: Boolean = false,
+        private val budget: ComparisonBudget? = null,
     ) : Closeable {
-        private val xBandCount = template.prefilterData.xBandCount
-        private val yBandCount = template.prefilterData.yBandCount
-        private val xStarts = partitionStarts(template.widthPx, xBandCount)
-        private val xEnds = partitionEnds(template.widthPx, xBandCount)
+        private val yBandCount = data.yBandCount
         private val yStarts = partitionStarts(template.heightPx, yBandCount)
         private val yEnds = partitionEnds(template.heightPx, yBandCount)
-        private val templateCellSums = template.prefilterData.cellSums
-        private val templateBandSums = template.prefilterData.bandSums
+        private val templateBandSums = data.bandSums
         private val templateWidth = template.widthPx
         private val prefixStride = (bounds.width + 1) * CHANNEL_COUNT
 
         // Capture dimensions cap a band's per-channel prefix below Int.MAX_VALUE.
         private val prefixes = IntArray(yBandCount * prefixStride)
-        private var originY = bounds.top
-        private var originX = bounds.left
+        private var originY = initialOriginY
+        private var originX = initialOriginX
+        private var detailedFilter: TemplateWindowPrefilter? = null
 
         init {
             for (yBand in 0 until yBandCount) {
@@ -418,14 +426,17 @@ class VisualConditionEvaluator(
             }
         }
 
-        fun mayMatch(maxError: Double): Boolean = minimumError(maxError).toDouble() <= maxError
+        fun mayMatch(maxError: Double, detailed: Boolean = false): Boolean = minimumError(maxError).toDouble() <= maxError &&
+            (!detailed || budget?.remaining == 0L || (template.widthPx <= PREFILTER_BANDS && template.heightPx <= PREFILTER_BANDS) || fineFilter().minimumError(maxError).toDouble() <= maxError)
 
         fun minimumError(maxError: Double): Long {
+            val xBandCount = data.xBandCount
             var lowerBound = 0L
             val relativeX = originX - bounds.left
             // Whole-band bounds cheaply reject unrelated backgrounds before the finer cells.
             if (xBandCount > 1) {
                 for (yBand in 0 until yBandCount) {
+                    if (ownsData && budget?.tryConsume(1L) == false) return 0L
                     val left = yBand * prefixStride + relativeX * CHANNEL_COUNT
                     val right = left + templateWidth * CHANNEL_COUNT
                     for (channel in 0 until CHANNEL_COUNT) lowerBound += abs(prefixes[right + channel] - prefixes[left + channel] - templateBandSums[yBand * CHANNEL_COUNT + channel]).toLong()
@@ -435,10 +446,11 @@ class VisualConditionEvaluator(
             }
             for (yBand in 0 until yBandCount) {
                 for (xBand in 0 until xBandCount) {
-                    val left = yBand * prefixStride + (relativeX + xStarts[xBand]) * CHANNEL_COUNT
-                    val right = yBand * prefixStride + (relativeX + xEnds[xBand]) * CHANNEL_COUNT
+                    if (ownsData && budget?.tryConsume(1L) == false) return 0L
+                    val left = yBand * prefixStride + (relativeX + data.xStarts[xBand]) * CHANNEL_COUNT
+                    val right = yBand * prefixStride + (relativeX + data.xEnds[xBand]) * CHANNEL_COUNT
                     val cell = (yBand * xBandCount + xBand) * CHANNEL_COUNT
-                    for (channel in 0 until CHANNEL_COUNT) lowerBound += abs(prefixes[right + channel] - prefixes[left + channel] - templateCellSums[cell + channel]).toLong()
+                    for (channel in 0 until CHANNEL_COUNT) lowerBound += abs(prefixes[right + channel] - prefixes[left + channel] - data.cellSums[cell + channel]).toLong()
                     if (lowerBound.toDouble() > maxError) return lowerBound
                 }
             }
@@ -447,9 +459,11 @@ class VisualConditionEvaluator(
 
         fun moveRight() {
             originX++
+            detailedFilter?.moveRight()
         }
 
         fun moveDown() {
+            if (ownsData && budget?.tryConsume(2L * yBandCount * bounds.width) == false) return
             val previousY = originY++
             for (yBand in 0 until yBandCount) {
                 var removeOffset = rgbaOffset(bounds.left, previousY + yStarts[yBand], frameWidth)
@@ -474,10 +488,30 @@ class VisualConditionEvaluator(
                 }
             }
             originX = bounds.left
+            detailedFilter?.moveDown()
         }
 
         override fun close() {
             prefixes.fill(0)
+            detailedFilter?.close()
+            detailedFilter = null
+            if (ownsData) data.clear()
+        }
+
+        // Allocate the stronger filter only for ambiguous candidates; release it with this frame.
+        private fun fineFilter(): TemplateWindowPrefilter = detailedFilter ?: template.withRgbaBytes { bytes ->
+            if (budget?.tryConsume(template.widthPx.toLong() * template.heightPx + bounds.width.toLong() * (template.heightPx + minOf(PREFILTER_FINE_BANDS, template.heightPx))) == false) return@withRgbaBytes this
+            TemplateWindowPrefilter(
+                frameWidth,
+                frameBytes,
+                template,
+                bounds,
+                data = TemplatePrefilterData.create(template.widthPx, template.heightPx, bytes, PREFILTER_FINE_BANDS),
+                initialOriginX = originX,
+                initialOriginY = originY,
+                ownsData = true,
+                budget = budget,
+            ).also { detailedFilter = it }
         }
     }
 
@@ -528,11 +562,21 @@ class VisualConditionEvaluator(
 
         val remaining: Long get() = limit - comparisons
 
-        fun consume() {
-            comparisons++
+        // Refinement is optional; exhausting its own work budget falls back to exact verification.
+        fun tryConsume(amount: Long): Boolean {
+            if (amount > remaining) {
+                comparisons = limit
+                return false
+            }
+            comparisons += amount
+            return true
+        }
+
+        fun consume(amount: Long = 1L) {
+            comparisons += amount
             if (comparisons > limit) {
                 throw VisualConditionEvaluationException(
-                    "Image template exact comparison exceeded its safety budget. " +
+                    "Image template comparison exceeded its safety budget. " +
                         "Narrow the screen search region or use a smaller crop ($context).",
                 )
             }
@@ -575,6 +619,7 @@ class VisualConditionEvaluator(
 
 private const val CHANNEL_COUNT = 4
 private const val PREFILTER_BANDS = 16
+private const val PREFILTER_FINE_BANDS = 64
 
 private fun partitionStarts(size: Int, bands: Int): IntArray = IntArray(bands) { band ->
     band * size / bands
