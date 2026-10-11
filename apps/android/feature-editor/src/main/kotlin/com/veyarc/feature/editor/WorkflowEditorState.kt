@@ -102,7 +102,7 @@ data class DraftBuildResult(
 data class TemplateUsageNumbers(val crop: List<String>, val background: List<String>) {
     fun subtitle(): String = listOfNotNull(
         crop.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "Crop: "),
-        background.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "Background: "),
+        background.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "BG: "),
     ).joinToString(" · ")
 }
 

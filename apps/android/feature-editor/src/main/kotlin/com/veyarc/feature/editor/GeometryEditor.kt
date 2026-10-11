@@ -509,8 +509,8 @@ private fun LongPressGeometryEditor(
         }
         LongEditorField(
             label = "Hold duration (ms)",
-            value = durationText.toLongOrNull() ?: 0L,
-            onValueChange = { durationText = it.toString() },
+            value = durationText,
+            onValueChange = { durationText = it },
         )
         if (!validDuration) {
             Text(
@@ -708,8 +708,8 @@ private fun PathGeometryEditor(
         }
         LongEditorField(
             label = "Path duration (ms)",
-            value = duration ?: 0L,
-            onValueChange = { durationText = it.toString() },
+            value = durationText,
+            onValueChange = { durationText = it },
             modifier = Modifier.fillMaxWidth(),
         )
         Text(

@@ -269,10 +269,10 @@ private fun PixelConditionFields(
     condition: PixelColorCondition,
     onChange: (Condition) -> Unit,
 ) {
-    var xText by remember(condition) { mutableStateOf(condition.point.x.toEditorText()) }
-    var yText by remember(condition) { mutableStateOf(condition.point.y.toEditorText()) }
+    var xText by rememberNumericEditorText(condition.point.x.toEditorText())
+    var yText by rememberNumericEditorText(condition.point.y.toEditorText())
     var colorText by remember(condition) { mutableStateOf(condition.expectedArgb.toArgbText()) }
-    var toleranceText by remember(condition) { mutableStateOf(condition.tolerance.toString()) }
+    var toleranceText by rememberNumericEditorText(condition.tolerance.toString())
     Text("Compare one normalized screen point (0 to 1) with an ARGB colour.", style = MaterialTheme.typography.bodySmall)
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -447,7 +447,7 @@ private fun ImageConditionFields(
             onRegionChange = { update(assetId, it, condition.threshold()) },
         )
     }
-    var thresholdText by remember(condition) { mutableStateOf(condition.threshold().toEditorText()) }
+    var thresholdText by rememberNumericEditorText(condition.threshold().toEditorText())
     ConditionNumberField("Match threshold (0 to 1)", thresholdText, { next ->
         thresholdText = next
         next.toDoubleOrNull()?.takeIf { it in 0.0..1.0 }?.let { update(assetId, condition.region(), it) }
@@ -498,10 +498,10 @@ private fun RegionConditionFields(
     region: NormalizedRect,
     onRegionChange: (NormalizedRect) -> Unit,
 ) {
-    var xText by remember(region) { mutableStateOf(region.x.toEditorText()) }
-    var yText by remember(region) { mutableStateOf(region.y.toEditorText()) }
-    var widthText by remember(region) { mutableStateOf(region.width.toEditorText()) }
-    var heightText by remember(region) { mutableStateOf(region.height.toEditorText()) }
+    var xText by rememberNumericEditorText(region.x.toEditorText())
+    var yText by rememberNumericEditorText(region.y.toEditorText())
+    var widthText by rememberNumericEditorText(region.width.toEditorText())
+    var heightText by rememberNumericEditorText(region.height.toEditorText())
     fun updateRegion() {
         val x = xText.toDoubleOrNull() ?: return
         val y = yText.toDoubleOrNull() ?: return

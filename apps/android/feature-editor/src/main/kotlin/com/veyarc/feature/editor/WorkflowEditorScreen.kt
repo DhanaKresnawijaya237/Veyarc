@@ -1696,7 +1696,7 @@ private fun TemplateAssetSection(
                                 )
                                 Text(
                                     listOfNotNull(
-                                        asset.addedAtMs?.let { "Added ${java.text.SimpleDateFormat("dd/MM/yy HH:mm", java.util.Locale.ROOT).format(java.util.Date(it))}" },
+                                        asset.addedAtMs?.let { java.text.SimpleDateFormat("dd/MM/yy HH:mm", java.util.Locale.ROOT).format(java.util.Date(it)) },
                                         asset.byteCount?.let { android.text.format.Formatter.formatShortFileSize(context, it) },
                                         usageNumbers[asset.assetId.value]?.subtitle()?.takeIf { it.isNotEmpty() },
                                     ).joinToString(" · "),
@@ -2536,7 +2536,7 @@ private fun EditableStepSummary(
         when (step) {
             is Wait -> {
                 Text("Wait", style = MaterialTheme.typography.bodyMedium)
-                InlineLongField(step.durationMs.value, 0) { value ->
+                InlineLongField(step.durationMs.value, 0, resetKey = draft.lastSavedRevision) { value ->
                     onDraftChange(draft.updateStep(path, index) { step.copy(durationMs = com.veyarc.model.DurationMillis(value)) })
                 }
                 Text("ms", style = MaterialTheme.typography.bodyMedium)
@@ -2544,18 +2544,18 @@ private fun EditableStepSummary(
 
             is WaitUntil -> {
                 Text("Wait until ${step.condition.summary(draft.assetNames)} · timeout", style = MaterialTheme.typography.bodyMedium)
-                InlineLongField(step.timeoutMs.value, 0) { value ->
+                InlineLongField(step.timeoutMs.value, 0, resetKey = draft.lastSavedRevision) { value ->
                     onDraftChange(draft.updateStep(path, index) { step.copy(timeoutMs = com.veyarc.model.DurationMillis(value)) })
                 }
                 Text("ms, poll every", style = MaterialTheme.typography.bodyMedium)
-                InlineLongField(step.pollIntervalMs.value, 1) { value ->
+                InlineLongField(step.pollIntervalMs.value, 1, resetKey = draft.lastSavedRevision) { value ->
                     onDraftChange(draft.updateStep(path, index) { step.copy(pollIntervalMs = com.veyarc.model.DurationMillis(value)) })
                 }
                 Text("ms", style = MaterialTheme.typography.bodyMedium)
             }
 
             is Repeat -> {
-                InlineLongField(step.count.toLong(), 0, Int.MAX_VALUE.toLong()) { value ->
+                InlineLongField(step.count.toLong(), 0, Int.MAX_VALUE.toLong(), draft.lastSavedRevision) { value ->
                     onDraftChange(draft.updateStep(path, index) { step.copy(count = value.toInt()) })
                 }
                 Text("iterations, ${step.bodySteps.size} nested blocks", style = MaterialTheme.typography.bodyMedium)
@@ -2563,7 +2563,7 @@ private fun EditableStepSummary(
 
             is WhileStep -> {
                 Text("While ${step.condition.summary(draft.assetNames)} · up to", style = MaterialTheme.typography.bodyMedium)
-                InlineLongField(step.maxIterations.toLong(), 1, Int.MAX_VALUE.toLong()) { value ->
+                InlineLongField(step.maxIterations.toLong(), 1, Int.MAX_VALUE.toLong(), draft.lastSavedRevision) { value ->
                     onDraftChange(draft.updateStep(path, index) { step.copy(maxIterations = value.toInt()) })
                 }
                 Text("iterations, ${step.bodySteps.size} nested blocks", style = MaterialTheme.typography.bodyMedium)
@@ -2571,7 +2571,7 @@ private fun EditableStepSummary(
 
             is LaunchApp -> {
                 Text("Open ${step.packageName.value} · wait up to", style = MaterialTheme.typography.bodyMedium)
-                InlineLongField(step.foregroundTimeoutMs.value, 1) { value ->
+                InlineLongField(step.foregroundTimeoutMs.value, 1, resetKey = draft.lastSavedRevision) { value ->
                     onDraftChange(
                         draft.updateStep(path, index) {
                             step.copy(foregroundTimeoutMs = com.veyarc.model.DurationMillis(value))
@@ -2592,7 +2592,7 @@ private fun EditableStepSummary(
                     },
                 )
                 Text("until this section has run", style = MaterialTheme.typography.bodyMedium)
-                InlineLongField(step.maxVisits.toLong(), 1, draft.runLimits.maxLoopIterations.toLong()) { value ->
+                InlineLongField(step.maxVisits.toLong(), 1, draft.runLimits.maxLoopIterations.toLong(), draft.lastSavedRevision) { value ->
                     onDraftChange(draft.updateStep(path, index) { step.copy(maxVisits = value.toInt()) })
                 }
                 Text("times", style = MaterialTheme.typography.bodyMedium)
@@ -2646,9 +2646,10 @@ private fun InlineLongField(
     value: Long,
     minimum: Long,
     maximum: Long = Long.MAX_VALUE,
+    resetKey: Int?,
     onValueChange: (Long) -> Unit,
 ) {
-    var text by remember(value) { mutableStateOf(value.toString()) }
+    var text by rememberNumericEditorText(value.toString(), resetKey)
     Box(Modifier.widthIn(min = 16.dp, max = 96.dp)) {
         Text(
             text.ifEmpty { "0" },
@@ -2712,17 +2713,13 @@ private fun StepEditorFields(
 @Composable
 internal fun LongEditorField(
     label: String,
-    value: Long,
-    onValueChange: (Long) -> Unit,
+    value: String,
+    onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var text by remember(value) { mutableStateOf(value.toString()) }
     OutlinedTextField(
-        value = text,
-        onValueChange = { candidate ->
-            text = candidate
-            candidate.toLongOrNull()?.let(onValueChange)
-        },
+        value = value,
+        onValueChange = onValueChange,
         modifier = modifier.fillMaxWidth(),
         label = { Text(label) },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
