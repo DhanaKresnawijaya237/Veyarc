@@ -83,6 +83,8 @@ data class PreviewTurn(
     val modelId: String = model.apiId,
     val providerName: String = "DeepSeek",
     val modelName: String = model.shortLabel,
+    val providerId: String? = null,
+    val usage: com.veyarc.data.storage.AssistantTokenUsage? = null,
 )
 
 @Serializable
@@ -122,6 +124,7 @@ class AssistantPreviewState(
     private val onConnectionsChanged: (suspend (AssistantConnections) -> Unit)? = null,
     private val modelDiscovery: (suspend (AssistantConnection) -> List<AssistantModelConfig>)? = null,
     private val onRequestStarted: ((String) -> Unit)? = null,
+    private val usageRepository: com.veyarc.data.storage.AssistantUsageRepository? = null,
     private var contextSource: (() -> AssistantContextCapture)? = null,
 ) {
     private val attachmentWork = kotlinx.coroutines.sync.Mutex()
@@ -220,6 +223,7 @@ class AssistantPreviewState(
         connections = value
         connectionsReady = true
         connectionError = null
+        backfillUsage()
         syncLegacyDefaults()
         if (isOpen && conversation == null && !isLoading) createChat()
     }
@@ -421,6 +425,7 @@ class AssistantPreviewState(
         storageError = null
         isLoading = false
         loadFailed = false
+        backfillUsage()
     }
 
     fun open(currentContext: AssistantPreviewContext, captureContext: (() -> AssistantContextCapture)? = null) {
@@ -929,7 +934,7 @@ class AssistantPreviewState(
                 val bytes = providerCall(request)
                 request.latestThinking?.let { receiveThinking(token, it) }
                 receiveReply(token, request.latestReply)
-                receive(token, bytes)
+                receive(token, bytes, request.latestUsage, request.connection.catalogProviderId ?: "custom:${request.connection.id}")
             } catch (cancelled: CancellationException) {
                 // Owner cancellation cannot publish a result. A persisted unfinished turn recovers interrupted.
                 if (requestId == token) stop(PreviewReplyStatus.INTERRUPTED)
@@ -1038,7 +1043,7 @@ class AssistantPreviewState(
     }
 
     /** Called only with a complete response. A stale/cancelled attempt can never change a turn. */
-    internal fun receive(token: String, bytes: ByteArray) {
+    internal fun receive(token: String, bytes: ByteArray, usage: com.veyarc.data.storage.AssistantTokenUsage? = null, providerId: String? = null) {
         if (requestId != token) return
         val chat = conversation ?: return
         val turn = chat.turns.lastOrNull() ?: return
@@ -1048,7 +1053,7 @@ class AssistantPreviewState(
             updateLast { it.copy(status = PreviewReplyStatus.ERROR, outcome = null, responseError = "Response rejected: invalid format, size, or request context. Your prompt is kept; retry is explicit.") }
         } else {
             val proposal = response.candidate?.let { AssistantCandidateValidator.validate(turn.baseSnapshot, AssistantWireWorkflow.restoreLocalFields(turn.baseSnapshot, it).toString(), compileCandidate, response.imageAdditions, imagesThrough(chat, turn.id)) }
-            updateLast { it.copy(reply = response.text, status = PreviewReplyStatus.COMPLETE, outcome = response.outcome, responseError = null, proposal = proposal) }
+            updateLast { it.copy(reply = response.text, status = PreviewReplyStatus.COMPLETE, outcome = response.outcome, responseError = null, proposal = proposal, usage = usage, providerId = providerId ?: it.providerId) }
             if (chat.turns.size == 1 && !chat.titleManuallySet && (chat.title == "New chat" || chat.title == turn.prompt.take(48))) {
                 response.chatTitle?.trim()?.let { title -> update { it.copy(title = title) } }
             }
@@ -1100,7 +1105,10 @@ class AssistantPreviewState(
         }
         enqueue(blocksChanges) {
             val create = chat.id !in savedIds
-            withContext(Dispatchers.IO) { repository.save(encode(chat), create) }
+            withContext(Dispatchers.IO) {
+                repository.save(encode(chat), create)
+                chat.turns.lastOrNull()?.let(::recordUsage)
+            }
             savedIds.add(chat.id)
             onSaved()
         }
@@ -1133,6 +1141,19 @@ class AssistantPreviewState(
                 }
             }.isSuccess,
         ) { "Chat write queue is full" }
+    }
+
+    private fun recordUsage(turn: PreviewTurn) {
+        if (!turn.provider || turn.status != PreviewReplyStatus.COMPLETE) return
+        val providerId = turn.providerId ?: connections.connections.firstOrNull { it.id == turn.connectionId }?.catalogProviderId ?: "custom:${turn.connectionId}"
+        usageRepository?.record(turn.requestId, providerId, turn.providerName, turn.modelId, turn.modelName, turn.createdAtMs, turn.usage)
+    }
+
+    private fun backfillUsage() {
+        if (usageRepository == null || !connectionsReady || isLoading) return
+        val completed = conversations.flatMap { it.turns }.filter { it.provider && it.status == PreviewReplyStatus.COMPLETE }.distinctBy { it.requestId }
+        if (completed.isEmpty()) return
+        enqueue(blocksChanges = false) { withContext(Dispatchers.IO) { completed.forEach(::recordUsage) } }
     }
 
     private fun updateLast(transform: (PreviewTurn) -> PreviewTurn) = update { chat ->

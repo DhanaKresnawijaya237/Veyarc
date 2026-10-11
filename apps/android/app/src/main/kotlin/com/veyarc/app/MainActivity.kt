@@ -194,6 +194,7 @@ class MainActivity : ComponentActivity() {
                                     when (destination) {
                                         VeyarcDestination.HOME -> HomeDashboardScreen(
                                             pageState = pageState.home,
+                                            usageRepository = (application as VeyarcApplication).assistantUsage,
                                             repository = workflowRepository,
                                             refreshGeneration = resumeGeneration,
                                             onRecord = {
@@ -586,6 +587,7 @@ internal class EditorSessionOwner(application: Application) {
     val assistant = AssistantPreviewState(
         chatRepository,
         scope,
+        usageRepository = (application as VeyarcApplication).assistantUsage,
         compileCandidate = ::assistantCompilationIssues,
         applyCandidate = assistantDraft::apply,
         contextSource = assistantDraft::capture,

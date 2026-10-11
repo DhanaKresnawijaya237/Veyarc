@@ -98,6 +98,7 @@ internal object GoogleContent {
         }
         val reason = candidate["finishReason"]
         require(reason == null || reason == JsonPrimitive("STOP"))
+        request.captureUsage(root["usageMetadata"] as? JsonObject)
         return reason == JsonPrimitive("STOP")
     }
     fun decode(root: JsonObject, request: AssistantRequest): ByteArray {

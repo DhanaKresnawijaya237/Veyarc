@@ -36,6 +36,7 @@ internal object DeepSeekStream {
             val id = chunk.string("id")
             require(id.isNotBlank() && id.length <= 256 && (completionId == null || completionId == id))
             completionId = id
+            request.captureUsage(chunk["usage"] as? JsonObject)
             val choices = chunk["choices"] as JsonArray
             // Compatible servers may send a usage-only chunk after the terminal choice.
             if (!request.strictDeepSeek && choices.isEmpty()) {

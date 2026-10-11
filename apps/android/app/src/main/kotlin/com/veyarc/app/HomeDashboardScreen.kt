@@ -79,6 +79,7 @@ fun HomeDashboardScreen(
     onRecord: () -> Unit,
     onPlayWorkflow: (WorkflowSummary) -> Unit,
     pageState: HomeDashboardState = remember { HomeDashboardState() },
+    usageRepository: com.veyarc.data.storage.AssistantUsageRepository? = null,
 ) {
     var dashboard by pageState.dashboard
     var workflows by pageState.workflows
@@ -87,6 +88,16 @@ fun HomeDashboardScreen(
 
     val pageActive = LocalMainPageActive.current
     val context = LocalContext.current
+    var aiUsage by pageState.aiUsage
+    LaunchedEffect(usageRepository, pageActive) {
+        if (usageRepository == null || !pageActive) return@LaunchedEffect
+        try {
+            usageRepository.observe().collect { aiUsage = it }
+        } catch (failure: Exception) {
+            if (failure is CancellationException) throw failure
+            error = "AI usage could not be loaded."
+        }
+    }
     DisposableEffect(context, workflows, pageActive) {
         val preferences = context.getSharedPreferences("replay_controller", Context.MODE_PRIVATE)
         fun refreshPlayTarget() {
@@ -142,6 +153,7 @@ fun HomeDashboardScreen(
             }
         }
         item(key = "quick-start") { HomeQuickStart(quickPlayWorkflow, onRecord, onPlayWorkflow) }
+        if (aiUsage.isNotEmpty()) item(key = "ai-usage") { AssistantUsageCard(aiUsage) }
 
         error?.let { message ->
             item { Text(message, color = MaterialTheme.colorScheme.error) }
