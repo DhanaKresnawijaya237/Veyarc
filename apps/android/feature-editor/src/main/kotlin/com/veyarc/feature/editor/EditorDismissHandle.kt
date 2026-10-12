@@ -36,11 +36,13 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -72,6 +74,16 @@ internal fun EditorSheetDialog(
     content: @Composable BoxScope.() -> Unit,
 ) {
     val contentScrollState = rememberScrollState()
+    val contentStates = rememberSaveableStateHolder()
+    val currentContent by rememberUpdatedState(content)
+    val retainedBody = remember {
+        movableContentOf {
+            contentStates.SaveableStateProvider("editor-content") {
+                com.veyarc.ui.VeyarcParticles(interactive = false, modifier = Modifier.fillMaxWidth(), content = currentContent)
+            }
+        }
+    }
+    val retainedContent: @Composable BoxScope.() -> Unit = { retainedBody() }
     val configuration = LocalConfiguration.current
     val sheetColor = MaterialTheme.colorScheme.surfaceContainerLow
     val landscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -106,14 +118,14 @@ internal fun EditorSheetDialog(
                     intermediateHeightFraction = largeHeightFraction,
                     mode = largeMode,
                     onContentHeightChanged = { contentHeightPx = it },
-                    content = content,
+                    content = retainedContent,
                 )
             } else {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = (configuration.screenHeightDp * largeHeightFraction).dp),
-                    content = content,
+                    content = retainedContent,
                 )
             }
         }
@@ -166,7 +178,7 @@ internal fun EditorSheetDialog(
                                 Modifier
                             },
                         ),
-                    content = content,
+                    content = retainedContent,
                 )
             }
         }

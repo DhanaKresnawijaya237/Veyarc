@@ -38,6 +38,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -65,12 +66,17 @@ import com.veyarc.model.PackageName
 import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.StepResultCondition
 import com.veyarc.model.VariableComparisonCondition
+import com.veyarc.model.WorkflowJson
 import com.veyarc.model.backgroundAssetId
 import com.veyarc.model.bundle.BundleAsset
 import kotlin.math.roundToInt
 
 private const val MAX_COMPOSED_CONDITIONS = 8
 private const val MISSING_TEMPLATE_ASSET_ID = "template-missing"
+private val ConditionEditorSaver = Saver<Condition, String>(
+    save = { WorkflowJson.encodeCanonical(Condition.serializer(), it) },
+    restore = { WorkflowJson.decodeStrict(Condition.serializer(), it) },
+)
 
 internal fun Condition.usesCompactEditorSheet(): Boolean = this is ForegroundPackageCondition ||
     this is OrientationCondition ||
@@ -91,7 +97,7 @@ internal fun ConditionEditorDialog(
     onDismiss: () -> Unit,
     onApply: (Condition) -> Unit,
 ) {
-    var condition by remember(initialCondition) { mutableStateOf(initialCondition) }
+    var condition by rememberSaveable(initialCondition, stateSaver = ConditionEditorSaver) { mutableStateOf(initialCondition) }
     val compact = condition.usesCompactEditorSheet()
     EditorSheetDialog(
         compact = compact,
@@ -271,7 +277,7 @@ private fun PixelConditionFields(
 ) {
     var xText by rememberNumericEditorText(condition.point.x.toEditorText())
     var yText by rememberNumericEditorText(condition.point.y.toEditorText())
-    var colorText by remember(condition) { mutableStateOf(condition.expectedArgb.toArgbText()) }
+    var colorText by rememberSaveable(condition.expectedArgb) { mutableStateOf(condition.expectedArgb.toArgbText()) }
     var toleranceText by rememberNumericEditorText(condition.tolerance.toString())
     Text("Compare one normalized screen point (0 to 1) with an ARGB colour.", style = MaterialTheme.typography.bodySmall)
     Row(
@@ -537,7 +543,7 @@ private fun PackageConditionFields(
     condition: ForegroundPackageCondition,
     onChange: (Condition) -> Unit,
 ) {
-    var packageText by remember(condition) { mutableStateOf(condition.packageName.value) }
+    var packageText by rememberSaveable(condition.packageName.value) { mutableStateOf(condition.packageName.value) }
     OutlinedTextField(
         value = packageText,
         onValueChange = { next ->

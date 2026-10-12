@@ -117,6 +117,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
@@ -165,18 +166,24 @@ fun AssistantPreviewHost(
     editorContent: @Composable (onAskAi: (() -> Unit)?) -> Unit,
 ) {
     val openChat: (() -> Unit)? = if (enabled) ({ state.open(context) }) else null
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        val wide = maxWidth >= 1000.dp && LocalDensity.current.fontScale <= 1.5f
-        if (!enabled || !state.isOpen) {
-            editorContent(openChat)
-        } else if (wide) {
-            Row(Modifier.fillMaxSize().testTag("assistant-split")) {
-                Box(Modifier.weight(1f)) { editorContent(openChat) }
-                VerticalDivider()
-                Box(Modifier.weight(1f)) { AssistantPreviewScreen(state, onOpenSettings) }
+    key(context.workflowId) {
+        val editorStates = rememberSaveableStateHolder()
+        val retainedEditor: @Composable () -> Unit = {
+            editorStates.SaveableStateProvider("editor") { editorContent(openChat) }
+        }
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val wide = maxWidth >= 1000.dp && LocalDensity.current.fontScale <= 1.5f
+            if (!enabled || !state.isOpen) {
+                retainedEditor()
+            } else if (wide) {
+                Row(Modifier.fillMaxSize().testTag("assistant-split")) {
+                    Box(Modifier.weight(1f)) { retainedEditor() }
+                    VerticalDivider()
+                    Box(Modifier.weight(1f)) { AssistantPreviewScreen(state, onOpenSettings) }
+                }
+            } else {
+                AssistantPreviewScreen(state, onOpenSettings)
             }
-        } else {
-            AssistantPreviewScreen(state, onOpenSettings)
         }
     }
 }

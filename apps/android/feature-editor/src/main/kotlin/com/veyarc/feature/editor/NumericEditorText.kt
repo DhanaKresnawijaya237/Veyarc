@@ -10,8 +10,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 @Composable
 internal fun rememberNumericEditorText(value: String, resetKey: Any? = null): MutableState<String> {
     val text = rememberSaveable(resetKey) { mutableStateOf(value) }
+    val previousModel = rememberSaveable(resetKey) { mutableStateOf(value) }
     LaunchedEffect(value) {
-        if (!sameNumericValue(text.value, value)) text.value = value
+        if (previousModel.value != value && !sameNumericValue(text.value, value)) text.value = value
+        previousModel.value = value
     }
     return text
 }
