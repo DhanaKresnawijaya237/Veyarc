@@ -164,113 +164,115 @@ fun VeyarcChoicePicker(
                     tonalElevation = 0.dp,
                     shadowElevation = 12.dp,
                 ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        BoxWithConstraints {
-                            val availableWidth = maxWidth
-                            val searchWidth by animateDpAsState(
-                                targetValue = if (searchExpanded) (availableWidth - 64.dp).coerceAtLeast(48.dp) else 48.dp,
-                                animationSpec = tween(180),
-                                label = "Search width",
-                            )
-                            val titleAlpha by animateFloatAsState(if (searchExpanded) 0f else 1f, label = "Picker title")
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    title,
-                                    modifier = Modifier.weight(1f).graphicsLayer { alpha = titleAlpha },
-                                    style = MaterialTheme.typography.titleLarge,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                if (searchable) {
-                                    Surface(
-                                        modifier = Modifier.width(searchWidth).height(48.dp),
-                                        shape = RoundedCornerShape(12.dp),
-                                        color = if (searchExpanded) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
-                                    ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            IconButton(onClick = {
-                                                searchExpanded = !searchExpanded
-                                                if (!searchExpanded) {
-                                                    query = ""
-                                                    keyboardController?.hide()
-                                                }
-                                            }) {
-                                                Icon(Icons.Outlined.Search, contentDescription = "Search $title")
-                                            }
-                                            AnimatedVisibility(
-                                                visible = searchExpanded,
-                                                enter = fadeIn(tween(90, delayMillis = 90)),
-                                                exit = fadeOut(tween(90)),
-                                                modifier = Modifier.weight(1f),
-                                            ) {
-                                                BasicTextField(
-                                                    value = query,
-                                                    onValueChange = { query = it },
-                                                    modifier = Modifier.fillMaxWidth().padding(end = 10.dp).focusRequester(searchFocusRequester)
-                                                        .semantics { contentDescription = "Search $title" },
-                                                    singleLine = true,
-                                                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
-                                                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                                                    decorationBox = { innerTextField ->
-                                                        Box {
-                                                            if (query.isEmpty()) Text("Search", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                                            innerTextField()
-                                                        }
-                                                    },
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                                IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, contentDescription = "Close $title") }
-                            }
-                        }
-                        LazyColumn(
-                            modifier = Modifier.weight(1f, fill = false),
-                            state = listState,
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                    com.veyarc.ui.VeyarcParticles(interactive = false, modifier = Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            itemsIndexed(filtered, key = { _, option -> option.id }) { index, option ->
-                                Column {
-                                    if (index > 0 && option.group != filtered[index - 1].group) {
-                                        HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.outlineVariant)
-                                    }
-                                    val selected = option.id == selectedId
-                                    Surface(
-                                        onClick = { onSelect(option) },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        shape = RoundedCornerShape(14.dp),
-                                        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 14.dp, vertical = 8.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
+                            BoxWithConstraints {
+                                val availableWidth = maxWidth
+                                val searchWidth by animateDpAsState(
+                                    targetValue = if (searchExpanded) (availableWidth - 64.dp).coerceAtLeast(48.dp) else 48.dp,
+                                    animationSpec = tween(180),
+                                    label = "Search width",
+                                )
+                                val titleAlpha by animateFloatAsState(if (searchExpanded) 0f else 1f, label = "Picker title")
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        title,
+                                        modifier = Modifier.weight(1f).graphicsLayer { alpha = titleAlpha },
+                                        style = MaterialTheme.typography.titleLarge,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    if (searchable) {
+                                        Surface(
+                                            modifier = Modifier.width(searchWidth).height(48.dp),
+                                            shape = RoundedCornerShape(12.dp),
+                                            color = if (searchExpanded) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
                                         ) {
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(
-                                                    option.label,
-                                                    color = if (option.destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                                                    maxLines = 2,
-                                                    overflow = TextOverflow.Ellipsis,
-                                                )
-                                                option.detail?.let { detail ->
-                                                    Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                IconButton(onClick = {
+                                                    searchExpanded = !searchExpanded
+                                                    if (!searchExpanded) {
+                                                        query = ""
+                                                        keyboardController?.hide()
+                                                    }
+                                                }) {
+                                                    Icon(Icons.Outlined.Search, contentDescription = "Search $title")
+                                                }
+                                                AnimatedVisibility(
+                                                    visible = searchExpanded,
+                                                    enter = fadeIn(tween(90, delayMillis = 90)),
+                                                    exit = fadeOut(tween(90)),
+                                                    modifier = Modifier.weight(1f),
+                                                ) {
+                                                    BasicTextField(
+                                                        value = query,
+                                                        onValueChange = { query = it },
+                                                        modifier = Modifier.fillMaxWidth().padding(end = 10.dp).focusRequester(searchFocusRequester)
+                                                            .semantics { contentDescription = "Search $title" },
+                                                        singleLine = true,
+                                                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+                                                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                                                        decorationBox = { innerTextField ->
+                                                            Box {
+                                                                if (query.isEmpty()) Text("Search", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                                innerTextField()
+                                                            }
+                                                        },
+                                                    )
                                                 }
                                             }
-                                            if (selected) Icon(Icons.Outlined.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
+                                        }
+                                    }
+                                    IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, contentDescription = "Close $title") }
+                                }
+                            }
+                            LazyColumn(
+                                modifier = Modifier.weight(1f, fill = false),
+                                state = listState,
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                itemsIndexed(filtered, key = { _, option -> option.id }) { index, option ->
+                                    Column {
+                                        if (index > 0 && option.group != filtered[index - 1].group) {
+                                            HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                                        }
+                                        val selected = option.id == selectedId
+                                        Surface(
+                                            onClick = { onSelect(option) },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            shape = RoundedCornerShape(14.dp),
+                                            color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 14.dp, vertical = 8.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        option.label,
+                                                        color = if (option.destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                                                        maxLines = 2,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                    )
+                                                    option.detail?.let { detail ->
+                                                        Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                    }
+                                                }
+                                                if (selected) Icon(Icons.Outlined.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
+                                            }
                                         }
                                     }
                                 }
-                            }
-                            if (filtered.isEmpty()) {
-                                item { Text("No matching options", modifier = Modifier.padding(14.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                if (filtered.isEmpty()) {
+                                    item { Text("No matching options", modifier = Modifier.padding(14.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                }
                             }
                         }
                     }

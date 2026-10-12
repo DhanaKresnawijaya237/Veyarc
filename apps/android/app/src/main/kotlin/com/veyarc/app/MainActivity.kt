@@ -143,149 +143,155 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    BackHandler(enabled = runSettingsSection != null, onBack = ::returnToRunReview)
-                    val bundle = workflowToRun.takeIf { runSettingsSection == null }
-                    when (fullScreenDestination) {
-                        FullScreenDestination.RECORDER -> CoordinateRecorderScreen(
-                            controller = recordingSession.controller,
-                            onBack = {
-                                recordingFolderId = null
-                                fullScreenDestination = null
-                            },
-                            onEditWorkflow = { bundle, journalFileName ->
-                                editorReturnToManager = false
-                                workflowToEdit = bundle
-                                storedWorkflowToEdit = null
-                                recordedJournalFileName = journalFileName
-                                recordingFolderId = null
-                                selectedDestination = VeyarcDestination.EDITOR
-                                fullScreenDestination = null
-                            },
-                            destinationFolderId = recordingFolderId,
-                        )
+                    com.veyarc.ui.VeyarcParticles(
+                        interactive = false,
+                        modifier = Modifier.fillMaxSize(),
+                        enabled = !(selectedDestination == VeyarcDestination.EDITOR && editorSession.assistant.isOpen && fullScreenDestination == null && workflowToRun == null),
+                    ) {
+                        BackHandler(enabled = runSettingsSection != null, onBack = ::returnToRunReview)
+                        val bundle = workflowToRun.takeIf { runSettingsSection == null }
+                        when (fullScreenDestination) {
+                            FullScreenDestination.RECORDER -> CoordinateRecorderScreen(
+                                controller = recordingSession.controller,
+                                onBack = {
+                                    recordingFolderId = null
+                                    fullScreenDestination = null
+                                },
+                                onEditWorkflow = { bundle, journalFileName ->
+                                    editorReturnToManager = false
+                                    workflowToEdit = bundle
+                                    storedWorkflowToEdit = null
+                                    recordedJournalFileName = journalFileName
+                                    recordingFolderId = null
+                                    selectedDestination = VeyarcDestination.EDITOR
+                                    fullScreenDestination = null
+                                },
+                                destinationFolderId = recordingFolderId,
+                            )
 
-                        null ->
-                            if (bundle != null) {
-                                val controller = requireNotNull(runSession.controller) {
-                                    "A workflow run screen requires an active run controller"
-                                }
-                                key(controller) {
-                                    WorkflowRunScreen(
-                                        bundle = bundle,
-                                        controller = controller,
-                                        canStart = recoveryState == RunRecoveryState.READY,
-                                        startBlockMessage = recoveryState.message,
-                                        onStart = ::startRunAndRemember,
-                                        onBack = ::leaveRunScreen,
-                                        onOpenConnectionSettings = { openRunSettings("connections") },
-                                        onOpenLatchSettings = { openRunSettings("latch") },
-                                    )
-                                }
-                            } else {
-                                VeyarcAppShell(
-                                    selectedDestination = if (runSettingsSection == null) selectedDestination else VeyarcDestination.SETTINGS,
-                                    onDestinationSelected = {
-                                        if (runSettingsSection == null || it != VeyarcDestination.SETTINGS) {
-                                            if (runSettingsSection != null) leaveRunScreen()
-                                            managerSelectionBar = null
-                                            selectedDestination = it
-                                        }
-                                    },
-                                    selectionBar = managerSelectionBar,
-                                    showNavigation = runSettingsSection != null || !(selectedDestination == VeyarcDestination.EDITOR && editorSession.assistant.isOpen),
-                                ) { destination ->
-                                    when (destination) {
-                                        VeyarcDestination.HOME -> HomeDashboardScreen(
-                                            pageState = pageState.home,
-                                            usageRepository = (application as VeyarcApplication).assistantUsage,
-                                            repository = workflowRepository,
-                                            refreshGeneration = resumeGeneration,
-                                            onRecord = {
-                                                recordingSession.controller.dismissReview()
-                                                recordingFolderId = null
-                                                fullScreenDestination = FullScreenDestination.RECORDER
-                                            },
-                                            onPlayWorkflow = ::playWorkflow,
+                            null ->
+                                if (bundle != null) {
+                                    val controller = requireNotNull(runSession.controller) {
+                                        "A workflow run screen requires an active run controller"
+                                    }
+                                    key(controller) {
+                                        WorkflowRunScreen(
+                                            bundle = bundle,
+                                            controller = controller,
+                                            canStart = recoveryState == RunRecoveryState.READY,
+                                            startBlockMessage = recoveryState.message,
+                                            onStart = ::startRunAndRemember,
+                                            onBack = ::leaveRunScreen,
+                                            onOpenConnectionSettings = { openRunSettings("connections") },
+                                            onOpenLatchSettings = { openRunSettings("latch") },
                                         )
-
-                                        VeyarcDestination.WORKFLOWS -> WorkflowManagerScreen(
-                                            pageState = pageState.workflows,
-                                            repository = workflowRepository,
-                                            refreshGeneration = resumeGeneration,
-                                            onEditWorkflow = ::editWorkflow,
-                                            onPlayWorkflow = ::playWorkflow,
-                                            onSelectionBarChange = { if (selectedDestination == VeyarcDestination.WORKFLOWS) managerSelectionBar = it },
-                                            onWorkflowDeleted = ::workflowDeleted,
-                                        )
-
-                                        VeyarcDestination.EDITOR -> AssistantPreviewHost(
-                                            enabled = true,
-                                            state = editorSession.assistant,
-                                            context = editorSession.state.assistantContext(),
-                                            onOpenSettings = {
-                                                assistantSettingsRequest++
-                                                selectedDestination = VeyarcDestination.SETTINGS
-                                            },
-                                        ) { onAskAi ->
-                                            WorkflowEditorScreen(
+                                    }
+                                } else {
+                                    VeyarcAppShell(
+                                        selectedDestination = if (runSettingsSection == null) selectedDestination else VeyarcDestination.SETTINGS,
+                                        onDestinationSelected = {
+                                            if (runSettingsSection == null || it != VeyarcDestination.SETTINGS) {
+                                                if (runSettingsSection != null) leaveRunScreen()
+                                                managerSelectionBar = null
+                                                selectedDestination = it
+                                            }
+                                        },
+                                        selectionBar = managerSelectionBar,
+                                        showNavigation = runSettingsSection != null || !(selectedDestination == VeyarcDestination.EDITOR && editorSession.assistant.isOpen),
+                                    ) { destination ->
+                                        when (destination) {
+                                            VeyarcDestination.HOME -> HomeDashboardScreen(
+                                                pageState = pageState.home,
+                                                usageRepository = (application as VeyarcApplication).assistantUsage,
                                                 repository = workflowRepository,
-                                                session = editorSession.state,
-                                                onAskAi = onAskAi?.let { { editorSession.assistant.open(editorSession.state.assistantContext()) } },
-                                                onRunWorkflow = ::openStoredRunScreen,
-                                                onOpenWorkflowManager = {
-                                                    selectedDestination = VeyarcDestination.WORKFLOWS
+                                                refreshGeneration = resumeGeneration,
+                                                onRecord = {
+                                                    recordingSession.controller.dismissReview()
+                                                    recordingFolderId = null
+                                                    fullScreenDestination = FullScreenDestination.RECORDER
                                                 },
-                                                onWorkflowClosed = {
-                                                    workflowToEdit = null
-                                                    storedWorkflowToEdit = null
-                                                    recordedJournalFileName = null
-                                                    if (editorReturnToManager) selectedDestination = VeyarcDestination.WORKFLOWS
-                                                    editorReturnToManager = false
+                                                onPlayWorkflow = ::playWorkflow,
+                                            )
+
+                                            VeyarcDestination.WORKFLOWS -> WorkflowManagerScreen(
+                                                pageState = pageState.workflows,
+                                                repository = workflowRepository,
+                                                refreshGeneration = resumeGeneration,
+                                                onEditWorkflow = ::editWorkflow,
+                                                onPlayWorkflow = ::playWorkflow,
+                                                onSelectionBarChange = { if (selectedDestination == VeyarcDestination.WORKFLOWS) managerSelectionBar = it },
+                                                onWorkflowDeleted = ::workflowDeleted,
+                                            )
+
+                                            VeyarcDestination.EDITOR -> AssistantPreviewHost(
+                                                enabled = true,
+                                                state = editorSession.assistant,
+                                                context = editorSession.state.assistantContext(),
+                                                onOpenSettings = {
+                                                    assistantSettingsRequest++
+                                                    selectedDestination = VeyarcDestination.SETTINGS
                                                 },
-                                                initialBundle = workflowToEdit,
-                                                initialStoredWorkflowId = storedWorkflowToEdit?.first,
-                                                initialStoredRevision = storedWorkflowToEdit?.second,
-                                                initialRecordingJournalFileName = recordedJournalFileName,
-                                                onInitialBundleConsumed = {
-                                                    workflowToEdit = null
-                                                    storedWorkflowToEdit = null
-                                                    recordedJournalFileName = null
-                                                },
-                                                newWorkflowRequestId = newWorkflowRequestId,
-                                                newWorkflowFolderId = newWorkflowFolderId,
-                                                onNewWorkflowRequestConsumed = {
-                                                    newWorkflowRequestId = 0
-                                                    newWorkflowFolderId = null
+                                            ) { onAskAi ->
+                                                WorkflowEditorScreen(
+                                                    repository = workflowRepository,
+                                                    session = editorSession.state,
+                                                    onAskAi = onAskAi?.let { { editorSession.assistant.open(editorSession.state.assistantContext()) } },
+                                                    onRunWorkflow = ::openStoredRunScreen,
+                                                    onOpenWorkflowManager = {
+                                                        selectedDestination = VeyarcDestination.WORKFLOWS
+                                                    },
+                                                    onWorkflowClosed = {
+                                                        workflowToEdit = null
+                                                        storedWorkflowToEdit = null
+                                                        recordedJournalFileName = null
+                                                        if (editorReturnToManager) selectedDestination = VeyarcDestination.WORKFLOWS
+                                                        editorReturnToManager = false
+                                                    },
+                                                    initialBundle = workflowToEdit,
+                                                    initialStoredWorkflowId = storedWorkflowToEdit?.first,
+                                                    initialStoredRevision = storedWorkflowToEdit?.second,
+                                                    initialRecordingJournalFileName = recordedJournalFileName,
+                                                    onInitialBundleConsumed = {
+                                                        workflowToEdit = null
+                                                        storedWorkflowToEdit = null
+                                                        recordedJournalFileName = null
+                                                    },
+                                                    newWorkflowRequestId = newWorkflowRequestId,
+                                                    newWorkflowFolderId = newWorkflowFolderId,
+                                                    onNewWorkflowRequestConsumed = {
+                                                        newWorkflowRequestId = 0
+                                                        newWorkflowFolderId = null
+                                                    },
+                                                )
+                                            }
+
+                                            VeyarcDestination.RUNS -> RunManagerScreen(
+                                                pageState = pageState.runs,
+                                                repository = workflowRepository,
+                                                refreshGeneration = resumeGeneration,
+                                                onOpenWorkflowRevision = ::editRunWorkflowRevision,
+                                                onSelectionBarChange = { if (selectedDestination == VeyarcDestination.RUNS) managerSelectionBar = it },
+                                            )
+
+                                            VeyarcDestination.SETTINGS -> SettingsScreen(
+                                                storageState = pageState.settings,
+                                                requestedSection = runSettingsSection,
+                                                assistant = editorSession.assistant,
+                                                assistantConnectionRequestId = assistantSettingsRequest,
+                                                onAssistantConnectionRequestConsumed = { assistantSettingsRequest = 0 },
+                                                repository = workflowRepository,
+                                                refreshGeneration = resumeGeneration,
+                                                themePreference = uiPreferences.theme,
+                                                onThemePreferenceChange = { preference ->
+                                                    catalogScope.launch {
+                                                        AppPreferences.setTheme(this@MainActivity, preference)
+                                                    }
                                                 },
                                             )
                                         }
-
-                                        VeyarcDestination.RUNS -> RunManagerScreen(
-                                            pageState = pageState.runs,
-                                            repository = workflowRepository,
-                                            refreshGeneration = resumeGeneration,
-                                            onOpenWorkflowRevision = ::editRunWorkflowRevision,
-                                            onSelectionBarChange = { if (selectedDestination == VeyarcDestination.RUNS) managerSelectionBar = it },
-                                        )
-
-                                        VeyarcDestination.SETTINGS -> SettingsScreen(
-                                            storageState = pageState.settings,
-                                            requestedSection = runSettingsSection,
-                                            assistant = editorSession.assistant,
-                                            assistantConnectionRequestId = assistantSettingsRequest,
-                                            onAssistantConnectionRequestConsumed = { assistantSettingsRequest = 0 },
-                                            repository = workflowRepository,
-                                            refreshGeneration = resumeGeneration,
-                                            themePreference = uiPreferences.theme,
-                                            onThemePreferenceChange = { preference ->
-                                                catalogScope.launch {
-                                                    AppPreferences.setTheme(this@MainActivity, preference)
-                                                }
-                                            },
-                                        )
                                     }
                                 }
-                            }
+                        }
                     }
                 }
             }

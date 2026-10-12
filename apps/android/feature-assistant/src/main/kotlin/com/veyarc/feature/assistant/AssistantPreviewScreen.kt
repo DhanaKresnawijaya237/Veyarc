@@ -578,7 +578,7 @@ private fun ConversationBody(state: AssistantPreviewState, onContext: (PreviewTu
         withFrameNanos { }
         if (followLatest && chat.turns.isNotEmpty()) list.scrollToItem((list.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
     }
-    AssistantParticles(interactive = chat.turns.isEmpty(), modifier = modifier.fillMaxWidth()) {
+    com.veyarc.ui.VeyarcParticles(interactive = chat.turns.isEmpty(), modifier = modifier.fillMaxWidth()) {
         if (chat.turns.isEmpty()) {
             AssistantWelcome(state)
         }
@@ -827,61 +827,63 @@ fun AssistantPanel(title: String, onDismiss: () -> Unit, onBack: (() -> Unit)? =
             properties = ModalBottomSheetProperties(isAppearanceLightStatusBars = !dark, isAppearanceLightNavigationBars = !dark),
         ) {
             CompositionLocalProvider(LocalDensity provides density) {
-                Column(
-                    Modifier.fillMaxWidth().testTag("assistant-panel").pointerInput(sheetState, routing) {
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                            routing.pullSheet = !scrolling.canScrollBackward
-                            val fromHeader = down.position.y <= headerHeight
-                            val tracker = VelocityTracker()
+                com.veyarc.ui.VeyarcParticles(interactive = false, modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        Modifier.fillMaxWidth().testTag("assistant-panel").pointerInput(sheetState, routing) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                routing.pullSheet = !scrolling.canScrollBackward
+                                val fromHeader = down.position.y <= headerHeight
+                                val tracker = VelocityTracker()
 
-                            // Sheet-local pointer positions move with the sheet; measure velocity in the window.
-                            fun windowPosition(position: Offset) = position + Offset(0f, sheetState.requireOffset())
-                            val start = windowPosition(down.position)
-                            tracker.addPosition(down.uptimeMillis, start)
-                            var last = start
-                            var released = false
-                            do {
-                                val event = awaitPointerEvent(PointerEventPass.Initial)
-                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                last = windowPosition(change.position)
-                                tracker.addPosition(change.uptimeMillis, last)
-                                released = !change.pressed
-                            } while (!released)
-                            val distance = last - start
-                            val clearPull = distance.y > viewConfiguration.touchSlop && distance.y > kotlin.math.abs(distance.x)
-                            val dismissPull = distance.y >= 56.dp.toPx() || tracker.calculateVelocity().y >= 125.dp.toPx()
-                            if (released && !closing && (fromHeader || routing.pullSheet) && clearPull && dismissPull) {
-                                closing = true
-                                scope.launch {
-                                    // Finish after the native drag/fling callbacks, so they cannot cancel closing.
-                                    withFrameNanos { }
-                                    sheetState.hide()
-                                    if (!sheetState.isVisible) dismiss()
+                                // Sheet-local pointer positions move with the sheet; measure velocity in the window.
+                                fun windowPosition(position: Offset) = position + Offset(0f, sheetState.requireOffset())
+                                val start = windowPosition(down.position)
+                                tracker.addPosition(down.uptimeMillis, start)
+                                var last = start
+                                var released = false
+                                do {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                    last = windowPosition(change.position)
+                                    tracker.addPosition(change.uptimeMillis, last)
+                                    released = !change.pressed
+                                } while (!released)
+                                val distance = last - start
+                                val clearPull = distance.y > viewConfiguration.touchSlop && distance.y > kotlin.math.abs(distance.x)
+                                val dismissPull = distance.y >= 56.dp.toPx() || tracker.calculateVelocity().y >= 125.dp.toPx()
+                                if (released && !closing && (fromHeader || routing.pullSheet) && clearPull && dismissPull) {
+                                    closing = true
+                                    scope.launch {
+                                        // Finish after the native drag/fling callbacks, so they cannot cancel closing.
+                                        withFrameNanos { }
+                                        sheetState.hide()
+                                        if (!sheetState.isVisible) dismiss()
+                                    }
                                 }
                             }
+                        },
+                    ) {
+                        Box(Modifier.fillMaxWidth().onSizeChanged { headerHeight = it.height }.testTag("assistant-panel-header").padding(horizontal = 12.dp, vertical = 4.dp).heightIn(min = 56.dp)) {
+                            Column(Modifier.align(Alignment.Center).padding(horizontal = if (headerActions == null) 52.dp else 96.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            IconButton(onClick = onBack ?: onDismiss, modifier = Modifier.align(Alignment.CenterStart)) {
+                                Icon(if (onBack == null) Icons.Outlined.Close else Icons.AutoMirrored.Outlined.ArrowBack, if (onBack == null) "Close $title" else backDescription)
+                            }
+                            if (headerActions != null) {
+                                Row(Modifier.align(Alignment.CenterEnd), content = headerActions)
+                            } else if (onBack != null) {
+                                IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterEnd)) { Icon(Icons.Outlined.Close, "Close $title") }
+                            }
                         }
-                    },
-                ) {
-                    Box(Modifier.fillMaxWidth().onSizeChanged { headerHeight = it.height }.testTag("assistant-panel-header").padding(horizontal = 12.dp, vertical = 4.dp).heightIn(min = 56.dp)) {
-                        Column(Modifier.align(Alignment.Center).padding(horizontal = if (headerActions == null) 52.dp else 96.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        IconButton(onClick = onBack ?: onDismiss, modifier = Modifier.align(Alignment.CenterStart)) {
-                            Icon(if (onBack == null) Icons.Outlined.Close else Icons.AutoMirrored.Outlined.ArrowBack, if (onBack == null) "Close $title" else backDescription)
-                        }
-                        if (headerActions != null) {
-                            Row(Modifier.align(Alignment.CenterEnd), content = headerActions)
-                        } else if (onBack != null) {
-                            IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterEnd)) { Icon(Icons.Outlined.Close, "Close $title") }
-                        }
+                        Column(
+                            Modifier.fillMaxWidth().weight(1f, fill = false).testTag("assistant-panel-scroll")
+                                .nestedScroll(routing).then(if (scrollBody) Modifier.verticalScroll(scroll, overscrollEffect = null) else Modifier).padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) { content() }
                     }
-                    Column(
-                        Modifier.fillMaxWidth().weight(1f, fill = false).testTag("assistant-panel-scroll")
-                            .nestedScroll(routing).then(if (scrollBody) Modifier.verticalScroll(scroll, overscrollEffect = null) else Modifier).padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) { content() }
                 }
             }
         }

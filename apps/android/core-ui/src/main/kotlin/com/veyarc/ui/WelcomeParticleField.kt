@@ -1,4 +1,4 @@
-package com.veyarc.feature.assistant
+package com.veyarc.ui
 
 import kotlin.math.cos
 import kotlin.math.exp

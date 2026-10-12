@@ -102,6 +102,7 @@ internal fun VeyarcAppShell(
         } else {
             val showLabels = LocalDensity.current.fontScale < 1.5f
             Scaffold(
+                containerColor = androidx.compose.ui.graphics.Color.Transparent,
                 bottomBar = {
                     if (selectionBar != null) {
                         ManagerSelectionBar(selectionBar)
