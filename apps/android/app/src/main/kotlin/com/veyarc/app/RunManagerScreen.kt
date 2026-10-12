@@ -69,6 +69,7 @@ import com.veyarc.data.storage.StoredRunRecord
 import com.veyarc.data.storage.StoredRunStatus
 import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowSummary
+import com.veyarc.feature.assistant.AssistantPanel
 import com.veyarc.feature.editor.StoredRunDetailScreen
 import com.veyarc.feature.editor.VeyarcChoice
 import com.veyarc.feature.editor.VeyarcChoicePicker
@@ -443,12 +444,18 @@ internal fun RunManagerScreen(
     }
 
     if (filtersOpen) {
-        ModalBottomSheet(onDismissRequest = { filtersOpen = false }) {
+        AssistantPanel("Filter runs", onDismiss = { filtersOpen = false }, headerActions = {
+            TextButton(onClick = {
+                statusFilter = null
+                workflowFilter = null
+                dateFilter = RunDateFilter.ANY
+                revisionFilter = ""
+            }) { Text("Reset") }
+        }) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text("Filter runs", style = MaterialTheme.typography.titleLarge)
                 FilterMenuButton(
                     text = "Status: ${statusFilter?.label() ?: "Any"}",
                     title = "Run status",
@@ -496,15 +503,6 @@ internal fun RunManagerScreen(
                     label = { Text("Revision") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = {
-                        statusFilter = null
-                        workflowFilter = null
-                        dateFilter = RunDateFilter.ANY
-                        revisionFilter = ""
-                    }) { Text("Reset") }
-                    TextButton(onClick = { filtersOpen = false }) { Text("Done") }
-                }
             }
         }
     }

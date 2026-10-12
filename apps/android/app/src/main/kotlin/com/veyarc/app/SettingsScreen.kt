@@ -588,69 +588,66 @@ fun SettingsScreen(
             )
         }
         if (chooseExportWorkflow) {
-            AlertDialog(
-                onDismissRequest = { chooseExportWorkflow = false },
-                title = { Text("Export workflow") },
-                text = {
-                    LazyColumn {
-                        items(workflows, key = WorkflowSummary::workflowId) { workflow ->
-                            TextButton(
-                                modifier = Modifier.fillMaxWidth(),
-                                onClick = {
-                                    chooseExportWorkflow = false
-                                    pendingExportWorkflow = workflow
-                                    exportBundle.launch("${workflow.name.safeFileName()}.veyarc")
-                                },
-                            ) { Text(workflow.name, modifier = Modifier.fillMaxWidth()) }
+            val exportList = rememberLazyListState()
+            AssistantPanel("Export workflow", onDismiss = { chooseExportWorkflow = false }, scrollBody = false, bodyState = exportList) {
+                LazyColumn(state = exportList, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(workflows, key = WorkflowSummary::workflowId) { workflow ->
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(18.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            onClick = {
+                                chooseExportWorkflow = false
+                                pendingExportWorkflow = workflow
+                                exportBundle.launch("${workflow.name.safeFileName()}.veyarc")
+                            },
+                        ) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(workflow.name, style = MaterialTheme.typography.titleSmall)
+                                Text("Revision ${workflow.latestRevision}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
-                },
-                confirmButton = {},
-                dismissButton = { TextButton(onClick = { chooseExportWorkflow = false }) { Text("Cancel") } },
-            )
+                }
+            }
         }
         if (chooseExportRun) {
-            AlertDialog(
-                onDismissRequest = { chooseExportRun = false },
-                title = { Text("Export run") },
-                text = {
-                    val finishedRuns = exportRuns.filter { it.status != StoredRunStatus.RUNNING }
-                    if (loadingExportRuns && exportRuns.isEmpty()) {
-                        androidx.compose.material3.CircularProgressIndicator()
-                    } else {
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (finishedRuns.isEmpty()) item { Text("No finished runs yet.") }
-                            items(finishedRuns, key = StoredRunRecord::runId) { run ->
-                                val name = run.name ?: workflows.firstOrNull { it.workflowId == run.workflowId }?.name ?: "Workflow run"
-                                Surface(onClick = {
-                                    chooseExportRun = false
-                                    pendingExportRun = run
-                                    val time = SimpleDateFormat("yyyy-MM-dd HH-mm", Locale.ROOT).format(Date(run.startedAtMs))
-                                    exportRun.launch("${name.safeFileName()} $time.veyarc-run")
-                                }, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-                                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        Text(name, style = MaterialTheme.typography.titleSmall)
-                                        Text(
-                                            "${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(run.startedAtMs))} · ${run.status.name.lowercase().replaceFirstChar(Char::uppercase)}",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                }
-                            }
-                            if (loadingExportRuns) {
-                                item { androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth()) }
-                            } else if (moreExportRuns) {
-                                item {
-                                    TextButton(onClick = { loadExportRuns(reset = false) }, modifier = Modifier.fillMaxWidth()) { Text("Load older runs") }
+            val exportList = rememberLazyListState()
+            AssistantPanel("Export run", onDismiss = { chooseExportRun = false }, scrollBody = false, bodyState = exportList) {
+                val finishedRuns = exportRuns.filter { it.status != StoredRunStatus.RUNNING }
+                if (loadingExportRuns && exportRuns.isEmpty()) {
+                    androidx.compose.material3.CircularProgressIndicator()
+                } else {
+                    LazyColumn(state = exportList, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (finishedRuns.isEmpty()) item { Text("No finished runs yet.") }
+                        items(finishedRuns, key = StoredRunRecord::runId) { run ->
+                            val name = run.name ?: workflows.firstOrNull { it.workflowId == run.workflowId }?.name ?: "Workflow run"
+                            Surface(onClick = {
+                                chooseExportRun = false
+                                pendingExportRun = run
+                                val time = SimpleDateFormat("yyyy-MM-dd HH-mm", Locale.ROOT).format(Date(run.startedAtMs))
+                                exportRun.launch("${name.safeFileName()} $time.veyarc-run")
+                            }, shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(name, style = MaterialTheme.typography.titleSmall)
+                                    Text(
+                                        "${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(run.startedAtMs))} · ${run.status.name.lowercase().replaceFirstChar(Char::uppercase)}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
                                 }
                             }
                         }
+                        if (loadingExportRuns) {
+                            item { androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth()) }
+                        } else if (moreExportRuns) {
+                            item {
+                                TextButton(onClick = { loadExportRuns(reset = false) }, modifier = Modifier.fillMaxWidth()) { Text("Load older runs") }
+                            }
+                        }
                     }
-                },
-                confirmButton = {},
-                dismissButton = { TextButton(onClick = { chooseExportRun = false }) { Text("Cancel") } },
-            )
+                }
+            }
         }
         if (confirmShizukuDownload) {
             AlertDialog(
