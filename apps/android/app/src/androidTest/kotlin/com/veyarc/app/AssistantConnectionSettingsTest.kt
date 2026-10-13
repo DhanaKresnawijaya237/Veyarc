@@ -59,17 +59,14 @@ import java.util.UUID
 class AssistantConnectionSettingsTest {
     @get:Rule val compose = createComposeRule()
 
-    @Test fun enableControlPrecedesProvidersAndHelpLinksAreCentered() {
+    @Test fun enableControlPrecedesProvidersWithoutOldHelpLinks() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        compose.setContent { VeyarcTheme { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(AssistantKeyStore(context), onHelp = {}) } } }
+        compose.setContent { VeyarcTheme { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(AssistantKeyStore(context)) } } }
         val control = compose.onNodeWithText("Enable AI").fetchSemanticsNode().boundsInRoot
         val provider = compose.onNodeWithContentDescription("Expand DeepSeek").fetchSemanticsNode().boundsInRoot
         assertTrue(control.bottom < provider.top)
-        val width = context.resources.displayMetrics.widthPixels.toFloat()
-        listOf("Privacy and costs", "AI chat help").forEach {
-            val bounds = compose.onNodeWithText(it).fetchSemanticsNode().boundsInRoot
-            org.junit.Assert.assertEquals(width / 2, bounds.center.x, 2f)
-        }
+        compose.onNodeWithText("Privacy and costs").assertDoesNotExist()
+        compose.onNodeWithText("AI chat help").assertDoesNotExist()
     }
 
     @Test fun newDeepSeekPresetKeepsCurrentVisionModelAndNativeThinkingControls() {
@@ -455,7 +452,7 @@ class AssistantConnectionSettingsTest {
             compose.onNodeWithContentDescription("Collapse DeepSeek").performClick()
             compose.onNodeWithText("Default model").assertDoesNotExist()
             compose.onNodeWithText("Default effort").assertDoesNotExist()
-            compose.onNodeWithText("Privacy and costs").assertExists()
+            compose.onNodeWithText("Privacy and costs").assertDoesNotExist()
             compose.onNodeWithContentDescription("Expand DeepSeek").performClick()
             compose.onNodeWithText("Default effort").assertExists()
             compose.onNodeWithContentDescription("Test all connections").assertIsNotEnabled()
@@ -566,9 +563,7 @@ class AssistantConnectionSettingsTest {
             awaitText("Key saved")
             compose.onNodeWithText("Provider privacy policy").assertDoesNotExist()
             capture("settings")
-            compose.onNodeWithText("Privacy and costs").performScrollTo().performClick()
-            compose.onNodeWithText("Provider privacy policy").performScrollTo().assertExists()
-            compose.onNodeWithContentDescription("Close Privacy and costs").performClick()
+            compose.onNodeWithText("Privacy and costs").assertDoesNotExist()
             compose.onNodeWithText("Enable AI").performScrollTo().performClick()
             capture("consent")
             compose.onNodeWithText("Details").assertDoesNotExist()

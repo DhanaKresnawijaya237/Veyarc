@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -33,19 +32,13 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccountTree
-import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.DarkMode
-import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.LightMode
-import androidx.compose.material.icons.outlined.Policy
 import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.SettingsBrightness
@@ -70,21 +63,20 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.veyarc.automation.android.AccessibilityGestureDispatcher
 import com.veyarc.automation.android.EdgeLatchPlayTarget
 import com.veyarc.automation.android.ReplayFloatingController
@@ -93,7 +85,6 @@ import com.veyarc.data.storage.StoredRunRecord
 import com.veyarc.data.storage.StoredRunStatus
 import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowSummary
-import com.veyarc.feature.assistant.AssistantMarkdown
 import com.veyarc.feature.assistant.AssistantPanel
 import com.veyarc.feature.assistant.SettingsChoiceTile
 import com.veyarc.model.bundle.BundleLimits
@@ -162,8 +153,7 @@ fun SettingsScreen(
     }
     var confirmShizukuDownload by remember { mutableStateOf(false) }
     var chooseShizukuSource by remember { mutableStateOf(false) }
-    var openGuide by remember { mutableStateOf<Pair<String, String>?>(null) }
-    var noticesVisible by remember { mutableStateOf(false) }
+    var openGuide by rememberSaveable { mutableStateOf<GuideCategory?>(null) }
 
     fun loadExportRuns(reset: Boolean) {
         val request = ++exportRunRequest
@@ -369,7 +359,7 @@ fun SettingsScreen(
                     expanded = expandedSection == "assistant",
                     onToggle = { expandedSection = if (expandedSection == "assistant") null else "assistant" },
                 ) {
-                    AssistantConnectionSettings(assistantKeys, assistant, onHelp = { openGuide = "AI chat help" to "ai-chat-guide.md" })
+                    AssistantConnectionSettings(assistantKeys, assistant)
                 }
             }
             item {
@@ -527,6 +517,16 @@ fun SettingsScreen(
                 }
             }
             item {
+                SettingsCard(
+                    title = "Guide",
+                    summary = null,
+                    expanded = expandedSection == "guide",
+                    onToggle = { expandedSection = if (expandedSection == "guide") null else "guide" },
+                ) {
+                    SettingsGuideLinks(onOpen = { openGuide = it })
+                }
+            }
+            item {
                 val packageInfo = remember { context.packageManager.getPackageInfo(context.packageName, 0) }
                 SettingsCard(
                     title = "About",
@@ -534,38 +534,22 @@ fun SettingsScreen(
                     expanded = expandedSection == "about",
                     onToggle = { expandedSection = if (expandedSection == "about") null else "about" },
                 ) {
-                    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainerHighest) {
-                            Image(painterResource(R.drawable.veyarc_logo), null, Modifier.size(60.dp).padding(10.dp))
+                            Image(painterResource(R.drawable.veyarc_logo), null, Modifier.size(72.dp).padding(12.dp).testTag("about-logo"))
                         }
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text("Veyarc", style = MaterialTheme.typography.titleLarge)
-                            @Suppress("DEPRECATION")
-                            Text("${packageInfo.versionName} · Build ${packageInfo.versionCode}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
+                        Text("Veyarc", style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
+                        Text("Record, edit, and run workflows.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                        @Suppress("DEPRECATION")
+                        Text("${packageInfo.versionName} · Build ${packageInfo.versionCode}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
                     }
                     StatusRow("Android", "${Build.VERSION.RELEASE} • API ${Build.VERSION.SDK_INT}")
                     StatusRow("Device", "${Build.MANUFACTURER} ${Build.MODEL}")
-                    Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-                        Column {
-                            AboutLink("Android guide", Icons.Outlined.HelpOutline) { openGuide = "Android guide" to "android-beta-guide.md" }
-                            AboutLink("Device compatibility notes", Icons.Outlined.Info) { openGuide = "Device compatibility notes" to "android-device-compatibility.md" }
-                            AboutLink("Third-party notices", Icons.Outlined.Policy) { noticesVisible = true }
-                        }
-                    }
                 }
             }
             message?.let { status -> item { Text(status, color = MaterialTheme.colorScheme.primary) } }
         }
 
-        if (noticesVisible) {
-            AlertDialog(
-                onDismissRequest = { noticesVisible = false },
-                title = { Text("CommonMark · BSD 2-Clause") },
-                text = { Text(COMMONMARK_LICENSE, Modifier.verticalScroll(rememberScrollState()), style = MaterialTheme.typography.bodySmall) },
-                confirmButton = { TextButton(onClick = { noticesVisible = false }) { Text("Done") } },
-            )
-        }
         if (confirmClearHistory) {
             AlertDialog(
                 onDismissRequest = { confirmClearHistory = false },
@@ -684,53 +668,12 @@ fun SettingsScreen(
                 dismissButton = { TextButton(onClick = { chooseShizukuSource = false }) { Text("Cancel") } },
             )
         }
-        openGuide?.let { (title, assetName) ->
-            val guide by produceState<String?>(initialValue = if (assetName == "ai-chat-guide.md") AI_CHAT_HELP else null, key1 = assetName) {
-                if (value == null) {
-                    value = withContext(Dispatchers.IO) {
-                        runCatching { context.assets.open(assetName).bufferedReader().use { it.readText() } }
-                            .getOrElse { "This guide could not be loaded." }
-                    }
-                }
-            }
-            val guideLines = remember(guide) { guide?.lines()?.filter(String::isNotBlank).orEmpty() }
-            val guideList = rememberLazyListState()
-            val guideContent: @Composable () -> Unit = {
-                LazyColumn(state = guideList, overscrollEffect = null, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (guide == null) item { androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth()) }
-                    items(guideLines) { line ->
-                        when {
-                            line.startsWith("# ") -> Unit
-
-                            assetName == "android-beta-guide.md" -> AssistantMarkdown(line)
-
-                            line.startsWith("## ") -> Text(line.removePrefix("## "), style = MaterialTheme.typography.titleMedium)
-
-                            line.startsWith("- ") -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("•", style = MaterialTheme.typography.bodyMedium)
-                                Text(line.removePrefix("- "), style = MaterialTheme.typography.bodyMedium)
-                            }
-
-                            else -> Text(line, style = MaterialTheme.typography.bodyMedium)
-                        }
-                    }
-                }
-            }
-            if (assetName == "ai-chat-guide.md") {
-                AssistantPanel(title, onDismiss = { openGuide = null }, scrollBody = false, bodyState = guideList, content = guideContent)
-            } else {
-                Dialog(onDismissRequest = { openGuide = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-                    Card(Modifier.fillMaxWidth(0.94f).fillMaxHeight(0.9f)) {
-                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-                                TextButton(onClick = { openGuide = null }) { Text("Close") }
-                            }
-                            guideContent()
-                        }
-                    }
-                }
-            }
+        openGuide?.let { category ->
+            SettingsGuide(
+                category,
+                onDismiss = { openGuide = null },
+                onShizukuSetup = { openUrl(context, "https://shizuku.rikka.app/guide/setup/") },
+            )
         }
     }
 }
@@ -834,15 +777,6 @@ private fun StatusRow(
     }
 }
 
-@Composable
-private fun AboutLink(label: String, icon: ImageVector, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Icon(icon, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
-        Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-        Icon(Icons.Outlined.ChevronRight, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
 private data class StorageSnapshot(
     val workflows: List<WorkflowSummary>,
     val runCount: Long,
@@ -868,27 +802,6 @@ private fun openUrl(context: android.content.Context, url: String) {
 }
 
 private data class DownloadSource(val label: String, val url: String)
-
-private val AI_CHAT_HELP = """
-    ## Get started
-    - Add a DeepSeek key and enable AI in Settings.
-    - In the Editor, tap Ask AI or Create with AI.
-
-    ## Review changes
-    - Expand a changes card to compare Before and After.
-    - Apply updates your draft. Undo is in the editor.
-    - Save and Run are separate. Check AI changes first.
-
-    ## Reply controls
-    - Copy copies text. Branch starts a new chat.
-    - Resend is a paid retry. Stop cancels, but may still cost.
-
-    ## Need help?
-    - Draft changed? Send a new message.
-    - AI off after restart? Enable it in Settings.
-    - Key or balance error? Check your DeepSeek account.
-    - See Privacy and costs for shared data and charges.
-""".trimIndent()
 
 private val COMMONMARK_LICENSE = """
     Copyright (c) 2015, Atlassian Pty Ltd

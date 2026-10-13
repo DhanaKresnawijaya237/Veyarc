@@ -54,7 +54,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -72,7 +71,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.veyarc.data.storage.AssistantConnection
 import com.veyarc.data.storage.AssistantConnections
 import com.veyarc.data.storage.AssistantKeyStore
-import com.veyarc.data.storage.AssistantProtocol
 import com.veyarc.feature.assistant.AssistantPanel
 import com.veyarc.feature.assistant.DeepSeekEffort
 import kotlinx.coroutines.Dispatchers
@@ -80,10 +78,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: com.veyarc.feature.assistant.AssistantPreviewState? = null, onHelp: (() -> Unit)? = null) {
+internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: com.veyarc.feature.assistant.AssistantPreviewState? = null) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current.applicationContext
-    val uri = LocalUriHandler.current
     val profiles = assistant?.connections ?: AssistantConnections(listOf(AssistantConnection.deepSeek()), AssistantConnection.DEEPSEEK_ID)
     var hasKeys by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
     var busy by remember { mutableStateOf(true) }
@@ -93,7 +90,6 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
     var removingProfile by remember { mutableStateOf<AssistantConnection?>(null) }
     var enabling by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
-    var privacyVisible by remember { mutableStateOf(false) }
     var modelProfile by remember { mutableStateOf<AssistantConnection?>(null) }
     var editProfile by remember { mutableStateOf<AssistantConnection?>(null) }
     var adding by remember { mutableStateOf(false) }
@@ -238,9 +234,6 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         assistant?.connectionError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        HorizontalDivider()
-        TextButton(onClick = { privacyVisible = true }, modifier = Modifier.fillMaxWidth()) { Text("Privacy and costs") }
-        if (onHelp != null) TextButton(onClick = onHelp, modifier = Modifier.fillMaxWidth()) { Text("AI chat help") }
     }
     modelProfile?.let { selected ->
         val profile = profiles.connections.first { it.id == selected.id }
@@ -277,21 +270,6 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
                 adding = false
                 editProfile = null
                 if (newConnection) keyProfile = profile
-            }
-        }
-    }
-    if (privacyVisible) {
-        AssistantPanel("Privacy and costs", onDismiss = { privacyVisible = false }) {
-            Text("• Sends chat, workflow text and files you attach.")
-            Text("• Recordings and run history stay on this device.")
-            Text("• Your API account pays. Stop may still cost.")
-            Text("• Deleting locally doesn't erase provider records.")
-            if (currentDefault.protocol == AssistantProtocol.DEEPSEEK) {
-                TextButton(onClick = { uri.openUri("https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html") }, modifier = Modifier.fillMaxWidth()) { Text("Provider privacy policy") }
-                TextButton(onClick = { uri.openUri("https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html") }, modifier = Modifier.fillMaxWidth()) { Text("Provider API terms") }
-                TextButton(onClick = { uri.openUri("https://api-docs.deepseek.com/quick_start/pricing/") }, modifier = Modifier.fillMaxWidth()) { Text("Provider pricing") }
-            } else {
-                Text("Check your provider's privacy policy and pricing.", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
