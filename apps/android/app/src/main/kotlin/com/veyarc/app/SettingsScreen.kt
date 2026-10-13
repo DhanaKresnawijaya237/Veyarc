@@ -110,6 +110,9 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
     storageState: SettingsStorageState = remember { SettingsStorageState() },
     requestedSection: String? = null,
+    guideRequestId: Int = 0,
+    onGuideRequestConsumed: () -> Unit = {},
+    onOpenHome: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val assistantKeys = remember(context) { com.veyarc.data.storage.AssistantKeyStore(context.applicationContext) }
@@ -139,16 +142,33 @@ fun SettingsScreen(
     var pendingExportRun by remember { mutableStateOf<StoredRunRecord?>(null) }
     var expandedSection by remember { mutableStateOf<String?>(null) }
     val settingsListState = rememberLazyListState()
-    LaunchedEffect(requestedSection) {
-        if (requestedSection != null) {
-            expandedSection = requestedSection
-            settingsListState.animateScrollToItem(if (requestedSection == "latch") 4 else 2)
+    fun openSection(section: String) {
+        expandedSection = section
+        val index = when (section) {
+            "assistant" -> 1
+            "connections" -> 2
+            "appearance" -> 3
+            "latch" -> 4
+            "data" -> 5
+            "guide" -> 6
+            "about" -> 7
+            else -> return
         }
+        scope.launch { settingsListState.animateScrollToItem(index) }
+    }
+    LaunchedEffect(requestedSection) {
+        if (requestedSection != null) openSection(requestedSection)
     }
     LaunchedEffect(assistantConnectionRequestId) {
         if (assistantConnectionRequestId > 0) {
-            expandedSection = "assistant"
+            openSection("assistant")
             onAssistantConnectionRequestConsumed()
+        }
+    }
+    LaunchedEffect(guideRequestId) {
+        if (guideRequestId > 0) {
+            openSection("guide")
+            onGuideRequestConsumed()
         }
     }
     var confirmShizukuDownload by remember { mutableStateOf(false) }
@@ -673,6 +693,10 @@ fun SettingsScreen(
                 category,
                 onDismiss = { openGuide = null },
                 onShizukuSetup = { openUrl(context, "https://shizuku.rikka.app/guide/setup/") },
+                onNavigate = { target ->
+                    openGuide = null
+                    if (target == "home") onOpenHome() else openSection(target)
+                },
             )
         }
     }

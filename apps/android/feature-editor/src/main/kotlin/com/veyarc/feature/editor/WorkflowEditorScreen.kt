@@ -74,6 +74,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Loop
+import androidx.compose.material.icons.outlined.NorthEast
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Schedule
@@ -193,6 +194,7 @@ fun WorkflowEditorScreen(
     onNewWorkflowRequestConsumed: () -> Unit = {},
     onWorkflowClosed: () -> Unit = {},
     modifier: Modifier = Modifier,
+    onOpenGuide: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -614,6 +616,7 @@ fun WorkflowEditorScreen(
                 statusMessage = null
             },
             onOpenWorkflowManager = onOpenWorkflowManager,
+            onOpenGuide = onOpenGuide,
             statusMessage = statusMessage,
             onAskAi = onAskAi?.let { openChat ->
                 {
@@ -853,6 +856,7 @@ private fun EmptyWorkflowEditorScreen(
     statusMessage: String? = null,
     onOpenWorkflowManager: () -> Unit,
     onAskAi: (() -> Unit)?,
+    onOpenGuide: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
@@ -901,6 +905,13 @@ private fun EmptyWorkflowEditorScreen(
                                 Text("Describe what you want to automate.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
+                    }
+                }
+                if (onOpenGuide != null) {
+                    TextButton(onClick = onOpenGuide, modifier = Modifier.fillMaxWidth()) {
+                        Text("Open guide")
+                        Spacer(Modifier.width(8.dp))
+                        Icon(Icons.Outlined.NorthEast, null, Modifier.size(18.dp))
                     }
                 }
                 statusMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }

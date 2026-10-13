@@ -81,6 +81,7 @@ class MainActivity : ComponentActivity() {
     }
     private val catalogScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var assistantSettingsRequest by mutableIntStateOf(0)
+    private var guideSettingsRequest by mutableIntStateOf(0)
     private var runSettingsSection by mutableStateOf<String?>(null)
     private var runReadinessObserver: Closeable? = null
 
@@ -211,6 +212,7 @@ class MainActivity : ComponentActivity() {
                                                     fullScreenDestination = FullScreenDestination.RECORDER
                                                 },
                                                 onPlayWorkflow = ::playWorkflow,
+                                                onOpenGuide = ::openGuideSettings,
                                             )
 
                                             VeyarcDestination.WORKFLOWS -> WorkflowManagerScreen(
@@ -240,6 +242,7 @@ class MainActivity : ComponentActivity() {
                                                     onOpenWorkflowManager = {
                                                         selectedDestination = VeyarcDestination.WORKFLOWS
                                                     },
+                                                    onOpenGuide = ::openGuideSettings,
                                                     onWorkflowClosed = {
                                                         workflowToEdit = null
                                                         storedWorkflowToEdit = null
@@ -279,6 +282,12 @@ class MainActivity : ComponentActivity() {
                                                 assistant = editorSession.assistant,
                                                 assistantConnectionRequestId = assistantSettingsRequest,
                                                 onAssistantConnectionRequestConsumed = { assistantSettingsRequest = 0 },
+                                                guideRequestId = guideSettingsRequest,
+                                                onGuideRequestConsumed = { guideSettingsRequest = 0 },
+                                                onOpenHome = {
+                                                    if (runSettingsSection != null) leaveRunScreen()
+                                                    selectedDestination = VeyarcDestination.HOME
+                                                },
                                                 repository = workflowRepository,
                                                 refreshGeneration = resumeGeneration,
                                                 themePreference = uiPreferences.theme,
@@ -349,6 +358,11 @@ class MainActivity : ComponentActivity() {
         runSession.open(bundle)
         workflowToRun = bundle
         if (autoStart) startControllerReplayWhenReady()
+    }
+
+    private fun openGuideSettings() {
+        guideSettingsRequest++
+        selectedDestination = VeyarcDestination.SETTINGS
     }
 
     private fun openStoredRunScreen(revision: WorkflowRevisionDocument, autoStart: Boolean = false) {

@@ -21,9 +21,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircleOutline
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Lightbulb
+import androidx.compose.material.icons.outlined.NorthEast
 import androidx.compose.material.icons.outlined.PlayCircleOutline
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -37,10 +39,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.veyarc.feature.assistant.AssistantPanel
 import com.veyarc.feature.editor.ExpansionScrollAnchor
@@ -76,7 +79,7 @@ internal fun SettingsGuideLinks(onOpen: (GuideCategory) -> Unit) {
 }
 
 @Composable
-internal fun SettingsGuide(category: GuideCategory, onDismiss: () -> Unit, onShizukuSetup: () -> Unit) {
+internal fun SettingsGuide(category: GuideCategory, onDismiss: () -> Unit, onShizukuSetup: () -> Unit, onNavigate: (String) -> Unit) {
     val topics = GUIDE_TOPICS.getValue(category)
     var expandedTopic by rememberSaveable(category) { mutableStateOf<String?>(topics.first().first) }
     val list = rememberLazyListState()
@@ -84,6 +87,20 @@ internal fun SettingsGuide(category: GuideCategory, onDismiss: () -> Unit, onShi
         LazyColumn(state = list, overscrollEffect = null, verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(topics, key = { it.first }) { (title, bullets) ->
                 val expanded = expandedTopic == title
+                val section = when {
+                    category == GuideCategory.PREREQUISITES && title == "Shizuku" -> "connections" to "Connections and permissions"
+                    category == GuideCategory.PREREQUISITES && title == "Edge latch" -> "latch" to "Edge latch"
+                    category == GuideCategory.FEATURES && title == "AI connection" -> "assistant" to "AI connection"
+                    category == GuideCategory.FEATURES && title == "Import and export" -> "data" to "Local data"
+                    else -> null
+                }
+                val links = when {
+                    category == GuideCategory.PREREQUISITES && title == "Before recording or running" -> mapOf("Accessibility" to "connections", "notifications" to "connections", "edge latch" to "latch")
+                    category == GuideCategory.FEATURES && title == "Recording" -> mapOf("Home" to "home", "latch" to "latch")
+                    category == GuideCategory.FEATURES && title == "Statistics and AI usage" -> mapOf("Home" to "home", "Local data" to "data")
+                    category == GuideCategory.HOW_IT_WORKS && title == "Android access" -> mapOf("Accessibility" to "connections", "Shizuku" to "connections")
+                    else -> emptyMap()
+                }
                 Surface(
                     onClick = { expandedTopic = if (expanded) null else title },
                     modifier = Modifier.fillMaxWidth().semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" },
@@ -91,14 +108,21 @@ internal fun SettingsGuide(category: GuideCategory, onDismiss: () -> Unit, onShi
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
                 ) {
                     Column {
-                        Text(title, Modifier.fillMaxWidth().padding(16.dp), style = MaterialTheme.typography.titleMedium, color = if (expanded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = if (section == null) 16.dp else 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(title, Modifier.weight(1f).padding(vertical = 16.dp), style = MaterialTheme.typography.titleMedium, color = if (expanded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                            section?.let { (target, label) ->
+                                IconButton(onClick = { onNavigate(target) }) {
+                                    Icon(Icons.Outlined.NorthEast, "Open $label", Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                        }
                         AnimatedVisibility(
                             expanded,
                             enter = expandVertically(tween(140)) + fadeIn(tween(100)),
                             exit = shrinkVertically(tween(120)) + fadeOut(tween(80)),
                         ) {
                             Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                bullets.forEach { bullet -> GuideBullet(bullet) }
+                                bullets.forEach { bullet -> GuideBullet(bullet, links, onNavigate) }
                                 if (category == GuideCategory.PREREQUISITES && title == "Shizuku") {
                                     TextButton(onClick = onShizukuSetup, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Shizuku setup instructions") }
                                 }
@@ -113,17 +137,23 @@ internal fun SettingsGuide(category: GuideCategory, onDismiss: () -> Unit, onShi
 }
 
 @Composable
-private fun GuideBullet(text: String) {
+private fun GuideBullet(text: String, links: Map<String, String>, onNavigate: (String) -> Unit) {
+    val linkColor = MaterialTheme.colorScheme.primary
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("•", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
         Text(
             buildAnnotatedString {
+                append(text)
                 val labelEnd = text.indexOf(':')
                 if (labelEnd in 1..32) {
-                    withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(text.take(labelEnd + 1)) }
-                    append(text.drop(labelEnd + 1))
-                } else {
-                    append(text)
+                    addStyle(SpanStyle(fontWeight = FontWeight.SemiBold), 0, labelEnd + 1)
+                }
+                links.forEach { (label, target) ->
+                    var start = text.indexOf(label)
+                    while (start >= 0) {
+                        addLink(LinkAnnotation.Clickable(target, TextLinkStyles(SpanStyle(color = linkColor))) { onNavigate(target) }, start, start + label.length)
+                        start = text.indexOf(label, start + label.length)
+                    }
                 }
             },
             style = MaterialTheme.typography.bodyMedium,

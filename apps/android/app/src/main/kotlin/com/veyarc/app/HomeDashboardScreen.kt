@@ -32,12 +32,14 @@ import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.ChevronLeft
 import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.NorthEast
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -86,6 +88,7 @@ fun HomeDashboardScreen(
     onPlayWorkflow: (WorkflowSummary) -> Unit,
     pageState: HomeDashboardState = remember { HomeDashboardState() },
     usageRepository: com.veyarc.data.storage.AssistantUsageRepository? = null,
+    onOpenGuide: (() -> Unit)? = null,
 ) {
     var dashboard by pageState.dashboard
     var workflows by pageState.workflows
@@ -177,6 +180,15 @@ fun HomeDashboardScreen(
                 }
             }
         } else if (loaded != null) {
+            if (workflows.isEmpty() && loaded.totalRuns == 0L && aiUsage.isEmpty() && onOpenGuide != null) {
+                item(key = "guide") {
+                    TextButton(onClick = onOpenGuide, modifier = Modifier.fillMaxWidth()) {
+                        Text("Open guide")
+                        Spacer(Modifier.width(8.dp))
+                        Icon(Icons.Outlined.NorthEast, null, Modifier.size(18.dp))
+                    }
+                }
+            }
             item(key = "metrics") { DashboardMetrics(loaded) }
             val names = workflows.associate { it.workflowId to it.name }
             val loadEarlier: suspend (Int) -> Int = { count ->
