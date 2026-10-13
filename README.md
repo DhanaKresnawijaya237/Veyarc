@@ -18,6 +18,11 @@ Record taps and swipes on Android, turn them into editable workflows, and replay
 3. Edit the blocks yourself or ask AI to help.
 4. Review, save, and test. Use the edge latch or stop notification to end a run.
 
+## How recording and replay work
+
+- **Recording.** Shizuku reads your touch positions and timing. Veyarc tracks app switches and converts the recording into editable blocks. System screens and Veyarc's own controls are skipped.
+- **Replay.** Veyarc launches apps and follows the workflow's waits, conditions, and loops. Android Accessibility sends taps, holds, and swipes at the saved coordinates. Image checks compare temporary screen captures with saved templates.
+
 ## AI and local data
 
 Recording, editing, and playback work offline. Saved workflows, images, recordings, and chats are encrypted on your device. No Veyarc account, cloud sync, or analytics.
