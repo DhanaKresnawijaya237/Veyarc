@@ -164,7 +164,7 @@ fun VeyarcChoicePicker(
                     tonalElevation = 0.dp,
                     shadowElevation = 12.dp,
                 ) {
-                    com.veyarc.ui.VeyarcParticles(interactive = false, modifier = Modifier.fillMaxWidth()) {
+                    Box(Modifier.fillMaxWidth()) {
                         Column(
                             modifier = Modifier.padding(16.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),

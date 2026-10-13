@@ -79,7 +79,7 @@ internal fun EditorSheetDialog(
     val retainedBody = remember {
         movableContentOf {
             contentStates.SaveableStateProvider("editor-content") {
-                com.veyarc.ui.VeyarcParticles(interactive = false, modifier = Modifier.fillMaxWidth(), content = currentContent)
+                Box(modifier = Modifier.fillMaxWidth(), content = currentContent)
             }
         }
     }

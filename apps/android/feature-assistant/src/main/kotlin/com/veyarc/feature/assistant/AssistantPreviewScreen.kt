@@ -834,7 +834,7 @@ fun AssistantPanel(title: String, onDismiss: () -> Unit, onBack: (() -> Unit)? =
             properties = ModalBottomSheetProperties(isAppearanceLightStatusBars = !dark, isAppearanceLightNavigationBars = !dark),
         ) {
             CompositionLocalProvider(LocalDensity provides density) {
-                com.veyarc.ui.VeyarcParticles(interactive = false, modifier = Modifier.fillMaxWidth()) {
+                Box(Modifier.fillMaxWidth()) {
                     Column(
                         Modifier.fillMaxWidth().testTag("assistant-panel").pointerInput(sheetState, routing) {
                             awaitEachGesture {
