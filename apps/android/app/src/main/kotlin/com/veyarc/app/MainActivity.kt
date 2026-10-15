@@ -80,8 +80,7 @@ class MainActivity : ComponentActivity() {
         ViewModelProvider(this)[MainPageState::class.java]
     }
     private val catalogScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private var assistantSettingsRequest by mutableIntStateOf(0)
-    private var guideSettingsRequest by mutableIntStateOf(0)
+    private var settingsSectionRequest by mutableStateOf<String?>(null)
     private var runSettingsSection by mutableStateOf<String?>(null)
     private var runReadinessObserver: Closeable? = null
 
@@ -213,6 +212,7 @@ class MainActivity : ComponentActivity() {
                                                 },
                                                 onPlayWorkflow = ::playWorkflow,
                                                 onOpenGuide = ::openGuideSettings,
+                                                onOpenLatchSettings = { openSettingsSection("latch") },
                                             )
 
                                             VeyarcDestination.WORKFLOWS -> WorkflowManagerScreen(
@@ -229,10 +229,7 @@ class MainActivity : ComponentActivity() {
                                                 enabled = true,
                                                 state = editorSession.assistant,
                                                 context = editorSession.state.assistantContext(),
-                                                onOpenSettings = {
-                                                    assistantSettingsRequest++
-                                                    selectedDestination = VeyarcDestination.SETTINGS
-                                                },
+                                                onOpenSettings = { openSettingsSection("assistant") },
                                             ) { onAskAi ->
                                                 WorkflowEditorScreen(
                                                     repository = workflowRepository,
@@ -278,12 +275,9 @@ class MainActivity : ComponentActivity() {
 
                                             VeyarcDestination.SETTINGS -> SettingsScreen(
                                                 storageState = pageState.settings,
-                                                requestedSection = runSettingsSection,
+                                                requestedSection = runSettingsSection ?: settingsSectionRequest,
+                                                onSectionRequestConsumed = { settingsSectionRequest = null },
                                                 assistant = editorSession.assistant,
-                                                assistantConnectionRequestId = assistantSettingsRequest,
-                                                onAssistantConnectionRequestConsumed = { assistantSettingsRequest = 0 },
-                                                guideRequestId = guideSettingsRequest,
-                                                onGuideRequestConsumed = { guideSettingsRequest = 0 },
                                                 onOpenHome = {
                                                     if (runSettingsSection != null) leaveRunScreen()
                                                     selectedDestination = VeyarcDestination.HOME
@@ -361,7 +355,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openGuideSettings() {
-        guideSettingsRequest++
+        openSettingsSection("guide")
+    }
+
+    private fun openSettingsSection(section: String) {
+        settingsSectionRequest = section
         selectedDestination = VeyarcDestination.SETTINGS
     }
 

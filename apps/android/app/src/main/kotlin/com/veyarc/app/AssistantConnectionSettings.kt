@@ -5,20 +5,28 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.view.WindowManager
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -28,6 +36,7 @@ import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.NetworkCheck
+import androidx.compose.material.icons.outlined.PowerSettingsNew
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
@@ -53,6 +62,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -62,6 +73,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.SecureFlagPolicy
@@ -88,8 +100,8 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
     var keyProfile by remember { mutableStateOf<AssistantConnection?>(null) }
     var removingKey by remember { mutableStateOf<AssistantConnection?>(null) }
     var removingProfile by remember { mutableStateOf<AssistantConnection?>(null) }
-    var enabling by remember { mutableStateOf(false) }
-    var testing by remember { mutableStateOf(false) }
+    var enabling by rememberSaveable { mutableStateOf(false) }
+    var testing by rememberSaveable { mutableStateOf(false) }
     var modelProfile by remember { mutableStateOf<AssistantConnection?>(null) }
     var editProfile by remember { mutableStateOf<AssistantConnection?>(null) }
     var adding by remember { mutableStateOf(false) }
@@ -132,14 +144,12 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
     val canEnable = !busy && hasKeys[currentDefault.id] == true && assistant?.usesProvider == true && assistant.connectionsReady
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(
-            Modifier.fillMaxWidth().toggleable(value = enabled, enabled = enabled || canEnable, role = Role.Switch, onValueChange = {
-                if (it) enabling = true else assistant?.disableProvider()
-            }).testTag("assistant-enable").padding(vertical = 8.dp),
+            Modifier.fillMaxWidth().padding(vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
-                Text(if (enabled) "Disable AI" else "Enable AI", style = MaterialTheme.typography.bodyLarge, color = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(if (enabled) "Enabled until app restart" else "AI disabled", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("AI chat", style = MaterialTheme.typography.bodyLarge)
+                Text(if (enabled) "On for this session" else "Off", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             IconButton(onClick = { if (assistant?.testingConnection == true) assistant.stop() else testing = true }, enabled = assistant?.testingConnection == true || (!busy && hasKeys.values.any { it } && assistant?.isResponding == false && assistant.connectionsReady)) {
                 if (assistant?.testingConnection == true) {
@@ -148,6 +158,9 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
                     Icon(Icons.Outlined.NetworkCheck, "Test all connections")
                 }
             }
+            AssistantEnableSwitch(checked = enabled, enabled = enabled || canEnable, onCheckedChange = {
+                if (it) enabling = true else assistant?.disableProvider()
+            })
         }
         assistant?.connectionTestStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
@@ -347,6 +360,23 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
                 }
             }) { Text("Remove connection") }
         }, dismissButton = { TextButton(onClick = { removingProfile = null }) { Text("Cancel") } })
+    }
+}
+
+@Composable
+private fun AssistantEnableSwitch(checked: Boolean, enabled: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val offset by animateDpAsState(if (checked) 40.dp else 0.dp, tween(140), label = "AI switch thumb")
+    val track by animateColorAsState(if (checked) colors.primary.copy(alpha = 0.2f) else colors.surfaceContainerHighest, tween(140), label = "AI switch track")
+    Box(
+        Modifier.width(84.dp).height(44.dp).alpha(if (enabled) 1f else 0.45f).clip(RoundedCornerShape(22.dp)).background(track)
+            .toggleable(checked, enabled = enabled, role = Role.Switch, onValueChange = onCheckedChange)
+            .semantics { contentDescription = "Enable AI" }.testTag("assistant-enable"),
+    ) {
+        Text(if (checked) "On" else "Off", Modifier.width(40.dp).align(if (checked) Alignment.CenterStart else Alignment.CenterEnd), style = MaterialTheme.typography.labelSmall, color = if (checked) colors.primary else colors.onSurfaceVariant, textAlign = TextAlign.Center, maxLines = 1)
+        Box(Modifier.padding(4.dp).offset(x = offset).size(36.dp).background(if (checked) colors.primary else colors.onSurfaceVariant, CircleShape), contentAlignment = Alignment.Center) {
+            Icon(Icons.Outlined.PowerSettingsNew, null, Modifier.size(18.dp), tint = if (checked) colors.onPrimary else colors.surface)
+        }
     }
 }
 

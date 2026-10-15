@@ -47,6 +47,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,6 +63,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.veyarc.automation.android.ReplayFloatingController
@@ -88,6 +90,7 @@ fun HomeDashboardScreen(
     pageState: HomeDashboardState = remember { HomeDashboardState() },
     usageRepository: com.veyarc.data.storage.AssistantUsageRepository? = null,
     onOpenGuide: (() -> Unit)? = null,
+    onOpenLatchSettings: (() -> Unit)? = null,
 ) {
     var dashboard by pageState.dashboard
     var workflows by pageState.workflows
@@ -96,6 +99,8 @@ fun HomeDashboardScreen(
 
     val pageActive = LocalMainPageActive.current
     val context = LocalContext.current
+    var latchEnabled by remember(context) { mutableStateOf(ReplayFloatingController.isEnabled(context)) }
+    var needsLatch by rememberSaveable { mutableStateOf(false) }
     var aiUsage by pageState.aiUsage
     LaunchedEffect(usageRepository, pageActive) {
         if (usageRepository == null || !pageActive) return@LaunchedEffect
@@ -107,6 +112,14 @@ fun HomeDashboardScreen(
         }
     }
     DisposableEffect(context, workflows, pageActive) {
+        val stopLatchObservation = if (pageActive) {
+            ReplayFloatingController.observeEnabled(context) {
+                latchEnabled = it
+                if (it) needsLatch = false
+            }
+        } else {
+            ({})
+        }
         val preferences = context.getSharedPreferences("replay_controller", Context.MODE_PRIVATE)
         fun refreshPlayTarget() {
             ReplayWorkflowCatalog.load(context)
@@ -122,7 +135,10 @@ fun HomeDashboardScreen(
             refreshPlayTarget()
             preferences.registerOnSharedPreferenceChangeListener(listener)
         }
-        onDispose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
+        onDispose {
+            stopLatchObservation()
+            preferences.unregisterOnSharedPreferenceChangeListener(listener)
+        }
     }
     LaunchedEffect(repository, refreshGeneration, pageActive) {
         if (!pageActive) return@LaunchedEffect
@@ -160,7 +176,17 @@ fun HomeDashboardScreen(
                 if (dashboard != null) Text("${workflows.size} ${if (workflows.size == 1) "workflow" else "workflows"}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        item(key = "quick-start") { HomeQuickStart(quickPlayWorkflow, onRecord, onPlayWorkflow) }
+        item(key = "quick-start") {
+            HomeQuickStart(quickPlayWorkflow, {
+                if (ReplayFloatingController.isEnabled(context)) onRecord() else needsLatch = true
+            }, onPlayWorkflow)
+            androidx.compose.animation.AnimatedVisibility(needsLatch && !latchEnabled) {
+                Column(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Turn on the edge latch to pause or stop recording.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                    if (onOpenLatchSettings != null) TextButton(onClick = onOpenLatchSettings) { Text("Edge latch settings") }
+                }
+            }
+        }
         if (aiUsage.isNotEmpty()) item(key = "ai-usage") { AssistantUsageCard(aiUsage) }
 
         error?.let { message ->

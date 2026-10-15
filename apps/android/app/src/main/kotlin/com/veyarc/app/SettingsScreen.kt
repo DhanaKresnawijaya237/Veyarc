@@ -101,8 +101,6 @@ import java.util.Locale
 @Composable
 fun SettingsScreen(
     assistant: com.veyarc.feature.assistant.AssistantPreviewState? = null,
-    assistantConnectionRequestId: Int = 0,
-    onAssistantConnectionRequestConsumed: () -> Unit = {},
     repository: WorkflowRepository,
     refreshGeneration: Int,
     themePreference: ThemePreference,
@@ -110,8 +108,7 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
     storageState: SettingsStorageState = remember { SettingsStorageState() },
     requestedSection: String? = null,
-    guideRequestId: Int = 0,
-    onGuideRequestConsumed: () -> Unit = {},
+    onSectionRequestConsumed: () -> Unit = {},
     onOpenHome: () -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -157,18 +154,9 @@ fun SettingsScreen(
         scope.launch { settingsListState.animateScrollToItem(index) }
     }
     LaunchedEffect(requestedSection) {
-        if (requestedSection != null) openSection(requestedSection)
-    }
-    LaunchedEffect(assistantConnectionRequestId) {
-        if (assistantConnectionRequestId > 0) {
-            openSection("assistant")
-            onAssistantConnectionRequestConsumed()
-        }
-    }
-    LaunchedEffect(guideRequestId) {
-        if (guideRequestId > 0) {
-            openSection("guide")
-            onGuideRequestConsumed()
+        if (requestedSection != null) {
+            openSection(requestedSection)
+            onSectionRequestConsumed()
         }
     }
     var confirmShizukuDownload by remember { mutableStateOf(false) }

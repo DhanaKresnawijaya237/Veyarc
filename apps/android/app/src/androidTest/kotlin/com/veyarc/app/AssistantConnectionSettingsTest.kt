@@ -62,7 +62,9 @@ class AssistantConnectionSettingsTest {
     @Test fun enableControlPrecedesProvidersWithoutOldHelpLinks() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         compose.setContent { VeyarcTheme { Column(Modifier.verticalScroll(rememberScrollState())) { AssistantConnectionSettings(AssistantKeyStore(context)) } } }
-        val control = compose.onNodeWithText("Enable AI").fetchSemanticsNode().boundsInRoot
+        val control = compose.onNodeWithTag("assistant-enable").fetchSemanticsNode().boundsInRoot
+        val test = compose.onNodeWithContentDescription("Test all connections").fetchSemanticsNode().boundsInRoot
+        assertTrue(test.right <= control.left)
         val provider = compose.onNodeWithContentDescription("Expand DeepSeek").fetchSemanticsNode().boundsInRoot
         assertTrue(control.bottom < provider.top)
         compose.onNodeWithText("Privacy and costs").assertDoesNotExist()
@@ -488,7 +490,7 @@ class AssistantConnectionSettingsTest {
             }
             expandProvider("DeepSeek")
             compose.waitUntil(10_000) { compose.onAllNodes(androidx.compose.ui.test.hasContentDescription("Add API key")).fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithText("Enable AI").assertIsNotEnabled()
+            compose.onNodeWithTag("assistant-enable").assertIsNotEnabled()
             compose.onNodeWithContentDescription("Test all connections").assertIsNotEnabled()
             compose.onNodeWithContentDescription("Add API key").performScrollTo().performClick()
             compose.runOnIdle { assertTrue(window!!.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0) }
@@ -526,7 +528,7 @@ class AssistantConnectionSettingsTest {
             compose.onNodeWithText("Remove key", substring = false).performClick()
             awaitText("No API key")
             assertFalse(store.hasKey())
-            compose.onNodeWithText("Enable AI").assertIsNotEnabled()
+            compose.onNodeWithTag("assistant-enable").assertIsNotEnabled()
         } finally {
             store.remove()
             directory.deleteRecursively()
@@ -564,7 +566,7 @@ class AssistantConnectionSettingsTest {
             compose.onNodeWithText("Provider privacy policy").assertDoesNotExist()
             capture("settings")
             compose.onNodeWithText("Privacy and costs").assertDoesNotExist()
-            compose.onNodeWithText("Enable AI").performScrollTo().performClick()
+            compose.onNodeWithTag("assistant-enable").performScrollTo().performClick()
             capture("consent")
             compose.onNodeWithText("Details").assertDoesNotExist()
             compose.runOnIdle { org.junit.Assert.assertEquals(0, calls) }
@@ -577,6 +579,7 @@ class AssistantConnectionSettingsTest {
             compose.onNodeWithTag("assistant-enable").performClick()
             compose.onNodeWithText("Enable for this session").performClick()
             compose.onNodeWithTag("assistant-enable").assertIsOn()
+            capture("enabled")
             compose.runOnIdle {
                 assertTrue(assistant.providerEnabled)
                 org.junit.Assert.assertEquals(0, calls)
