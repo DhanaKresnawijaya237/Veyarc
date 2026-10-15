@@ -74,7 +74,6 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Loop
-import androidx.compose.material.icons.outlined.NorthEast
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Schedule
@@ -910,8 +909,6 @@ private fun EmptyWorkflowEditorScreen(
                 if (onOpenGuide != null) {
                     TextButton(onClick = onOpenGuide, modifier = Modifier.fillMaxWidth()) {
                         Text("Open guide")
-                        Spacer(Modifier.width(8.dp))
-                        Icon(Icons.Outlined.NorthEast, null, Modifier.size(18.dp))
                     }
                 }
                 statusMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }

@@ -32,7 +32,6 @@ import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.ChevronLeft
 import androidx.compose.material.icons.outlined.ChevronRight
-import androidx.compose.material.icons.outlined.NorthEast
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -184,8 +183,6 @@ fun HomeDashboardScreen(
                 item(key = "guide") {
                     TextButton(onClick = onOpenGuide, modifier = Modifier.fillMaxWidth()) {
                         Text("Open guide")
-                        Spacer(Modifier.width(8.dp))
-                        Icon(Icons.Outlined.NorthEast, null, Modifier.size(18.dp))
                     }
                 }
             }
