@@ -1,5 +1,6 @@
 package com.veyarc.feature.editor
 
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -137,6 +138,18 @@ class WorkflowEditorSession {
     internal var geometryTarget by mutableStateOf<GeometryTarget?>(null)
     internal var conditionTarget by mutableStateOf<ConditionTarget?>(null)
     internal var pendingTemplateCrop by mutableStateOf<TemplateCropDraft?>(null)
+    internal var allowedAppsExpanded by mutableStateOf(true)
+    internal var templatesExpanded by mutableStateOf(true)
+    internal var revisionPickerExpanded by mutableStateOf(false)
+    internal var validationDetailsVisible by mutableStateOf(false)
+    internal var renameTemplateTarget by mutableStateOf<com.veyarc.model.AssetId?>(null)
+    internal var renameTemplateName by mutableStateOf("")
+    internal var blockSelection by mutableStateOf<BlockSelection?>(null)
+    internal var blockSelectionMode by mutableStateOf(false)
+    internal var selectedBlockPath by mutableStateOf<StepListPath?>(null)
+    internal var selectedBlockIds by mutableStateOf<Set<String>>(emptySet())
+    internal var canvasScrollState by mutableStateOf(LazyListState())
+    internal var templateScrollState by mutableStateOf(LazyListState())
     private var savedDraft by mutableStateOf<WorkflowDraft?>(null)
     private var undoStack by mutableStateOf<List<WorkflowDraft>>(emptyList())
     private var redoStack by mutableStateOf<List<WorkflowDraft>>(emptyList())
@@ -293,6 +306,18 @@ class WorkflowEditorSession {
         geometryTarget = null
         conditionTarget = null
         pendingTemplateCrop = null
+        allowedAppsExpanded = true
+        templatesExpanded = true
+        revisionPickerExpanded = false
+        validationDetailsVisible = false
+        renameTemplateTarget = null
+        renameTemplateName = ""
+        blockSelection = null
+        blockSelectionMode = false
+        selectedBlockPath = null
+        selectedBlockIds = emptySet()
+        canvasScrollState = LazyListState()
+        templateScrollState = LazyListState()
     }
 
     private fun clearHistory() {

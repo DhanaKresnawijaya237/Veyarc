@@ -51,7 +51,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CutCornerShape
@@ -112,7 +111,6 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -941,10 +939,10 @@ private fun WorkflowDraftScreen(
     onPasteBlocks: (StepListPath, Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var selection by remember { mutableStateOf<BlockSelection?>(null) }
-    var selectionMode by remember(draft.workflowId) { mutableStateOf(false) }
-    var selectedPath by remember(draft.workflowId) { mutableStateOf<StepListPath?>(null) }
-    var selectedIds by remember(draft.workflowId) { mutableStateOf<Set<String>>(emptySet()) }
+    var selection by session::blockSelection
+    var selectionMode by session::blockSelectionMode
+    var selectedPath by session::selectedBlockPath
+    var selectedIds by session::selectedBlockIds
     val clipboardActions = BlockClipboardActions(
         clipboardAvailable = clipboardAvailable,
         selectionMode = selectionMode,
@@ -1072,6 +1070,38 @@ private fun WorkflowDraftScreen(
             }
         }
     }
+    if (session.validationDetailsVisible) {
+        AlertDialog(
+            onDismissRequest = { session.validationDetailsVisible = false },
+            title = { Text("Validation issues") },
+            text = {
+                Column(
+                    modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    validation.issues.forEach { issue ->
+                        Text(issue.displayMessage())
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { session.validationDetailsVisible = false }) { Text("Done") }
+            },
+        )
+    }
+    if (session.revisionPickerExpanded) {
+        VeyarcChoicePicker(
+            title = "Choose revision",
+            options = revisions.map { VeyarcChoice(it.revision.toString(), "Revision ${it.revision}") },
+            selectedId = draft.lastSavedRevision?.toString(),
+            onDismiss = { session.revisionPickerExpanded = false },
+            onSelect = { choice ->
+                session.revisionPickerExpanded = false
+                onOpenRevision(choice.id.toInt())
+            },
+        )
+    }
+    TemplateRenameDialog(session, draft.assetNames, loadPreview) { assetId, name -> onDraftChange(draft.renameAsset(assetId, name)) }
 }
 
 @Composable
@@ -1100,7 +1130,7 @@ private fun WorkflowTitleEditor(
     }
 }
 
-private data class BlockSelection(val path: StepListPath, val stepId: String)
+internal data class BlockSelection(val path: StepListPath, val stepId: String)
 
 private data class PendingBlockPaste(val path: StepListPath, val index: Int, val entry: BlockClipboardEntry)
 
@@ -1260,7 +1290,7 @@ private fun WorkflowDraftCanvas(
     scrollHeader: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val scrollState = key(draft.workflowId) { rememberLazyListState() }
+    val scrollState = session.canvasScrollState
     val stepDragCoordinator = remember(draft.workflowId) { StepDragCoordinator() }
     val root = remember { StepListPath() }
     DisposableEffect(stepDragCoordinator) {
@@ -1327,6 +1357,7 @@ private fun WorkflowDraftCanvas(
                         )
                     }
                     AllowedApplications(
+                        session = session,
                         packages = draft.allowedPackagesText,
                         onPickApplication = onPickApplication,
                         onReorderApplications = { onDraftChange(draft.copy(allowedPackagesText = it.joinToString(", "))) },
@@ -1341,6 +1372,7 @@ private fun WorkflowDraftCanvas(
                         },
                     )
                     TemplateAssetSection(
+                        session = session,
                         assets = draft.assetDescriptors,
                         assetNames = draft.assetNames,
                         referencedAssetIds = remember(draft.steps) { draft.referencedAssetIds() },
@@ -1351,7 +1383,6 @@ private fun WorkflowDraftCanvas(
                             clearTemplatePreviewCache()
                             onDraftChange(draft.removeAsset(assetId))
                         },
-                        onRenameTemplate = { assetId, name -> onDraftChange(draft.renameAsset(assetId, name)) },
                     )
                     Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("Execution", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
@@ -1420,7 +1451,6 @@ private fun EditorToolbar(
     onOpenRevision: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var validationDetailsVisible by remember { mutableStateOf(false) }
     val clipboard = LocalBlockClipboardActions.current
     Surface(modifier = modifier.testTag("workflow-toolbar"), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.92f), tonalElevation = 0.dp) {
         Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1470,6 +1500,7 @@ private fun EditorToolbar(
                     }
                 }
                 RevisionSelector(
+                    session = session,
                     currentRevision = draft.lastSavedRevision,
                     dirty = session.isDirty,
                     revisions = revisions,
@@ -1507,7 +1538,7 @@ private fun EditorToolbar(
                             enabled = !isBusy,
                             onClick = onValidate,
                             onLongClick = {
-                                if (validation.issues.isNotEmpty()) validationDetailsVisible = true
+                                if (validation.issues.isNotEmpty()) session.validationDetailsVisible = true
                             },
                         ),
                     contentAlignment = Alignment.Center,
@@ -1539,25 +1570,6 @@ private fun EditorToolbar(
             }
         }
     }
-    if (validationDetailsVisible) {
-        AlertDialog(
-            onDismissRequest = { validationDetailsVisible = false },
-            title = { Text("Validation issues") },
-            text = {
-                Column(
-                    modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    validation.issues.forEach { issue ->
-                        Text(issue.displayMessage())
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { validationDetailsVisible = false }) { Text("Done") }
-            },
-        )
-    }
 }
 
 private fun DraftIssue.displayMessage(): String = if (path == "/assets" && " is still used" in message) {
@@ -1568,13 +1580,14 @@ private fun DraftIssue.displayMessage(): String = if (path == "/assets" && " is 
 
 @Composable
 private fun RevisionSelector(
+    session: WorkflowEditorSession,
     currentRevision: Int?,
     dirty: Boolean,
     revisions: List<RevisionSummary>,
     onOpenRevision: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by session::revisionPickerExpanded
     Box(modifier) {
         Surface(
             onClick = { expanded = !expanded },
@@ -1589,30 +1602,19 @@ private fun RevisionSelector(
                 )
             }
         }
-        if (expanded) {
-            VeyarcChoicePicker(
-                title = "Choose revision",
-                options = revisions.map { VeyarcChoice(it.revision.toString(), "Revision ${it.revision}") },
-                selectedId = currentRevision?.toString(),
-                onDismiss = { expanded = false },
-                onSelect = { choice ->
-                    expanded = false
-                    onOpenRevision(choice.id.toInt())
-                },
-            )
-        }
     }
 }
 
 @Composable
 private fun AllowedApplications(
+    session: WorkflowEditorSession,
     packages: String,
     onPickApplication: () -> Unit,
     onRemoveApplication: (String) -> Unit,
     onReorderApplications: (List<String>) -> Unit,
 ) {
     val packageNames = remember(packages) { packages.packageNames() }
-    var expanded by rememberSaveable { mutableStateOf(true) }
+    var expanded by session::allowedAppsExpanded
     EditorSetupSection("Allowed apps", Icons.Outlined.Apps, expanded, { expanded = !expanded }, onPickApplication, "Add allowed app") {
         if (packageNames.isEmpty()) {
             Text("No apps added.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1658,6 +1660,7 @@ private fun BlockInspector(
 
 @Composable
 private fun TemplateAssetSection(
+    session: WorkflowEditorSession,
     assets: List<com.veyarc.data.storage.WorkflowAssetDescriptor>,
     assetNames: Map<String, String>,
     referencedAssetIds: Set<String>,
@@ -1665,12 +1668,11 @@ private fun TemplateAssetSection(
     onAddTemplate: () -> Unit,
     loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
     onRemoveTemplate: (com.veyarc.model.AssetId) -> Unit,
-    onRenameTemplate: (com.veyarc.model.AssetId, String) -> Unit,
 ) {
     val context = LocalContext.current
-    var expanded by remember { mutableStateOf(true) }
-    var renameTarget by remember { mutableStateOf<com.veyarc.model.AssetId?>(null) }
-    val templateScroll = rememberLazyListState()
+    var expanded by session::templatesExpanded
+    var renameTarget by session::renameTemplateTarget
+    val templateScroll = session.templateScrollState
     val edgeScroll = remember(templateScroll) { TemplateListScroll(templateScroll) }
     EditorSetupSection("Image templates", Icons.Outlined.Image, expanded, { expanded = !expanded }, onAddTemplate, "Add image template") {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1690,7 +1692,10 @@ private fun TemplateAssetSection(
                 ) {
                     itemsIndexed(assets, key = { _, asset -> asset.assetId.value }) { index, asset ->
                         Row(
-                            modifier = Modifier.fillMaxWidth().clickable { renameTarget = asset.assetId },
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                session.renameTemplateName = assetNames[asset.assetId.value].orEmpty()
+                                renameTarget = asset.assetId
+                            },
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
@@ -1720,74 +1725,6 @@ private fun TemplateAssetSection(
                 }
             }
         }
-    }
-    renameTarget?.let { assetId ->
-        var name by remember(assetId) { mutableStateOf(assetNames[assetId.value].orEmpty()) }
-        val preview by produceState(cachedTemplatePreview(assetId, 640), assetId) {
-            value = loadPreview(assetId, 640)
-        }
-        val valid = name.trim().let { candidate ->
-            candidate.isNotEmpty() && candidate.length <= 64 &&
-                assetNames.none { (id, existing) -> id != assetId.value && existing.equals(candidate, ignoreCase = true) }
-        }
-        val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val renameButton: @Composable () -> Unit = {
-            TextButton(enabled = valid, onClick = {
-                onRenameTemplate(assetId, name.trim())
-                renameTarget = null
-            }) { Text("Rename") }
-        }
-        val cancelButton: @Composable () -> Unit = { TextButton(onClick = { renameTarget = null }) { Text("Cancel") } }
-        AlertDialog(
-            onDismissRequest = { renameTarget = null },
-            modifier = if (landscape) Modifier.widthIn(min = 560.dp, max = 760.dp) else Modifier,
-            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = !landscape),
-            title = { Text("Rename template") },
-            text = {
-                val nameField: @Composable () -> Unit = {
-                    OutlinedTextField(
-                        value = name,
-                        onValueChange = { name = it },
-                        modifier = Modifier.fillMaxWidth().testTag("rename-template-name"),
-                        singleLine = true,
-                        label = { Text("Template name") },
-                        supportingText = if (valid) null else ({ Text("Use a unique name with 1 to 64 characters.") }),
-                    )
-                }
-                val imagePreview: @Composable (Modifier) -> Unit = { modifier ->
-                    Box(modifier.clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh), contentAlignment = Alignment.Center) {
-                        val image = preview
-                        if (image != null) {
-                            Image(image.image, "Image template preview", Modifier.fillMaxSize().testTag("rename-template-preview"), contentScale = ContentScale.Fit)
-                        } else {
-                            Icon(Icons.Outlined.Image, "Image template preview", Modifier.size(28.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
-                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (landscape) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                            imagePreview(Modifier.weight(1f).heightIn(min = 140.dp, max = 220.dp).height(LocalConfiguration.current.screenHeightDp.dp * 0.42f))
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                nameField()
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                                    cancelButton()
-                                    renameButton()
-                                }
-                            }
-                        }
-                    } else {
-                        BoxWithConstraints(Modifier.fillMaxWidth()) {
-                            val previewHeight = minOf(maxWidth, LocalConfiguration.current.screenHeightDp.dp * 0.35f)
-                            imagePreview(Modifier.fillMaxWidth().height(previewHeight))
-                        }
-                        nameField()
-                    }
-                }
-            },
-            confirmButton = { if (!landscape) renameButton() },
-            dismissButton = { if (!landscape) cancelButton() },
-        )
     }
 }
 
@@ -2817,4 +2754,82 @@ private fun viewportFor(context: Context): com.veyarc.model.ViewportSpec {
 private fun Throwable.userMessage(): String = when (this) {
     is WorkflowStorageException -> message ?: "storage operation failed"
     else -> message ?: "unexpected error"
+}
+
+@Composable
+private fun TemplateRenameDialog(
+    session: WorkflowEditorSession,
+    assetNames: Map<String, String>,
+    loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
+    onRenameTemplate: (AssetId, String) -> Unit,
+) {
+    var renameTarget by session::renameTemplateTarget
+    renameTarget?.let { assetId ->
+        var name by session::renameTemplateName
+        val preview by produceState(cachedTemplatePreview(assetId, 640), assetId) {
+            value = loadPreview(assetId, 640)
+        }
+        val valid = name.trim().let { candidate ->
+            candidate.isNotEmpty() && candidate.length <= 64 &&
+                assetNames.none { (id, existing) -> id != assetId.value && existing.equals(candidate, ignoreCase = true) }
+        }
+        val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val renameButton: @Composable () -> Unit = {
+            TextButton(enabled = valid, onClick = {
+                onRenameTemplate(assetId, name.trim())
+                renameTarget = null
+            }) { Text("Rename") }
+        }
+        val cancelButton: @Composable () -> Unit = { TextButton(onClick = { renameTarget = null }) { Text("Cancel") } }
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            modifier = if (landscape) Modifier.widthIn(min = 560.dp, max = 760.dp) else Modifier,
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = !landscape),
+            title = { Text("Rename template") },
+            text = {
+                val nameField: @Composable () -> Unit = {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        modifier = Modifier.fillMaxWidth().testTag("rename-template-name"),
+                        singleLine = true,
+                        label = { Text("Template name") },
+                        supportingText = if (valid) null else ({ Text("Use a unique name with 1 to 64 characters.") }),
+                    )
+                }
+                val imagePreview: @Composable (Modifier) -> Unit = { modifier ->
+                    Box(modifier.clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh), contentAlignment = Alignment.Center) {
+                        val image = preview
+                        if (image != null) {
+                            Image(image.image, "Image template preview", Modifier.fillMaxSize().testTag("rename-template-preview"), contentScale = ContentScale.Fit)
+                        } else {
+                            Icon(Icons.Outlined.Image, "Image template preview", Modifier.size(28.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (landscape) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+                            imagePreview(Modifier.weight(1f).heightIn(min = 140.dp, max = 220.dp).height(LocalConfiguration.current.screenHeightDp.dp * 0.42f))
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                nameField()
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                    cancelButton()
+                                    renameButton()
+                                }
+                            }
+                        }
+                    } else {
+                        BoxWithConstraints(Modifier.fillMaxWidth()) {
+                            val previewHeight = minOf(maxWidth, LocalConfiguration.current.screenHeightDp.dp * 0.35f)
+                            imagePreview(Modifier.fillMaxWidth().height(previewHeight))
+                        }
+                        nameField()
+                    }
+                }
+            },
+            confirmButton = { if (!landscape) renameButton() },
+            dismissButton = { if (!landscape) cancelButton() },
+        )
+    }
 }
