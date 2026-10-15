@@ -281,6 +281,7 @@ object WorkflowCompiler {
         var maxLoopBound = 0
         val indices = steps.mapIndexed { index, step -> step.id to index }.toMap()
         val jumpVisits = mutableMapOf<String, Int>()
+        val stepCosts = if (followJumps && steps.any { it is Jump }) mutableMapOf<Int, StepCost>() else null
         var index = 0
         var analyzedSteps = 0
 
@@ -289,7 +290,7 @@ object WorkflowCompiler {
                 return ControlFlowAnalysis(Long.MAX_VALUE, Long.MAX_VALUE, maxDepth, maxLoopBound, true)
             }
             val step = steps[index]
-            val cost = analyzeStep(step, depth, followJumps)
+            val cost = stepCosts?.getOrPut(index) { analyzeStep(step, depth, followJumps) } ?: analyzeStep(step, depth, followJumps)
             totalSteps = add(totalSteps, cost.steps)
             totalRuntime = add(totalRuntime, cost.runtime)
             maxDepth = maxOf(maxDepth, cost.maxDepth)

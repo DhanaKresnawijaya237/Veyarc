@@ -1,7 +1,6 @@
 package com.veyarc.feature.assistant
 
 import com.veyarc.model.IfElse
-import com.veyarc.model.Jump
 import com.veyarc.model.PackageName
 import com.veyarc.model.Repeat
 import com.veyarc.model.WhileStep
@@ -96,7 +95,6 @@ object AssistantCandidateValidator {
             return invalid("An unchanged block received a new ID. Preserve existing block IDs.")
         }
         return try {
-            compilerWork(candidate.steps)
             val errors = compileIssues(candidate)
             if (errors.isNotEmpty()) {
                 diagnostics(errors)
@@ -105,7 +103,7 @@ object AssistantCandidateValidator {
                 if (canonical.toByteArray(Charsets.UTF_8).size > MAX_CANDIDATE_BYTES) invalid("The proposed workflow is too large to review safely.") else AssistantProposalCheck(candidateJson = canonical, imageAdditions = imageAdditions)
             }
         } catch (_: Exception) {
-            invalid("Candidate exceeds the local compilation budget or could not be compiled.")
+            invalid("The proposed workflow could not be validated. Try asking again.")
         }
     }
 
@@ -145,14 +143,6 @@ object AssistantCandidateValidator {
         else -> emptyList()
     }
     private fun body(step: WorkflowStep) = WorkflowJson.format.encodeToJsonElement(WorkflowStep.serializer(), step).jsonObject - "id"
-
-    /** Conservative work bound before the compiler revisits nested Go To regions. */
-    private fun compilerWork(steps: List<WorkflowStep>): Long {
-        val work = steps.sumOf { 1 + compilerWork(children(it)) }
-        val visits = 1 + steps.filterIsInstance<Jump>().sumOf { it.maxVisits.toLong() }
-        require(work <= 10000 && visits <= 10000 && work * visits <= 10000)
-        return work * visits
-    }
 
     private fun invalid(message: String) = AssistantProposalCheck(issues = listOf(message))
     private fun diagnostics(messages: List<String>) = AssistantProposalCheck(issues = messages.take(20).map { it.take(300) })
