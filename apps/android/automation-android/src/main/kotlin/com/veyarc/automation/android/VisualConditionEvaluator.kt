@@ -309,12 +309,22 @@ class VisualConditionEvaluator(
                 if (match.matched) return match
             }
         }
+        var closestX = bounds.left
+        var closestY = bounds.top
+        var leastBound = Long.MAX_VALUE
         TemplateWindowPrefilter(frame.capturedBounds.width, frameBytes, template, bounds, budget = ComparisonBudget(maxComparisons, "pattern filter")).use { prefilter ->
             for (originY in bounds.top..maxOriginY) {
                 if (originY > bounds.top) prefilter.moveDown()
                 for (originX in bounds.left..maxOriginX) {
+                    val lowerBound = prefilter.minimumError(maxError)
+                    // Rejected partial bounds exceed maxError, so they cannot beat a complete passing bound.
+                    if (lowerBound.toDouble() <= maxError && lowerBound < leastBound) {
+                        leastBound = lowerBound
+                        closestX = originX
+                        closestY = originY
+                    }
                     val isPreferredOrigin = originX == preferredOriginX && originY == preferredOriginY
-                    if (!isPreferredOrigin && prefilter.mayMatch(maxError, detailed = true)) {
+                    if (!isPreferredOrigin && prefilter.mayMatch(maxError, detailed = true, lowerBound = lowerBound)) {
                         val match = matchesAt(frame.capturedBounds.width, frameBytes, template, templateBytes, originX, originY, maxError, budget)
                         if (match.matched) return match
                     }
@@ -322,7 +332,7 @@ class VisualConditionEvaluator(
                 }
             }
         }
-        return closestCheckedMatch(frame.capturedBounds.width, frameBytes, template, templateBytes, bounds, maxError, budget)
+        return closestCheckedMatch(frame.capturedBounds.width, frameBytes, template, templateBytes, bounds, maxError, budget, closestX, closestY, leastBound)
     }
 
     /** Scores rejected searches without changing their result or exceeding the remaining work budget. */
@@ -334,24 +344,30 @@ class VisualConditionEvaluator(
         bounds: FramePixelBounds,
         maxError: Double,
         budget: ComparisonBudget,
+        candidateX: Int,
+        candidateY: Int,
+        candidateBound: Long,
     ): ImageMatchResult {
         val pixels = template.widthPx.toLong() * template.heightPx
         if (budget.remaining < pixels || Thread.currentThread().isInterrupted) return ImageMatchResult.Unmatched
-        var closestX = bounds.left
-        var closestY = bounds.top
-        var leastBound = Long.MAX_VALUE
-        TemplateWindowPrefilter(frameWidth, frameBytes, template, bounds).use { prefilter ->
-            for (y in bounds.top..bounds.bottomExclusive - template.heightPx) {
-                if (Thread.currentThread().isInterrupted) return ImageMatchResult.Unmatched
-                if (y > bounds.top) prefilter.moveDown()
-                for (x in bounds.left..bounds.rightExclusive - template.widthPx) {
-                    val lowerBound = prefilter.minimumError(leastBound.toDouble() - 1.0)
-                    if (lowerBound < leastBound) {
-                        leastBound = lowerBound
-                        closestX = x
-                        closestY = y
+        var closestX = candidateX
+        var closestY = candidateY
+        var leastBound = candidateBound
+        if (leastBound == Long.MAX_VALUE) {
+            TemplateWindowPrefilter(frameWidth, frameBytes, template, bounds).use { prefilter ->
+                origins@ for (y in bounds.top..bounds.bottomExclusive - template.heightPx) {
+                    if (Thread.currentThread().isInterrupted) return ImageMatchResult.Unmatched
+                    if (y > bounds.top) prefilter.moveDown()
+                    for (x in bounds.left..bounds.rightExclusive - template.widthPx) {
+                        val lowerBound = prefilter.minimumError(leastBound.toDouble() - 1.0)
+                        if (lowerBound < leastBound) {
+                            leastBound = lowerBound
+                            closestX = x
+                            closestY = y
+                            if (leastBound == 0L) break@origins
+                        }
+                        if (x < bounds.rightExclusive - template.widthPx) prefilter.moveRight()
                     }
-                    if (x < bounds.rightExclusive - template.widthPx) prefilter.moveRight()
                 }
             }
         }
@@ -360,7 +376,7 @@ class VisualConditionEvaluator(
         val measuredError = ((1.0 - best.score!!) * maximumError).roundToLong()
         if (measuredError == leastBound) return best
         var bestError = measuredError - 1.0
-        // ponytail: bounded nearest-candidate search; report "best checked" if the budget stops it early.
+        // shortcut: report the best checked score if the remaining comparison budget ends refinement.
         TemplateWindowPrefilter(frameWidth, frameBytes, template, bounds).use { prefilter ->
             for (y in bounds.top..bounds.bottomExclusive - template.heightPx) {
                 if (budget.remaining < pixels || Thread.currentThread().isInterrupted) return best
@@ -426,7 +442,7 @@ class VisualConditionEvaluator(
             }
         }
 
-        fun mayMatch(maxError: Double, detailed: Boolean = false): Boolean = minimumError(maxError).toDouble() <= maxError &&
+        fun mayMatch(maxError: Double, detailed: Boolean = false, lowerBound: Long = minimumError(maxError)): Boolean = lowerBound.toDouble() <= maxError &&
             (!detailed || budget?.remaining == 0L || (template.widthPx <= PREFILTER_BANDS && template.heightPx <= PREFILTER_BANDS) || fineFilter().minimumError(maxError).toDouble() <= maxError)
 
         fun minimumError(maxError: Double): Long {
