@@ -2,6 +2,7 @@ package com.veyarc.data.storage
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import java.io.DataInputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -119,12 +120,10 @@ class AesGcmFileCodec(
             val ciphertextStart = ivStart + ivLength
             require(payload.size > ciphertextStart + GCM_TAG_BYTES) { "Encrypted payload has no ciphertext" }
 
-            val iv = payload.copyOfRange(ivStart, ciphertextStart)
-            val ciphertext = payload.copyOfRange(ciphertextStart, payload.size)
             val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(Cipher.DECRYPT_MODE, keySource.get(), GCMParameterSpec(GCM_TAG_BITS, iv))
+            cipher.init(Cipher.DECRYPT_MODE, keySource.get(), GCMParameterSpec(GCM_TAG_BITS, payload, ivStart, ivLength))
             cipher.updateAAD(associatedData)
-            return cipher.doFinal(ciphertext)
+            return cipher.doFinal(payload, ciphertextStart, payload.size - ciphertextStart)
         } catch (error: Exception) {
             if (error is StorageCryptoException) throw error
             throw StorageCryptoException("Could not decrypt workflow data", error)
@@ -178,9 +177,15 @@ class EncryptedFileStore(
     fun read(fileName: String, associatedData: ByteArray): ByteArray {
         val file = resolveFile(fileName)
         check(file.isFile) { "Encrypted workflow file is missing" }
-        checkSize(file.length())
-        val payload = FileInputStream(file).use { input -> input.readBytes() }
-        checkSize(payload.size.toLong())
+        val payload = FileInputStream(file).use { input ->
+            val length = input.channel.size()
+            checkSize(length)
+            require(length <= Int.MAX_VALUE) { "Encrypted workflow file exceeds its size limit" }
+            ByteArray(length.toInt()).also { bytes ->
+                DataInputStream(input).readFully(bytes)
+                check(input.read() == -1) { "Encrypted workflow file changed while reading" }
+            }
+        }
         return codec.decrypt(payload, associatedData)
     }
 
