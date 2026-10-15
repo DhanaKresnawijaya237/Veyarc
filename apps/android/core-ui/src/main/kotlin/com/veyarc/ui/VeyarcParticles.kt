@@ -52,9 +52,10 @@ fun VeyarcParticles(interactive: Boolean, modifier: Modifier, enabled: Boolean =
                 frame++
                 if (scale > 0f) {
                     var previous = withInfiniteAnimationFrameNanos { it }
+                    val pacing = ParticleFramePacing(previous)
                     while (true) {
                         val now = withInfiniteAnimationFrameNanos { it }
-                        if (!interactive && now - previous < 33_333_333L) continue
+                        if (!interactive && !pacing.advance(now)) continue
                         field.advance((now - previous) / (1_000_000_000f * scale))
                         previous = now
                         // Only Canvas reads this state; messages and the composer do not recompose.
@@ -109,5 +110,24 @@ fun VeyarcParticles(interactive: Boolean, modifier: Modifier, enabled: Boolean =
             }
         }
         content()
+    }
+}
+
+internal class ParticleFramePacing(startNanos: Long) {
+    private var previousVsync = startNanos
+    private var nextFrame = startNanos + INTERVAL_NANOS
+
+    fun advance(now: Long): Boolean {
+        val halfVsync = (now - previousVsync).coerceAtLeast(0L) / 2
+        previousVsync = now
+        // Choose the nearest display tick; integer-rounded 60 Hz ticks are just under 1/30 s.
+        if (now + halfVsync < nextFrame) return false
+        nextFrame += INTERVAL_NANOS
+        if (nextFrame <= now) nextFrame = now + INTERVAL_NANOS
+        return true
+    }
+
+    private companion object {
+        const val INTERVAL_NANOS = 1_000_000_000L / 30
     }
 }

@@ -24,6 +24,7 @@ internal class WelcomeParticleField(random: Random = Random.Default) {
     private var pointerY = 0f
     private var dragX = 0f
     private var dragY = 0f
+    private var hasTouchMotion = false
 
     fun resize(width: Float, height: Float) {
         this.width = width
@@ -32,6 +33,7 @@ internal class WelcomeParticleField(random: Random = Random.Default) {
     }
 
     fun touch(x: Float, y: Float) {
+        hasTouchMotion = true
         if (pressed) {
             dragX += x - pointerX
             dragY += y - pointerY
@@ -62,6 +64,7 @@ internal class WelcomeParticleField(random: Random = Random.Default) {
         displacementY.fill(0f)
         velocityX.fill(0f)
         velocityY.fill(0f)
+        hasTouchMotion = false
         advance(0f)
     }
 
@@ -88,10 +91,12 @@ internal class WelcomeParticleField(random: Random = Random.Default) {
                 velocityX[i] += (dx * 14f * dt + pullX) * influence
                 velocityY[i] += (dy * 14f * dt + pullY) * influence
             }
-            velocityX[i] = ((velocityX[i] - displacementX[i] * 12f * dt) * damping).coerceIn(-600f, 600f)
-            velocityY[i] = ((velocityY[i] - displacementY[i] * 12f * dt) * damping).coerceIn(-600f, 600f)
-            displacementX[i] = (displacementX[i] + velocityX[i] * dt).coerceIn(-90f, 90f)
-            displacementY[i] = (displacementY[i] + velocityY[i] * dt).coerceIn(-90f, 90f)
+            if (hasTouchMotion) {
+                velocityX[i] = ((velocityX[i] - displacementX[i] * 12f * dt) * damping).coerceIn(-600f, 600f)
+                velocityY[i] = ((velocityY[i] - displacementY[i] * 12f * dt) * damping).coerceIn(-600f, 600f)
+                displacementX[i] = (displacementX[i] + velocityX[i] * dt).coerceIn(-90f, 90f)
+                displacementY[i] = (displacementY[i] + velocityY[i] * dt).coerceIn(-90f, 90f)
+            }
             x[i] = baseX + displacementX[i]
             y[i] = baseY + displacementY[i]
         }
