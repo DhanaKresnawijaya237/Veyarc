@@ -1032,23 +1032,34 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
 private fun ProposalChanges(changes: List<AssistantValueChange>, compact: Boolean = false, modifier: Modifier = Modifier) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         changes.forEach { change ->
+            val diff = remember(change.before, change.after) { changedTextRanges(change.before, change.after) }
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 HorizontalDivider()
                 Text(change.label, style = MaterialTheme.typography.titleSmall, maxLines = if (compact) 1 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis)
-                change.before?.let { DiffValue("Before", it, false, compact) }
-                change.after?.let { DiffValue("After", it, true, compact) }
+                change.before?.let { DiffValue("Before", it, false, compact, diff.before) }
+                change.after?.let { DiffValue("After", it, true, compact, diff.after) }
             }
         }
     }
 }
 
 @Composable
-private fun DiffValue(label: String, value: String, added: Boolean, compact: Boolean = false) {
+private fun DiffValue(label: String, value: String, added: Boolean, compact: Boolean = false, changed: List<IntRange> = listOf(value.indices)) {
     val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-    val background = if (added) Color(if (dark) 0xFF173326 else 0xFFE5F2E9) else Color(if (dark) 0xFF381E22 else 0xFFFBE9E8)
+    val background = if (added) Color(if (dark) 0xFF245039 else 0xFFC9E9D3) else Color(if (dark) 0xFF652F38 else 0xFFF3CBCE)
     val foreground = if (added) Color(if (dark) 0xFFD4EDDD else 0xFF173F25) else Color(if (dark) 0xFFF4D4D4 else 0xFF603232)
-    Surface(color = background, shape = RoundedCornerShape(8.dp)) {
-        Text("$label: $value", Modifier.fillMaxWidth().padding(if (compact) 8.dp else 10.dp), style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium, color = foreground, maxLines = if (compact) 2 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis)
+    val text = remember(label, value, changed, background, foreground) {
+        androidx.compose.ui.text.buildAnnotatedString {
+            append("$label: ")
+            val offset = length
+            append(value)
+            changed.filterNot { it.isEmpty() }.forEach { range ->
+                addStyle(androidx.compose.ui.text.SpanStyle(background = background, color = foreground), offset + range.first, offset + range.last + 1)
+            }
+        }
+    }
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(8.dp)) {
+        Text(text, Modifier.fillMaxWidth().padding(if (compact) 8.dp else 10.dp), style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface, maxLines = if (compact) 2 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis)
     }
 }
 
