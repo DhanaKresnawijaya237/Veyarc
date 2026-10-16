@@ -87,6 +87,7 @@ class AndroidWorkflowExecutor private constructor(
             VisualConditionEvaluator(
                 frameSource = MediaProjectionCaptureRuntime::captureLatestFrame,
                 templateSource = templateSource ?: ImageTemplateSource { null },
+                cancellation = cancellation,
             )
         } else {
             null

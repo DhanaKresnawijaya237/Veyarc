@@ -149,6 +149,13 @@ class WorkflowRunner {
             }
             throw abort
         } catch (error: Exception) {
+            if (state.cancellation.isCancellationRequested()) {
+                if (!finished) {
+                    state.stepOutcomes[step.id] = StepOutcome.CANCELLED
+                    state.emit(RunEvent.StepFinished(state.nowMs(), step.id, StepOutcome.CANCELLED))
+                }
+                ensureNotCancelled(state)
+            }
             val failure = RunFailure(
                 code = RunFailureCode.DRIVER_ERROR,
                 stepId = step.id,
