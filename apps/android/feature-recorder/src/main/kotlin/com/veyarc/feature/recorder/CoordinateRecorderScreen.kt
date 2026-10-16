@@ -29,15 +29,20 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.veyarc.automation.android.ReplayFloatingController
 import com.veyarc.model.bundle.WorkflowBundle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -52,6 +57,11 @@ fun CoordinateRecorderScreen(
 ) {
     val state by controller.state.collectAsState()
     val context = LocalContext.current
+    var latchEnabled by remember(context) { mutableStateOf(ReplayFloatingController.isEnabled(context)) }
+    DisposableEffect(context) {
+        val stopObservation = ReplayFloatingController.observeEnabled(context) { latchEnabled = it }
+        onDispose { stopObservation() }
+    }
     LaunchedEffect(state) {
         val review = (state as? CoordinateRecordingState.Review)?.review ?: return@LaunchedEffect
         val bundle = review.editableWorkflow ?: return@LaunchedEffect
@@ -72,6 +82,7 @@ fun CoordinateRecorderScreen(
         onClose = close,
         onNotificationSettings = { RecordingForegroundService.openNotificationSettings(context) },
         modifier = modifier,
+        latchEnabled = latchEnabled,
     )
 }
 
@@ -85,6 +96,7 @@ internal fun RecordingPanel(
     onClose: () -> Unit,
     onNotificationSettings: () -> Unit,
     modifier: Modifier = Modifier,
+    latchEnabled: Boolean = true,
 ) {
     val context = LocalContext.current
     val active = state is CoordinateRecordingState.Arming || state is CoordinateRecordingState.Recording || state is CoordinateRecordingState.Paused
@@ -134,9 +146,9 @@ internal fun RecordingPanel(
                     }
                 }
                 if (active) {
-                    Text("Use apps normally. Pause or stop from the edge latch.", style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if (latchEnabled) "Use apps normally. Pause or stop from the edge latch." else "Turn on the edge latch before recording.", style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        OutlinedButton(if (paused) onResume else onPause, Modifier.weight(1f)) {
+                        OutlinedButton(if (paused) onResume else onPause, Modifier.weight(1f), enabled = !paused || latchEnabled) {
                             Icon(if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, null, Modifier.padding(end = 8.dp))
                             Text(if (paused) "Resume" else "Pause")
                         }
@@ -156,7 +168,8 @@ internal fun RecordingPanel(
                     if (reason?.contains("notification", ignoreCase = true) == true) {
                         OutlinedButton(onNotificationSettings) { Text("Notification settings") }
                     }
-                    Button(onStart, Modifier.fillMaxWidth()) { Text(if (reason == null) "Start recording" else "Try again") }
+                    if (!latchEnabled && reason == null) Text("Turn on the edge latch before recording.", color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
+                    Button(onStart, Modifier.fillMaxWidth(), enabled = latchEnabled) { Text(if (reason == null) "Start recording" else "Try again") }
                 }
             }
         }

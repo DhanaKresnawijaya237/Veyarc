@@ -134,6 +134,10 @@ class CoordinateRecordingController(
         onServiceLost = { onRecordingServiceLost() },
     )
 
+    private val stopLatchObservation = ReplayFloatingController.observeEnabled(appContext) { enabled ->
+        if (!enabled && active) stop()
+    }
+
     init {
         ReplayFloatingController.setRecordingActions(controlCenterActions)
     }
@@ -240,6 +244,10 @@ class CoordinateRecordingController(
 
     fun start(destinationFolderId: String?) {
         if (active) return
+        if (!ReplayFloatingController.isEnabled(appContext)) {
+            showUnavailable("Turn on the edge latch before recording.")
+            return
+        }
         AndroidDeviceSafety.current(appContext)?.takeUnless { it == AndroidUnsafeDeviceState.SYSTEM_WINDOW_ACTIVE }?.let {
             showUnavailable("Recording unavailable: ${it.reason}.")
             return
@@ -351,6 +359,10 @@ class CoordinateRecordingController(
 
     private fun startInputSource(durationMillis: Long) {
         if (!active || stopRequested || paused || pauseRequested) return
+        if (!ReplayFloatingController.isEnabled(appContext)) {
+            stop()
+            return
+        }
         val startError = runCatching {
             source.start(durationMillis = durationMillis, listener = ::onSourceEvent)
         }.getOrElse { error ->
@@ -402,6 +414,10 @@ class CoordinateRecordingController(
     /** Resumes raw observation using the same encrypted journal and session clock. */
     fun resume() {
         if (!active || stopRequested || !paused) return
+        if (!ReplayFloatingController.isEnabled(appContext)) {
+            stop()
+            return
+        }
         if (pauseRequested) {
             resumeRequested = true
             return
@@ -888,6 +904,7 @@ class CoordinateRecordingController(
 
     /** Process-lifecycle cleanup; the activity ViewModel calls this only when the process exits. */
     fun close() {
+        stopLatchObservation()
         if (active) {
             sessionCleanup.requestStop(RecordingStopCause.PROCESS_CLOSE)
             if (!sessionCleanup.claimTerminal()) return
