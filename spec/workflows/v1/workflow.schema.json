@@ -229,6 +229,7 @@
           "required": ["type", "point", "expectedArgb", "tolerance"],
           "properties": {
             "type": { "const": "pixelColor" },
+            "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor-only background. Cleared when its image is cropped or resized on replacement; saving a copy keeps the original. Does not change replay or color matching. Omit to remove." },
             "point": { "$ref": "#/$defs/coordinate" },
             "expectedArgb": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
             "tolerance": { "type": "integer", "minimum": 0, "maximum": 255 },

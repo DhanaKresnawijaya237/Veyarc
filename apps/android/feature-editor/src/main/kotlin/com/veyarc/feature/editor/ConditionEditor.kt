@@ -2,8 +2,16 @@
 
 package com.veyarc.feature.editor
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,18 +43,27 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.veyarc.data.storage.WorkflowAssetDescriptor
 import com.veyarc.model.AndCondition
@@ -66,6 +83,7 @@ import com.veyarc.model.PackageName
 import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.StepResultCondition
 import com.veyarc.model.VariableComparisonCondition
+import com.veyarc.model.WorkflowIds
 import com.veyarc.model.WorkflowJson
 import com.veyarc.model.backgroundAssetId
 import com.veyarc.model.bundle.BundleAsset
@@ -151,15 +169,16 @@ private fun ConditionNodeEditor(
     previewWidthPx: Int,
     previewHeightPx: Int,
     onChange: (Condition) -> Unit,
+    showTypePicker: Boolean = true,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        ConditionKindPicker(
-            condition = condition,
-            defaultPackage = defaultPackage,
-            onChange = onChange,
-        )
+        if (showTypePicker) {
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                ConditionKindPicker(condition, defaultPackage, onChange)
+            }
+        }
         when (condition) {
-            is PixelColorCondition -> PixelConditionFields(condition, previewWidthPx, previewHeightPx, onChange)
+            is PixelColorCondition -> PixelConditionFields(condition, assets, assetNames, onAddTemplate, loadAsset, loadPreview, previewWidthPx, previewHeightPx, onChange)
 
             is ImagePresentCondition -> ImageConditionFields(
                 condition = condition,
@@ -219,7 +238,8 @@ private fun ConditionNodeEditor(
 
             is NotCondition -> {
                 Text("Invert the nested condition.", style = MaterialTheme.typography.bodySmall)
-                ConditionNodeEditor(
+                NestedConditionEditor(
+                    number = 1,
                     condition = condition.condition,
                     assets = assets,
                     assetNames = assetNames,
@@ -246,33 +266,40 @@ private fun ConditionKindPicker(
     condition: Condition,
     defaultPackage: String,
     onChange: (Condition) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     var expanded by remember(condition::class) { mutableStateOf(false) }
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("Condition type", style = MaterialTheme.typography.labelLarge)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedButton(onClick = { expanded = true }) {
-                Text(condition.kind().label)
-            }
-            if (expanded) {
-                VeyarcChoicePicker(
-                    title = "Condition type",
-                    options = EditableConditionKind.entries.map { VeyarcChoice(it.name, it.label) },
-                    selectedId = condition.kind().name,
-                    onDismiss = { expanded = false },
-                    onSelect = { choice ->
-                        expanded = false
-                        onChange(EditableConditionKind.entries.first { it.name == choice.id }.defaultCondition(defaultPackage))
-                    },
-                )
-            }
-        }
+    Surface(
+        onClick = { expanded = true },
+        modifier = modifier,
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+    ) {
+        Text(condition.kind().label, Modifier.padding(horizontal = 14.dp, vertical = 12.dp), style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+    if (expanded) {
+        VeyarcChoicePicker(
+            title = "Condition type",
+            options = EditableConditionKind.entries.map { VeyarcChoice(it.name, it.label) },
+            selectedId = condition.kind().name,
+            onDismiss = { expanded = false },
+            onSelect = { choice ->
+                expanded = false
+                onChange(EditableConditionKind.entries.first { it.name == choice.id }.defaultCondition(defaultPackage))
+            },
+        )
     }
 }
 
 @Composable
 private fun PixelConditionFields(
     condition: PixelColorCondition,
+    assets: List<WorkflowAssetDescriptor>,
+    assetNames: Map<String, String>,
+    onAddTemplate: () -> Unit,
+    loadAsset: suspend (AssetId) -> BundleAsset?,
+    loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
     previewWidthPx: Int,
     previewHeightPx: Int,
     onChange: (Condition) -> Unit,
@@ -345,7 +372,37 @@ private fun PixelConditionFields(
         }
     } else {
         Text("Matches when any pixel in this area has the selected color.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        ColorAreaPreview(searchRegion, previewWidthPx, previewHeightPx) { onChange(condition.copy(region = it)) }
+        val backgroundAsset by produceState<BundleAsset?>(null, condition.backgroundAssetId) {
+            value = condition.backgroundAssetId?.let { loadAsset(it) }
+        }
+        var showBackgrounds by rememberSaveable { mutableStateOf(false) }
+        ColorAreaPreview(searchRegion, previewWidthPx, previewHeightPx, backgroundAsset) { onChange(condition.copy(region = it)) }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { showBackgrounds = true }) {
+                Icon(Icons.Outlined.Image, contentDescription = "Change background")
+            }
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = onAddTemplate) {
+                Icon(Icons.Outlined.AddPhotoAlternate, contentDescription = "Add image")
+            }
+        }
+        TemplatePickerSheet(
+            visible = showBackgrounds,
+            title = "Background",
+            assets = assets,
+            assetNames = assetNames,
+            displayWidthPx = previewWidthPx,
+            displayHeightPx = previewHeightPx,
+            fullScreenOnly = true,
+            selectedAssetId = condition.backgroundAssetId?.value,
+            allowNone = true,
+            onDismiss = { showBackgrounds = false },
+            onSelect = { selected ->
+                onChange(condition.copy(backgroundAssetId = selected))
+                showBackgrounds = false
+            },
+            loadPreview = loadPreview,
+        )
         RegionConditionFields(searchRegion) { onChange(condition.copy(region = it)) }
     }
     ConditionNumberField("Tolerance (0 to 255)", toleranceText, { next ->
@@ -601,41 +658,91 @@ private fun ComposedConditionFields(
     onChange: (List<Condition>) -> Unit,
 ) {
     Text(label, style = MaterialTheme.typography.bodySmall)
+    var childKeys by rememberSaveable { mutableStateOf(conditions.map { WorkflowIds.newUuid() }) }
     conditions.forEachIndexed { index, child ->
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Condition ${index + 1}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
-                    if (index >= 2) {
-                        IconButton(
-                            onClick = { onChange(conditions.toMutableList().apply { removeAt(index) }) },
-                        ) {
-                            Icon(Icons.Outlined.Delete, contentDescription = "Remove nested condition")
-                        }
+        key(childKeys[index]) {
+            NestedConditionEditor(
+                number = index + 1,
+                condition = child,
+                assets = assets,
+                assetNames = assetNames,
+                defaultPackage = defaultPackage,
+                onAddTemplate = onAddTemplate,
+                loadAsset = loadAsset,
+                loadPreview = loadPreview,
+                previewWidthPx = previewWidthPx,
+                previewHeightPx = previewHeightPx,
+                onChange = { updated -> onChange(conditions.toMutableList().apply { this[index] = updated }) },
+                onRemove = if (index < 2) {
+                    null
+                } else {
+                    {
+                        childKeys = childKeys.toMutableList().apply { removeAt(index) }
+                        onChange(conditions.toMutableList().apply { removeAt(index) })
                     }
-                }
-                ConditionNodeEditor(
-                    condition = child,
-                    assets = assets,
-                    assetNames = assetNames,
-                    defaultPackage = defaultPackage,
-                    onAddTemplate = onAddTemplate,
-                    loadAsset = loadAsset,
-                    loadPreview = loadPreview,
-                    previewWidthPx = previewWidthPx,
-                    previewHeightPx = previewHeightPx,
-                    onChange = { updated ->
-                        onChange(conditions.toMutableList().apply { this[index] = updated })
-                    },
-                )
-            }
+                },
+            )
         }
     }
     OutlinedButton(
         enabled = conditions.size < MAX_COMPOSED_CONDITIONS,
-        onClick = { onChange(conditions + defaultCondition(defaultPackage)) },
+        onClick = {
+            childKeys = childKeys + WorkflowIds.newUuid()
+            onChange(conditions + defaultCondition(defaultPackage))
+        },
     ) {
         Text("Add nested condition")
+    }
+}
+
+@Composable
+private fun NestedConditionEditor(
+    number: Int,
+    condition: Condition,
+    assets: List<WorkflowAssetDescriptor>,
+    assetNames: Map<String, String>,
+    defaultPackage: String,
+    onAddTemplate: () -> Unit,
+    loadAsset: suspend (AssetId) -> BundleAsset?,
+    loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
+    previewWidthPx: Int,
+    previewHeightPx: Int,
+    onChange: (Condition) -> Unit,
+    onRemove: (() -> Unit)? = null,
+) {
+    var expanded by rememberSaveable { mutableStateOf(true) }
+    val fields = rememberSaveableStateHolder()
+    val focus = LocalFocusManager.current
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    role = Role.Button,
+                    onClickLabel = if (expanded) "Collapse condition" else "Expand condition",
+                ) {
+                    if (expanded) focus.clearFocus()
+                    expanded = !expanded
+                }
+                .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" }
+                .padding(start = 14.dp, top = 10.dp, end = 8.dp, bottom = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Condition $number", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            ConditionKindPicker(condition, defaultPackage, onChange, Modifier.weight(1.3f))
+            if (onRemove != null) {
+                IconButton(onClick = onRemove) { Icon(Icons.Outlined.Delete, contentDescription = "Remove nested condition") }
+            }
+        }
+        AnimatedVisibility(expanded, enter = expandVertically(tween(160)) + fadeIn(tween(100)), exit = shrinkVertically(tween(140)) + fadeOut(tween(90))) {
+            fields.SaveableStateProvider("fields") {
+                Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
+                    ConditionNodeEditor(condition, assets, assetNames, defaultPackage, onAddTemplate, loadAsset, loadPreview, previewWidthPx, previewHeightPx, onChange, showTypePicker = false)
+                }
+            }
+        }
     }
 }
 

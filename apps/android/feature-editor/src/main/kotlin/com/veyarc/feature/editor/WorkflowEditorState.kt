@@ -743,6 +743,7 @@ data class WorkflowDraft(
 
 private fun List<WorkflowStep>.withoutBackground(assetId: com.veyarc.model.AssetId): List<WorkflowStep> {
     fun condition(value: Condition): Condition = when (value) {
+        is PixelColorCondition -> if (value.backgroundAssetId == assetId) value.copy(backgroundAssetId = null) else value
         is ImagePresentCondition -> if (value.backgroundAssetId == assetId) value.copy(backgroundAssetId = null) else value
         is ImageAbsentCondition -> if (value.backgroundAssetId == assetId) value.copy(backgroundAssetId = null) else value
         is AndCondition -> value.copy(conditions = value.conditions.map(::condition))

@@ -227,6 +227,7 @@ data class PixelColorCondition(
     val expectedArgb: Long,
     val tolerance: Int,
     val region: NormalizedRect? = null,
+    val backgroundAssetId: AssetId? = null,
 ) : Condition {
     init {
         require(expectedArgb in 0L..0xFFFF_FFFFL) { "ARGB color must fit an unsigned 32-bit value" }
@@ -329,6 +330,7 @@ fun WorkflowStep.withBackgroundAsset(id: AssetId?): WorkflowStep = when (this) {
 }
 
 fun Condition.backgroundAssetId(): AssetId? = when (this) {
+    is PixelColorCondition -> backgroundAssetId
     is ImagePresentCondition -> backgroundAssetId
     is ImageAbsentCondition -> backgroundAssetId
     else -> null

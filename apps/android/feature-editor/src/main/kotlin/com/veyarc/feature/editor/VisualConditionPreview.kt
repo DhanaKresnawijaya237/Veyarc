@@ -63,11 +63,14 @@ private const val PREVIEW_MAX_DIMENSION = 1_200
 private const val DEVICE_PREVIEW_HEIGHT_DP = 360
 
 @Composable
-internal fun ColorAreaPreview(region: NormalizedRect, width: Int, height: Int, onChange: (NormalizedRect) -> Unit) {
+internal fun ColorAreaPreview(region: NormalizedRect, width: Int, height: Int, backgroundAsset: BundleAsset?, onChange: (NormalizedRect) -> Unit) {
+    val background by produceState<TemplatePreviewData?>(null, backgroundAsset) {
+        value = backgroundAsset?.let { asset -> withContext(Dispatchers.Default) { decodeTemplatePreview(asset) } }
+    }
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
         Column(Modifier.padding(12.dp)) {
             Text("Drag the area or its corners.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            DeviceComparisonPreview(region, width.coerceAtLeast(1), height.coerceAtLeast(1), null, null, onChange, false, Modifier.fillMaxWidth().height(260.dp))
+            DeviceComparisonPreview(region, width.coerceAtLeast(1), height.coerceAtLeast(1), null, background, onChange, false, Modifier.fillMaxWidth().height(260.dp))
         }
     }
 }

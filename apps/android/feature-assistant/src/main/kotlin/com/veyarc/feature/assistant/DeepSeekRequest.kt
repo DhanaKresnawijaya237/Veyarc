@@ -210,7 +210,7 @@ object DeepSeekRequest {
             Crop coordinates are fractions of that attachment's displayed width and height. TARGET is a cropped comparison image;
             BACKGROUND is the full image, with crop {"x":0,"y":0,"width":1,"height":1}, for use as an editor reference.
             Add the corresponding {"assetId":"same new image id","kind":"imageTemplate","displayName":"same name"} to candidate.assets.
-            Set backgroundAssetId on a tap, long press, swipe, or image condition to save its editor background.
+            Set backgroundAssetId on a tap, long press, swipe, image condition, or pixel-color condition to save its editor background.
             Use an existing image asset ID or a BACKGROUND image addition. Omit backgroundAssetId to clear the reference.
             Backgrounds are visual editing references and do not change touch coordinates or image matching.
             The pencil beside a template opens crop, rotate and annotation editing; its name icon opens a floating name field.

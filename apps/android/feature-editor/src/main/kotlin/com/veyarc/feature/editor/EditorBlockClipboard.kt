@@ -274,6 +274,7 @@ internal fun remapClipboardSteps(steps: List<WorkflowStep>, assetIds: Map<String
     }
     steps.forEach(::assign)
     fun condition(value: Condition): Condition = when (value) {
+        is com.veyarc.model.PixelColorCondition -> value.copy(backgroundAssetId = value.backgroundAssetId?.let { assetIds[it.value] ?: it })
         is ImagePresentCondition -> value.copy(assetId = assetIds[value.assetId.value] ?: value.assetId, backgroundAssetId = value.backgroundAssetId?.let { assetIds[it.value] ?: it })
         is ImageAbsentCondition -> value.copy(assetId = assetIds[value.assetId.value] ?: value.assetId, backgroundAssetId = value.backgroundAssetId?.let { assetIds[it.value] ?: it })
         is StepResultCondition -> value.copy(stepId = stepIds[value.stepId] ?: value.stepId)
