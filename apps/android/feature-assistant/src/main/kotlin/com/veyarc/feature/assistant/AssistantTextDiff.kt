@@ -2,6 +2,30 @@ package com.veyarc.feature.assistant
 
 internal data class AssistantTextDiff(val before: List<IntRange>, val after: List<IntRange>)
 
+internal data class AssistantDiffLine(val text: String, val changed: List<IntRange>)
+
+/** Keep changed rows only; ranges are relative to each row for stronger inline emphasis. */
+internal fun changedDiffLines(value: String, ranges: List<IntRange>): List<AssistantDiffLine> = buildList {
+    var offset = 0
+    value.split('\n').forEach { line ->
+        val end = offset + line.length
+        val edits = ranges.filter { !it.isEmpty() && it.first <= end && it.last >= offset }
+        if (edits.isNotEmpty()) {
+            add(
+                AssistantDiffLine(
+                    line,
+                    edits.mapNotNull {
+                        val first = maxOf(offset, it.first) - offset
+                        val last = minOf(end - 1, it.last) - offset
+                        (first..last).takeUnless(IntRange::isEmpty)
+                    },
+                ),
+            )
+        }
+        offset = end + 1
+    }
+}
+
 /** Display-only ranges; the original proposal remains unchanged. */
 internal fun changedTextRanges(before: String?, after: String?): AssistantTextDiff {
     fun all(text: String?) = if (text.isNullOrEmpty()) emptyList() else listOf(text.indices)

@@ -1005,8 +1005,8 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
                         SelectionContainer {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("Wait", style = MaterialTheme.typography.titleSmall)
-                                DiffValue("Before", "1 second", false)
-                                DiffValue("After", "2 seconds", true)
+                                DiffValue("1 second", false)
+                                DiffValue("2 seconds", true)
                             }
                         }
                     } else {
@@ -1036,30 +1036,42 @@ private fun ProposalChanges(changes: List<AssistantValueChange>, compact: Boolea
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 HorizontalDivider()
                 Text(change.label, style = MaterialTheme.typography.titleSmall, maxLines = if (compact) 1 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis)
-                change.before?.let { DiffValue("Before", it, false, compact, diff.before) }
-                change.after?.let { DiffValue("After", it, true, compact, diff.after) }
+                change.before?.let { DiffValue(it, false, compact, diff.before) }
+                change.after?.let { DiffValue(it, true, compact, diff.after) }
             }
         }
     }
 }
 
 @Composable
-private fun DiffValue(label: String, value: String, added: Boolean, compact: Boolean = false, changed: List<IntRange> = listOf(value.indices)) {
+private fun DiffValue(value: String, added: Boolean, compact: Boolean = false, changed: List<IntRange> = listOf(value.indices)) {
     val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-    val background = if (added) Color(if (dark) 0xFF245039 else 0xFFC9E9D3) else Color(if (dark) 0xFF652F38 else 0xFFF3CBCE)
+    val emphasis = if (added) Color(if (dark) 0xFF315F43 else 0xFFA7D9B8) else Color(if (dark) 0xFF783D46 else 0xFFE9ABB4)
+    val rowColor = if (added) Color(if (dark) 0xFF192D23 else 0xFFE6F4E9) else Color(if (dark) 0xFF352025 else 0xFFFCEBED)
     val foreground = if (added) Color(if (dark) 0xFFD4EDDD else 0xFF173F25) else Color(if (dark) 0xFFF4D4D4 else 0xFF603232)
-    val text = remember(label, value, changed, background, foreground) {
-        androidx.compose.ui.text.buildAnnotatedString {
-            append("$label: ")
-            val offset = length
-            append(value)
-            changed.filterNot { it.isEmpty() }.forEach { range ->
-                addStyle(androidx.compose.ui.text.SpanStyle(background = background, color = foreground), offset + range.first, offset + range.last + 1)
+    val lines = remember(value, changed) { changedDiffLines(value, changed) }
+    if (lines.isEmpty()) return
+    val hidden = value.lines().size - lines.size
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        if (hidden > 0 && !compact) Text("$hidden unchanged line${if (hidden == 1) "" else "s"} hidden", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Surface(color = rowColor, shape = RoundedCornerShape(8.dp)) {
+            Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                (if (compact) lines.take(2) else lines).forEach { line ->
+                    val text = remember(line, emphasis) {
+                        androidx.compose.ui.text.buildAnnotatedString {
+                            append(line.text)
+                            line.changed.forEach { range ->
+                                addStyle(androidx.compose.ui.text.SpanStyle(background = emphasis), range.first, range.last + 1)
+                            }
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 3.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(if (added) "+" else "−", color = foreground, style = MaterialTheme.typography.bodySmall)
+                        Text(text, Modifier.weight(1f), style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium, color = foreground, maxLines = if (compact) 2 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis)
+                    }
+                }
             }
         }
-    }
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(8.dp)) {
-        Text(text, Modifier.fillMaxWidth().padding(if (compact) 8.dp else 10.dp), style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface, maxLines = if (compact) 2 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis)
     }
 }
 
