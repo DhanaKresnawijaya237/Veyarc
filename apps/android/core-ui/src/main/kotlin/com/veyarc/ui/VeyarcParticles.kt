@@ -3,7 +3,6 @@ package com.veyarc.ui
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.withInfiniteAnimationFrameNanos
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
@@ -16,9 +15,11 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -34,8 +35,17 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlin.math.ceil
 import kotlin.math.sin
 
+val LocalParticlesEnabled = staticCompositionLocalOf { true }
+
 @Composable
 fun VeyarcParticles(interactive: Boolean, modifier: Modifier, enabled: Boolean = true, content: @Composable BoxScope.() -> Unit) {
+    val particles = if (enabled && LocalParticlesEnabled.current) particleBackground(interactive) else Modifier
+    // Keep the content at the same composition position when particles are switched off.
+    Box(modifier.clipToBounds().then(particles), content = content)
+}
+
+@Composable
+private fun particleBackground(interactive: Boolean): Modifier {
     val field = remember { WelcomeParticleField() }
     var frame by remember { mutableIntStateOf(0) }
     val density = LocalDensity.current.density
@@ -43,8 +53,8 @@ fun VeyarcParticles(interactive: Boolean, modifier: Modifier, enabled: Boolean =
     val colors = MaterialTheme.colorScheme
     val particleColors = remember(colors) { field.depth.map { lerp(colors.primary, colors.onSurface, 0.35f + it * 0.5f) } }
     val opacity = animateFloatAsState(if (interactive) 1f else 0.22f, tween(180), label = "particle background")
-    LaunchedEffect(lifecycleState, interactive, enabled) {
-        if (!enabled || !lifecycleState.isAtLeast(Lifecycle.State.STARTED)) return@LaunchedEffect
+    LaunchedEffect(lifecycleState, interactive) {
+        if (!lifecycleState.isAtLeast(Lifecycle.State.STARTED)) return@LaunchedEffect
         val motionScale = coroutineContext[MotionDurationScale]
         try {
             snapshotFlow { motionScale?.scaleFactor ?: 1f }.collectLatest { scale ->
@@ -58,7 +68,7 @@ fun VeyarcParticles(interactive: Boolean, modifier: Modifier, enabled: Boolean =
                         if (!interactive && !pacing.advance(now)) continue
                         field.advance((now - previous) / (1_000_000_000f * scale))
                         previous = now
-                        // Only Canvas reads this state; messages and the composer do not recompose.
+                        // Only drawing reads this state; messages and the composer do not recompose.
                         frame++
                     }
                 }
@@ -67,7 +77,7 @@ fun VeyarcParticles(interactive: Boolean, modifier: Modifier, enabled: Boolean =
             field.release()
         }
     }
-    val touch = if (interactive && enabled) {
+    val touch = if (interactive) {
         Modifier.pointerInput(field, density) {
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
@@ -87,29 +97,22 @@ fun VeyarcParticles(interactive: Boolean, modifier: Modifier, enabled: Boolean =
     } else {
         Modifier
     }
-    Box(
-        modifier.clipToBounds().onSizeChanged {
-            field.resize(it.width / density, it.height / density)
-        }.then(touch),
-    ) {
-        if (enabled) {
-            Canvas(Modifier.matchParentSize().testTag(if (interactive) "assistant-welcome-particles" else "assistant-chat-particles")) {
-                val tick = frame
-                val edge = 24.dp.toPx()
-                val stride = if (interactive) 1 else ceil(360f * 800f * density * density / (size.width * size.height)).toInt().coerceIn(1, field.x.size)
-                for (i in field.x.indices step stride) {
-                    val position = Offset(field.x[i] * density, field.y[i] * density)
-                    val fade = 0.4f + 0.6f * (minOf(position.x, size.width - position.x) / edge).coerceIn(0f, 1f)
-                    val shimmer = 0.88f + sin(tick * 0.012f + i) * 0.12f
-                    val alpha = (0.16f + field.depth[i] * 0.44f) * fade * shimmer * opacity.value
-                    val radius = (0.65f + field.depth[i] * 0.9f) * density
-                    val color = particleColors[i]
-                    if (i % 9 == 0) drawCircle(color.copy(alpha = alpha * 0.1f), radius * 3f, position)
-                    drawCircle(color.copy(alpha = alpha), radius, position)
-                }
-            }
+    return Modifier.onSizeChanged {
+        field.resize(it.width / density, it.height / density)
+    }.then(touch).testTag(if (interactive) "assistant-welcome-particles" else "assistant-chat-particles").drawBehind {
+        val tick = frame
+        val edge = 24.dp.toPx()
+        val stride = if (interactive) 1 else ceil(360f * 800f * density * density / (size.width * size.height)).toInt().coerceIn(1, field.x.size)
+        for (i in field.x.indices step stride) {
+            val position = Offset(field.x[i] * density, field.y[i] * density)
+            val fade = 0.4f + 0.6f * (minOf(position.x, size.width - position.x) / edge).coerceIn(0f, 1f)
+            val shimmer = 0.88f + sin(tick * 0.012f + i) * 0.12f
+            val alpha = (0.16f + field.depth[i] * 0.44f) * fade * shimmer * opacity.value
+            val radius = (0.65f + field.depth[i] * 0.9f) * density
+            val color = particleColors[i]
+            if (i % 9 == 0) drawCircle(color.copy(alpha = alpha * 0.1f), radius * 3f, position)
+            drawCircle(color.copy(alpha = alpha), radius, position)
         }
-        content()
     }
 }
 

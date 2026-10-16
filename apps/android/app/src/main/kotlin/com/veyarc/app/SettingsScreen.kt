@@ -53,7 +53,6 @@ import androidx.compose.material3.LocalRippleConfiguration
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -110,6 +109,8 @@ fun SettingsScreen(
     requestedSection: String? = null,
     onSectionRequestConsumed: () -> Unit = {},
     onOpenHome: () -> Unit = {},
+    particlesEnabled: Boolean = true,
+    onParticlesEnabledChange: (Boolean) -> Unit = {},
 ) {
     val context = LocalContext.current
     val assistantKeys = remember(context) { com.veyarc.data.storage.AssistantKeyStore(context.applicationContext) }
@@ -360,14 +361,14 @@ fun SettingsScreen(
                 }
             }
             item {
-                SettingsCard(
-                    title = "AI connection",
-                    summary = if (assistant?.providerEnabled == true) "Enabled for this session" else "Disabled",
-                    summaryActive = assistant?.providerEnabled == true,
-                    expanded = expandedSection == "assistant",
-                    onToggle = { expandedSection = if (expandedSection == "assistant") null else "assistant" },
-                ) {
-                    AssistantConnectionSettings(assistantKeys, assistant)
+                AssistantConnectionSettings(assistantKeys, assistant) { toggle, connections ->
+                    SettingsCard(
+                        title = "AI connection",
+                        summary = null,
+                        expanded = expandedSection == "assistant",
+                        onToggle = { expandedSection = if (expandedSection == "assistant") null else "assistant" },
+                        trailing = toggle,
+                    ) { connections() }
                 }
             }
             item {
@@ -444,6 +445,10 @@ fun SettingsScreen(
                             )
                         }
                     }
+                    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Particles", Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                        SettingsEnableSwitch("Particles", checked = particlesEnabled, modifier = Modifier.testTag("particles-enable"), onCheckedChange = onParticlesEnabledChange)
+                    }
                 }
             }
             item {
@@ -457,10 +462,7 @@ fun SettingsScreen(
                         IconButton(onClick = { ReplayFloatingController.resetPosition(context) }) {
                             Icon(Icons.Outlined.RestartAlt, "Reset latch position")
                         }
-                        Switch(
-                            checked = latchEnabled,
-                            onCheckedChange = { enabled -> ReplayFloatingController.setEnabled(context, enabled) },
-                        )
+                        SettingsEnableSwitch("Enable edge latch", checked = latchEnabled, modifier = Modifier.testTag("latch-enable"), onCheckedChange = { enabled -> ReplayFloatingController.setEnabled(context, enabled) })
                     },
                 ) {
                     Text("Play button", style = MaterialTheme.typography.titleMedium)
@@ -739,6 +741,7 @@ private fun SettingsCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 64.dp)
+                    .testTag("settings-header-$title")
                     .clickable(onClick = onToggle)
                     .padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,

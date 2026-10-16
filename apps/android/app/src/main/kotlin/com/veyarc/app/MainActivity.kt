@@ -131,9 +131,11 @@ class MainActivity : ComponentActivity() {
             val preferencesFlow = androidx.compose.runtime.remember {
                 AppPreferences.observe(this@MainActivity)
             }
-            val uiPreferences by preferencesFlow.collectAsState(initial = AppUiPreferences())
+            // Wait for saved appearance preferences before allocating the particle field.
+            val uiPreferences by preferencesFlow.collectAsState(initial = AppUiPreferences(particlesEnabled = false))
             val systemDark = isSystemInDarkTheme()
             VeyarcTheme(
+                particlesEnabled = uiPreferences.particlesEnabled,
                 darkTheme = when (uiPreferences.theme) {
                     ThemePreference.SYSTEM -> systemDark
                     ThemePreference.LIGHT -> false
@@ -286,6 +288,10 @@ class MainActivity : ComponentActivity() {
                                                 repository = workflowRepository,
                                                 refreshGeneration = resumeGeneration,
                                                 themePreference = uiPreferences.theme,
+                                                particlesEnabled = uiPreferences.particlesEnabled,
+                                                onParticlesEnabledChange = { enabled ->
+                                                    catalogScope.launch { AppPreferences.setParticlesEnabled(this@MainActivity, enabled) }
+                                                },
                                                 onThemePreferenceChange = { preference ->
                                                     catalogScope.launch {
                                                         AppPreferences.setTheme(this@MainActivity, preference)
