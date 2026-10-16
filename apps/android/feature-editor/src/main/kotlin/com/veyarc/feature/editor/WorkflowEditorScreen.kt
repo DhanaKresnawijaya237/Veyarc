@@ -210,8 +210,12 @@ fun WorkflowEditorScreen(
     var clipboardAvailable by remember { mutableStateOf(false) }
     var pendingBlockPaste by remember { mutableStateOf<PendingBlockPaste?>(null) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(EditorBlockClipboard.isCopying) {
+        if (EditorBlockClipboard.isCopying) return@LaunchedEffect
         clipboardAvailable = withContext(Dispatchers.IO) { runCatching { blockClipboard.read() != null }.getOrDefault(false) }
+    }
+    LaunchedEffect(EditorBlockClipboard.copyMessage) {
+        EditorBlockClipboard.copyMessage?.let { statusMessage = it }
     }
 
     val templatePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -507,26 +511,11 @@ fun WorkflowEditorScreen(
     fun copyBlocks(path: StepListPath, ids: List<String>) {
         val current = session.draft ?: return
         val selected = current.stepsAt(path).filter { it.id in ids }
-        if (selected.isEmpty()) return
-        scope.launch {
-            isWorking = true
-            statusMessage = null
-            runCatching {
-                val images = selected.clipboardImageIds().map { id ->
-                    val assetId = AssetId(id)
-                    val asset = loadDraftAsset(assetId) ?: error("A referenced image is unavailable: ${current.assetNames[id] ?: id}")
-                    asset to (current.assetNames[id] ?: "Image")
-                }
-                withContext(Dispatchers.IO) { blockClipboard.replace(current.viewport.recordedOrientation, selected, images) }
-            }.onSuccess {
-                clipboardAvailable = true
-                statusMessage = "Copied ${selected.size} block${if (selected.size == 1) "" else "s"}."
-            }.onFailure { error -> statusMessage = "Could not copy blocks: ${error.userMessage()}" }
-            isWorking = false
-        }
+        EditorBlockClipboard.copy(context, current, selected)
     }
 
     fun requestBlockPaste(path: StepListPath, index: Int) {
+        if (EditorBlockClipboard.isCopying) return
         scope.launch {
             runCatching { withContext(Dispatchers.IO) { blockClipboard.read() } }
                 .onSuccess { entry ->
@@ -541,6 +530,7 @@ fun WorkflowEditorScreen(
     }
 
     fun confirmBlockPaste(importImages: Boolean) {
+        if (EditorBlockClipboard.isCopying) return
         val pending = pendingBlockPaste ?: return
         pendingBlockPaste = null
         scope.launch {
@@ -944,10 +934,10 @@ private fun WorkflowDraftScreen(
     var selectedPath by session::selectedBlockPath
     var selectedIds by session::selectedBlockIds
     val clipboardActions = BlockClipboardActions(
-        clipboardAvailable = clipboardAvailable,
+        clipboardAvailable = clipboardAvailable && !EditorBlockClipboard.isCopying,
         selectionMode = selectionMode,
         selectedIds = selectedIds,
-        canCopy = if (selectionMode) selectedIds.isNotEmpty() else selection != null,
+        canCopy = !EditorBlockClipboard.isCopying && (if (selectionMode) selectedIds.isNotEmpty() else selection != null),
         onToggleSelectionMode = {
             selectionMode = !selectionMode
             selectedIds = emptySet()

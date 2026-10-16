@@ -1,6 +1,9 @@
 package com.veyarc.feature.editor
 
 import android.content.Context
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import com.veyarc.data.storage.AesGcmFileCodec
 import com.veyarc.data.storage.AndroidKeystoreKeySource
 import com.veyarc.data.storage.DecodedTemplate
@@ -8,6 +11,7 @@ import com.veyarc.data.storage.EncryptedFileStore
 import com.veyarc.data.storage.EncryptedTemplateAssetCodec
 import com.veyarc.data.storage.TEMPLATE_ASSET_KEY_ALIAS
 import com.veyarc.data.storage.WorkflowAssetDescriptor
+import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.model.AndCondition
 import com.veyarc.model.AssetId
 import com.veyarc.model.AssetKind
@@ -29,6 +33,11 @@ import com.veyarc.model.WorkflowStep
 import com.veyarc.model.backgroundAssetId
 import com.veyarc.model.bundle.BundleAsset
 import com.veyarc.model.withBackgroundAsset
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import java.io.File
 import java.security.MessageDigest
@@ -62,15 +71,15 @@ internal class EditorBlockClipboard(context: Context) {
     )
     private val templateCodec = EncryptedTemplateAssetCodec(AndroidKeystoreKeySource(TEMPLATE_ASSET_KEY_ALIAS))
 
-    fun read(): BlockClipboardEntry? {
+    fun read(): BlockClipboardEntry? = synchronized(lock) {
         val fileName = prefs.getString("current", null) ?: return null
         val bytes = files.read(fileName, AAD)
-        return WorkflowJson.decodeStrict(BlockClipboardEntry.serializer(), bytes.decodeToString()).also {
+        WorkflowJson.decodeStrict(BlockClipboardEntry.serializer(), bytes.decodeToString()).also {
             require(it.version == 1 && it.steps.isNotEmpty()) { "Unsupported block clipboard" }
         }
     }
 
-    fun replace(orientation: DisplayOrientation, steps: List<WorkflowStep>, assets: List<Pair<BundleAsset, String>>) {
+    fun replace(orientation: DisplayOrientation, steps: List<WorkflowStep>, assets: List<Pair<BundleAsset, String>>) = synchronized(lock) {
         require(steps.isNotEmpty()) { "Select at least one block" }
         val previous = runCatching { read() }.getOrNull()
         val previousFile = prefs.getString("current", null)
@@ -100,10 +109,49 @@ internal class EditorBlockClipboard(context: Context) {
         images: List<ClipboardImage>,
         existingAssets: List<WorkflowAssetDescriptor>,
         loadAsset: (AssetId) -> BundleAsset,
-    ): ClipboardImageImport = importClipboardImages(images, existingAssets, templateCodec, { files.read(it.fileName, AAD) }, loadAsset)
+    ): ClipboardImageImport = synchronized(lock) {
+        importClipboardImages(images, existingAssets, templateCodec, { files.read(it.fileName, AAD) }, loadAsset)
+    }
 
-    private companion object {
-        val AAD = "editor-block-clipboard:v1".encodeToByteArray()
+    companion object {
+        private val AAD = "editor-block-clipboard:v1".encodeToByteArray()
+        private val lock = Any()
+        private val copyScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        var isCopying by mutableStateOf(false)
+            private set
+        var copyMessage by mutableStateOf<String?>(null)
+            private set
+
+        fun copy(context: Context, source: WorkflowDraft, steps: List<WorkflowStep>) {
+            if (isCopying || steps.isEmpty()) return
+            val app = context.applicationContext
+            isCopying = true
+            copyMessage = "Copying blocks…"
+            // Navigation and rotation must not cancel the copy or change its source revision.
+            copyScope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        val repository = WorkflowRepository(app)
+                        try {
+                            val images = steps.clipboardImageIds().map { id ->
+                                val assetId = AssetId(id)
+                                val asset = source.assets.firstOrNull { it.assetId == assetId }
+                                    ?: repository.loadRevisionAsset(source.workflowId, requireNotNull(source.lastSavedRevision), assetId)
+                                asset to (source.assetNames[id] ?: "Image")
+                            }
+                            EditorBlockClipboard(app).replace(source.viewport.recordedOrientation, steps, images)
+                        } finally {
+                            repository.close()
+                        }
+                    }
+                    copyMessage = "Copied ${steps.size} block${if (steps.size == 1) "" else "s"}."
+                } catch (_: Exception) {
+                    copyMessage = "Could not copy blocks. Try again."
+                } finally {
+                    isCopying = false
+                }
+            }
+        }
     }
 }
 
