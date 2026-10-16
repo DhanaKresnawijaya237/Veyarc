@@ -226,6 +226,7 @@ data class PixelColorCondition(
     val point: NormalizedCoordinate,
     val expectedArgb: Long,
     val tolerance: Int,
+    val region: NormalizedRect? = null,
 ) : Condition {
     init {
         require(expectedArgb in 0L..0xFFFF_FFFFL) { "ARGB color must fit an unsigned 32-bit value" }

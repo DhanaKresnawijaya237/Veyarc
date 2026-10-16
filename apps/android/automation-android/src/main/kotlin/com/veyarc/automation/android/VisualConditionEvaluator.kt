@@ -166,8 +166,23 @@ class VisualConditionEvaluator(
     }
 
     private fun evaluatePixelColor(condition: PixelColorCondition): Boolean {
-        val frame = requireFrame(ScreenCaptureArea.Pixel(condition.point))
+        val frame = requireFrame(condition.region?.let { ScreenCaptureArea.Region(it) } ?: ScreenCaptureArea.Pixel(condition.point))
         return try {
+            val region = condition.region
+            if (region != null) {
+                val bounds = FramePixelBounds.from(region, frame.widthPx, frame.heightPx).relativeTo(frame.capturedBounds)
+                val expected = argbColor(condition.expectedArgb)
+                return frame.withRgbaBytes { bytes ->
+                    for (y in bounds.top until bounds.bottomExclusive) {
+                        checkCancellation()
+                        for (x in bounds.left until bounds.rightExclusive) {
+                            val offset = rgbaOffset(x, y, frame.capturedBounds.width)
+                            if (abs(channelValue(bytes, offset) - expected.red) <= condition.tolerance && abs(channelValue(bytes, offset + 1) - expected.green) <= condition.tolerance && abs(channelValue(bytes, offset + 2) - expected.blue) <= condition.tolerance && abs(channelValue(bytes, offset + 3) - expected.alpha) <= condition.tolerance) return@withRgbaBytes true
+                        }
+                    }
+                    false
+                }
+            }
             val point = FramePixelBounds.pixel(condition.point, frame.widthPx, frame.heightPx)
             withinTolerance(frame.pixelAt(point.left, point.top), argbColor(condition.expectedArgb), condition.tolerance)
         } finally {

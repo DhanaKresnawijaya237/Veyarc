@@ -16,6 +16,7 @@ import com.veyarc.data.storage.EncryptedTemplateAssetCodec
 import com.veyarc.data.storage.TEMPLATE_ASSET_KEY_ALIAS
 import com.veyarc.model.AssetId
 import com.veyarc.model.AssetKind
+import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.NormalizedRect
 import com.veyarc.model.WorkflowIds
 import com.veyarc.model.bundle.BundleAsset
@@ -29,6 +30,7 @@ import java.io.InputStream
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 private const val CROP_PREVIEW_MAX_PIXELS = DecodedTemplate.MAX_TEMPLATE_PIXELS
 private const val MAX_SOURCE_IMAGE_BYTES = 64L * 1024L * 1024L
@@ -73,6 +75,18 @@ internal fun loadTemplateCropSource(contentResolver: ContentResolver, uri: Uri):
         heightPx = bounds.second,
         preview = preview.asImageBitmap(),
     )
+}
+
+internal fun sampleImagePixel(resolver: ContentResolver, source: TemplateCropSource, point: NormalizedCoordinate): Long {
+    val x = (point.x * (source.widthPx - 1)).roundToInt().coerceIn(0, source.widthPx - 1)
+    val y = (point.y * (source.heightPx - 1)).roundToInt().coerceIn(0, source.heightPx - 1)
+    if (source.uri == Uri.EMPTY) return source.preview.asAndroidBitmap().getPixel(x, y).toLong() and 0xFFFFFFFFL
+    val pixel = decodeRegion(resolver, source.uri, Rect(x, y, x + 1, y + 1))
+    return try {
+        pixel.getPixel(0, 0).toLong() and 0xFFFFFFFFL
+    } finally {
+        pixel.recycle()
+    }
 }
 
 /** Chooses a power-of-two preview sample without overflowing on hostile image dimensions. */

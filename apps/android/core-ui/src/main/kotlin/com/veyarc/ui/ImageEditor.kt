@@ -8,6 +8,7 @@ import android.graphics.PorterDuffXfermode
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
@@ -86,6 +87,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.NormalizedRect
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -451,7 +453,7 @@ private fun ImageEditCanvas(bitmap: Bitmap, crop: NormalizedRect, cropping: Bool
 }
 
 @Composable
-fun ZoomableImage(bitmap: Bitmap) {
+fun ZoomableImage(bitmap: Bitmap, selectedPixel: NormalizedCoordinate? = null, onPickPixel: ((NormalizedCoordinate) -> Unit)? = null) {
     var scale by remember(bitmap) { mutableFloatStateOf(1f) }
     var offset by remember(bitmap) { mutableStateOf(Offset.Zero) }
     var viewport by remember { mutableStateOf(IntSize.Zero) }
@@ -463,7 +465,20 @@ fun ZoomableImage(bitmap: Bitmap) {
     }
     Box(
         // Let the pager handle a one-finger swipe until the image is zoomed.
-        Modifier.fillMaxSize().clipToBounds().onSizeChanged { viewport = it }.transformable(transform, canPan = { scale > 1f }),
+        Modifier.fillMaxSize().clipToBounds().onSizeChanged { viewport = it }.transformable(transform, canPan = { scale > 1f }).then(
+            if (onPickPixel != null) {
+                Modifier.pointerInput(bitmap, onPickPixel) {
+                    detectTapGestures { tap ->
+                        val center = Offset(size.width / 2f, size.height / 2f)
+                        val original = (tap - center - offset) / scale + center
+                        val bounds = fittedImage(Size(size.width.toFloat(), size.height.toFloat()), bitmap)
+                        if (bounds.contains(original)) onPickPixel(NormalizedCoordinate(((original.x - bounds.left) / bounds.width).toDouble().coerceIn(0.0, 1.0), ((original.y - bounds.top) / bounds.height).toDouble().coerceIn(0.0, 1.0)))
+                    }
+                }
+            } else {
+                Modifier
+            },
+        ),
         contentAlignment = Alignment.Center,
     ) {
         Image(
@@ -477,5 +492,20 @@ fun ZoomableImage(bitmap: Bitmap) {
             },
             contentScale = ContentScale.Fit,
         )
+        if (selectedPixel != null) {
+            androidx.compose.foundation.Canvas(
+                Modifier.fillMaxSize().graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = offset.x
+                    translationY = offset.y
+                },
+            ) {
+                val bounds = fittedImage(size, bitmap)
+                val position = Offset(bounds.left + selectedPixel.x.toFloat() * bounds.width, bounds.top + selectedPixel.y.toFloat() * bounds.height)
+                drawCircle(Color.Black, 7.dp.toPx() / scale, position, style = Stroke(3.dp.toPx() / scale))
+                drawCircle(Color.White, 7.dp.toPx() / scale, position, style = Stroke(1.5.dp.toPx() / scale))
+            }
+        }
     }
 }

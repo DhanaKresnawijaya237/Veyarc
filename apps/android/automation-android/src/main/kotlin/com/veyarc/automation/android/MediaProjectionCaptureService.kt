@@ -119,6 +119,7 @@ class MediaProjectionCaptureService : Service() {
             resultCode: Int,
             resultData: Intent,
             displaySpec: MediaProjectionDisplaySpec = MediaProjectionDisplaySpec.fromContext(context),
+            owner: Any? = null,
         ) {
             require(MediaProjectionConsent.wasGranted(resultCode, resultData)) {
                 "MediaProjection consent was not granted"
@@ -129,7 +130,7 @@ class MediaProjectionCaptureService : Service() {
             notificationUnavailableReason(context)?.let { reason ->
                 throw MediaProjectionCaptureException(reason)
             }
-            MediaProjectionCaptureRuntime.prepare()
+            MediaProjectionCaptureRuntime.prepare(owner)
             createChannel(context)
             expectedStop.set(false)
             val intent = Intent(context, MediaProjectionCaptureService::class.java)
@@ -145,9 +146,10 @@ class MediaProjectionCaptureService : Service() {
             }
         }
 
-        fun stop(context: Context, reason: String = "MediaProjection capture stopped.") {
+        fun stop(context: Context, reason: String = "MediaProjection capture stopped.", owner: Any? = null) {
+            if (owner != null && !MediaProjectionCaptureRuntime.isOwnedBy(owner)) return
+            if (!MediaProjectionCaptureRuntime.notifyTerminated(reason, owner)) return
             expectedStop.set(true)
-            MediaProjectionCaptureRuntime.notifyTerminated(reason)
             context.stopService(Intent(context, MediaProjectionCaptureService::class.java))
         }
 
@@ -233,6 +235,9 @@ object MediaProjectionCaptureRuntime {
     private var terminationListener: ((String) -> Unit)? = null
     private var lastTerminationReason: String? = null
     private var activeSignal = CountDownLatch(1)
+    private var captureOwner: Any? = null
+
+    internal fun isOwnedBy(owner: Any): Boolean = synchronized(lock) { captureOwner === owner }
 
     val isActive: Boolean
         get() = synchronized(lock) { activeCapture?.isActive == true }
@@ -252,6 +257,7 @@ object MediaProjectionCaptureRuntime {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
         while (true) {
             if (isActive) return true
+            if (synchronized(lock) { lastTerminationReason != null }) return false
             val remainingNanos = deadline - System.nanoTime()
             if (remainingNanos <= 0L) return false
             val signal = synchronized(lock) { activeSignal }
@@ -286,22 +292,26 @@ object MediaProjectionCaptureRuntime {
         }
     }
 
-    internal fun notifyTerminated(reason: String) {
+    internal fun notifyTerminated(reason: String, owner: Any? = null): Boolean {
         val (capture, listener) = synchronized(lock) {
+            if (owner != null && captureOwner !== owner) return false
             val currentCapture = activeCapture
             activeCapture = null
+            captureOwner = null
             lastTerminationReason = reason
             currentCapture to terminationListener
         }
         capture?.close()
         synchronized(lock) { activeSignal.countDown() }
         runCatching { listener?.invoke(reason) }
+        return true
     }
 
-    internal fun prepare() {
+    internal fun prepare(owner: Any? = null) {
         synchronized(lock) {
-            check(activeCapture == null) { "Another MediaProjection capture is already active" }
+            check(activeCapture == null && captureOwner == null) { "Another MediaProjection capture is already active" }
             activeSignal = CountDownLatch(1)
+            captureOwner = owner
             lastTerminationReason = null
         }
     }

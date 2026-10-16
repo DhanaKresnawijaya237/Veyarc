@@ -159,7 +159,7 @@ private fun ConditionNodeEditor(
             onChange = onChange,
         )
         when (condition) {
-            is PixelColorCondition -> PixelConditionFields(condition, onChange)
+            is PixelColorCondition -> PixelConditionFields(condition, previewWidthPx, previewHeightPx, onChange)
 
             is ImagePresentCondition -> ImageConditionFields(
                 condition = condition,
@@ -273,13 +273,23 @@ private fun ConditionKindPicker(
 @Composable
 private fun PixelConditionFields(
     condition: PixelColorCondition,
+    previewWidthPx: Int,
+    previewHeightPx: Int,
     onChange: (Condition) -> Unit,
 ) {
     var xText by rememberNumericEditorText(condition.point.x.toEditorText())
     var yText by rememberNumericEditorText(condition.point.y.toEditorText())
     var colorText by rememberSaveable(condition.expectedArgb) { mutableStateOf(condition.expectedArgb.toArgbText()) }
     var toleranceText by rememberNumericEditorText(condition.tolerance.toString())
-    Text("Compare one normalized screen point (0 to 1) with an ARGB colour.", style = MaterialTheme.typography.bodySmall)
+    var showRgb by rememberSaveable { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf("Point", "Area").forEachIndexed { index, label ->
+            val selected = (condition.region != null) == (index == 1)
+            Surface(onClick = { onChange(condition.copy(region = if (index == 0) null else condition.region ?: FULL_SCREEN_REGION)) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp), color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh) {
+                Text(label, Modifier.padding(12.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -305,33 +315,39 @@ private fun PixelConditionFields(
             )
         }
     }
-    RgbSlider("Red", condition.red, Color(0xFFE53935)) { red -> onChange(condition.withRgb(red = red)) }
-    RgbSlider("Green", condition.green, Color(0xFF43A047)) { green -> onChange(condition.withRgb(green = green)) }
-    RgbSlider("Blue", condition.blue, Color(0xFF1E88E5)) { blue -> onChange(condition.withRgb(blue = blue)) }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        ConditionNumberField("X", xText, { next ->
-            xText = next
-            val x = next.toDoubleOrNull()?.takeIf { it in 0.0..1.0 } ?: return@ConditionNumberField
-            val y = yText.toDoubleOrNull()?.takeIf { it in 0.0..1.0 } ?: return@ConditionNumberField
-            onChange(condition.copy(point = NormalizedCoordinate(x, y)))
-        }, Modifier.weight(1f))
-        ConditionNumberField("Y", yText, { next ->
-            yText = next
-            val y = next.toDoubleOrNull()?.takeIf { it in 0.0..1.0 } ?: return@ConditionNumberField
-            val x = xText.toDoubleOrNull()?.takeIf { it in 0.0..1.0 } ?: return@ConditionNumberField
-            onChange(condition.copy(point = NormalizedCoordinate(x, y)))
-        }, Modifier.weight(1f))
-    }
-    OutlinedTextField(
-        value = colorText,
-        onValueChange = { next ->
+    ColorPalette(condition.expectedArgb) { onChange(condition.copy(expectedArgb = it)) }
+    ColorSampleTools { point, argb -> onChange(condition.copy(point = point, expectedArgb = argb)) }
+    TextButton(onClick = { showRgb = !showRgb }) { Text(if (showRgb) "Hide RGB & hex" else "RGB & hex") }
+    if (showRgb) {
+        RgbSlider("Red", condition.red, Color(0xFFE53935)) { red -> onChange(condition.withRgb(red = red)) }
+        RgbSlider("Green", condition.green, Color(0xFF43A047)) { green -> onChange(condition.withRgb(green = green)) }
+        RgbSlider("Blue", condition.blue, Color(0xFF1E88E5)) { blue -> onChange(condition.withRgb(blue = blue)) }
+        OutlinedTextField(colorText, { next ->
             colorText = next
             next.parseArgb()?.let { onChange(condition.copy(expectedArgb = it)) }
-        },
-        modifier = Modifier.fillMaxWidth(),
-        label = { Text("Expected ARGB (for example #FF00AA11)") },
-        singleLine = true,
-    )
+        }, Modifier.fillMaxWidth(), label = { Text("Hex color · #AARRGGBB") }, singleLine = true)
+    }
+    val searchRegion = condition.region
+    if (searchRegion == null) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ConditionNumberField("X", xText, { next ->
+                xText = next
+                val x = next.toDoubleOrNull()?.takeIf { it in 0.0..1.0 } ?: return@ConditionNumberField
+                val y = yText.toDoubleOrNull()?.takeIf { it in 0.0..1.0 } ?: return@ConditionNumberField
+                onChange(condition.copy(point = NormalizedCoordinate(x, y)))
+            }, Modifier.weight(1f))
+            ConditionNumberField("Y", yText, { next ->
+                yText = next
+                val y = next.toDoubleOrNull()?.takeIf { it in 0.0..1.0 } ?: return@ConditionNumberField
+                val x = xText.toDoubleOrNull()?.takeIf { it in 0.0..1.0 } ?: return@ConditionNumberField
+                onChange(condition.copy(point = NormalizedCoordinate(x, y)))
+            }, Modifier.weight(1f))
+        }
+    } else {
+        Text("Matches when any pixel in this area has the selected color.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        ColorAreaPreview(searchRegion, previewWidthPx, previewHeightPx) { onChange(condition.copy(region = it)) }
+        RegionConditionFields(searchRegion) { onChange(condition.copy(region = it)) }
+    }
     ConditionNumberField("Tolerance (0 to 255)", toleranceText, { next ->
         toleranceText = next
         next.toIntOrNull()?.takeIf { it in 0..255 }?.let { onChange(condition.copy(tolerance = it)) }

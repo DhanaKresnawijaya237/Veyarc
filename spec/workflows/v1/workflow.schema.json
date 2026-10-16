@@ -231,7 +231,8 @@
             "type": { "const": "pixelColor" },
             "point": { "$ref": "#/$defs/coordinate" },
             "expectedArgb": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
-            "tolerance": { "type": "integer", "minimum": 0, "maximum": 255 }
+            "tolerance": { "type": "integer", "minimum": 0, "maximum": 255 },
+            "region": { "$ref": "#/$defs/rect", "description": "Optional area to search for any pixel of this color. Omit to check only point." }
           }
         },
         {

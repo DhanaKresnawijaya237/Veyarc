@@ -691,22 +691,28 @@ fun WorkflowEditorScreen(
             val targetStep = draft.stepsAt(target.path).getOrNull(target.index)
             val condition = targetStep?.conditionOrNull()
             if (condition != null) {
-                ConditionEditorDialog(
-                    initialCondition = condition,
-                    assets = draft.assetDescriptors,
-                    assetNames = draft.assetNames,
-                    defaultPackage = draft.allowedPackagesText.firstPackageOrDefault(),
-                    onAddTemplate = { templatePicker.launch("image/*") },
-                    loadAsset = ::loadDraftAsset,
-                    loadPreview = ::loadDraftPreview,
-                    previewWidthPx = draft.viewport.recordedWidthPx,
-                    previewHeightPx = draft.viewport.recordedHeightPx,
-                    onDismiss = { conditionTarget = null },
-                    onApply = { updatedCondition ->
-                        session.update(draft.updateCondition(target.path, target.index) { updatedCondition })
-                        conditionTarget = null
-                    },
-                )
+                CompositionLocalProvider(LocalColorPickerImages provides session.colorPickerImages) {
+                    ConditionEditorDialog(
+                        initialCondition = condition,
+                        assets = draft.assetDescriptors,
+                        assetNames = draft.assetNames,
+                        defaultPackage = draft.allowedPackagesText.firstPackageOrDefault(),
+                        onAddTemplate = { templatePicker.launch("image/*") },
+                        loadAsset = ::loadDraftAsset,
+                        loadPreview = ::loadDraftPreview,
+                        previewWidthPx = draft.viewport.recordedWidthPx,
+                        previewHeightPx = draft.viewport.recordedHeightPx,
+                        onDismiss = {
+                            session.colorPickerImages.clear()
+                            conditionTarget = null
+                        },
+                        onApply = { updatedCondition ->
+                            session.update(draft.updateCondition(target.path, target.index) { updatedCondition })
+                            session.colorPickerImages.clear()
+                            conditionTarget = null
+                        },
+                    )
+                }
             }
         }
     }

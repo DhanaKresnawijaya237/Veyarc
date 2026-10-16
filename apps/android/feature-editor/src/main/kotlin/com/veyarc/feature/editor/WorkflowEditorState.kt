@@ -139,6 +139,7 @@ class WorkflowEditorSession {
     internal var conditionTarget by mutableStateOf<ConditionTarget?>(null)
     internal var pendingTemplateCrop by mutableStateOf<TemplateCropDraft?>(null)
     internal var editTemplateTarget by mutableStateOf<com.veyarc.model.AssetId?>(null)
+    internal val colorPickerImages = ColorPickerImages()
     internal var allowedAppsExpanded by mutableStateOf(true)
     internal var templatesExpanded by mutableStateOf(true)
     internal var revisionPickerExpanded by mutableStateOf(false)
@@ -304,6 +305,7 @@ class WorkflowEditorSession {
     }
 
     private fun dismissEditors() {
+        colorPickerImages.clear()
         geometryTarget = null
         conditionTarget = null
         pendingTemplateCrop = null
@@ -933,7 +935,7 @@ fun WorkflowStep.summary(assetNames: Map<String, String> = emptyMap()): String =
 }
 
 fun Condition.summary(assetNames: Map<String, String> = emptyMap()): String = when (this) {
-    is PixelColorCondition -> "the pixel at ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}% has the selected color"
+    is PixelColorCondition -> if (region == null) "the pixel at ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}% has the selected color" else "the selected color appears in the search area"
 
     is ImagePresentCondition -> when (matchMode) {
         ImageMatchMode.APPEARS_WITHIN_REGION -> "${assetNames[assetId.value] ?: "the selected image"} appears"

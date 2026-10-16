@@ -176,6 +176,30 @@ class EphemeralScreenFrame internal constructor(
         }
     }
 
+    /** Copies the captured region into a caller-owned bitmap that must be recycled. */
+    fun copyBitmap(): android.graphics.Bitmap = withRgbaBytes { bytes ->
+        val width = capturedBounds.width
+        val height = capturedBounds.height
+        val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+        val row = IntArray(width)
+        try {
+            for (y in 0 until height) {
+                if (Thread.currentThread().isInterrupted) throw InterruptedException("Screen snapshot cancelled")
+                for (x in 0 until width) {
+                    val offset = (y * width + x) * 4
+                    row[x] = ((bytes[offset + 3].toInt() and 255) shl 24) or ((bytes[offset].toInt() and 255) shl 16) or ((bytes[offset + 1].toInt() and 255) shl 8) or (bytes[offset + 2].toInt() and 255)
+                }
+                bitmap.setPixels(row, 0, width, 0, y, width, 1)
+            }
+            bitmap
+        } catch (error: Throwable) {
+            bitmap.recycle()
+            throw error
+        } finally {
+            row.fill(0)
+        }
+    }
+
     /** Runs a bounded in-memory inspection without exposing the frame buffer to callers. */
     internal fun <T> withRgbaBytes(block: (ByteArray) -> T): T {
         check(!closed) { "The ephemeral frame has already been released" }
@@ -210,10 +234,10 @@ internal interface MediaProjectionSession : Closeable {
 
 /** Builds the one-shot consent request required for each capture session. */
 object MediaProjectionConsent {
-    fun createRequestIntent(context: Context): Intent {
+    fun createRequestIntent(context: Context, fullDisplay: Boolean = false): Intent {
         val manager = context.getSystemService(MediaProjectionManager::class.java)
             ?: throw MediaProjectionCaptureException("Android MediaProjection is unavailable")
-        return manager.createScreenCaptureIntent()
+        return if (fullDisplay && android.os.Build.VERSION.SDK_INT >= 34) manager.createScreenCaptureIntent(android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay()) else manager.createScreenCaptureIntent()
     }
 
     fun wasGranted(resultCode: Int, data: Intent?): Boolean = resultCode == Activity.RESULT_OK && data != null

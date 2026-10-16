@@ -136,7 +136,7 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
     }
 
     private fun conditionName(condition: Condition): String = when (condition) {
-        is PixelColorCondition -> "Pixel color at ${formatPoint(condition.point)}"
+        is PixelColorCondition -> if (condition.region == null) "Pixel color at ${formatPoint(condition.point)}" else "Color appears in the search area"
 
         is ImagePresentCondition -> when (condition.matchMode) {
             ImageMatchMode.SCREEN_STATE -> assetNames[condition.assetId.value]?.let { "Screen matches $it" } ?: "Screen state"
