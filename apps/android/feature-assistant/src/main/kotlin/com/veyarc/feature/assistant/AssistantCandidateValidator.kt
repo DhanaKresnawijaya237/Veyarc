@@ -103,7 +103,7 @@ object AssistantCandidateValidator {
         }
         if (locked.isNotEmpty()) return invalid("Candidate changed locked fields: ${locked.joinToString()}. Change these in the editor first.")
         val modelIssues = WorkflowValidator.validate(candidate)
-        if (modelIssues.isNotEmpty()) return diagnostics(modelIssues.map { "${it.path}: ${it.message}" })
+        if (modelIssues.isNotEmpty()) return diagnostics(modelIssues.map { "${it.path}: ${it.code}: ${it.message}" })
         val before = flatten(base.steps)
         val after = flatten(candidate.steps)
         val afterIds = after.mapTo(mutableSetOf()) { it.id }
