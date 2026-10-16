@@ -329,9 +329,15 @@ object WorkflowValidator {
         when (condition) {
             is PixelColorCondition -> Unit
 
-            is ImagePresentCondition -> validateImageAsset(condition.assetId, path, AssetKind.IMAGE_TEMPLATE, declaredAssets, referencedAssets, errors)
+            is ImagePresentCondition -> {
+                validateImageAsset(condition.assetId, path, AssetKind.IMAGE_TEMPLATE, declaredAssets, referencedAssets, errors)
+                validateImageBounds(condition.assetId, condition.region, condition.matchMode == ImageMatchMode.SCREEN_STATE, path, document, declaredAssets, errors)
+            }
 
-            is ImageAbsentCondition -> validateImageAsset(condition.assetId, path, AssetKind.IMAGE_TEMPLATE, declaredAssets, referencedAssets, errors)
+            is ImageAbsentCondition -> {
+                validateImageAsset(condition.assetId, path, AssetKind.IMAGE_TEMPLATE, declaredAssets, referencedAssets, errors)
+                validateImageBounds(condition.assetId, condition.region, false, path, document, declaredAssets, errors)
+            }
 
             is ForegroundPackageCondition -> validatePackage(condition.packageName, "$path/packageName", document, errors)
 
@@ -412,6 +418,17 @@ object WorkflowValidator {
                 errors,
             )
         }
+    }
+
+    private fun validateImageBounds(assetId: AssetId, region: NormalizedRect, screenState: Boolean, path: String, document: WorkflowDocument, assets: Map<String, AssetReference>, errors: MutableList<ValidationError>) {
+        val asset = assets[assetId.value] ?: return
+        val width = asset.widthPx ?: return
+        val height = asset.heightPx ?: return
+        val viewport = document.viewport
+        val regionWidth = kotlin.math.ceil((region.x + region.width) * viewport.recordedWidthPx).toInt().coerceAtMost(viewport.recordedWidthPx) - kotlin.math.floor(region.x * viewport.recordedWidthPx).toInt()
+        val regionHeight = kotlin.math.ceil((region.y + region.height) * viewport.recordedHeightPx).toInt().coerceAtMost(viewport.recordedHeightPx) - kotlin.math.floor(region.y * viewport.recordedHeightPx).toInt()
+        val invalid = if (screenState) width != viewport.recordedWidthPx || height != viewport.recordedHeightPx else width > regionWidth || height > regionHeight
+        if (invalid) errors += error(ValidationErrorCode.LIMIT_EXCEEDED, "$path/region", if (screenState) "${asset.displayName ?: "Image"} must match the full screen size ${viewport.recordedWidthPx} × ${viewport.recordedHeightPx} px." else "${asset.displayName ?: "Crop"} is $width × $height px and cannot fit the $regionWidth × $regionHeight px search area. Enlarge the area or use a smaller crop.")
     }
 
     private fun validateImageAsset(

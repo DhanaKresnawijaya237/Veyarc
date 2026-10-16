@@ -395,7 +395,7 @@ data class WorkflowDraft(
                 runLimits = runLimits,
                 variables = variables,
                 assets = assetDescriptors.map { asset ->
-                    AssetReference(asset.assetId, asset.kind, assetNames[asset.assetId.value] ?: asset.displayName)
+                    AssetReference(asset.assetId, asset.kind, assetNames[asset.assetId.value] ?: asset.displayName, asset.widthPx, asset.heightPx)
                 },
                 steps = steps,
             )

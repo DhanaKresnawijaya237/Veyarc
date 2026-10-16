@@ -153,8 +153,11 @@
       "properties": {
         "assetId": { "$ref": "#/$defs/assetId" },
         "kind": { "const": "imageTemplate" },
-        "displayName": { "type": "string", "minLength": 1, "maxLength": 64 }
-      }
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "widthPx": { "type": "integer", "minimum": 1 },
+        "heightPx": { "type": "integer", "minimum": 1 }
+      },
+      "dependentRequired": { "widthPx": ["heightPx"], "heightPx": ["widthPx"] }
     },
     "scalarValue": {
       "oneOf": [

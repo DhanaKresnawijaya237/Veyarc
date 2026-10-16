@@ -1112,7 +1112,8 @@ class WorkflowRepository internal constructor(
                     producerVersion = bundle.producerVersion,
                     assets = descriptors,
                 )
-                val byteLength = writeAndVerifyManifest(manifestFileName, manifest)
+                // Preserve old revisions so invalid image areas can still be opened and repaired.
+                val byteLength = writeAndVerifyManifest(manifestFileName, manifest, validateImageBounds = false)
                 check(
                     database.workflowDao().replaceRevisionStorage(
                         workflowId = authoritative.workflowId,
@@ -1192,7 +1193,20 @@ class WorkflowRepository internal constructor(
     private fun writeAndVerifyManifest(
         fileName: String,
         manifest: StoredRevisionManifest,
+        validateImageBounds: Boolean = true,
     ): Long {
+        if (validateImageBounds) {
+            val dimensions = manifest.assets.associateBy { it.assetId }
+            val verified = manifest.document.copy(
+                assets = manifest.document.assets.map { reference ->
+                    val asset = requireNotNull(dimensions[reference.assetId])
+                    require(reference.widthPx == null || (reference.widthPx == asset.widthPx && reference.heightPx == asset.heightPx)) { "Image dimensions do not match stored pixels" }
+                    reference.copy(widthPx = asset.widthPx, heightPx = asset.heightPx)
+                },
+            )
+            val issues = com.veyarc.model.WorkflowValidator.validate(verified)
+            require(issues.isEmpty()) { issues.joinToString { it.message } }
+        }
         val canonical = manifest.copy(assets = manifest.assets.sortedBy { it.assetId.value })
         val encoded = StoredRevisionManifestCodec.encode(canonical)
         val byteLength = try {

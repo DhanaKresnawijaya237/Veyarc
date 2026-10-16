@@ -44,7 +44,7 @@ object AssistantCandidateValidator {
         } catch (_: Exception) {
             return invalid("The workflow context could not be read. Reopen the workflow and try again.")
         }
-        val candidate = try {
+        var candidate = try {
             require(candidateJson.toByteArray(Charsets.UTF_8).size <= MAX_CANDIDATE_BYTES)
             WorkflowJson.checkNesting(candidateJson, 64)
             AssistantResponseCodec.rejectDuplicateKeys(candidateJson)
@@ -70,10 +70,28 @@ object AssistantCandidateValidator {
                 require(base.assets.none { it.displayName?.equals(addition.name, ignoreCase = true) == true })
             }
             require(imageAdditions.map { it.name.lowercase() }.distinct().size == imageAdditions.size)
-            imageAdditions.map(AssistantImageAddition::reference)
+            imageAdditions.map { addition ->
+                val source = availableImages.first { it.id == addition.sourceAttachmentId }
+                var width = (kotlin.math.ceil((addition.crop.x + addition.crop.width) * source.width) - kotlin.math.floor(addition.crop.x * source.width)).toInt()
+                var height = (kotlin.math.ceil((addition.crop.y + addition.crop.height) * source.height) - kotlin.math.floor(addition.crop.y * source.height)).toInt()
+                if (addition.purpose == AssistantImagePurpose.BACKGROUND && width.toLong() * height > com.veyarc.data.storage.DecodedTemplate.MAX_TEMPLATE_PIXELS) {
+                    val scale = kotlin.math.sqrt(com.veyarc.data.storage.DecodedTemplate.MAX_TEMPLATE_PIXELS.toDouble() / (width.toDouble() * height))
+                    width = (width * scale).toInt().coerceAtLeast(1)
+                    height = (height * scale).toInt().coerceAtLeast(1)
+                }
+                addition.reference().copy(widthPx = width, heightPx = height)
+            }
         } catch (_: Exception) {
             return invalid("The proposed image must come from a photo you attached, with a unique name and a valid crop.")
         }
+        // Fill omitted dimensions from local images; contradictory sizes still fail the locked comparison.
+        val images = (base.assets + imageReferences).associateBy { it.assetId }
+        candidate = candidate.copy(
+            assets = candidate.assets.map { reference ->
+                val image = images[reference.assetId]
+                if (image != null && reference.widthPx == null) reference.copy(widthPx = image.widthPx, heightPx = image.heightPx) else reference
+            },
+        )
         val locked = buildList {
             if (candidate.id != base.workflowId) add("workflow identity")
             if (candidate.schemaVersion != base.schemaVersion) add("schema version")
@@ -85,7 +103,7 @@ object AssistantCandidateValidator {
         }
         if (locked.isNotEmpty()) return invalid("Candidate changed locked fields: ${locked.joinToString()}. Change these in the editor first.")
         val modelIssues = WorkflowValidator.validate(candidate)
-        if (modelIssues.isNotEmpty()) return diagnostics(modelIssues.map { "${it.path}: ${it.code}" })
+        if (modelIssues.isNotEmpty()) return diagnostics(modelIssues.map { "${it.path}: ${it.message}" })
         val before = flatten(base.steps)
         val after = flatten(candidate.steps)
         val afterIds = after.mapTo(mutableSetOf()) { it.id }
