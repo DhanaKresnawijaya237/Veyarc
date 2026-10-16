@@ -485,6 +485,24 @@ fun WorkflowEditorScreen(
         }.getOrNull()
     }
 
+    val editTemplateTarget = session.editTemplateTarget
+    LaunchedEffect(editTemplateTarget) {
+        val target = editTemplateTarget ?: return@LaunchedEffect
+        val workflowId = session.draft?.workflowId
+        isWorking = true
+        try {
+            val asset = requireNotNull(loadDraftAsset(target)) { "Image is unavailable" }
+            val source = withContext(Dispatchers.Default) { loadTemplateCropSource(asset) }
+            if (session.draft?.workflowId == workflowId) pendingTemplateCrop = TemplateCropDraft(source, session.draft?.assetNames?.get(target.value).orEmpty(), com.veyarc.ui.ImageEdits(FULL_TEMPLATE_CROP, "view"))
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            statusMessage = "Could not open image: ${error.userMessage()}"
+        } finally {
+            session.editTemplateTarget = null
+            isWorking = false
+        }
+    }
+
     fun copyBlocks(path: StepListPath, ids: List<String>) {
         val current = session.draft ?: return
         val selected = current.stepsAt(path).filter { it.id in ids }
@@ -698,32 +716,42 @@ fun WorkflowEditorScreen(
             draft = cropDraft,
             displayWidthPx = display.recordedWidthPx,
             displayHeightPx = display.recordedHeightPx,
-            existingNames = session.draft?.activeAssetNames().orEmpty(),
+            existingNames = session.draft?.activeAssetNames().orEmpty() - cropDraft.source.existingAsset?.assetId?.let { session.draft?.assetNames?.get(it.value) }.orEmpty(),
             saving = isBusy,
             onDraftChange = { pendingTemplateCrop = it },
             onDismiss = { pendingTemplateCrop = null },
-            onApply = { crop, rotationQuarterTurns, requestedName, strokes ->
+            onApply = { crop, rotationQuarterTurns, requestedName, strokes, replace ->
                 scope.launch {
                     isWorking = true
                     statusMessage = null
-                    runCatching {
-                        withContext(Dispatchers.Default) {
-                            importTemplateAsset(context.contentResolver, cropDraft.source.uri, crop, rotationQuarterTurns, strokes)
+                    val originalDraft = session.draft
+                    try {
+                        val asset = withContext(Dispatchers.Default) {
+                            if (cropDraft.source.existingAsset != null) {
+                                importEditedTemplate(cropDraft.source, crop, rotationQuarterTurns, strokes, replace)
+                            } else {
+                                importTemplateAsset(context.contentResolver, cropDraft.source.uri, crop, rotationQuarterTurns, strokes)
+                            }
                         }
-                    }.onSuccess { asset ->
+                        check(session.draft === originalDraft) { "Workflow changed while the image was being saved. Try again." }
                         val prefix = if (crop == FULL_TEMPLATE_CROP) "Full screen" else "Crop"
                         clearTemplatePreviewCache()
-                        session.draft?.addAsset(asset, prefix)?.let { withAsset ->
+                        val original = cropDraft.source.existingAsset
+                        val current = session.draft
+                        val withImage = if (replace && original != null) current?.replaceAsset(asset) else current?.addAsset(asset, if (original == null) prefix else "${cropDraft.name} copy")
+                        withImage?.let { withAsset ->
                             session.update(
-                                if (requestedName.isBlank()) withAsset else withAsset.renameAsset(asset.assetId, requestedName),
+                                if (requestedName.isBlank() || (!replace && current?.activeAssetNames().orEmpty().any { it.equals(requestedName, true) })) withAsset else withAsset.renameAsset(asset.assetId, requestedName),
                             )
                         }
                         pendingTemplateCrop = null
-                        statusMessage = "Encrypted cropped image template added. Select it from the image condition."
-                    }.onFailure { error ->
-                        statusMessage = "Could not add image crop: ${error.userMessage()}"
+                        statusMessage = if (replace) "Image replaced." else "Image added."
+                    } catch (error: Exception) {
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        pendingTemplateCrop = cropDraft.copy(error = "Could not save image: ${error.userMessage()}")
+                    } finally {
+                        isWorking = false
                     }
-                    isWorking = false
                 }
             },
         )
@@ -1683,6 +1711,9 @@ private fun TemplateAssetSection(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                            }
+                            IconButton(onClick = { session.editTemplateTarget = asset.assetId }) {
+                                Icon(Icons.Outlined.Edit, contentDescription = "Edit image template")
                             }
                             IconButton(onClick = { onRemoveTemplate(asset.assetId) }) {
                                 Icon(Icons.Outlined.Delete, contentDescription = "Remove image template")

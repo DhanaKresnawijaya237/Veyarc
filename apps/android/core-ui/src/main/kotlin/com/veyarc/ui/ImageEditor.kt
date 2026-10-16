@@ -164,7 +164,7 @@ val ImageEditsSaver = listSaver<ImageEdits, Any>(
 
 /** One editor for chat images and original-resolution workflow template crops. */
 @Composable
-fun ImageEditor(source: Bitmap?, edits: ImageEdits, editable: Boolean, saving: Boolean, error: String?, applyEnabled: Boolean = true, onDismiss: () -> Unit, onApply: () -> Unit, details: (@Composable () -> Unit)? = null) {
+fun ImageEditor(source: Bitmap?, edits: ImageEdits, editable: Boolean, saving: Boolean, error: String?, applyEnabled: Boolean = true, onDismiss: () -> Unit, onApply: () -> Unit, details: (@Composable () -> Unit)? = null, tools: (@Composable () -> Unit)? = null, overlay: (@Composable () -> Unit)? = null) {
     val turns = edits.turns
     val previewBitmap by produceState<Pair<Bitmap, Boolean>?>(null, source, turns) {
         value = null
@@ -242,58 +242,58 @@ fun ImageEditor(source: Bitmap?, edits: ImageEdits, editable: Boolean, saving: B
     val close: @Composable () -> Unit = { IconButton(onClick = onDismiss, enabled = !saving) { Icon(Icons.Outlined.Close, "Close preview") } }
     val rotate: @Composable () -> Unit = { IconButton(onClick = edits::rotate, enabled = active) { Icon(Icons.AutoMirrored.Outlined.RotateRight, "Rotate") } }
     CompositionLocalProvider(LocalContentColor provides Color.White) {
-        if (landscape) {
-            Row(Modifier.fillMaxSize().safeDrawingPadding()) {
-                Column(Modifier.width(if (details != null) 196.dp else 56.dp).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
-                    if (details != null) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            close()
-                            if (editable) rotate()
-                        }
-                    } else {
+        Box(Modifier.fillMaxSize()) {
+            if (landscape) {
+                Row(Modifier.fillMaxSize().safeDrawingPadding()) {
+                    Column(Modifier.width(56.dp).fillMaxHeight().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
                         close()
                         if (editable) rotate()
+                        tools?.invoke()
                     }
-                    if (details != null) {
-                        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) { details() }
+                    Box(Modifier.weight(1f).fillMaxHeight()) {
+                        preview()
+                        if (details != null) Box(Modifier.align(Alignment.BottomCenter).padding(8.dp)) { details() }
+                    }
+                    if (editable) {
+                        Column(Modifier.width(112.dp).fillMaxHeight().padding(4.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
+                            if (edits.mode == "draw" && edits.tool != AnnotationTool.ERASER) LazyVerticalGrid(GridCells.Fixed(2), Modifier.weight(1f).testTag("annotation-colors")) { items(colors) { swatch(it) } }
+                            Row { undoRedo() }
+                            Row { modes() }
+                            accept()
                         }
                     }
                 }
-                Box(Modifier.weight(1f).fillMaxHeight()) { preview() }
-                if (editable) {
-                    Column(Modifier.width(112.dp).fillMaxHeight().padding(4.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
-                        if (edits.mode == "draw" && edits.tool != AnnotationTool.ERASER) LazyVerticalGrid(GridCells.Fixed(2), Modifier.weight(1f).testTag("annotation-colors")) { items(colors) { swatch(it) } }
-                        Row { undoRedo() }
-                        Row { modes() }
-                        accept()
+            } else {
+                Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        close()
+                        if (editable) {
+                            Row(Modifier.weight(1f), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                                rotate()
+                                tools?.invoke()
+                            }
+                            accept()
+                        } else {
+                            Spacer(Modifier.size(48.dp))
+                        }
                     }
-                }
-            }
-        } else {
-            Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    close()
+                    Box(Modifier.weight(1f).fillMaxWidth()) {
+                        preview()
+                        if (details != null) Box(Modifier.align(Alignment.BottomCenter).padding(8.dp)) { details() }
+                    }
                     if (editable) {
-                        rotate()
-                        accept()
-                    } else {
-                        Spacer(Modifier.size(48.dp))
-                    }
-                }
-                details?.invoke()
-                Box(Modifier.weight(1f).fillMaxWidth()) { preview() }
-                if (editable) {
-                    if (edits.mode == "draw" && edits.tool != AnnotationTool.ERASER) LazyRow(Modifier.fillMaxWidth().testTag("annotation-colors"), contentPadding = PaddingValues(horizontal = 12.dp)) { items(colors) { swatch(it) } }
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.Center) {
-                        undoRedo()
-                        Spacer(Modifier.weight(1f))
-                        modes()
+                        if (edits.mode == "draw" && edits.tool != AnnotationTool.ERASER) LazyRow(Modifier.fillMaxWidth().testTag("annotation-colors"), contentPadding = PaddingValues(horizontal = 12.dp)) { items(colors) { swatch(it) } }
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.Center) {
+                            undoRedo()
+                            Spacer(Modifier.weight(1f))
+                            modes()
+                        }
                     }
                 }
             }
+            if (source != null && error != null) Box(Modifier.fillMaxSize().safeDrawingPadding(), contentAlignment = Alignment.BottomCenter) { Text(error, Modifier.padding(12.dp), color = MaterialTheme.colorScheme.error) }
+            overlay?.invoke()
         }
-        if (source != null && error != null) Box(Modifier.fillMaxSize().safeDrawingPadding(), contentAlignment = Alignment.BottomCenter) { Text(error, Modifier.padding(12.dp), color = MaterialTheme.colorScheme.error) }
     }
 }
 

@@ -138,6 +138,7 @@ class WorkflowEditorSession {
     internal var geometryTarget by mutableStateOf<GeometryTarget?>(null)
     internal var conditionTarget by mutableStateOf<ConditionTarget?>(null)
     internal var pendingTemplateCrop by mutableStateOf<TemplateCropDraft?>(null)
+    internal var editTemplateTarget by mutableStateOf<com.veyarc.model.AssetId?>(null)
     internal var allowedAppsExpanded by mutableStateOf(true)
     internal var templatesExpanded by mutableStateOf(true)
     internal var revisionPickerExpanded by mutableStateOf(false)
@@ -306,6 +307,7 @@ class WorkflowEditorSession {
         geometryTarget = null
         conditionTarget = null
         pendingTemplateCrop = null
+        editTemplateTarget = null
         allowedAppsExpanded = true
         templatesExpanded = true
         revisionPickerExpanded = false

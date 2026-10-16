@@ -8,6 +8,7 @@ import android.graphics.Matrix
 import android.graphics.Rect
 import android.net.Uri
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import com.veyarc.data.storage.AndroidKeystoreKeySource
 import com.veyarc.data.storage.DecodedTemplate
@@ -20,6 +21,8 @@ import com.veyarc.model.WorkflowIds
 import com.veyarc.model.bundle.BundleAsset
 import com.veyarc.ui.AnnotationStroke
 import com.veyarc.ui.annotateCroppedImage
+import com.veyarc.ui.renderEditedImage
+import com.veyarc.ui.rotatedForEditing
 import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
@@ -39,7 +42,25 @@ internal data class TemplateCropSource(
     val widthPx: Int,
     val heightPx: Int,
     val preview: ImageBitmap,
+    val existingAsset: BundleAsset? = null,
 )
+
+internal fun loadTemplateCropSource(asset: BundleAsset): TemplateCropSource {
+    val preview = requireNotNull(decodeTemplatePreview(asset)) { "Image could not be opened" }
+    return TemplateCropSource(Uri.parse("veyarc-template:${asset.assetId.value}"), preview.widthPx, preview.heightPx, preview.image, asset)
+}
+
+internal fun importEditedTemplate(source: TemplateCropSource, crop: NormalizedRect, turns: Int, strokes: List<AnnotationStroke>, replace: Boolean): BundleAsset {
+    val asset = requireNotNull(source.existingAsset)
+    val image = requireNotNull(decodeTemplatePreview(asset, maxOf(source.widthPx, source.heightPx))).image.asAndroidBitmap()
+    val rotated = image.rotatedForEditing(turns)
+    val result = try {
+        renderEditedImage(rotated, crop, strokes)
+    } finally {
+        if (rotated !== image) rotated.recycle()
+    }
+    return encryptTemplateBitmap(result, if (replace) asset.assetId else AssetId("template-${WorkflowIds.newUuid()}"))
+}
 
 /** Loads a bounded display copy while retaining the original dimensions used for the final crop. */
 internal fun loadTemplateCropSource(contentResolver: ContentResolver, uri: Uri): TemplateCropSource {
