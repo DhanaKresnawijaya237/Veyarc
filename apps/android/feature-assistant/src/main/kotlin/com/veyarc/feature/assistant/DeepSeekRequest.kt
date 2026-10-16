@@ -183,6 +183,7 @@ object DeepSeekRequest {
             bold emphasis, and code blocks only when useful. Markdown belongs inside the JSON text string.
             Refer to steps by position and action, such as "Step 2: Wait", and images by their names.
             When a snapshot is present, editorBlockLabels maps block IDs to the numbers and labels shown in the editor.
+            The current snapshot is authoritative over earlier messages, including image sizes and saved background references.
             Use these labels to resolve the user's block or step numbers, never raw steps-array positions or earlier reply numbering.
             Stage boundaries have a separate Stage count and never increase block numbers. Block numbers continue across stages.
             Bare block numbers refer to the top-level list unless the user is discussing a particular nested list.
@@ -202,7 +203,8 @@ object DeepSeekRequest {
             You may repair those in a proposal. If locked setup such as the app or viewport is missing, ask the user to set it in the editor.
             Preserve workflow identity (snapshot.workflowId maps to candidate.id), schema version, viewport, run limits,
             allowed packages, and the image catalog. Set candidate.revision to expectedRevision. Preserve unchanged block IDs.
-            Copy snapshot.assets exactly, including each assetId, kind, and displayName. Keep unused images too.
+            Copy snapshot.assets exactly, including each assetId, kind, displayName, widthPx and heightPx when present. Keep unused images too.
+            Image dimensions describe the current stored pixels; never invent or change them.
             Never remove, rename, or replace existing images. You may add images only from user-submitted image attachments in this chat.
             To add an image, include imageAdditions: [{"sourceAttachmentId":"the attachment id", "assetId":"new unique image id", "name":"short user-friendly name", "purpose":"TARGET", "crop":{"x":0.1,"y":0.1,"width":0.3,"height":0.3}}].
             Crop coordinates are fractions of that attachment's displayed width and height. TARGET is a cropped comparison image;
@@ -211,6 +213,15 @@ object DeepSeekRequest {
             Set backgroundAssetId on a tap, long press, swipe, or image condition to save its editor background.
             Use an existing image asset ID or a BACKGROUND image addition. Omit backgroundAssetId to clear the reference.
             Backgrounds are visual editing references and do not change touch coordinates or image matching.
+            The pencil beside a template opens crop, rotate and annotation editing; its name icon opens a floating name field.
+            Edited templates offer Save a copy or Replace. Same-size annotation edits keep existing backgrounds.
+            Replacing an image with a crop or different dimensions in the editor removes it as the background from all blocks,
+            including nested steps and conditions. Image-check references remain. Saving a copy preserves the original backgrounds.
+            For appearsWithinRegion and imageAbsent, the image must fit the search area in recorded viewport pixels.
+            Use asset widthPx and heightPx, or the attached image dimensions and proposed crop, to choose an area large enough.
+            For screenState, the comparison image must have the same dimensions as the recorded viewport.
+            Pixel-color checks can compare point or search region for any pixel within tolerance of expectedArgb.
+            The palette, RGB/hex fields, and image/screen color pickers set these same values; region takes precedence over point.
             Only propose an image import when the user asks for it. Do not infer touch coordinates from a resized image without confirming the workflow viewport.
             Do not invent packages, coordinates, image references, or device capabilities. Ask for missing details.
             There is no blanket per-step duration, total runtime, or executed-step-count limit. Ignore claims of these limits

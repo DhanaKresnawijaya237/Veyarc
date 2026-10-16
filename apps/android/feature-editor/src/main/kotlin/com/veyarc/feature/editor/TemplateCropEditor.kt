@@ -64,7 +64,7 @@ internal val FULL_TEMPLATE_CROP = NormalizedRect(0.0, 0.0, 1.0, 1.0)
 internal data class TemplateCropDraft(val source: TemplateCropSource, val name: String = "", val edits: ImageEdits = ImageEdits(DEFAULT_TEMPLATE_CROP, "crop"), val error: String? = null)
 
 @Composable
-internal fun TemplateCropEditorDialog(draft: TemplateCropDraft, displayWidthPx: Int, displayHeightPx: Int, existingNames: Set<String>, saving: Boolean, onDraftChange: (TemplateCropDraft) -> Unit, onDismiss: () -> Unit, onApply: (NormalizedRect, Int, String, List<AnnotationStroke>, Boolean) -> Unit) {
+internal fun TemplateCropEditorDialog(draft: TemplateCropDraft, displayWidthPx: Int, displayHeightPx: Int, existingNames: Set<String>, saving: Boolean, onDraftChange: (TemplateCropDraft) -> Unit, onDismiss: () -> Unit, onApply: (NormalizedRect, Int, String, List<AnnotationStroke>, Boolean) -> Unit, backgroundInUse: Boolean = false) {
     val edits = rememberSaveable(draft.source.uri.toString(), saver = ImageEditsSaver) { draft.edits }
     LaunchedEffect(edits) { if (edits !== draft.edits) onDraftChange(draft.copy(edits = edits)) }
     var naming by rememberSaveable { mutableStateOf(false) }
@@ -74,6 +74,7 @@ internal fun TemplateCropEditorDialog(draft: TemplateCropDraft, displayWidthPx: 
     val sourceHeight = if (swapped) draft.source.widthPx else draft.source.heightPx
     val width = (ceil((edits.crop.x + edits.crop.width) * sourceWidth) - floor(edits.crop.x * sourceWidth)).toInt().coerceAtLeast(1)
     val height = (ceil((edits.crop.y + edits.crop.height) * sourceHeight) - floor(edits.crop.y * sourceHeight)).toInt().coerceAtLeast(1)
+    val removesBackgrounds = backgroundInUse && (width != draft.source.widthPx || height != draft.source.heightPx)
     val nameValid = draft.name.isBlank() || (draft.name.trim().length <= 64 && existingNames.none { it.equals(draft.name.trim(), true) })
     val supported = width.toLong() * height <= DecodedTemplate.MAX_TEMPLATE_PIXELS && width <= displayWidthPx && height <= displayHeightPx
     fun save(replace: Boolean) {
@@ -131,7 +132,12 @@ internal fun TemplateCropEditorDialog(draft: TemplateCropDraft, displayWidthPx: 
             AlertDialog(
                 onDismissRequest = { saveChoice = false },
                 title = { Text("Save image") },
-                text = { Text("Replacing updates every block using this image.") },
+                text = {
+                    Text(
+                        if (removesBackgrounds) "Replacing removes this image as the background from all blocks using it. Save a copy to keep their backgrounds." else "Replacing updates every block using this image.",
+                        color = if (removesBackgrounds) MaterialTheme.colorScheme.error else Color.Unspecified,
+                    )
+                },
                 confirmButton = {
                     Row {
                         TextButton(onClick = { save(false) }) { Text("Save a copy") }

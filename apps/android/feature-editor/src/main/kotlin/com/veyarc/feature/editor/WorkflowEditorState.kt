@@ -48,6 +48,7 @@ import com.veyarc.model.WorkflowValidator
 import com.veyarc.model.backgroundAssetId
 import com.veyarc.model.bundle.BundleAsset
 import com.veyarc.model.bundle.WorkflowBundle
+import com.veyarc.model.withBackgroundAsset
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 
@@ -588,11 +589,12 @@ data class WorkflowDraft(
         )
     }
 
-    fun replaceAsset(asset: BundleAsset): WorkflowDraft = copy(
+    fun replaceAsset(asset: BundleAsset, removeBackgrounds: Boolean = assetDescriptors.any { it.assetId == asset.assetId && (it.widthPx != asset.widthPx || it.heightPx != asset.heightPx) }): WorkflowDraft = copy(
         assets = (assets.filterNot { it.assetId == asset.assetId } + asset).sortedBy { it.assetId.value },
         assetDescriptors = assetDescriptors.map { existing ->
             if (existing.assetId == asset.assetId) asset.toDescriptor(existing.displayName, existing.addedAtMs) else existing
         },
+        steps = if (removeBackgrounds) steps.withoutBackground(asset.assetId) else steps,
     )
 
     fun removeAsset(assetId: com.veyarc.model.AssetId): WorkflowDraft = copy(
@@ -735,6 +737,27 @@ data class WorkflowDraft(
                 used += name.lowercase()
                 asset.assetId.value to name
             }
+        }
+    }
+}
+
+private fun List<WorkflowStep>.withoutBackground(assetId: com.veyarc.model.AssetId): List<WorkflowStep> {
+    fun condition(value: Condition): Condition = when (value) {
+        is ImagePresentCondition -> if (value.backgroundAssetId == assetId) value.copy(backgroundAssetId = null) else value
+        is ImageAbsentCondition -> if (value.backgroundAssetId == assetId) value.copy(backgroundAssetId = null) else value
+        is AndCondition -> value.copy(conditions = value.conditions.map(::condition))
+        is OrCondition -> value.copy(conditions = value.conditions.map(::condition))
+        is NotCondition -> value.copy(condition = condition(value.condition))
+        else -> value
+    }
+    return map { original ->
+        val step = if (original.backgroundAssetId() == assetId) original.withBackgroundAsset(null) else original
+        when (step) {
+            is WaitUntil -> step.copy(condition = condition(step.condition))
+            is IfElse -> step.copy(condition = condition(step.condition), thenSteps = step.thenSteps.withoutBackground(assetId), elseSteps = step.elseSteps.withoutBackground(assetId))
+            is WhileStep -> step.copy(condition = condition(step.condition), bodySteps = step.bodySteps.withoutBackground(assetId))
+            is Repeat -> step.copy(bodySteps = step.bodySteps.withoutBackground(assetId))
+            else -> step
         }
     }
 }

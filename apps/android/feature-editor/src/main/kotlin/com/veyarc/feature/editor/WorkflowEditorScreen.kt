@@ -723,6 +723,7 @@ fun WorkflowEditorScreen(
             displayWidthPx = display.recordedWidthPx,
             displayHeightPx = display.recordedHeightPx,
             existingNames = session.draft?.activeAssetNames().orEmpty() - cropDraft.source.existingAsset?.assetId?.let { session.draft?.assetNames?.get(it.value) }.orEmpty(),
+            backgroundInUse = cropDraft.source.existingAsset?.assetId?.value?.let { session.draft?.assetUsageNumbers()?.get(it)?.background?.isNotEmpty() } == true,
             saving = isBusy,
             onDraftChange = { pendingTemplateCrop = it },
             onDismiss = { pendingTemplateCrop = null },
@@ -744,7 +745,7 @@ fun WorkflowEditorScreen(
                         clearTemplatePreviewCache()
                         val original = cropDraft.source.existingAsset
                         val current = session.draft
-                        val withImage = if (replace && original != null) current?.replaceAsset(asset) else current?.addAsset(asset, if (original == null) prefix else "${cropDraft.name} copy")
+                        val withImage = if (replace && original != null) current?.replaceAsset(asset, removeBackgrounds = asset.widthPx != cropDraft.source.widthPx || asset.heightPx != cropDraft.source.heightPx) else current?.addAsset(asset, if (original == null) prefix else "${cropDraft.name} copy")
                         withImage?.let { withAsset ->
                             session.update(
                                 if (requestedName.isBlank() || (!replace && current?.activeAssetNames().orEmpty().any { it.equals(requestedName, true) })) withAsset else withAsset.renameAsset(asset.assetId, requestedName),
