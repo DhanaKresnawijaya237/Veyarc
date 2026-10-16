@@ -940,8 +940,8 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
     }
     val reviewLabel = when (turn.applyState) {
         ProposalApplyState.NONE -> status.label
-        ProposalApplyState.RESERVED -> if (state.isApplyingImages) "Adding images…" else "Apply attempt recorded"
-        ProposalApplyState.APPLIED -> "Applied to draft"
+        ProposalApplyState.RESERVED -> if (state.isApplyingProposal) "Saving changes…" else "Save interrupted"
+        ProposalApplyState.APPLIED -> turn.appliedRevision?.let { "Saved revision $it" } ?: "Applied to draft"
         ProposalApplyState.REJECTED -> "Apply was blocked"
     }
     val colors = MaterialTheme.colorScheme
@@ -980,11 +980,11 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
             AnimatedVisibility(expanded, enter = expandVertically(tween(140), expandFrom = Alignment.Top) + fadeIn(tween(90)), exit = shrinkVertically(tween(120), shrinkTowards = Alignment.Top) + fadeOut(tween(70))) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     when (turn.applyState) {
-                        ProposalApplyState.RESERVED -> if (state.isApplyingImages) LinearProgressIndicator(Modifier.fillMaxWidth()) else Text("Check your draft in the editor before continuing.")
+                        ProposalApplyState.RESERVED -> if (state.isApplyingProposal) LinearProgressIndicator(Modifier.fillMaxWidth()) else Text("Check saved revisions before sending another request.")
 
                         ProposalApplyState.APPLIED -> Unit
 
-                        ProposalApplyState.REJECTED -> Text("Nothing applied. Send a new request.")
+                        ProposalApplyState.REJECTED -> Text(turn.applyError ?: "Nothing saved. Send a new request.")
 
                         ProposalApplyState.NONE -> when (status) {
                             AssistantReviewStatus.STALE -> Text("Draft changed. Send a new request.", color = MaterialTheme.colorScheme.error)
@@ -1016,9 +1016,9 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
                         }
                         if (compact) OutlinedButton(onClick = { allChangesVisible = true }, modifier = Modifier.fillMaxWidth()) { Text("View all changes") }
                     }
-                    Text(if (state.supportsApply && proposal != null) "Draft only. Save and Run are separate." else "Sample only. Apply is unavailable.", style = MaterialTheme.typography.bodySmall)
+                    Text(if (state.supportsApply && proposal != null) "Saves a new revision. Does not run it." else "Sample only. Apply is unavailable.", style = MaterialTheme.typography.bodySmall)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { state.applyProposal(turn.id) }, enabled = changes.isSuccess && state.canApply(turn)) { Text(if (compact) "Apply all changes" else "Apply to draft") }
+                        Button(onClick = { state.applyProposal(turn.id) }, enabled = changes.isSuccess && state.canApply(turn)) { Text("Apply and save") }
                         if (proposal != null && !turn.proposalDismissed && turn.applyState == ProposalApplyState.NONE) TextButton(onClick = { state.dismissProposal(turn.id) }, enabled = state.canChange) { Text("Dismiss proposal") }
                     }
                 }

@@ -35,6 +35,7 @@ import com.veyarc.feature.assistant.AssistantPreviewHost
 import com.veyarc.feature.assistant.AssistantPreviewState
 import com.veyarc.feature.editor.WorkflowEditorScreen
 import com.veyarc.feature.editor.WorkflowEditorSession
+import com.veyarc.feature.editor.saveRevision
 import com.veyarc.feature.recorder.CoordinateRecorderScreen
 import com.veyarc.feature.recorder.CoordinateRecordingRuntime
 import com.veyarc.feature.runner.WorkflowRunController
@@ -619,7 +620,21 @@ internal class EditorSessionOwner(application: Application) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val state = WorkflowEditorSession()
     private val chatRepository = com.veyarc.data.storage.ChatRepository(application)
-    private val assistantDraft = AssistantDraftBridge(state)
+    private val workflowRepository = WorkflowRepository(application)
+    private val assistantDraft = AssistantDraftBridge(state) { expected, candidate ->
+        val stored = state.saveRevision(workflowRepository, expected, candidate)
+        runCatching {
+            ReplayWorkflowCatalog.addOrReplace(
+                application,
+                ReplayControllerWorkflow(
+                    workflowId = stored.revision.document.id,
+                    revision = stored.revision.document.revision,
+                    name = stored.revision.document.name,
+                ),
+            )
+        }
+        stored.revision.document.revision
+    }
     private val assistantConnections = com.veyarc.data.storage.AssistantConnectionStore(application)
     private val assistantAttachments = com.veyarc.feature.assistant.AssistantAttachmentImporter(application)
     val assistant = AssistantPreviewState(

@@ -234,7 +234,7 @@ private val GUIDE_TOPICS = mapOf(
             "Image support depends on the model. AI can add crops and backgrounds.",
         ),
         "Review AI changes" to listOf(
-            "Open Changes to preview edits. View all shows more; Apply updates the draft; Dismiss leaves it alone.",
+            "Open Changes to review edits. Apply and save creates a revision; Dismiss keeps the workflow as it is.",
             "Undo reverses edits. Review, then Save. Run is separate.",
         ),
         "Manage workflows and runs" to listOf(

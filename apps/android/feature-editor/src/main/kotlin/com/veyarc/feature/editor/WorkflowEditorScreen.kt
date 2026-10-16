@@ -415,35 +415,12 @@ fun WorkflowEditorScreen(
             pendingOrientationSave = PendingOrientationSave(draft, afterSave)
             return
         }
-        val destinationFolderId = session.destinationFolderId
-        if (isBusy || !session.beginSave()) return
+        if (isBusy) return
         isWorking = true
         scope.launch {
             try {
                 statusMessage = null
-                val stored = session.persistSave(draft) {
-                    withContext(Dispatchers.IO) {
-                        val latest = repository.listRevisions(draft.workflowId).maxOfOrNull { it.revision }
-                        if (latest != null && latest > (draft.latestKnownRevision ?: 0)) {
-                            throw WorkflowStorageException("A newer saved revision exists. Open it and review your changes before saving again.")
-                        }
-                        val sourceRevision = draft.lastSavedRevision
-                        if (sourceRevision == null) {
-                            val bundle = build.bundle
-                                ?: throw WorkflowStorageException("Unsaved workflow assets are incomplete")
-                            repository.saveRevision(bundle, destinationFolderId)
-                        } else {
-                            repository.saveRevisionFromAssetChanges(
-                                sourceWorkflowId = draft.workflowId,
-                                sourceRevision = sourceRevision,
-                                document = document,
-                                changedAssets = draft.assets,
-                                destinationFolderId = destinationFolderId,
-                            )
-                        }
-                        repository.loadRevisionForEditor(document.id, document.revision)
-                    }
-                }
+                val stored = session.saveRevision(repository, draft)
                 ReplayWorkflowCatalog.addOrReplace(
                     context.applicationContext,
                     ReplayControllerWorkflow(
@@ -462,7 +439,7 @@ fun WorkflowEditorScreen(
             } finally {
                 isWorking = false
             }
-        }.invokeOnCompletion { session.finishSave() }
+        }
     }
 
     fun saveAndRun(draft: WorkflowDraft) {
