@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -60,6 +61,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -335,9 +337,10 @@ private fun PixelConditionFields(
             }
         }
     }
+    ColorSampleTools(assets, assetNames, loadAsset, loadPreview, previewWidthPx, previewHeightPx) { point, argb -> onChange(condition.copy(point = point ?: condition.point, expectedArgb = argb)) }
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
@@ -346,7 +349,7 @@ private fun PixelConditionFields(
                 .background(Color(condition.expectedArgb.toInt()), MaterialTheme.shapes.medium)
                 .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.medium),
         )
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text("Colour preview", style = MaterialTheme.typography.labelLarge)
             Text(
                 condition.expectedArgb.toArgbText(),
@@ -359,10 +362,15 @@ private fun PixelConditionFields(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        Surface(
+            Modifier.clip(RoundedCornerShape(14.dp)).toggleable(showRgb, role = Role.Switch, onValueChange = { showRgb = it }),
+            color = if (showRgb) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = if (showRgb) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+        ) {
+            Text("RGB & hex", Modifier.padding(horizontal = 12.dp, vertical = 14.dp), style = MaterialTheme.typography.labelMedium)
+        }
     }
     ColorPalette(condition.expectedArgb) { onChange(condition.copy(expectedArgb = it)) }
-    ColorSampleTools { point, argb -> onChange(condition.copy(point = point, expectedArgb = argb)) }
-    TextButton(onClick = { showRgb = !showRgb }) { Text(if (showRgb) "Hide RGB & hex" else "RGB & hex") }
     if (showRgb) {
         RgbSlider("Red", condition.red, Color(0xFFE53935)) { red -> onChange(condition.withRgb(red = red)) }
         RgbSlider("Green", condition.green, Color(0xFF43A047)) { green -> onChange(condition.withRgb(green = green)) }
@@ -437,10 +445,6 @@ private fun RgbSlider(
     onValueChange: (Int) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
-            Text(value.toString(), style = MaterialTheme.typography.bodyMedium)
-        }
         Box(modifier = Modifier.fillMaxWidth().height(36.dp), contentAlignment = Alignment.Center) {
             Box(
                 modifier = Modifier
@@ -450,6 +454,7 @@ private fun RgbSlider(
                     .background(Brush.horizontalGradient(listOf(Color.Black, color))),
             )
             Slider(
+                modifier = Modifier.semantics { contentDescription = label },
                 value = value.toFloat(),
                 onValueChange = { onValueChange(it.roundToInt().coerceIn(0, 255)) },
                 valueRange = 0f..255f,

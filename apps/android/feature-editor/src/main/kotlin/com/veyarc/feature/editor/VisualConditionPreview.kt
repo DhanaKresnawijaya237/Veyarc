@@ -67,7 +67,7 @@ internal fun ColorAreaPreview(region: NormalizedRect, width: Int, height: Int, b
     val background by produceState<TemplatePreviewData?>(null, backgroundAsset) {
         value = backgroundAsset?.let { asset -> withContext(Dispatchers.Default) { decodeTemplatePreview(asset) } }
     }
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.padding(12.dp)) {
             Text("Drag the area or its corners.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             DeviceComparisonPreview(region, width.coerceAtLeast(1), height.coerceAtLeast(1), null, background, onChange, false, Modifier.fillMaxWidth().height(260.dp))

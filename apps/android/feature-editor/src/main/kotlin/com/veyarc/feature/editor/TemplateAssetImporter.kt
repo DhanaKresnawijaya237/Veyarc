@@ -78,6 +78,21 @@ internal fun loadTemplateCropSource(contentResolver: ContentResolver, uri: Uri):
 }
 
 internal fun sampleImagePixel(resolver: ContentResolver, source: TemplateCropSource, point: NormalizedCoordinate): Long {
+    source.existingAsset?.let { asset ->
+        val decoded = EncryptedTemplateAssetCodec(AndroidKeystoreKeySource(TEMPLATE_ASSET_KEY_ALIAS)).decrypt(asset.assetId, asset.bytes)
+        val rgba = decoded.takeRgbaBytes()
+        return try {
+            val x = (point.x * (decoded.widthPx - 1)).roundToInt().coerceIn(0, decoded.widthPx - 1)
+            val y = (point.y * (decoded.heightPx - 1)).roundToInt().coerceIn(0, decoded.heightPx - 1)
+            val offset = (y * decoded.widthPx + x) * 4
+            ((rgba[offset + 3].toLong() and 255) shl 24) or
+                ((rgba[offset].toLong() and 255) shl 16) or
+                ((rgba[offset + 1].toLong() and 255) shl 8) or
+                (rgba[offset + 2].toLong() and 255)
+        } finally {
+            rgba.fill(0)
+        }
+    }
     val x = (point.x * (source.widthPx - 1)).roundToInt().coerceIn(0, source.widthPx - 1)
     val y = (point.y * (source.heightPx - 1)).roundToInt().coerceIn(0, source.heightPx - 1)
     if (source.uri == Uri.EMPTY) return source.preview.asAndroidBitmap().getPixel(x, y).toLong() and 0xFFFFFFFFL

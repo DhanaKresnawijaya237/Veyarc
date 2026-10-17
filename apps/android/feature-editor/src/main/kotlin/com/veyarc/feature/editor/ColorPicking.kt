@@ -65,7 +65,11 @@ import androidx.compose.ui.window.DialogProperties
 import com.veyarc.automation.android.MediaProjectionCaptureRuntime
 import com.veyarc.automation.android.MediaProjectionCaptureService
 import com.veyarc.automation.android.MediaProjectionConsent
+import com.veyarc.data.storage.WorkflowAssetDescriptor
+import com.veyarc.model.AssetId
+import com.veyarc.model.AssetKind
 import com.veyarc.model.NormalizedCoordinate
+import com.veyarc.model.bundle.BundleAsset
 import com.veyarc.ui.ZoomableImage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -128,7 +132,15 @@ internal fun ColorPalette(argb: Long, onChange: (Long) -> Unit) {
 }
 
 @Composable
-internal fun ColorSampleTools(onPick: (NormalizedCoordinate, Long) -> Unit) {
+internal fun ColorSampleTools(
+    assets: List<WorkflowAssetDescriptor>,
+    assetNames: Map<String, String>,
+    loadAsset: suspend (AssetId) -> BundleAsset?,
+    loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
+    previewWidthPx: Int,
+    previewHeightPx: Int,
+    onPick: (NormalizedCoordinate?, Long) -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val pick by rememberUpdatedState(onPick)
@@ -141,6 +153,7 @@ internal fun ColorSampleTools(onPick: (NormalizedCoordinate, Long) -> Unit) {
     var countdown by remember { mutableStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
     var explainCapture by rememberSaveable { mutableStateOf(false) }
+    var showImages by rememberSaveable { mutableStateOf(false) }
     var captureJob by remember { mutableStateOf<Job?>(null) }
     DisposableEffect(Unit) {
         onDispose {
@@ -151,7 +164,7 @@ internal fun ColorSampleTools(onPick: (NormalizedCoordinate, Long) -> Unit) {
     }
     DisposableEffect(source) {
         val displayed = source
-        onDispose { if (retainedImages == null || retainedImages.current(imageId) !== displayed) displayed?.preview?.asAndroidBitmap()?.recycle() }
+        onDispose { if (displayed?.existingAsset == null && (retainedImages == null || retainedImages.current(imageId) !== displayed)) displayed?.preview?.asAndroidBitmap()?.recycle() }
     }
     val upload = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null && alive.get()) {
@@ -205,7 +218,7 @@ internal fun ColorSampleTools(onPick: (NormalizedCoordinate, Long) -> Unit) {
         }
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = { upload.launch("image/*") }, enabled = !busy, modifier = Modifier.weight(1f)) {
+        OutlinedButton(onClick = { showImages = true }, enabled = !busy, modifier = Modifier.weight(1f)) {
             Icon(Icons.Outlined.Colorize, null, Modifier.size(18.dp))
             Text(" From image")
         }
@@ -214,6 +227,42 @@ internal fun ColorSampleTools(onPick: (NormalizedCoordinate, Long) -> Unit) {
             Text(" Screen")
         }
     }
+    TemplatePickerSheet(
+        visible = showImages,
+        title = "Choose image",
+        assets = assets.filter { it.kind == AssetKind.IMAGE_TEMPLATE },
+        assetNames = assetNames,
+        displayWidthPx = previewWidthPx,
+        displayHeightPx = previewHeightPx,
+        fullScreenOnly = false,
+        selectedAssetId = null,
+        allowNone = false,
+        allowAnySize = true,
+        onDismiss = { showImages = false },
+        onAddImage = {
+            showImages = false
+            upload.launch("image/*")
+        },
+        onSelect = { id ->
+            showImages = false
+            if (id != null && alive.get()) {
+                scope.launch {
+                    busy = true
+                    try {
+                        val asset = requireNotNull(loadAsset(id))
+                        source = runInterruptible(Dispatchers.IO) { loadTemplateCropSource(asset) }
+                        error = null
+                    } catch (failure: Exception) {
+                        if (failure is CancellationException) throw failure
+                        error = "Could not open image."
+                    } finally {
+                        busy = false
+                    }
+                }
+            }
+        },
+        loadPreview = loadPreview,
+    )
     if (busy) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -238,7 +287,9 @@ internal fun ColorSampleTools(onPick: (NormalizedCoordinate, Long) -> Unit) {
     }
     source?.let { image ->
         PixelSampleDialog(image, onDismiss = { source = null }, onPick = { point, argb ->
-            pick(point, argb)
+            // A crop has no screen origin, so it supplies only the color.
+            val screenPoint = point.takeUnless { image.existingAsset != null && (image.widthPx != previewWidthPx || image.heightPx != previewHeightPx) }
+            pick(screenPoint, argb)
             source = null
         })
     }
