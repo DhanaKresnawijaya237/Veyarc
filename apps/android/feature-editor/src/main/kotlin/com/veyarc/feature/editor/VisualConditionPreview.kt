@@ -179,8 +179,8 @@ private fun DeviceComparisonPreview(
     BoxWithConstraints(modifier = modifier, contentAlignment = Alignment.Center) {
         val horizontalPadding = 12.dp
         val verticalPadding = 8.dp
-        val availableWidth = maxWidth - horizontalPadding * 2
-        val availableHeight = maxHeight - verticalPadding * 2
+        val availableWidth = (maxWidth - horizontalPadding * 2).coerceAtLeast(0.dp)
+        val availableHeight = (maxHeight - verticalPadding * 2).coerceAtLeast(0.dp)
         val screenWidth = minOf(availableWidth, availableHeight * displayAspectRatio)
         val screenHeight = screenWidth / displayAspectRatio
 
@@ -226,7 +226,8 @@ private fun DeviceComparisonPreview(
             } else {
                 Modifier.pointerInput(Unit) {
                     detectDragGestures(
-                        onDragStart = { offset ->
+                        onDragStart = dragStart@{ offset ->
+                            if (size.width == 0 || size.height == 0) return@dragStart
                             activeHandle = selectRegionHandle(
                                 region = currentRegion,
                                 point = NormalizedCoordinate(
@@ -239,7 +240,7 @@ private fun DeviceComparisonPreview(
                         onDragEnd = { activeHandle = null },
                         onDragCancel = { activeHandle = null },
                     ) { change, dragAmount ->
-                        val handle = activeHandle ?: return@detectDragGestures
+                        val handle = activeHandle?.takeIf { size.width > 0 && size.height > 0 } ?: return@detectDragGestures
                         change.consume()
                         currentOnRegionChange?.invoke(
                             updateRegion(
@@ -257,6 +258,9 @@ private fun DeviceComparisonPreview(
                     .fillMaxSize()
                     .then(interactionModifier),
             ) {
+                val handleRadius = 7.dp.toPx()
+                // A collapsing parent can temporarily measure this preview at zero size.
+                if (size.minDimension < handleRadius * 2) return@Canvas
                 val searchRect = Rect(
                     left = (region.x * size.width).toFloat(),
                     top = (region.y * size.height).toFloat(),
@@ -284,7 +288,6 @@ private fun DeviceComparisonPreview(
                     style = Stroke(width = strokeWidth),
                 )
                 if (!screenStateMode) {
-                    val handleRadius = 7.dp.toPx()
                     val handleCenterRadius = 2.5.dp.toPx()
                     listOf(searchRect.topLeft, searchRect.topRight, searchRect.bottomLeft, searchRect.bottomRight).forEach { point ->
                         val visibleCenter = Offset(

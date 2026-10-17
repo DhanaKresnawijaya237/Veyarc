@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -31,6 +32,7 @@ import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -173,9 +175,7 @@ private fun ConditionNodeEditor(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (showTypePicker) {
-            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                ConditionKindPicker(condition, defaultPackage, onChange)
-            }
+            ConditionKindPicker(condition, defaultPackage, onChange, Modifier.fillMaxWidth(), showDividers = true)
         }
         when (condition) {
             is PixelColorCondition -> PixelConditionFields(condition, assets, assetNames, onAddTemplate, loadAsset, loadPreview, previewWidthPx, previewHeightPx, onChange)
@@ -267,16 +267,34 @@ private fun ConditionKindPicker(
     defaultPackage: String,
     onChange: (Condition) -> Unit,
     modifier: Modifier = Modifier,
+    showDividers: Boolean = false,
 ) {
     var expanded by remember(condition::class) { mutableStateOf(false) }
-    Surface(
-        onClick = { expanded = true },
-        modifier = modifier,
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.secondaryContainer,
-        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-    ) {
-        Text(condition.kind().label, Modifier.padding(horizontal = 14.dp, vertical = 12.dp), style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    if (showDividers) {
+        Row(
+            modifier.heightIn(min = 48.dp).clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Button,
+                onClickLabel = "Change condition type",
+            ) { expanded = true }.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            HorizontalDivider(Modifier.weight(1f))
+            Text(condition.kind().label, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
+            HorizontalDivider(Modifier.weight(1f))
+        }
+    } else {
+        Surface(
+            onClick = { expanded = true },
+            modifier = modifier,
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        ) {
+            Text(condition.kind().label, Modifier.padding(horizontal = 14.dp, vertical = 12.dp), style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
     }
     if (expanded) {
         VeyarcChoicePicker(
