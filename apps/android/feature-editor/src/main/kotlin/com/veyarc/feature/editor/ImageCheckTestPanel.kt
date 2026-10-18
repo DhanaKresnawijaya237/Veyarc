@@ -49,7 +49,6 @@ import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.backgroundAssetId
 import com.veyarc.model.bundle.BundleAsset
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
 import java.util.Locale
 
 private data class SavedConditionCheck(val sourceId: String, val observation: ConditionObservation? = null, val error: String? = null)
@@ -59,10 +58,10 @@ internal fun ImageCheckTestPanel(condition: Condition, assets: List<WorkflowAsse
     var showImages by rememberSaveable { mutableStateOf(false) }
     var expanded by rememberSaveable { mutableStateOf(true) }
     var sourceId by rememberSaveable { mutableStateOf<String?>(null) }
-    var testedIds by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    var testedIds by rememberSaveable(condition, assets, width, height) { mutableStateOf<List<String>>(emptyList()) }
     var request by remember { mutableIntStateOf(0) }
     var busy by remember { mutableStateOf(false) }
-    // Retain only small results. Edited conditions invalidate and rerun this page's selected images.
+    // Edits discard old checks instead of rerunning them.
     var checks by remember(condition, assets, width, height) { mutableStateOf<List<SavedConditionCheck>>(emptyList()) }
     val colorSearch = condition is PixelColorCondition
     val imageId = sourceId ?: condition.backgroundAssetId()?.value
@@ -77,7 +76,6 @@ internal fun ImageCheckTestPanel(condition: Condition, assets: List<WorkflowAsse
         if (testedIds.isEmpty()) return@LaunchedEffect
         busy = true
         try {
-            delay(160)
             for (id in testedIds) {
                 if (checks.any { it.sourceId == id }) continue
                 val check = try {
@@ -127,7 +125,9 @@ internal fun ImageCheckTestPanel(condition: Condition, assets: List<WorkflowAsse
                         }
                         check?.observation?.let { observation ->
                             Text(imageCheckDescription(condition, observation), color = if (observation.result) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleSmall)
-                            if (!colorSearch) {
+                            if (condition is PixelColorCondition) {
+                                Text("Tolerance ±${condition.tolerance}", style = MaterialTheme.typography.bodyMedium)
+                            } else {
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text("Score ${observation.matchScore?.let(::imageCheckPercent) ?: "unavailable"}", style = MaterialTheme.typography.bodyMedium)
                                     Text("Threshold ${observation.threshold?.let(::imageCheckPercent) ?: "—"}", style = MaterialTheme.typography.bodyMedium)
