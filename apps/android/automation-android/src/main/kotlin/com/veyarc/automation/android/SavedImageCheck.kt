@@ -5,16 +5,18 @@ import com.veyarc.model.Condition
 import com.veyarc.model.ImageAbsentCondition
 import com.veyarc.model.ImageMatchMode
 import com.veyarc.model.ImagePresentCondition
-import com.veyarc.model.NormalizedRect
 import com.veyarc.model.PixelColorCondition
 
 /** Compares user-selected pixels only. Takes ownership of backgroundRgba and clears it on every exit. */
 object SavedImageCheck {
-    /** The selected image is the search area, even when it is a crop rather than a screenshot. */
-    fun searchColor(condition: PixelColorCondition, width: Int, height: Int, rgba: ByteArray): ConditionObservation {
+    /** Tests the configured pixel or area in an original, full-size background. */
+    fun searchColor(condition: PixelColorCondition, width: Int, height: Int, rgba: ByteArray, viewportWidth: Int, viewportHeight: Int): ConditionObservation {
         try {
+            require(width == viewportWidth && height == viewportHeight) {
+                "Use an original screenshot at $viewportWidth × $viewportHeight. This image is $width × $height; it won't be resized."
+            }
             EphemeralScreenFrame(width, height, 0L, rgba).use { frame ->
-                return VisualConditionEvaluator({ frame }, { null }).observe(condition.copy(region = NormalizedRect(0.0, 0.0, 1.0, 1.0)))
+                return VisualConditionEvaluator({ frame }, { null }).observe(condition)
             }
         } finally {
             rgba.fill(0)

@@ -86,7 +86,7 @@ internal fun ImageCheckTestPanel(condition: Condition, assets: List<WorkflowAsse
                 val check = try {
                     val image = requireNotNull(loadAsset(AssetId(id))) { "The test image is unavailable." }
                     val observation = if (condition is PixelColorCondition) {
-                        testColorCondition(condition, image)
+                        testColorCondition(condition, image, width, height)
                     } else {
                         val targetId = when (condition) {
                             is ImagePresentCondition -> condition.assetId
@@ -109,7 +109,7 @@ internal fun ImageCheckTestPanel(condition: Condition, assets: List<WorkflowAsse
         }
     }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = { showImages = true }, enabled = !busy) { Icon(Icons.Outlined.Image, if (colorSearch) "Choose colour search image" else "Choose test background") }
+        IconButton(onClick = { showImages = true }, enabled = !busy) { Icon(Icons.Outlined.Image, "Choose test background") }
         TextButton(onClick = { if (imageId == null) showImages = true else runCheck(imageId) }, enabled = !busy, modifier = Modifier.weight(1f).testTag("test-image-check")) {
             if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text(if (colorSearch) "Test colour search" else "Test image check")
         }
@@ -119,7 +119,7 @@ internal fun ImageCheckTestPanel(condition: Condition, assets: List<WorkflowAsse
     }
     AnimatedVisibility(expanded && testedIds.isNotEmpty(), enter = expandVertically(tween(160)) + fadeIn(tween(110)), exit = shrinkVertically(tween(140)) + fadeOut(tween(90))) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (colorSearch) Text("Searches the whole selected image for this colour.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (condition is PixelColorCondition) Text(if (condition.region == null) "Checks the selected pixel in this background." else "Searches the selected area in this background.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             testedIds.forEach { id ->
                 val check = checks.firstOrNull { it.sourceId == id }
                 Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth().testTag(if (check == null) "image-check-pending" else "image-check-result")) {
@@ -156,7 +156,7 @@ internal fun ImageCheckTestPanel(condition: Condition, assets: List<WorkflowAsse
         }
     }
     if (showImages) {
-        TemplatePickerSheet(visible = true, title = if (colorSearch) "Colour search image" else "Test background", assets = assets, assetNames = names, displayWidthPx = width, displayHeightPx = height, fullScreenOnly = !colorSearch, allowAnySize = colorSearch, selectedAssetId = imageId, allowNone = false, onDismiss = { showImages = false }, onSelect = { selected ->
+        TemplatePickerSheet(visible = true, title = "Test background", assets = assets, assetNames = names, displayWidthPx = width, displayHeightPx = height, fullScreenOnly = true, selectedAssetId = imageId, allowNone = false, onDismiss = { showImages = false }, onSelect = { selected ->
             selected?.value?.let(::runCheck)
             showImages = false
         }, loadPreview = loadPreview)

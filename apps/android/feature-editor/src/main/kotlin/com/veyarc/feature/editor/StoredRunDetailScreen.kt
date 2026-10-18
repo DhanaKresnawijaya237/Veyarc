@@ -85,8 +85,13 @@ fun StoredRunDetailScreen(
         item(key = "summary") {
             Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
                 Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Surface(shape = RoundedCornerShape(12.dp), color = statusColor.copy(alpha = 0.12f)) {
-                        Text(statusLabel ?: runTitle(record.status), Modifier.padding(horizontal = 12.dp, vertical = 7.dp), color = statusColor, style = MaterialTheme.typography.titleSmall)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Surface(modifier = Modifier.weight(1f, fill = false), shape = RoundedCornerShape(12.dp), color = statusColor.copy(alpha = 0.12f)) {
+                            Text(statusLabel ?: runTitle(record.status), Modifier.padding(horizontal = 12.dp, vertical = 7.dp), color = statusColor, style = MaterialTheme.typography.titleSmall)
+                        }
+                        onOpenWorkflowRevision?.let { open ->
+                            TextButton(onClick = open) { Text("Open revision ${record.revision}") }
+                        }
                     }
                     Text(timestamp, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -97,9 +102,6 @@ fun StoredRunDetailScreen(
                     record.interruptionReason?.takeIf { it.isNotBlank() }?.let {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                         Text(readableRunMessage(it), style = MaterialTheme.typography.bodyMedium, color = if (record.status == StoredRunStatus.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
-                    }
-                    onOpenWorkflowRevision?.let { open ->
-                        TextButton(onClick = open, modifier = Modifier.fillMaxWidth()) { Text("Open revision ${record.revision}") }
                     }
                     controls?.invoke()
                 }

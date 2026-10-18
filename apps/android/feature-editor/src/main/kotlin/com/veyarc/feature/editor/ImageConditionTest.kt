@@ -13,10 +13,10 @@ import com.veyarc.model.bundle.BundleAsset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
 
-internal suspend fun testColorCondition(condition: PixelColorCondition, image: BundleAsset): ConditionObservation = runInterruptible(Dispatchers.Default) {
+internal suspend fun testColorCondition(condition: PixelColorCondition, image: BundleAsset, viewportWidth: Int, viewportHeight: Int): ConditionObservation = runInterruptible(Dispatchers.Default) {
     val decoded = imageTestCodec().decrypt(image.assetId, image.bytes)
     try {
-        SavedImageCheck.searchColor(condition, decoded.widthPx, decoded.heightPx, decoded.takeRgbaBytes())
+        SavedImageCheck.searchColor(condition, decoded.widthPx, decoded.heightPx, decoded.takeRgbaBytes(), viewportWidth, viewportHeight)
     } finally {
         decoded.clear()
     }
