@@ -134,7 +134,6 @@ import androidx.compose.ui.layout.LocalPinnableContainer
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -1318,7 +1317,6 @@ private fun WorkflowDraftCanvas(
     val itemSpacing = 12.dp
     val density = LocalDensity.current
     var toolbarHeight by remember(density) { mutableIntStateOf(with(density) { 140.dp.roundToPx() }) }
-    var toolbarEndInHeader by remember(density) { mutableIntStateOf(with(density) { 164.dp.roundToPx() }) }
     Box(modifier = modifier) {
         LazyColumn(
             state = scrollState,
@@ -1356,7 +1354,6 @@ private fun WorkflowDraftCanvas(
                             onValidate = onValidate,
                             revisions = revisions,
                             onOpenRevision = onOpenRevision,
-                            modifier = Modifier.onGloballyPositioned { toolbarEndInHeader = (it.positionInParent().y + it.size.height).roundToInt() },
                         )
                     }
                     AllowedApplications(
@@ -1437,34 +1434,27 @@ private fun WorkflowDraftCanvas(
             )
         }
         if (onAskAi != null) {
-            val toolbarBottom = if (scrollHeader) {
-                if (scrollState.firstVisibleItemIndex == 0) (toolbarEndInHeader - scrollState.firstVisibleItemScrollOffset).coerceAtLeast(0) else 0
-            } else {
-                toolbarHeight
-            }
-            Surface(
-                modifier = Modifier.align(Alignment.TopEnd).padding(top = with(density) { toolbarBottom.toDp() } + 8.dp, end = horizontalPadding)
-                    .testTag("workflow-scroll-controls"),
-                shape = RoundedCornerShape(28.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                shadowElevation = 4.dp,
-            ) {
+            val topInset by animateDpAsState(if (canScrollUp) 0.dp else 48.dp, tween(160), label = "scroll-control-top")
+            val bottomInset by animateDpAsState(if (canScrollDown) 0.dp else 48.dp, tween(160), label = "scroll-control-bottom")
+            // Fixed slots keep the chat button centered while either arrow appears or disappears.
+            Box(Modifier.align(Alignment.CenterEnd).padding(end = horizontalPadding).size(52.dp, 148.dp).testTag("workflow-scroll-controls")) {
+                Surface(Modifier.fillMaxSize().padding(top = topInset, bottom = bottomInset), shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, shadowElevation = 4.dp) { }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    AnimatedVisibility(canScrollUp, enter = expandVertically(tween(160)) + fadeIn(tween(110)), exit = shrinkVertically(tween(140)) + fadeOut(tween(90))) {
-                        IconButton(onClick = { scope.launch { scrollState.animateScrollToBoundary(towardTop = true) } }, modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.Outlined.KeyboardArrowUp, "Scroll to top")
+                    Box(Modifier.size(52.dp, 48.dp), contentAlignment = Alignment.BottomCenter) {
+                        androidx.compose.animation.AnimatedVisibility(canScrollUp, enter = expandVertically(tween(160), expandFrom = Alignment.Bottom) + fadeIn(tween(110)), exit = shrinkVertically(tween(140), shrinkTowards = Alignment.Bottom) + fadeOut(tween(90))) {
+                            IconButton(onClick = { scope.launch { scrollState.animateScrollToBoundary(towardTop = true) } }, modifier = Modifier.size(48.dp)) {
+                                Icon(Icons.Outlined.KeyboardArrowUp, "Scroll to top")
+                            }
                         }
                     }
                     IconButton(onClick = onAskAi, modifier = Modifier.size(52.dp).testTag("workflow-ai-chat-button")) {
                         Icon(Icons.Outlined.ChatBubbleOutline, "Ask AI", tint = MaterialTheme.colorScheme.primary)
                     }
-                    AnimatedVisibility(canScrollDown, enter = expandVertically(tween(160)) + fadeIn(tween(110)), exit = shrinkVertically(tween(140)) + fadeOut(tween(90))) {
-                        IconButton(onClick = {
-                            scope.launch {
-                                scrollState.animateScrollToBoundary(towardTop = false)
+                    Box(Modifier.size(52.dp, 48.dp), contentAlignment = Alignment.TopCenter) {
+                        androidx.compose.animation.AnimatedVisibility(canScrollDown, enter = expandVertically(tween(160), expandFrom = Alignment.Top) + fadeIn(tween(110)), exit = shrinkVertically(tween(140), shrinkTowards = Alignment.Top) + fadeOut(tween(90))) {
+                            IconButton(onClick = { scope.launch { scrollState.animateScrollToBoundary(towardTop = false) } }, modifier = Modifier.size(48.dp)) {
+                                Icon(Icons.Outlined.KeyboardArrowDown, "Scroll to bottom")
                             }
-                        }, modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.Outlined.KeyboardArrowDown, "Scroll to bottom")
                         }
                     }
                 }
