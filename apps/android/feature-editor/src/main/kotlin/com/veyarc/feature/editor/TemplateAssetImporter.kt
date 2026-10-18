@@ -387,7 +387,7 @@ private fun NormalizedRect.toPixelBounds(widthPx: Int, heightPx: Int): Rect {
     return Rect(left, top, max(left + 1, right), max(top + 1, bottom))
 }
 
-private fun Bitmap.toRgbaBytes(): ByteArray {
+internal fun Bitmap.toRgbaBytes(): ByteArray {
     val output = ByteArray(width * height * 4)
     val row = IntArray(width)
     for (y in 0 until height) {

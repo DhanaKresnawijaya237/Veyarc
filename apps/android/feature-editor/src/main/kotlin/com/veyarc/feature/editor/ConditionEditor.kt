@@ -574,6 +574,7 @@ private fun ImageConditionFields(
         thresholdText = next
         next.toDoubleOrNull()?.takeIf { it in 0.0..1.0 }?.let { update(assetId, condition.region(), it) }
     })
+    ImageCheckTestPanel(condition, assets, assetNames, loadAsset, loadPreview, previewWidthPx, previewHeightPx)
     pickerMode?.let { mode ->
         TemplatePickerSheet(
             visible = true,

@@ -28,6 +28,7 @@ dependencies {
 
     implementation(project(":data"))
     implementation(project(":core-model"))
+    implementation(project(":core-engine"))
     implementation(project(":core-ui"))
     implementation(composeBom)
     implementation(libs.androidx.activity.compose)
