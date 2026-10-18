@@ -131,6 +131,8 @@ data class StoredRunRecord(
 data class StoredRunEvent(
     val atMs: Long,
     val message: String,
+    val blockLabel: String? = null,
+    val contextLabel: String? = null,
 )
 
 const val STORED_RUN_EVENT_LIMIT = 500
@@ -1029,7 +1031,9 @@ class WorkflowRepository internal constructor(
             put(
                 JSONObject()
                     .put("atMs", event.atMs)
-                    .put("message", event.message),
+                    .put("message", event.message)
+                    .put("blockLabel", event.blockLabel)
+                    .put("contextLabel", event.contextLabel),
             )
         }
     }.toString()
@@ -1045,6 +1049,8 @@ class WorkflowRepository internal constructor(
                         StoredRunEvent(
                             atMs = item.getLong("atMs"),
                             message = item.getString("message"),
+                            blockLabel = item.optString("blockLabel").takeIf { it.isNotBlank() && it != "null" },
+                            contextLabel = item.optString("contextLabel").takeIf { it.isNotBlank() && it != "null" },
                         ),
                     )
                 }

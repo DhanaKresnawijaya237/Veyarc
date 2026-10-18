@@ -168,7 +168,7 @@ fun WorkflowRunScreen(
             interruptionReason = state.failureMessage ?: state.message?.takeUnless { it == state.eventHistory.lastOrNull()?.message || it == "Running" || it == "Workflow completed" },
             completedSteps = state.completedSteps,
             totalSteps = state.review.plan?.analysis?.worstCaseStepCount,
-            eventHistory = state.eventHistory.map { StoredRunEvent(it.atMs, it.message) },
+            eventHistory = state.eventHistory.map { StoredRunEvent(it.atMs, it.message, it.blockLabel, it.contextLabel) },
             hasStoredDetails = true,
             folderId = null,
         ),

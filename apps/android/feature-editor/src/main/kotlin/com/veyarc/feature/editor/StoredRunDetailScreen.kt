@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.veyarc.data.storage.StoredRunEvent
 import com.veyarc.data.storage.StoredRunRecord
 import com.veyarc.data.storage.StoredRunStatus
 import kotlinx.coroutines.launch
@@ -62,6 +63,7 @@ fun StoredRunDetailScreen(
     // ponytail: Reveals saved events only; older discarded events need a separate retention change.
     var visibleEvents by remember(record.runId) { mutableIntStateOf(12) }
     val firstEvent = (record.eventHistory.size - visibleEvents).coerceAtLeast(0)
+    val activityGroups = remember(record.eventHistory, firstEvent) { runActivityGroups(record.eventHistory, firstEvent) }
     val timestamp = remember(record.startedAtMs) { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(record.startedAtMs)) }
     val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     val statusColor = when (record.status) {
@@ -119,12 +121,24 @@ fun StoredRunDetailScreen(
                 }
             }
         }
-        itemsIndexed(record.eventHistory.drop(firstEvent), key = { offset, _ -> "event-${firstEvent + offset}" }) { offset, event ->
-            val index = firstEvent + offset
-            Row(Modifier.animateItem(fadeInSpec = tween(160), placementSpec = tween(180)).fillMaxWidth().padding(horizontal = 4.dp).testTag("run-event-$index"), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Box(Modifier.padding(top = 8.dp).size(6.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.65f), CircleShape))
-                Text(readableRunMessage(event.message), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                if (index > 0) Text("+${formatEventGap(event.atMs - record.eventHistory[index - 1].atMs)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        items(activityGroups, key = { group -> "events-${group.first().index}" }) { group ->
+            val first = group.first().value
+            Surface(modifier = Modifier.animateItem(fadeInSpec = tween(160), placementSpec = tween(180)).fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    first.blockLabel?.let { label ->
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(label, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                            first.contextLabel?.takeUnless { it == "Workflow" }?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                    }
+                    group.forEach { (index, event) ->
+                        Row(Modifier.fillMaxWidth().testTag("run-event-$index"), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.Top) {
+                            Text(readableRunMessage(event.message).replace(": true", ": met").replace(": false", ": not met"), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                            if (index > 0) Text("+${formatEventGap(event.atMs - record.eventHistory[index - 1].atMs)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
             }
         }
         if (record.eventHistory.isEmpty()) {
@@ -161,4 +175,18 @@ internal fun formatEventGap(durationMs: Long): String = String.format(Locale.get
 private fun formatDuration(durationMs: Long): String {
     val seconds = durationMs.coerceAtLeast(0L) / 1_000
     return String.format(Locale.getDefault(), "%d:%02d", seconds / 60, seconds % 60)
+}
+
+/** Group only consecutive events that are known to belong to the same block and branch. */
+internal fun runActivityGroups(events: List<StoredRunEvent>, firstEvent: Int): List<List<IndexedValue<StoredRunEvent>>> {
+    val groups = mutableListOf<MutableList<IndexedValue<StoredRunEvent>>>()
+    events.withIndex().drop(firstEvent).forEach { indexed ->
+        val previous = groups.lastOrNull()?.lastOrNull()?.value
+        if (indexed.value.blockLabel != null && previous?.blockLabel == indexed.value.blockLabel && previous?.contextLabel == indexed.value.contextLabel) {
+            groups.last().add(indexed)
+        } else {
+            groups.add(mutableListOf(indexed))
+        }
+    }
+    return groups
 }

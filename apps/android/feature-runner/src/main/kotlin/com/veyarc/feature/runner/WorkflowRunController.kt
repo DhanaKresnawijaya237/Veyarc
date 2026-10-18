@@ -96,6 +96,8 @@ data class WorkflowRunReview(
 data class RedactedRunEvent(
     val atMs: Long,
     val message: String,
+    val blockLabel: String? = null,
+    val contextLabel: String? = null,
 )
 
 data class WorkflowRunUiState(
@@ -484,7 +486,7 @@ class WorkflowRunController(
                 val status = terminalStatus
                 val reason = terminalReason
                 val terminalState = _state.value
-                val savedHistory = synchronized(savedEvents) { savedEvents.map { StoredRunEvent(it.atMs, it.message) } }
+                val savedHistory = synchronized(savedEvents) { savedEvents.map { StoredRunEvent(it.atMs, it.message, it.blockLabel, it.contextLabel) } }
                 withContext(NonCancellable + Dispatchers.IO) {
                     runCatching {
                         repository.finishRun(
@@ -552,7 +554,7 @@ class WorkflowRunController(
     }
 
     private fun onEvent(event: RunEvent) {
-        val redacted = RedactedRunEvent(event.atMs, eventFormatter.format(event))
+        val redacted = eventFormatter.event(event)
         rememberEvent(redacted)
         _state.update { current ->
             val nextPhase = when (event) {
