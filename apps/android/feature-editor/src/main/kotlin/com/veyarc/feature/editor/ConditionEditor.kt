@@ -2,6 +2,8 @@
 
 package com.veyarc.feature.editor
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
@@ -22,14 +24,20 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.material.icons.outlined.CenterFocusStrong
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.StayCurrentLandscape
+import androidx.compose.material.icons.outlined.StayCurrentPortrait
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -111,6 +119,8 @@ internal fun ConditionEditorDialog(
     assets: List<WorkflowAssetDescriptor>,
     assetNames: Map<String, String>,
     defaultPackage: String,
+    allowedPackages: List<String>,
+    onAddAllowedPackage: (String) -> Unit,
     onAddTemplate: () -> Unit,
     loadAsset: suspend (AssetId) -> BundleAsset?,
     loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
@@ -149,6 +159,8 @@ internal fun ConditionEditorDialog(
                     assets = assets,
                     assetNames = assetNames,
                     defaultPackage = defaultPackage,
+                    allowedPackages = allowedPackages,
+                    onAddAllowedPackage = onAddAllowedPackage,
                     onAddTemplate = onAddTemplate,
                     loadAsset = loadAsset,
                     loadPreview = loadPreview,
@@ -167,6 +179,8 @@ private fun ConditionNodeEditor(
     assets: List<WorkflowAssetDescriptor>,
     assetNames: Map<String, String>,
     defaultPackage: String,
+    allowedPackages: List<String>,
+    onAddAllowedPackage: (String) -> Unit,
     onAddTemplate: () -> Unit,
     loadAsset: suspend (AssetId) -> BundleAsset?,
     loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
@@ -206,7 +220,7 @@ private fun ConditionNodeEditor(
                 onChange = { onChange(it) },
             )
 
-            is ForegroundPackageCondition -> PackageConditionFields(condition, onChange)
+            is ForegroundPackageCondition -> PackageConditionFields(condition, allowedPackages, onAddAllowedPackage, onChange)
 
             is OrientationCondition -> OrientationConditionFields(condition, onChange)
 
@@ -216,6 +230,8 @@ private fun ConditionNodeEditor(
                 assets = assets,
                 assetNames = assetNames,
                 defaultPackage = defaultPackage,
+                allowedPackages = allowedPackages,
+                onAddAllowedPackage = onAddAllowedPackage,
                 onAddTemplate = onAddTemplate,
                 loadAsset = loadAsset,
                 loadPreview = loadPreview,
@@ -230,6 +246,8 @@ private fun ConditionNodeEditor(
                 assets = assets,
                 assetNames = assetNames,
                 defaultPackage = defaultPackage,
+                allowedPackages = allowedPackages,
+                onAddAllowedPackage = onAddAllowedPackage,
                 onAddTemplate = onAddTemplate,
                 loadAsset = loadAsset,
                 loadPreview = loadPreview,
@@ -246,6 +264,8 @@ private fun ConditionNodeEditor(
                     assets = assets,
                     assetNames = assetNames,
                     defaultPackage = defaultPackage,
+                    allowedPackages = allowedPackages,
+                    onAddAllowedPackage = onAddAllowedPackage,
                     onAddTemplate = onAddTemplate,
                     loadAsset = loadAsset,
                     loadPreview = loadPreview,
@@ -637,19 +657,37 @@ private fun RegionConditionFields(
 @Composable
 private fun PackageConditionFields(
     condition: ForegroundPackageCondition,
+    allowedPackages: List<String>,
+    onAddAllowedPackage: (String) -> Unit,
     onChange: (Condition) -> Unit,
 ) {
-    var packageText by rememberSaveable(condition.packageName.value) { mutableStateOf(condition.packageName.value) }
-    OutlinedTextField(
-        value = packageText,
-        onValueChange = { next ->
-            packageText = next
-            runCatching { PackageName(next) }.getOrNull()?.let { onChange(condition.copy(packageName = it)) }
-        },
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val packageName = result.data?.component?.packageName ?: return@rememberLauncherForActivityResult
+        onAddAllowedPackage(packageName)
+        onChange(condition.copy(packageName = PackageName(packageName)))
+    }
+    val packages = (allowedPackages + condition.packageName.value).distinct()
+    LazyRow(
         modifier = Modifier.fillMaxWidth(),
-        label = { Text("Android package") },
-        singleLine = true,
-    )
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        items(packages, key = { it }) { packageName ->
+            val selected = condition.packageName.value == packageName
+            Surface(
+                modifier = Modifier.selectable(selected, role = Role.RadioButton) { onChange(condition.copy(packageName = PackageName(packageName))) },
+                shape = RoundedCornerShape(16.dp),
+                color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+            ) {
+                AllowedApplicationIcon(packageName, Modifier.padding(vertical = 10.dp, horizontal = 4.dp), actionLabel = "Select")
+            }
+        }
+        item(key = "add-app") {
+            IconButton(onClick = { picker.launch(allowedApplicationPickerIntent()) }) {
+                Icon(Icons.Outlined.Add, "Add allowed app")
+            }
+        }
+    }
 }
 
 @Composable
@@ -657,10 +695,20 @@ private fun OrientationConditionFields(
     condition: OrientationCondition,
     onChange: (Condition) -> Unit,
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         DisplayOrientation.entries.forEach { orientation ->
-            OutlinedButton(onClick = { onChange(condition.copy(orientation = orientation)) }) {
-                Text(if (condition.orientation == orientation) "✓ ${orientation.name.lowercase()}" else orientation.name.lowercase())
+            val selected = condition.orientation == orientation
+            val portrait = orientation == DisplayOrientation.PORTRAIT
+            Surface(
+                modifier = Modifier.weight(1f).selectable(selected, role = Role.RadioButton) { onChange(condition.copy(orientation = orientation)) },
+                shape = RoundedCornerShape(18.dp),
+                color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                contentColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+            ) {
+                Column(Modifier.padding(vertical = 18.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(if (portrait) Icons.Outlined.StayCurrentPortrait else Icons.Outlined.StayCurrentLandscape, null, Modifier.size(30.dp))
+                    Text(if (portrait) "Portrait" else "Landscape", style = MaterialTheme.typography.labelLarge)
+                }
             }
         }
     }
@@ -673,6 +721,8 @@ private fun ComposedConditionFields(
     assets: List<WorkflowAssetDescriptor>,
     assetNames: Map<String, String>,
     defaultPackage: String,
+    allowedPackages: List<String>,
+    onAddAllowedPackage: (String) -> Unit,
     onAddTemplate: () -> Unit,
     loadAsset: suspend (AssetId) -> BundleAsset?,
     loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
@@ -690,6 +740,8 @@ private fun ComposedConditionFields(
                 assets = assets,
                 assetNames = assetNames,
                 defaultPackage = defaultPackage,
+                allowedPackages = allowedPackages,
+                onAddAllowedPackage = onAddAllowedPackage,
                 onAddTemplate = onAddTemplate,
                 loadAsset = loadAsset,
                 loadPreview = loadPreview,
@@ -707,14 +759,17 @@ private fun ComposedConditionFields(
             )
         }
     }
-    OutlinedButton(
+    TextButton(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
         enabled = conditions.size < MAX_COMPOSED_CONDITIONS,
         onClick = {
             childKeys = childKeys + WorkflowIds.newUuid()
             onChange(conditions + defaultCondition(defaultPackage))
         },
     ) {
-        Text("Add nested condition")
+        Icon(Icons.Outlined.Add, null, Modifier.size(18.dp))
+        Text("Add nested condition", Modifier.padding(start = 8.dp))
     }
 }
 
@@ -725,6 +780,8 @@ private fun NestedConditionEditor(
     assets: List<WorkflowAssetDescriptor>,
     assetNames: Map<String, String>,
     defaultPackage: String,
+    allowedPackages: List<String>,
+    onAddAllowedPackage: (String) -> Unit,
     onAddTemplate: () -> Unit,
     loadAsset: suspend (AssetId) -> BundleAsset?,
     loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
@@ -762,7 +819,7 @@ private fun NestedConditionEditor(
         AnimatedVisibility(expanded, enter = expandVertically(tween(160)) + fadeIn(tween(100)), exit = shrinkVertically(tween(140)) + fadeOut(tween(90))) {
             fields.SaveableStateProvider("fields") {
                 Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
-                    ConditionNodeEditor(condition, assets, assetNames, defaultPackage, onAddTemplate, loadAsset, loadPreview, previewWidthPx, previewHeightPx, onChange, showTypePicker = false)
+                    ConditionNodeEditor(condition, assets, assetNames, defaultPackage, allowedPackages, onAddAllowedPackage, onAddTemplate, loadAsset, loadPreview, previewWidthPx, previewHeightPx, onChange, showTypePicker = false)
                 }
             }
         }
