@@ -378,16 +378,18 @@ internal fun AssistantConnectionSettings(
 @Composable
 internal fun SettingsEnableSwitch(label: String, checked: Boolean, enabled: Boolean = true, modifier: Modifier = Modifier, onCheckedChange: (Boolean) -> Unit) {
     val colors = MaterialTheme.colorScheme
-    val offset by animateDpAsState(if (checked) 40.dp else 0.dp, tween(140), label = "Settings switch thumb")
+    val offset by animateDpAsState(if (checked) 32.dp else 0.dp, tween(140), label = "Settings switch thumb")
     val track by animateColorAsState(if (checked) colors.primary.copy(alpha = 0.2f) else colors.surfaceContainerHighest, tween(140), label = "Settings switch track")
     Box(
-        modifier.width(84.dp).height(44.dp).alpha(if (enabled) 1f else 0.45f).clip(RoundedCornerShape(22.dp)).background(track)
+        modifier.width(68.dp).height(48.dp).alpha(if (enabled) 1f else 0.45f)
             .toggleable(checked, enabled = enabled, role = Role.Switch, onValueChange = onCheckedChange)
             .semantics { contentDescription = label },
     ) {
-        Text(if (checked) "On" else "Off", Modifier.width(40.dp).align(if (checked) Alignment.CenterStart else Alignment.CenterEnd), style = MaterialTheme.typography.labelSmall, color = if (checked) colors.primary else colors.onSurfaceVariant, textAlign = TextAlign.Center, maxLines = 1)
-        Box(Modifier.padding(4.dp).offset(x = offset).size(36.dp).background(if (checked) colors.primary else colors.onSurfaceVariant, CircleShape), contentAlignment = Alignment.Center) {
-            Icon(Icons.Outlined.PowerSettingsNew, null, Modifier.size(18.dp), tint = if (checked) colors.onPrimary else colors.surface)
+        Box(Modifier.align(Alignment.Center).width(68.dp).height(36.dp).clip(RoundedCornerShape(18.dp)).background(track)) {
+            Text(if (checked) "On" else "Off", Modifier.width(32.dp).align(if (checked) Alignment.CenterStart else Alignment.CenterEnd), style = MaterialTheme.typography.labelSmall, color = if (checked) colors.primary else colors.onSurfaceVariant, textAlign = TextAlign.Center, maxLines = 1)
+            Box(Modifier.padding(4.dp).offset(x = offset).size(28.dp).background(if (checked) colors.primary else colors.onSurfaceVariant, CircleShape), contentAlignment = Alignment.Center) {
+                Icon(Icons.Outlined.PowerSettingsNew, null, Modifier.size(16.dp), tint = if (checked) colors.onPrimary else colors.surface)
+            }
         }
     }
 }
