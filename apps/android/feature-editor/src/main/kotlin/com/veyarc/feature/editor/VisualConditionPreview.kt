@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.veyarc.data.storage.AndroidKeystoreKeySource
 import com.veyarc.data.storage.DecodedTemplate
@@ -166,6 +167,8 @@ private fun DeviceComparisonPreview(
     val displayAspectRatio = displayWidthPx.toFloat() / displayHeightPx
     val searchColor = MaterialTheme.colorScheme.primary
     val templateBorderColor = MaterialTheme.colorScheme.tertiary
+    var dragRegion by remember { mutableStateOf<NormalizedRect?>(null) }
+    val displayedRegion = dragRegion ?: region
     BoxWithConstraints(modifier = modifier, contentAlignment = Alignment.Center) {
         val horizontalPadding = 12.dp
         val verticalPadding = 8.dp
@@ -192,10 +195,10 @@ private fun DeviceComparisonPreview(
             template?.let { data ->
                 val templateWidth = screenWidth * data.widthPx.toFloat() / displayWidthPx
                 val templateHeight = screenHeight * data.heightPx.toFloat() / displayHeightPx
-                val searchLeft = screenWidth * region.x.toFloat()
-                val searchTop = screenHeight * region.y.toFloat()
-                val searchWidth = screenWidth * region.width.toFloat()
-                val searchHeight = screenHeight * region.height.toFloat()
+                val searchLeft = screenWidth * displayedRegion.x.toFloat()
+                val searchTop = screenHeight * displayedRegion.y.toFloat()
+                val searchWidth = screenWidth * displayedRegion.width.toFloat()
+                val searchHeight = screenHeight * displayedRegion.height.toFloat()
                 val templateLeft = searchLeft + (searchWidth - templateWidth) / 2f
                 val templateTop = searchTop + (searchHeight - templateHeight) / 2f
                 Image(
@@ -215,47 +218,61 @@ private fun DeviceComparisonPreview(
                 Modifier
             } else {
                 Modifier.pointerInput(Unit) {
-                    detectDragGestures(
-                        onDragStart = dragStart@{ offset ->
-                            if (size.width == 0 || size.height == 0) return@dragStart
-                            activeHandle = selectRegionHandle(
-                                region = currentRegion,
-                                point = NormalizedCoordinate(
-                                    x = (offset.x / size.width).toDouble().coerceIn(0.0, 1.0),
-                                    y = (offset.y / size.height).toDouble().coerceIn(0.0, 1.0),
-                                ),
-                                threshold = 0.075,
-                            )
-                        },
-                        onDragEnd = { activeHandle = null },
-                        onDragCancel = { activeHandle = null },
-                    ) { change, dragAmount ->
-                        val handle = activeHandle?.takeIf { size.width > 0 && size.height > 0 } ?: return@detectDragGestures
-                        change.consume()
-                        currentOnRegionChange?.invoke(
-                            updateRegion(
-                                region = currentRegion,
+                    try {
+                        detectDragGestures(
+                            onDragStart = dragStart@{ offset ->
+                                if (size.width == 0 || size.height == 0) return@dragStart
+                                activeHandle = selectRegionHandle(
+                                    region = currentRegion,
+                                    point = NormalizedCoordinate(
+                                        x = (offset.x / size.width).toDouble().coerceIn(0.0, 1.0),
+                                        y = (offset.y / size.height).toDouble().coerceIn(0.0, 1.0),
+                                    ),
+                                    threshold = 0.075,
+                                )
+                                if (activeHandle != null) dragRegion = currentRegion
+                            },
+                            onDragEnd = {
+                                val selected = dragRegion
+                                dragRegion = null
+                                activeHandle = null
+                                selected?.takeIf { it != currentRegion }?.let { currentOnRegionChange?.invoke(it) }
+                            },
+                            onDragCancel = {
+                                dragRegion = null
+                                activeHandle = null
+                            },
+                        ) { change, dragAmount ->
+                            val handle = activeHandle?.takeIf { size.width > 0 && size.height > 0 } ?: return@detectDragGestures
+                            change.consume()
+                            // Keep layout-changing condition updates until release, while the crop follows the finger.
+                            dragRegion = updateRegion(
+                                region = dragRegion ?: currentRegion,
                                 handle = handle,
                                 deltaX = dragAmount.x.toDouble() / size.width,
                                 deltaY = dragAmount.y.toDouble() / size.height,
-                            ),
-                        )
+                            )
+                        }
+                    } finally {
+                        dragRegion = null
+                        activeHandle = null
                     }
                 }
             }
             Canvas(
                 modifier = Modifier
                     .fillMaxSize()
+                    .testTag("condition-search-area")
                     .then(interactionModifier),
             ) {
                 val handleRadius = 7.dp.toPx()
                 // A collapsing parent can temporarily measure this preview at zero size.
                 if (size.minDimension < handleRadius * 2) return@Canvas
                 val searchRect = Rect(
-                    left = (region.x * size.width).toFloat(),
-                    top = (region.y * size.height).toFloat(),
-                    right = ((region.x + region.width) * size.width).toFloat(),
-                    bottom = ((region.y + region.height) * size.height).toFloat(),
+                    left = (displayedRegion.x * size.width).toFloat(),
+                    top = (displayedRegion.y * size.height).toFloat(),
+                    right = ((displayedRegion.x + displayedRegion.width) * size.width).toFloat(),
+                    bottom = ((displayedRegion.y + displayedRegion.height) * size.height).toFloat(),
                 )
                 val strokeWidth = 2.dp.toPx()
                 val visibleRect = Rect(
