@@ -12,7 +12,6 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -24,7 +23,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -49,6 +47,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -119,6 +118,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -178,7 +178,9 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 @Composable
 fun WorkflowEditorScreen(
@@ -1311,7 +1313,6 @@ private fun WorkflowDraftCanvas(
             if (scrollState.scrollBy(scrollDelta) == 0f) break
         }
     }
-    val controlsWidth = if (onAskAi != null) 64.dp else 0.dp
     val horizontalPadding = 20.dp
     val verticalPadding = 12.dp
     val itemSpacing = 12.dp
@@ -1358,39 +1359,37 @@ private fun WorkflowDraftCanvas(
                             modifier = Modifier.onGloballyPositioned { toolbarEndInHeader = (it.positionInParent().y + it.size.height).roundToInt() },
                         )
                     }
-                    Column(Modifier.padding(end = controlsWidth), verticalArrangement = Arrangement.spacedBy(itemSpacing)) {
-                        AllowedApplications(
-                            session = session,
-                            packages = draft.allowedPackagesText,
-                            onPickApplication = onPickApplication,
-                            onReorderApplications = { onDraftChange(draft.copy(allowedPackagesText = it.joinToString(", "))) },
-                            onRemoveApplication = { packageName ->
-                                onDraftChange(
-                                    draft.copy(
-                                        allowedPackagesText = draft.allowedPackagesText.packageNames()
-                                            .filterNot { it == packageName }
-                                            .joinToString(", "),
-                                    ),
-                                )
-                            },
-                        )
-                        TemplateAssetSection(
-                            session = session,
-                            assets = draft.assetDescriptors,
-                            assetNames = draft.assetNames,
-                            referencedAssetIds = remember(draft.steps) { draft.referencedAssetIds() },
-                            usageNumbers = remember(draft.steps) { draft.assetUsageNumbers() },
-                            onAddTemplate = onAddTemplate,
-                            loadPreview = loadPreview,
-                            onRemoveTemplate = { assetId ->
-                                clearTemplatePreviewCache()
-                                onDraftChange(draft.removeAsset(assetId))
-                            },
-                        )
-                        Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("Execution", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-                            Text("${draft.steps.size} blocks", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
+                    AllowedApplications(
+                        session = session,
+                        packages = draft.allowedPackagesText,
+                        onPickApplication = onPickApplication,
+                        onReorderApplications = { onDraftChange(draft.copy(allowedPackagesText = it.joinToString(", "))) },
+                        onRemoveApplication = { packageName ->
+                            onDraftChange(
+                                draft.copy(
+                                    allowedPackagesText = draft.allowedPackagesText.packageNames()
+                                        .filterNot { it == packageName }
+                                        .joinToString(", "),
+                                ),
+                            )
+                        },
+                    )
+                    TemplateAssetSection(
+                        session = session,
+                        assets = draft.assetDescriptors,
+                        assetNames = draft.assetNames,
+                        referencedAssetIds = remember(draft.steps) { draft.referencedAssetIds() },
+                        usageNumbers = remember(draft.steps) { draft.assetUsageNumbers() },
+                        onAddTemplate = onAddTemplate,
+                        loadPreview = loadPreview,
+                        onRemoveTemplate = { assetId ->
+                            clearTemplatePreviewCache()
+                            onDraftChange(draft.removeAsset(assetId))
+                        },
+                    )
+                    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Execution", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                        Text("${draft.steps.size} blocks", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -1398,28 +1397,26 @@ private fun WorkflowDraftCanvas(
                 item(key = "empty-blocks") { Text("No blocks yet.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
             itemsIndexed(draft.steps, key = { _, step -> step.id }, contentType = { _, step -> step::class }) { index, step ->
-                Box(Modifier.padding(end = controlsWidth)) {
-                    StepEditorItem(
-                        draft = draft,
-                        path = root,
-                        index = index,
-                        step = step,
-                        validation = validation,
-                        selection = selection,
-                        showInlineInspector = showInlineInspector,
-                        onSelectionChange = onSelectionChange,
-                        onDraftChange = onDraftChange,
-                        onEditGeometry = onEditGeometry,
-                        onEditCondition = onEditCondition,
-                        dragCoordinator = stepDragCoordinator,
-                    )
-                }
+                StepEditorItem(
+                    draft = draft,
+                    path = root,
+                    index = index,
+                    step = step,
+                    validation = validation,
+                    selection = selection,
+                    showInlineInspector = showInlineInspector,
+                    onSelectionChange = onSelectionChange,
+                    onDraftChange = onDraftChange,
+                    onEditGeometry = onEditGeometry,
+                    onEditCondition = onEditCondition,
+                    dragCoordinator = stepDragCoordinator,
+                )
             }
             item(key = "add-block", contentType = "footer") {
-                Box(Modifier.padding(end = controlsWidth)) { StepListFooter(draft, root, onDraftChange, stepDragCoordinator) }
+                StepListFooter(draft, root, onDraftChange, stepDragCoordinator)
             }
             item(key = "editor-status", contentType = "footer") {
-                statusMessage?.let { message -> Text(message, modifier = Modifier.padding(end = controlsWidth), color = MaterialTheme.colorScheme.primary) }
+                statusMessage?.let { message -> Text(message, color = MaterialTheme.colorScheme.primary) }
             }
         }
         if (!scrollHeader) {
@@ -1452,9 +1449,9 @@ private fun WorkflowDraftCanvas(
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
                 shadowElevation = 4.dp,
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.animateContentSize(tween(160))) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     AnimatedVisibility(canScrollUp, enter = expandVertically(tween(160)) + fadeIn(tween(110)), exit = shrinkVertically(tween(140)) + fadeOut(tween(90))) {
-                        IconButton(onClick = { scope.launch { scrollState.animateScrollToItem(0) } }, modifier = Modifier.size(48.dp)) {
+                        IconButton(onClick = { scope.launch { scrollState.animateScrollToBoundary(towardTop = true) } }, modifier = Modifier.size(48.dp)) {
                             Icon(Icons.Outlined.KeyboardArrowUp, "Scroll to top")
                         }
                     }
@@ -1464,12 +1461,7 @@ private fun WorkflowDraftCanvas(
                     AnimatedVisibility(canScrollDown, enter = expandVertically(tween(160)) + fadeIn(tween(110)), exit = shrinkVertically(tween(140)) + fadeOut(tween(90))) {
                         IconButton(onClick = {
                             scope.launch {
-                                val lastIndex = scrollState.layoutInfo.totalItemsCount - 1
-                                if (lastIndex >= 0) {
-                                    scrollState.animateScrollToItem(lastIndex)
-                                    // The last footer can be taller than the viewport.
-                                    scrollState.animateScrollBy(scrollState.layoutInfo.viewportSize.height.toFloat())
-                                }
+                                scrollState.animateScrollToBoundary(towardTop = false)
                             }
                         }, modifier = Modifier.size(48.dp)) {
                             Icon(Icons.Outlined.KeyboardArrowDown, "Scroll to bottom")
@@ -1477,6 +1469,41 @@ private fun WorkflowDraftCanvas(
                     }
                 }
             }
+        }
+    }
+}
+
+// Scroll measured pixels each frame so distant items never trigger lazy-list seeking jumps.
+private suspend fun LazyListState.animateScrollToBoundary(towardTop: Boolean) {
+    val durationScale = coroutineContext[MotionDurationScale]?.scaleFactor ?: 1f
+    if (durationScale == 0f) {
+        if (layoutInfo.totalItemsCount > 0) {
+            scrollToItem(if (towardTop) 0 else layoutInfo.totalItemsCount - 1)
+            if (!towardTop) scrollBy(layoutInfo.viewportSize.height.toFloat())
+        }
+        return
+    }
+    scroll {
+        val maximumSpeed = layoutInfo.viewportSize.height.coerceAtLeast(1) * 8f / durationScale
+        val acceleration = maximumSpeed * 5f
+        var speed = 0f
+        var previousFrame = withFrameNanos { it }
+        while (if (towardTop) canScrollBackward else canScrollForward) {
+            val frame = withFrameNanos { it }
+            val seconds = ((frame - previousFrame) / 1_000_000_000f).coerceIn(0f, 0.032f)
+            previousFrame = frame
+            val layout = layoutInfo
+            val last = layout.visibleItemsInfo.lastOrNull() ?: break
+            val averageSize = layout.visibleItemsInfo.sumOf { it.size }.toFloat() / layout.visibleItemsInfo.size
+            // Unmeasured rows only estimate braking distance; scrolling always ends at the actual boundary.
+            val remaining = if (towardTop) {
+                firstVisibleItemIndex * averageSize + firstVisibleItemScrollOffset
+            } else {
+                (layout.totalItemsCount - last.index - 1) * averageSize + last.offset + last.size + layout.afterContentPadding - layout.viewportEndOffset
+            }.coerceAtLeast(0f)
+            speed = minOf(maximumSpeed, speed + acceleration * seconds, sqrt(2f * acceleration * remaining))
+            val delta = (speed * seconds).coerceAtLeast(1f) * if (towardTop) -1f else 1f
+            if (scrollBy(delta) == 0f) break
         }
     }
 }
