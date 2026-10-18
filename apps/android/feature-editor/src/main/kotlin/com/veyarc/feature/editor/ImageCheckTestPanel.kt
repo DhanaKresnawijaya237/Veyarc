@@ -6,12 +6,16 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Image
@@ -34,6 +38,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -126,7 +131,16 @@ internal fun ImageCheckTestPanel(condition: Condition, assets: List<WorkflowAsse
                         check?.observation?.let { observation ->
                             Text(imageCheckDescription(condition, observation), color = if (observation.result) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleSmall)
                             if (condition is PixelColorCondition) {
-                                Text("Tolerance ±${condition.tolerance}", style = MaterialTheme.typography.bodyMedium)
+                                observation.colorMatch?.let { match ->
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        ColorResultSample("Target", match.targetArgb, Modifier.weight(1f))
+                                        ColorResultSample("Closest", match.closestArgb, Modifier.weight(1f))
+                                    }
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text("Difference ${match.difference}", style = MaterialTheme.typography.bodyMedium)
+                                        Text("Tolerance ±${match.tolerance}", style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                }
                             } else {
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text("Score ${observation.matchScore?.let(::imageCheckPercent) ?: "unavailable"}", style = MaterialTheme.typography.bodyMedium)
@@ -146,6 +160,17 @@ internal fun ImageCheckTestPanel(condition: Condition, assets: List<WorkflowAsse
             selected?.value?.let(::runCheck)
             showImages = false
         }, loadPreview = loadPreview)
+    }
+}
+
+@Composable
+private fun ColorResultSample(label: String, argb: Long, modifier: Modifier) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(Modifier.size(24.dp).background(Color(argb.toInt()), CircleShape).border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape))
+        Column {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(String.format(Locale.ROOT, "#%08X", argb), style = MaterialTheme.typography.bodySmall)
+        }
     }
 }
 

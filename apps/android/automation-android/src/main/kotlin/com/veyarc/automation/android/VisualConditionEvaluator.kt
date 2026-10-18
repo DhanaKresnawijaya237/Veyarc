@@ -2,6 +2,7 @@ package com.veyarc.automation.android
 
 import com.veyarc.engine.CancellationSignal
 import com.veyarc.engine.CancellationSignals
+import com.veyarc.engine.ColorMatchObservation
 import com.veyarc.engine.ConditionObservation
 import com.veyarc.engine.ConditionObserver
 import com.veyarc.model.AssetId
@@ -135,7 +136,7 @@ class VisualConditionEvaluator(
     override fun observe(condition: Condition): ConditionObservation {
         checkCancellation()
         return when (condition) {
-            is PixelColorCondition -> ConditionObservation(evaluatePixelColor(condition))
+            is PixelColorCondition -> evaluatePixelColor(condition)
 
             is ImagePresentCondition -> evaluateImage(
                 assetId = condition.assetId,
@@ -165,26 +166,45 @@ class VisualConditionEvaluator(
         }
     }
 
-    private fun evaluatePixelColor(condition: PixelColorCondition): Boolean {
+    private fun evaluatePixelColor(condition: PixelColorCondition): ConditionObservation {
         val frame = requireFrame(condition.region?.let { ScreenCaptureArea.Region(it) } ?: ScreenCaptureArea.Pixel(condition.point))
         return try {
-            val region = condition.region
-            if (region != null) {
-                val bounds = FramePixelBounds.from(region, frame.widthPx, frame.heightPx).relativeTo(frame.capturedBounds)
-                val expected = argbColor(condition.expectedArgb)
-                return frame.withRgbaBytes { bytes ->
-                    for (y in bounds.top until bounds.bottomExclusive) {
-                        checkCancellation()
-                        for (x in bounds.left until bounds.rightExclusive) {
-                            val offset = rgbaOffset(x, y, frame.capturedBounds.width)
-                            if (abs(channelValue(bytes, offset) - expected.red) <= condition.tolerance && abs(channelValue(bytes, offset + 1) - expected.green) <= condition.tolerance && abs(channelValue(bytes, offset + 2) - expected.blue) <= condition.tolerance && abs(channelValue(bytes, offset + 3) - expected.alpha) <= condition.tolerance) return@withRgbaBytes true
-                        }
+            val bounds = (
+                condition.region?.let { FramePixelBounds.from(it, frame.widthPx, frame.heightPx) }
+                    ?: FramePixelBounds.pixel(condition.point, frame.widthPx, frame.heightPx)
+                ).relativeTo(frame.capturedBounds)
+            val expected = argbColor(condition.expectedArgb)
+            val match = frame.withRgbaBytes { bytes ->
+                var bestDifference = 256
+                var bestOffset = 0
+                search@ for (y in bounds.top until bounds.bottomExclusive) {
+                    checkCancellation()
+                    var nextOffset = rgbaOffset(bounds.left, y, frame.capturedBounds.width)
+                    val end = rgbaOffset(bounds.rightExclusive, y, frame.capturedBounds.width)
+                    while (nextOffset < end) {
+                        val offset = nextOffset
+                        nextOffset += BYTES_PER_PIXEL
+                        var difference = abs(channelValue(bytes, offset) - expected.red)
+                        if (difference >= bestDifference) continue
+                        difference = maxOf(difference, abs(channelValue(bytes, offset + 1) - expected.green))
+                        if (difference >= bestDifference) continue
+                        difference = maxOf(difference, abs(channelValue(bytes, offset + 2) - expected.blue))
+                        if (difference >= bestDifference) continue
+                        difference = maxOf(difference, abs(channelValue(bytes, offset + 3) - expected.alpha))
+                        if (difference >= bestDifference) continue
+                        bestDifference = difference
+                        bestOffset = offset
+                        // Only an exact colour can prove there is no better pixel later in the area.
+                        if (difference == 0) break@search
                     }
-                    false
                 }
+                val closestArgb = (channelValue(bytes, bestOffset + 3).toLong() shl 24) or
+                    (channelValue(bytes, bestOffset).toLong() shl 16) or
+                    (channelValue(bytes, bestOffset + 1).toLong() shl 8) or
+                    channelValue(bytes, bestOffset + 2).toLong()
+                ColorMatchObservation(condition.expectedArgb, closestArgb, bestDifference, condition.tolerance)
             }
-            val point = FramePixelBounds.pixel(condition.point, frame.widthPx, frame.heightPx)
-            withinTolerance(frame.pixelAt(point.left, point.top), argbColor(condition.expectedArgb), condition.tolerance)
+            ConditionObservation(match.difference <= match.tolerance, colorMatch = match)
         } finally {
             frame.close()
         }
@@ -652,11 +672,6 @@ class VisualConditionEvaluator(
             blue = (value and 0xFF).toInt(),
             alpha = ((value shr 24) and 0xFF).toInt(),
         )
-
-        private fun withinTolerance(actual: RgbaColor, expected: RgbaColor, tolerance: Int): Boolean = abs(actual.red - expected.red) <= tolerance &&
-            abs(actual.green - expected.green) <= tolerance &&
-            abs(actual.blue - expected.blue) <= tolerance &&
-            abs(actual.alpha - expected.alpha) <= tolerance
 
         private fun channelError(
             first: ByteArray,

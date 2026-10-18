@@ -370,6 +370,7 @@ class WorkflowRunner {
                 result = result,
                 matchScore = observation?.matchScore,
                 threshold = observation?.threshold,
+                colorMatch = observation?.colorMatch,
             ),
         )
         return result

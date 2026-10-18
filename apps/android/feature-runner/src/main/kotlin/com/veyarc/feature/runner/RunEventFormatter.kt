@@ -34,7 +34,7 @@ import com.veyarc.model.resolvePoint
 import java.util.Locale
 import kotlin.math.roundToInt
 
-/** Produces local, human-readable run history without exposing variable values or screen pixels. */
+/** Produces local, human-readable run history without exposing variable values or screen captures. */
 internal class RunEventFormatter(private val document: WorkflowDocument) {
     private val stepsById = mutableMapOf<String, WorkflowStep>()
     private val blockLabels = mutableMapOf<String, String>()
@@ -78,6 +78,14 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
 
     private fun conditionResult(event: RunEvent.ConditionEvaluated): String {
         val condition = conditionsByPath[event.path]
+        event.colorMatch?.let { match ->
+            val location = (condition as? PixelColorCondition)?.let { if (it.region == null) " at ${formatPoint(it.point)}" else " in the search area" }.orEmpty()
+            val closest = String.format(Locale.ROOT, "#%08X", match.closestArgb)
+            val target = String.format(Locale.ROOT, "#%08X", match.targetArgb)
+            return "Colour ${if (event.result) "found" else "not found"}$location\n" +
+                "Closest $closest · Target $target\n" +
+                "Difference ${match.difference} · Tolerance ±${match.tolerance}"
+        }
         val base = condition?.let(::conditionName) ?: "Condition"
         val threshold = event.threshold ?: condition?.matchThresholdOrNull()
         if (threshold == null) return "$base: ${event.result}"

@@ -36,10 +36,23 @@ interface ConditionObserver {
     fun observe(condition: Condition): ConditionObservation
 }
 
+data class ColorMatchObservation(
+    val targetArgb: Long,
+    val closestArgb: Long,
+    val difference: Int,
+    val tolerance: Int,
+) {
+    init {
+        require(targetArgb in 0..0xFFFFFFFFL && closestArgb in 0..0xFFFFFFFFL)
+        require(difference in 0..255 && tolerance in 0..255)
+    }
+}
+
 data class ConditionObservation(
     val result: Boolean,
     val matchScore: Double? = null,
     val threshold: Double? = null,
+    val colorMatch: ColorMatchObservation? = null,
 ) {
     init {
         require(matchScore == null || matchScore in 0.0..1.0) {
@@ -160,6 +173,7 @@ sealed interface RunEvent {
         val result: Boolean,
         val matchScore: Double? = null,
         val threshold: Double? = null,
+        val colorMatch: ColorMatchObservation? = null,
     ) : RunEvent
 
     data class StepFinished(
