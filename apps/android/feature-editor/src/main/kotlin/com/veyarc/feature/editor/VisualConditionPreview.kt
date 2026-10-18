@@ -63,19 +63,6 @@ private const val PREVIEW_MAX_DIMENSION = 1_200
 private const val DEVICE_PREVIEW_HEIGHT_DP = 360
 
 @Composable
-internal fun ColorAreaPreview(region: NormalizedRect, width: Int, height: Int, backgroundAsset: BundleAsset?, onChange: (NormalizedRect) -> Unit) {
-    val background by produceState<TemplatePreviewData?>(null, backgroundAsset) {
-        value = backgroundAsset?.let { asset -> withContext(Dispatchers.Default) { decodeTemplatePreview(asset) } }
-    }
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-        Column(Modifier.padding(12.dp)) {
-            Text("Drag the area or its corners.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            DeviceComparisonPreview(region, width.coerceAtLeast(1), height.coerceAtLeast(1), null, background, onChange, false, Modifier.fillMaxWidth().height(260.dp))
-        }
-    }
-}
-
-@Composable
 internal fun ImageConditionPreview(
     region: NormalizedRect,
     displayWidthPx: Int,
@@ -83,6 +70,7 @@ internal fun ImageConditionPreview(
     asset: BundleAsset?,
     backgroundAsset: BundleAsset? = null,
     screenStateMode: Boolean = false,
+    colorSearch: Boolean = false,
     onRegionChange: ((NormalizedRect) -> Unit)?,
 ) {
     val safeDisplayWidth = displayWidthPx.coerceAtLeast(1)
@@ -117,7 +105,7 @@ internal fun ImageConditionPreview(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Text("Current-device comparison", style = MaterialTheme.typography.titleSmall)
+            Text(if (colorSearch) "Colour search area" else "Current-device comparison", style = MaterialTheme.typography.titleSmall)
             Text(
                 if (screenStateMode) "Compare with the whole screen." else "Drag the area or its corners to choose where Veyarc searches.",
                 modifier = Modifier.padding(top = 4.dp),
@@ -150,14 +138,16 @@ internal fun ImageConditionPreview(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            TemplateScaleDetails(
-                preview = preview,
-                displayWidthPx = safeDisplayWidth,
-                displayHeightPx = safeDisplayHeight,
-                searchBounds = searchBounds,
-                region = region,
-                screenStateMode = screenStateMode,
-            )
+            if (!colorSearch) {
+                TemplateScaleDetails(
+                    preview = preview,
+                    displayWidthPx = safeDisplayWidth,
+                    displayHeightPx = safeDisplayHeight,
+                    searchBounds = searchBounds,
+                    region = region,
+                    screenStateMode = screenStateMode,
+                )
+            }
         }
     }
 }

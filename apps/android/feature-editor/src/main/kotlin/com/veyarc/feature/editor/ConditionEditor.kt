@@ -352,7 +352,7 @@ private fun PixelConditionFields(
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf("Point", "Area").forEachIndexed { index, label ->
             val selected = (condition.region != null) == (index == 1)
-            Surface(onClick = { onChange(condition.copy(region = if (index == 0) null else condition.region ?: FULL_SCREEN_REGION)) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp), color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh) {
+            Surface(onClick = { onChange(condition.copy(region = if (index == 0) null else condition.region ?: NormalizedRect(0.25, 0.25, 0.5, 0.5))) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp), color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh) {
                 Text(label, Modifier.padding(12.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -422,7 +422,7 @@ private fun PixelConditionFields(
             value = condition.backgroundAssetId?.let { loadAsset(it) }
         }
         var showBackgrounds by rememberSaveable { mutableStateOf(false) }
-        ColorAreaPreview(searchRegion, previewWidthPx, previewHeightPx, backgroundAsset) { onChange(condition.copy(region = it)) }
+        ImageConditionPreview(region = searchRegion, displayWidthPx = previewWidthPx, displayHeightPx = previewHeightPx, asset = null, backgroundAsset = backgroundAsset, colorSearch = true, onRegionChange = { onChange(condition.copy(region = it)) })
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { showBackgrounds = true }) {
                 Icon(Icons.Outlined.Image, contentDescription = "Change background")
@@ -455,6 +455,7 @@ private fun PixelConditionFields(
         toleranceText = next
         next.toIntOrNull()?.takeIf { it in 0..255 }?.let { onChange(condition.copy(tolerance = it)) }
     })
+    ImageCheckTestPanel(condition, assets, assetNames, loadAsset, loadPreview, previewWidthPx, previewHeightPx)
 }
 
 @Composable
@@ -678,7 +679,7 @@ private fun PackageConditionFields(
             Surface(
                 modifier = Modifier.selectable(selected, role = Role.RadioButton) { onChange(condition.copy(packageName = PackageName(packageName))) },
                 shape = RoundedCornerShape(16.dp),
-                color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
             ) {
                 AllowedApplicationIcon(packageName, Modifier.padding(vertical = 10.dp, horizontal = 4.dp), actionLabel = "Select")
             }
@@ -703,8 +704,8 @@ private fun OrientationConditionFields(
             Surface(
                 modifier = Modifier.weight(1f).selectable(selected, role = Role.RadioButton) { onChange(condition.copy(orientation = orientation)) },
                 shape = RoundedCornerShape(18.dp),
-                color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
-                contentColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
             ) {
                 Column(Modifier.padding(vertical = 18.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(if (portrait) Icons.Outlined.StayCurrentPortrait else Icons.Outlined.StayCurrentLandscape, null, Modifier.size(30.dp))
