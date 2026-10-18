@@ -1,16 +1,34 @@
 package com.veyarc.app
 
 import com.veyarc.data.storage.ChatAttachmentStore
+import com.veyarc.data.storage.WorkflowRepository
+import com.veyarc.engine.ConditionObservation
 import com.veyarc.feature.assistant.AssistantAttachment
+import com.veyarc.feature.assistant.AssistantAttachmentImporter
 import com.veyarc.feature.assistant.AssistantCandidateValidator
 import com.veyarc.feature.assistant.AssistantContextCapture
 import com.veyarc.feature.assistant.AssistantContextSnapshot
 import com.veyarc.feature.assistant.AssistantImageAddition
+import com.veyarc.feature.assistant.AssistantImageCheckCall
+import com.veyarc.feature.assistant.AssistantImageCheckResult
 import com.veyarc.feature.assistant.AssistantImagePurpose
+import com.veyarc.feature.assistant.AttachmentKind
 import com.veyarc.feature.editor.WorkflowDraft
 import com.veyarc.feature.editor.WorkflowEditorSession
+import com.veyarc.model.AndCondition
 import com.veyarc.model.AssetId
+import com.veyarc.model.IfElse
+import com.veyarc.model.ImageAbsentCondition
+import com.veyarc.model.ImagePresentCondition
+import com.veyarc.model.NotCondition
+import com.veyarc.model.OrCondition
+import com.veyarc.model.Repeat
+import com.veyarc.model.WaitUntil
+import com.veyarc.model.WhileStep
 import com.veyarc.model.WorkflowJson
+import com.veyarc.model.WorkflowStep
+import com.veyarc.model.backgroundAssetId
+import com.veyarc.model.bundle.BundleAsset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -32,6 +50,80 @@ internal class AssistantDraftBridge(
             observed = current
         }
         return current.captureAssistantContext().copy(localBindingId = binding)
+    }
+
+    suspend fun testImage(localBindingId: String, base: AssistantContextSnapshot, call: AssistantImageCheckCall, sources: List<AssistantAttachment>, repository: WorkflowRepository, importer: AssistantAttachmentImporter): AssistantImageCheckResult {
+        val label = com.veyarc.feature.assistant.imageCheckBlockLabel(base, call.stepId)
+        try {
+            call.validate()
+            val captured = capture()
+            require(captured.localBindingId == localBindingId && captured.snapshot == base && captured.error == null) { "The workflow changed. Send a new request to test its current settings." }
+            val draft = requireNotNull(editor.draft) { "Open the workflow first." }
+            fun find(steps: List<WorkflowStep>): WorkflowStep? {
+                for (step in steps) {
+                    if (step.id == call.stepId) return step
+                    val children = when (step) {
+                        is IfElse -> step.thenSteps + step.elseSteps
+                        is Repeat -> step.bodySteps
+                        is WhileStep -> step.bodySteps
+                        else -> emptyList()
+                    }
+                    find(children)?.let { return it }
+                }
+                return null
+            }
+            var condition = when (val step = find(draft.steps)) {
+                is IfElse -> step.condition
+                is WhileStep -> step.condition
+                is WaitUntil -> step.condition
+                else -> throw IllegalArgumentException("That block has no image condition.")
+            }
+            call.conditionPath.forEach { index ->
+                condition = when (val parent = condition) {
+                    is AndCondition -> parent.conditions.getOrNull(index)
+                    is OrCondition -> parent.conditions.getOrNull(index)
+                    is NotCondition -> parent.condition.takeIf { index == 0 }
+                    else -> null
+                } ?: throw IllegalArgumentException("That nested condition does not exist.")
+            }
+            val targetId = when (val selected = condition) {
+                is ImagePresentCondition -> selected.assetId
+                is ImageAbsentCondition -> selected.assetId
+                else -> throw IllegalArgumentException("Select one image condition inside that block.")
+            }
+            suspend fun asset(id: AssetId): BundleAsset {
+                require(draft.assetDescriptors.any { it.assetId == id }) { "This image isn't in the captured workflow." }
+                return draft.assets.firstOrNull { it.assetId == id } ?: withContext(Dispatchers.IO) {
+                    repository.loadRevisionAsset(draft.workflowId, requireNotNull(draft.lastSavedRevision), id)
+                }
+            }
+            val target = asset(targetId)
+            val viewport = draft.viewport
+            val result: ConditionObservation
+            val name: String
+            if (call.sourceAttachmentId != null) {
+                val attachment = sources.firstOrNull { it.id == call.sourceAttachmentId && it.kind == AttachmentKind.IMAGE }
+                    ?: throw IllegalArgumentException("Choose an image already attached to this chat.")
+                name = attachment.name
+                val bitmap = withContext(Dispatchers.IO) { importer.bitmap(attachment) }
+                try {
+                    result = com.veyarc.feature.editor.testImageCondition(condition, target, bitmap, viewport.recordedWidthPx, viewport.recordedHeightPx)
+                } finally {
+                    bitmap.recycle()
+                }
+            } else {
+                val backgroundId = call.backgroundAssetId?.let(::AssetId) ?: condition.backgroundAssetId()
+                    ?: throw IllegalArgumentException("Choose a saved background or attach an original screenshot.")
+                name = draft.assetNames[backgroundId.value] ?: "Saved background"
+                result = com.veyarc.feature.editor.testImageCondition(condition, target, asset(backgroundId), viewport.recordedWidthPx, viewport.recordedHeightPx)
+            }
+            require(capture() == captured) { "The workflow changed during the test. Send a new request to test its current settings." }
+            return AssistantImageCheckResult(label, name, result.matchScore, result.threshold, result.result)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            return AssistantImageCheckResult(label, error = (error as? IllegalArgumentException)?.message ?: "Could not read or compare the selected images.")
+        }
     }
 
     suspend fun apply(localBindingId: String, base: AssistantContextSnapshot, candidateJson: String): Int? {

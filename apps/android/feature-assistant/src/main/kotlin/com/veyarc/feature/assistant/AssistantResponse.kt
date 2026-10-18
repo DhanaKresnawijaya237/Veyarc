@@ -17,6 +17,9 @@ enum class AssistantOutcome {
     @SerialName("clarification")
     CLARIFICATION,
 
+    @SerialName("imageCheck")
+    IMAGE_CHECK,
+
     @SerialName("proposal")
     PROPOSAL,
 }
@@ -33,6 +36,7 @@ data class AssistantResponse(
     val candidate: JsonObject? = null,
     val imageAdditions: List<AssistantImageAddition> = emptyList(),
     val chatTitle: String? = null,
+    val imageChecks: List<AssistantImageCheckCall> = emptyList(),
 )
 
 internal object AssistantResponseCodec {
@@ -50,7 +54,7 @@ internal object AssistantResponseCodec {
             require(
                 when (key) {
                     "candidate" -> value is JsonObject
-                    "imageAdditions" -> value is JsonArray
+                    "imageAdditions", "imageChecks" -> value is JsonArray
                     else -> value is JsonPrimitive && value.isString == (key != "contractVersion")
                 },
             )
@@ -61,6 +65,9 @@ internal object AssistantResponseCodec {
         require((response.outcome == AssistantOutcome.PROPOSAL) == (response.candidate != null))
         require(response.imageAdditions.size <= 64 && (response.imageAdditions.isEmpty() || response.outcome == AssistantOutcome.PROPOSAL))
         response.imageAdditions.forEach(AssistantImageAddition::validate)
+        require((response.outcome == AssistantOutcome.IMAGE_CHECK) == response.imageChecks.isNotEmpty())
+        require(response.imageChecks.size <= 200)
+        response.imageChecks.forEach(AssistantImageCheckCall::validate)
         require(response.chatTitle == null || (response.chatTitle.isNotBlank() && response.chatTitle.length <= 80 && response.chatTitle.none(Char::isISOControl)))
         require(response.text.isNotBlank() && response.text.length <= MAX_TEXT_LENGTH)
         return response
@@ -111,3 +118,21 @@ internal object AssistantResponseCodec {
 }
 
 internal fun PreviewTurn.responseBaseId(chat: PreviewConversation): String = baseSnapshot?.snapshotId ?: "draft:${chat.draftId}"
+
+/** A read-only local tool. IDs are resolved only within the request's captured workflow/chat. */
+@Serializable
+data class AssistantImageCheckCall(val stepId: String, val conditionPath: List<Int> = emptyList(), val backgroundAssetId: String? = null, val sourceAttachmentId: String? = null) {
+    fun validate() {
+        require(stepId.isNotBlank() && stepId.length <= 128 && stepId.none(Char::isISOControl))
+        require(conditionPath.size <= 12 && conditionPath.all { it in 0..7 })
+        require(backgroundAssetId == null || sourceAttachmentId == null)
+        listOfNotNull(backgroundAssetId, sourceAttachmentId).forEach { require(it.isNotBlank() && it.length <= 128 && it.none(Char::isISOControl)) }
+    }
+}
+
+@Serializable
+data class AssistantImageCheckResult(val block: String, val background: String? = null, val score: Double? = null, val threshold: Double? = null, val conditionMet: Boolean? = null, val error: String? = null)
+
+fun imageCheckBlockLabel(base: AssistantContextSnapshot, stepId: String): String = assistantStepNames(
+    (WorkflowJson.format.parseToJsonElement(base.json) as JsonObject)["steps"] as? JsonArray,
+)[stepId] ?: "Image condition"

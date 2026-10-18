@@ -653,6 +653,20 @@ private fun PreviewTurnContent(state: AssistantPreviewState, turn: PreviewTurn, 
         }
         val reply = remember(turn.reply, turn.baseSnapshot) { readableReply(turn) }
         ThinkingDisclosure(turn, followLatest)
+        turn.imageCheckResults.forEach { test ->
+            Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(test.block, style = MaterialTheme.typography.titleSmall)
+                    if (test.error != null) {
+                        Text(test.error, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                    } else {
+                        Text("Score ${imageTestPercent(test.score)} · Threshold ${imageTestPercent(test.threshold)}", style = MaterialTheme.typography.bodyMedium)
+                        Text(if (test.conditionMet == true) "Condition met" else "Condition not met", style = MaterialTheme.typography.labelMedium, color = if (test.conditionMet == true) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
+                        test.background?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    }
+                }
+            }
+        }
         if (turn.reply.isNotEmpty()) MessageText(reply, if (turn.provider) "DeepSeek reply" else "Sample reply", Modifier.fillMaxWidth().testTag("assistant-reply-${turn.id}"), markdown = true, onContext = if (turn.baseSnapshot != null) onContext else null)
         if (turn.status == PreviewReplyStatus.COMPLETE && reply.isNotBlank()) {
             val clipboard = LocalClipboard.current
@@ -1225,3 +1239,5 @@ private fun ComposerSendButton(state: AssistantPreviewState) {
 
 @Composable
 private fun chatControlColor(): Color = MaterialTheme.colorScheme.surfaceContainerHighest
+
+private fun imageTestPercent(value: Double?): String = value?.let { String.format(java.util.Locale.getDefault(), "%.1f%%", it * 100) } ?: "unavailable"

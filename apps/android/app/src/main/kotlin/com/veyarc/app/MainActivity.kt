@@ -650,6 +650,7 @@ internal class EditorSessionOwner(application: Application) {
         compileCandidate = ::assistantCompilationIssues,
         applyCandidate = assistantDraft::apply,
         contextSource = assistantDraft::capture,
+        imageCheck = { binding, base, call, sources -> assistantDraft.testImage(binding, base, call, sources, workflowRepository, assistantAttachments) },
         attachments = assistantAttachments,
         applyImageCandidate = { binding, base, candidate, additions, sources -> assistantDraft.applyImages(binding, base, candidate, additions, sources, assistantAttachments.store) },
         providerCall = { request ->
