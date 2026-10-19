@@ -38,8 +38,10 @@ import com.veyarc.model.WaitUntil
 import com.veyarc.model.WhileStep
 import com.veyarc.model.WorkflowDocument
 import com.veyarc.model.WorkflowJson
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -78,7 +80,7 @@ class AssistantAdvancedWorkflowAcceptanceTest {
         variables = mapOf("count" to VariableDeclaration(VariableType.NUMBER, NumberValue(0.0))),
         assetDescriptors = listOf(
             WorkflowAssetDescriptor(crop, AssetKind.IMAGE_TEMPLATE, "Crop", "image/png", 20, 30),
-            WorkflowAssetDescriptor(screen, AssetKind.IMAGE_TEMPLATE, "Screen", "image/png", 1080, 2400),
+            WorkflowAssetDescriptor(screen, AssetKind.IMAGE_TEMPLATE, "Screen", "image/png", 1080, 2392),
         ),
         recordingJournalFileName = "private-recording-journal",
     )
@@ -92,9 +94,9 @@ class AssistantAdvancedWorkflowAcceptanceTest {
     private fun withBranch(value: IfElse): WorkflowDocument = document.copy(steps = steps.map { if (it == repeat) repeat.copy(bodySteps = listOf(value)) else it })
 
     @Test
-    fun nestedEditsHaveExactLocalDiffAndOneUndoPreservesUnloadedAssetsAndRevision() {
+    fun nestedEditsSaveOneRevisionAndPreserveUnloadedAssets() = runBlocking {
         val editor = editor(source)
-        val bridge = AssistantDraftBridge(editor)
+        val bridge = savedRevisionTestBridge(editor)
         val captured = bridge.capture()
         val snapshot = requireNotNull(captured.snapshot)
         val context = WorkflowJson.decodeStrict(AssistantDraftContext.serializer(), snapshot.json)
@@ -137,23 +139,21 @@ class AssistantAdvancedWorkflowAcceptanceTest {
         changed("/ durationMs", "100", "250")
         assertTrue(diff.any { it.label == "Moved block ${wait.id}" && it.before == "Steps / 1 / bodySteps / 1 / thenSteps / 1 / bodySteps / 2" && it.after == "Steps / 1 / bodySteps / 1 / elseSteps / 2" })
         assertEquals(source, editor.draft)
-        assertTrue(bridge.apply(captured.localBindingId!!, snapshot, json))
-        assertEquals(source.copy(steps = candidate.steps, variables = candidate.variables), editor.draft)
+        assertNotNull(bridge.apply(captured.localBindingId!!, snapshot, json))
+        assertEquals(source.copy(steps = candidate.steps, variables = candidate.variables, lastSavedRevision = 6, latestKnownRevision = 6), editor.draft)
         assertTrue(editor.draft!!.assets.isEmpty())
-        assertEquals(3, editor.draft!!.lastSavedRevision)
-        assertEquals(6, editor.draft!!.nextRevision)
-        assertFalse(bridge.apply(captured.localBindingId!!, snapshot, json))
-        editor.undo()
-        assertEquals(source, editor.draft)
-        editor.redo()
-        assertEquals(candidate, editor.draft!!.buildBundle().document)
+        assertEquals(6, editor.draft!!.lastSavedRevision)
+        assertEquals(7, editor.draft!!.nextRevision)
+        assertNull(bridge.apply(captured.localBindingId!!, snapshot, json))
+        assertFalse(editor.canUndo)
+        assertEquals(candidate, editor.draft!!.buildBundle(candidate.revision).document)
     }
 
     @Test
-    fun configuredUnsavedDraftAcceptsAdvancedCreationButStaleCandidateCannotApply() {
+    fun configuredUnsavedDraftAcceptsAdvancedCreationButStaleCandidateCannotApply() = runBlocking {
         val configured = source.copy(lastSavedRevision = null, latestKnownRevision = null, steps = listOf(Wait(id(99), DurationMillis(125))), recordingJournalFileName = null)
         val editor = editor(configured)
-        val bridge = AssistantDraftBridge(editor)
+        val bridge = savedRevisionTestBridge(editor)
         val captured = bridge.capture()
         val candidate = document.copy(revision = 1)
         val json = WorkflowJson.encode(candidate)
@@ -164,21 +164,20 @@ class AssistantAdvancedWorkflowAcceptanceTest {
         assertTrue(diff.any { it.label.startsWith("Removed block ${id(99)}") })
         editor.update(configured.copy(name = "User edited while reviewing"))
         assertEquals(AssistantReviewStatus.STALE, AssistantProposalReview.status(captured.snapshot, bridge.capture(), proposal, false))
-        assertFalse(bridge.apply(captured.localBindingId!!, captured.snapshot!!, json))
+        assertNull(bridge.apply(captured.localBindingId!!, captured.snapshot!!, json))
         editor.undo()
         val fresh = bridge.capture()
-        assertTrue(bridge.apply(fresh.localBindingId!!, fresh.snapshot!!, json))
-        assertEquals(candidate, editor.draft!!.buildBundle().document)
-        assertNull(editor.draft!!.lastSavedRevision)
+        assertNotNull(bridge.apply(fresh.localBindingId!!, fresh.snapshot!!, json))
+        assertEquals(candidate, editor.draft!!.buildBundle(candidate.revision).document)
+        assertEquals(1, editor.draft!!.lastSavedRevision)
         assertEquals(configured.workflowId, editor.draft!!.workflowId)
-        editor.undo()
-        assertEquals(configured, editor.draft)
+        assertFalse(editor.canUndo)
     }
 
     @Test
-    fun invalidNestedReferencesTypesAndBoundsNeverReachApply() {
+    fun invalidNestedReferencesTypesAndBoundsNeverReachApply() = runBlocking {
         val editor = editor(source)
-        val bridge = AssistantDraftBridge(editor)
+        val bridge = savedRevisionTestBridge(editor)
         val captured = bridge.capture()
         val cases = listOf(
             "MISSING_VARIABLE" to document.copy(variables = emptyMap()),
@@ -198,7 +197,7 @@ class AssistantAdvancedWorkflowAcceptanceTest {
             assertNull(result.candidateJson)
             assertTrue("Expected $expected, got ${result.issues}", result.issues.any { it.contains(expected) })
             assertEquals(AssistantReviewStatus.INVALID, AssistantProposalReview.status(captured.snapshot, bridge.capture(), result, false))
-            assertFalse(bridge.apply(captured.localBindingId!!, captured.snapshot!!, json))
+            assertNull(bridge.apply(captured.localBindingId!!, captured.snapshot!!, json))
             assertEquals(source, editor.draft)
         }
     }

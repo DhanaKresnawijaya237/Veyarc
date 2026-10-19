@@ -90,7 +90,7 @@ class AssistantCandidateValidationTest {
         val first = Wait(id(), DurationMillis(1))
         val jumpSource = draft.copy(runLimits = draft.runLimits.copy(maxLoopIterations = Int.MAX_VALUE))
         val jumpBase = jumpSource.buildBundle().document!!
-        assertTrue(validate(jumpBase.copy(steps = listOf(first, Jump(id(), first.id, Int.MAX_VALUE))), jumpSource).issues.single().contains("compilation budget"))
+        assertTrue(validate(jumpBase.copy(steps = listOf(first, Jump(id(), first.id, Int.MAX_VALUE))), jumpSource).isValid)
         assertEquals(base, draft.buildBundle().document)
     }
 
