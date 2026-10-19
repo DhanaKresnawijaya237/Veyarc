@@ -7,7 +7,6 @@
 package com.veyarc.feature.editor
 
 import android.content.Context
-import android.content.Intent
 import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -48,10 +47,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CutCornerShape
@@ -73,6 +72,8 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Loop
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Save
@@ -103,6 +104,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
@@ -112,11 +114,11 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -171,8 +173,13 @@ import com.veyarc.model.WorkflowIds
 import com.veyarc.model.WorkflowStep
 import com.veyarc.model.bundle.WorkflowBundle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
+import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 @Composable
 fun WorkflowEditorScreen(
@@ -191,10 +198,12 @@ fun WorkflowEditorScreen(
     onNewWorkflowRequestConsumed: () -> Unit = {},
     onWorkflowClosed: () -> Unit = {},
     modifier: Modifier = Modifier,
+    onOpenGuide: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var isBusy by remember { mutableStateOf(false) }
+    var isWorking by remember { mutableStateOf(false) }
+    val isBusy = isWorking || session.isSaving
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var isOpening by remember { mutableStateOf(false) }
     var initialLoadFinished by remember(initialBundle, initialStoredWorkflowId, initialStoredRevision) { mutableStateOf(false) }
@@ -208,14 +217,18 @@ fun WorkflowEditorScreen(
     var clipboardAvailable by remember { mutableStateOf(false) }
     var pendingBlockPaste by remember { mutableStateOf<PendingBlockPaste?>(null) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(EditorBlockClipboard.isCopying) {
+        if (EditorBlockClipboard.isCopying) return@LaunchedEffect
         clipboardAvailable = withContext(Dispatchers.IO) { runCatching { blockClipboard.read() != null }.getOrDefault(false) }
+    }
+    LaunchedEffect(EditorBlockClipboard.copyMessage) {
+        EditorBlockClipboard.copyMessage?.let { statusMessage = it }
     }
 
     val templatePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
-            isBusy = true
+            isWorking = true
             statusMessage = null
             runCatching {
                 withContext(Dispatchers.Default) {
@@ -227,7 +240,7 @@ fun WorkflowEditorScreen(
             }.onFailure { error ->
                 statusMessage = "Could not open image: ${error.userMessage()}"
             }
-            isBusy = false
+            isWorking = false
         }
     }
     val appPicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -304,7 +317,7 @@ fun WorkflowEditorScreen(
             onInitialBundleConsumed()
             return@LaunchedEffect
         }
-        isBusy = true
+        isWorking = true
         isOpening = true
         try {
             val revisions = withContext(Dispatchers.IO) { repository.listRevisions(bundle.document.id) }
@@ -317,7 +330,7 @@ fun WorkflowEditorScreen(
             statusMessage = "Could not open workflow: ${error.userMessage()}"
             onInitialBundleConsumed()
         } finally {
-            isBusy = false
+            isWorking = false
             isOpening = false
             initialLoadFinished = true
         }
@@ -332,7 +345,7 @@ fun WorkflowEditorScreen(
             onInitialBundleConsumed()
             return@LaunchedEffect
         }
-        isBusy = true
+        isWorking = true
         isOpening = true
         try {
             val request = loadStoredRevision(workflowId, revision, initialRecordingJournalFileName, true)
@@ -343,7 +356,7 @@ fun WorkflowEditorScreen(
             statusMessage = "Could not open workflow: ${error.userMessage()}"
             onInitialBundleConsumed()
         } finally {
-            isBusy = false
+            isWorking = false
             isOpening = false
             initialLoadFinished = true
         }
@@ -372,7 +385,7 @@ fun WorkflowEditorScreen(
         val current = session.draft ?: return
         if (isBusy || current.lastSavedRevision == revision) return
         scope.launch {
-            isBusy = true
+            isWorking = true
             isOpening = true
             statusMessage = null
             try {
@@ -383,7 +396,7 @@ fun WorkflowEditorScreen(
             } catch (error: Exception) {
                 statusMessage = "Could not open revision: ${error.userMessage()}"
             } finally {
-                isBusy = false
+                isWorking = false
                 isOpening = false
             }
         }
@@ -409,60 +422,38 @@ fun WorkflowEditorScreen(
             pendingOrientationSave = PendingOrientationSave(draft, afterSave)
             return
         }
-        val sourceJournalFileName = session.draft?.recordingJournalFileName
-        if (isBusy || !session.beginSave()) return
-        isBusy = true
+        if (isBusy) return
+        isWorking = true
         scope.launch {
             try {
                 statusMessage = null
-                runCatching {
-                    withContext(Dispatchers.IO) {
-                        val latest = repository.listRevisions(draft.workflowId).maxOfOrNull { it.revision }
-                        if (latest != null && latest > (draft.latestKnownRevision ?: 0)) {
-                            throw WorkflowStorageException("A newer saved revision exists. Open it and review your changes before saving again.")
-                        }
-                        val sourceRevision = draft.lastSavedRevision
-                        if (sourceRevision == null) {
-                            val bundle = build.bundle
-                                ?: throw WorkflowStorageException("Unsaved workflow assets are incomplete")
-                            repository.saveRevision(bundle, session.destinationFolderId)
-                        } else {
-                            repository.saveRevisionFromAssetChanges(
-                                sourceWorkflowId = draft.workflowId,
-                                sourceRevision = sourceRevision,
-                                document = document,
-                                changedAssets = draft.assets,
-                                destinationFolderId = session.destinationFolderId,
-                            )
-                        }
-                        repository.loadRevisionForEditor(document.id, document.revision)
-                    }
-                }.onSuccess { stored ->
-                    session.markSaved(WorkflowDraft.fromRevision(stored, sourceJournalFileName))
-                    ReplayWorkflowCatalog.addOrReplace(
-                        context,
-                        ReplayControllerWorkflow(
-                            workflowId = stored.revision.document.id,
-                            revision = stored.revision.document.revision,
-                            name = stored.revision.document.name,
-                        ),
-                    )
-                    statusMessage = "Saved revision ${stored.revision.document.revision}."
-                    afterSave?.invoke(stored.revision)
-                }.onFailure { error ->
-                    statusMessage = "Could not save revision: ${error.userMessage()}"
-                }
+                val stored = session.saveRevision(repository, draft)
+                ReplayWorkflowCatalog.addOrReplace(
+                    context.applicationContext,
+                    ReplayControllerWorkflow(
+                        workflowId = stored.revision.document.id,
+                        revision = stored.revision.document.revision,
+                        name = stored.revision.document.name,
+                    ),
+                )
+                currentCoroutineContext().ensureActive()
+                statusMessage = "Saved revision ${stored.revision.document.revision}."
+                afterSave?.invoke(stored.revision)
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                statusMessage = "Could not save revision: ${error.userMessage()}"
             } finally {
-                isBusy = false
+                isWorking = false
             }
-        }.invokeOnCompletion { session.finishSave() }
+        }
     }
 
     fun saveAndRun(draft: WorkflowDraft) {
         val revision = draft.lastSavedRevision
         if (!session.isDirty && revision != null) {
             scope.launch {
-                isBusy = true
+                isWorking = true
                 statusMessage = null
                 runCatching {
                     withContext(Dispatchers.IO) {
@@ -471,7 +462,7 @@ fun WorkflowEditorScreen(
                 }.onSuccess(onRunWorkflow).onFailure { error ->
                     statusMessage = "Could not open workflow: ${error.userMessage()}"
                 }
-                isBusy = false
+                isWorking = false
             }
         } else {
             saveWorkflow(draft, afterSave = onRunWorkflow)
@@ -501,29 +492,32 @@ fun WorkflowEditorScreen(
         }.getOrNull()
     }
 
-    fun copyBlocks(path: StepListPath, ids: List<String>) {
-        val current = session.draft ?: return
-        val selected = current.stepsAt(path).filter { it.id in ids }
-        if (selected.isEmpty()) return
-        scope.launch {
-            isBusy = true
-            statusMessage = null
-            runCatching {
-                val images = selected.clipboardImageIds().map { id ->
-                    val assetId = AssetId(id)
-                    val asset = loadDraftAsset(assetId) ?: error("A referenced image is unavailable: ${current.assetNames[id] ?: id}")
-                    asset to (current.assetNames[id] ?: "Image")
-                }
-                withContext(Dispatchers.IO) { blockClipboard.replace(current.viewport.recordedOrientation, selected, images) }
-            }.onSuccess {
-                clipboardAvailable = true
-                statusMessage = "Copied ${selected.size} block${if (selected.size == 1) "" else "s"}."
-            }.onFailure { error -> statusMessage = "Could not copy blocks: ${error.userMessage()}" }
-            isBusy = false
+    val editTemplateTarget = session.editTemplateTarget
+    LaunchedEffect(editTemplateTarget) {
+        val target = editTemplateTarget ?: return@LaunchedEffect
+        val workflowId = session.draft?.workflowId
+        isWorking = true
+        try {
+            val asset = requireNotNull(loadDraftAsset(target)) { "Image is unavailable" }
+            val source = withContext(Dispatchers.Default) { loadTemplateCropSource(asset) }
+            if (session.draft?.workflowId == workflowId) pendingTemplateCrop = TemplateCropDraft(source, session.draft?.assetNames?.get(target.value).orEmpty(), com.veyarc.ui.ImageEdits(FULL_TEMPLATE_CROP, "view"))
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            statusMessage = "Could not open image: ${error.userMessage()}"
+        } finally {
+            session.editTemplateTarget = null
+            isWorking = false
         }
     }
 
+    fun copyBlocks(path: StepListPath, ids: List<String>) {
+        val current = session.draft ?: return
+        val selected = current.stepsAt(path).filter { it.id in ids }
+        EditorBlockClipboard.copy(context, current, selected)
+    }
+
     fun requestBlockPaste(path: StepListPath, index: Int) {
+        if (EditorBlockClipboard.isCopying) return
         scope.launch {
             runCatching { withContext(Dispatchers.IO) { blockClipboard.read() } }
                 .onSuccess { entry ->
@@ -538,10 +532,11 @@ fun WorkflowEditorScreen(
     }
 
     fun confirmBlockPaste(importImages: Boolean) {
+        if (EditorBlockClipboard.isCopying) return
         val pending = pendingBlockPaste ?: return
         pendingBlockPaste = null
         scope.launch {
-            isBusy = true
+            isWorking = true
             statusMessage = null
             runCatching {
                 val current = session.draft ?: error("No workflow is open")
@@ -563,7 +558,7 @@ fun WorkflowEditorScreen(
                 val omitted = required - existingIds - loaded.assetIds.keys
                 statusMessage = if (omitted.isEmpty()) "Pasted ${pending.entry.steps.size} blocks." else "Pasted blocks. Add the missing images before saving."
             }.onFailure { error -> statusMessage = "Could not paste blocks: ${error.userMessage()}" }
-            isBusy = false
+            isWorking = false
         }
     }
 
@@ -610,6 +605,7 @@ fun WorkflowEditorScreen(
                 statusMessage = null
             },
             onOpenWorkflowManager = onOpenWorkflowManager,
+            onOpenGuide = onOpenGuide,
             statusMessage = statusMessage,
             onAskAi = onAskAi?.let { openChat ->
                 {
@@ -643,12 +639,7 @@ fun WorkflowEditorScreen(
             revisions = session.revisionSummaries,
             onOpenRevision = ::openRevision,
             onPickApplication = {
-                appPicker.launch(
-                    Intent(Intent.ACTION_PICK_ACTIVITY).putExtra(
-                        Intent.EXTRA_INTENT,
-                        Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER),
-                    ),
-                )
+                appPicker.launch(allowedApplicationPickerIntent())
             },
             clipboardAvailable = clipboardAvailable,
             onCopyBlocks = ::copyBlocks,
@@ -702,22 +693,34 @@ fun WorkflowEditorScreen(
             val targetStep = draft.stepsAt(target.path).getOrNull(target.index)
             val condition = targetStep?.conditionOrNull()
             if (condition != null) {
-                ConditionEditorDialog(
-                    initialCondition = condition,
-                    assets = draft.assetDescriptors,
-                    assetNames = draft.assetNames,
-                    defaultPackage = draft.allowedPackagesText.firstPackageOrDefault(),
-                    onAddTemplate = { templatePicker.launch("image/*") },
-                    loadAsset = ::loadDraftAsset,
-                    loadPreview = ::loadDraftPreview,
-                    previewWidthPx = draft.viewport.recordedWidthPx,
-                    previewHeightPx = draft.viewport.recordedHeightPx,
-                    onDismiss = { conditionTarget = null },
-                    onApply = { updatedCondition ->
-                        session.update(draft.updateCondition(target.path, target.index) { updatedCondition })
-                        conditionTarget = null
-                    },
-                )
+                CompositionLocalProvider(LocalColorPickerImages provides session.colorPickerImages) {
+                    ConditionEditorDialog(
+                        initialCondition = condition,
+                        assets = draft.assetDescriptors,
+                        assetNames = draft.assetNames,
+                        defaultPackage = draft.allowedPackagesText.firstPackageOrDefault(),
+                        allowedPackages = draft.allowedPackagesText.packageNames(),
+                        onAddAllowedPackage = { packageName ->
+                            val current = session.draft ?: return@ConditionEditorDialog
+                            val packages = current.allowedPackagesText.packageNames()
+                            if (packageName !in packages) session.update(current.copy(allowedPackagesText = (packages + packageName).joinToString(", ")))
+                        },
+                        onAddTemplate = { templatePicker.launch("image/*") },
+                        loadAsset = ::loadDraftAsset,
+                        loadPreview = ::loadDraftPreview,
+                        previewWidthPx = draft.viewport.recordedWidthPx,
+                        previewHeightPx = draft.viewport.recordedHeightPx,
+                        onDismiss = {
+                            session.colorPickerImages.clear()
+                            conditionTarget = null
+                        },
+                        onApply = { updatedCondition ->
+                            session.update(draft.updateCondition(target.path, target.index) { updatedCondition })
+                            session.colorPickerImages.clear()
+                            conditionTarget = null
+                        },
+                    )
+                }
             }
         }
     }
@@ -727,32 +730,43 @@ fun WorkflowEditorScreen(
             draft = cropDraft,
             displayWidthPx = display.recordedWidthPx,
             displayHeightPx = display.recordedHeightPx,
-            existingNames = session.draft?.activeAssetNames().orEmpty(),
+            existingNames = session.draft?.activeAssetNames().orEmpty() - cropDraft.source.existingAsset?.assetId?.let { session.draft?.assetNames?.get(it.value) }.orEmpty(),
+            backgroundInUse = cropDraft.source.existingAsset?.assetId?.value?.let { session.draft?.assetUsageNumbers()?.get(it)?.background?.isNotEmpty() } == true,
             saving = isBusy,
             onDraftChange = { pendingTemplateCrop = it },
             onDismiss = { pendingTemplateCrop = null },
-            onApply = { crop, rotationQuarterTurns, requestedName, strokes ->
+            onApply = { crop, rotationQuarterTurns, requestedName, strokes, replace ->
                 scope.launch {
-                    isBusy = true
+                    isWorking = true
                     statusMessage = null
-                    runCatching {
-                        withContext(Dispatchers.Default) {
-                            importTemplateAsset(context.contentResolver, cropDraft.source.uri, crop, rotationQuarterTurns, strokes)
+                    val originalDraft = session.draft
+                    try {
+                        val asset = withContext(Dispatchers.Default) {
+                            if (cropDraft.source.existingAsset != null) {
+                                importEditedTemplate(cropDraft.source, crop, rotationQuarterTurns, strokes, replace)
+                            } else {
+                                importTemplateAsset(context.contentResolver, cropDraft.source.uri, crop, rotationQuarterTurns, strokes)
+                            }
                         }
-                    }.onSuccess { asset ->
+                        check(session.draft === originalDraft) { "Workflow changed while the image was being saved. Try again." }
                         val prefix = if (crop == FULL_TEMPLATE_CROP) "Full screen" else "Crop"
                         clearTemplatePreviewCache()
-                        session.draft?.addAsset(asset, prefix)?.let { withAsset ->
+                        val original = cropDraft.source.existingAsset
+                        val current = session.draft
+                        val withImage = if (replace && original != null) current?.replaceAsset(asset, removeBackgrounds = asset.widthPx != cropDraft.source.widthPx || asset.heightPx != cropDraft.source.heightPx) else current?.addAsset(asset, if (original == null) prefix else "${cropDraft.name} copy")
+                        withImage?.let { withAsset ->
                             session.update(
-                                if (requestedName.isBlank()) withAsset else withAsset.renameAsset(asset.assetId, requestedName),
+                                if (requestedName.isBlank() || (!replace && current?.activeAssetNames().orEmpty().any { it.equals(requestedName, true) })) withAsset else withAsset.renameAsset(asset.assetId, requestedName),
                             )
                         }
                         pendingTemplateCrop = null
-                        statusMessage = "Encrypted cropped image template added. Select it from the image condition."
-                    }.onFailure { error ->
-                        statusMessage = "Could not add image crop: ${error.userMessage()}"
+                        statusMessage = if (replace) "Image replaced." else "Image added."
+                    } catch (error: Exception) {
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        pendingTemplateCrop = cropDraft.copy(error = "Could not save image: ${error.userMessage()}")
+                    } finally {
+                        isWorking = false
                     }
-                    isBusy = false
                 }
             },
         )
@@ -849,6 +863,7 @@ private fun EmptyWorkflowEditorScreen(
     statusMessage: String? = null,
     onOpenWorkflowManager: () -> Unit,
     onAskAi: (() -> Unit)?,
+    onOpenGuide: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
@@ -899,6 +914,11 @@ private fun EmptyWorkflowEditorScreen(
                         }
                     }
                 }
+                if (onOpenGuide != null) {
+                    TextButton(onClick = onOpenGuide, modifier = Modifier.fillMaxWidth()) {
+                        Text("Open guide")
+                    }
+                }
                 statusMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         }
@@ -929,15 +949,15 @@ private fun WorkflowDraftScreen(
     onPasteBlocks: (StepListPath, Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var selection by remember { mutableStateOf<BlockSelection?>(null) }
-    var selectionMode by remember(draft.workflowId) { mutableStateOf(false) }
-    var selectedPath by remember(draft.workflowId) { mutableStateOf<StepListPath?>(null) }
-    var selectedIds by remember(draft.workflowId) { mutableStateOf<Set<String>>(emptySet()) }
+    var selection by session::blockSelection
+    var selectionMode by session::blockSelectionMode
+    var selectedPath by session::selectedBlockPath
+    var selectedIds by session::selectedBlockIds
     val clipboardActions = BlockClipboardActions(
-        clipboardAvailable = clipboardAvailable,
+        clipboardAvailable = clipboardAvailable && !EditorBlockClipboard.isCopying,
         selectionMode = selectionMode,
         selectedIds = selectedIds,
-        canCopy = if (selectionMode) selectedIds.isNotEmpty() else selection != null,
+        canCopy = !EditorBlockClipboard.isCopying && (if (selectionMode) selectedIds.isNotEmpty() else selection != null),
         onToggleSelectionMode = {
             selectionMode = !selectionMode
             selectedIds = emptySet()
@@ -1014,7 +1034,7 @@ private fun WorkflowDraftScreen(
                             onDraftChange = onDraftChange,
                             onEditGeometry = onEditGeometry,
                             onEditCondition = onEditCondition,
-                            modifier = Modifier.weight(0.38f).padding(bottom = if (onAskAi != null) 84.dp else 0.dp),
+                            modifier = Modifier.weight(0.38f),
                         )
                     }
                 } else {
@@ -1044,22 +1064,41 @@ private fun WorkflowDraftScreen(
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
-                if (onAskAi != null) {
-                    Surface(
-                        onClick = onAskAi,
-                        modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp).size(56.dp).testTag("workflow-ai-chat-button"),
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        shadowElevation = 4.dp,
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = "Ask AI", tint = MaterialTheme.colorScheme.primary)
-                        }
-                    }
-                }
             }
         }
     }
+    if (session.validationDetailsVisible) {
+        AlertDialog(
+            onDismissRequest = { session.validationDetailsVisible = false },
+            title = { Text("Validation issues") },
+            text = {
+                Column(
+                    modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    validation.issues.forEach { issue ->
+                        Text(issue.displayMessage())
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { session.validationDetailsVisible = false }) { Text("Done") }
+            },
+        )
+    }
+    if (session.revisionPickerExpanded) {
+        VeyarcChoicePicker(
+            title = "Choose revision",
+            options = revisions.map { VeyarcChoice(it.revision.toString(), "Revision ${it.revision}") },
+            selectedId = draft.lastSavedRevision?.toString(),
+            onDismiss = { session.revisionPickerExpanded = false },
+            onSelect = { choice ->
+                session.revisionPickerExpanded = false
+                onOpenRevision(choice.id.toInt())
+            },
+        )
+    }
+    TemplateRenameDialog(session, draft.assetNames, loadPreview) { assetId, name -> onDraftChange(draft.renameAsset(assetId, name)) }
 }
 
 @Composable
@@ -1088,7 +1127,7 @@ private fun WorkflowTitleEditor(
     }
 }
 
-private data class BlockSelection(val path: StepListPath, val stepId: String)
+internal data class BlockSelection(val path: StepListPath, val stepId: String)
 
 private data class PendingBlockPaste(val path: StepListPath, val index: Int, val entry: BlockClipboardEntry)
 
@@ -1248,7 +1287,10 @@ private fun WorkflowDraftCanvas(
     scrollHeader: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val scrollState = key(draft.workflowId) { rememberLazyListState() }
+    val scrollState = session.canvasScrollState
+    val scope = rememberCoroutineScope()
+    val canScrollUp by remember(scrollState) { derivedStateOf { scrollState.canScrollBackward } }
+    val canScrollDown by remember(scrollState) { derivedStateOf { scrollState.canScrollForward } }
     val stepDragCoordinator = remember(draft.workflowId) { StepDragCoordinator() }
     val root = remember { StepListPath() }
     DisposableEffect(stepDragCoordinator) {
@@ -1288,7 +1330,7 @@ private fun WorkflowDraftCanvas(
                 start = horizontalPadding,
                 end = horizontalPadding,
                 top = if (scrollHeader) 0.dp else with(density) { toolbarHeight.toDp() },
-                bottom = if (onAskAi != null) 84.dp else verticalPadding,
+                bottom = verticalPadding,
             ),
             verticalArrangement = Arrangement.spacedBy(itemSpacing),
         ) {
@@ -1315,6 +1357,7 @@ private fun WorkflowDraftCanvas(
                         )
                     }
                     AllowedApplications(
+                        session = session,
                         packages = draft.allowedPackagesText,
                         onPickApplication = onPickApplication,
                         onReorderApplications = { onDraftChange(draft.copy(allowedPackagesText = it.joinToString(", "))) },
@@ -1329,6 +1372,7 @@ private fun WorkflowDraftCanvas(
                         },
                     )
                     TemplateAssetSection(
+                        session = session,
                         assets = draft.assetDescriptors,
                         assetNames = draft.assetNames,
                         referencedAssetIds = remember(draft.steps) { draft.referencedAssetIds() },
@@ -1339,7 +1383,6 @@ private fun WorkflowDraftCanvas(
                             clearTemplatePreviewCache()
                             onDraftChange(draft.removeAsset(assetId))
                         },
-                        onRenameTemplate = { assetId, name -> onDraftChange(draft.renameAsset(assetId, name)) },
                     )
                     Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("Execution", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
@@ -1390,6 +1433,68 @@ private fun WorkflowDraftCanvas(
                     .padding(horizontal = horizontalPadding, vertical = verticalPadding),
             )
         }
+        if (onAskAi != null) {
+            val topInset by animateDpAsState(if (canScrollUp) 0.dp else 48.dp, tween(160), label = "scroll-control-top")
+            val bottomInset by animateDpAsState(if (canScrollDown) 0.dp else 48.dp, tween(160), label = "scroll-control-bottom")
+            // Fixed slots keep the chat button centered while either arrow appears or disappears.
+            Box(Modifier.align(Alignment.CenterEnd).padding(end = horizontalPadding).size(52.dp, 148.dp).testTag("workflow-scroll-controls")) {
+                Surface(Modifier.fillMaxSize().padding(top = topInset, bottom = bottomInset), shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, shadowElevation = 4.dp) { }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(Modifier.size(52.dp, 48.dp), contentAlignment = Alignment.BottomCenter) {
+                        androidx.compose.animation.AnimatedVisibility(canScrollUp, enter = expandVertically(tween(160), expandFrom = Alignment.Bottom) + fadeIn(tween(110)), exit = shrinkVertically(tween(140), shrinkTowards = Alignment.Bottom) + fadeOut(tween(90))) {
+                            IconButton(onClick = { scope.launch { scrollState.animateScrollToBoundary(towardTop = true) } }, modifier = Modifier.size(48.dp)) {
+                                Icon(Icons.Outlined.KeyboardArrowUp, "Scroll to top")
+                            }
+                        }
+                    }
+                    IconButton(onClick = onAskAi, modifier = Modifier.size(52.dp).testTag("workflow-ai-chat-button")) {
+                        Icon(Icons.Outlined.ChatBubbleOutline, "Ask AI", tint = MaterialTheme.colorScheme.primary)
+                    }
+                    Box(Modifier.size(52.dp, 48.dp), contentAlignment = Alignment.TopCenter) {
+                        androidx.compose.animation.AnimatedVisibility(canScrollDown, enter = expandVertically(tween(160), expandFrom = Alignment.Top) + fadeIn(tween(110)), exit = shrinkVertically(tween(140), shrinkTowards = Alignment.Top) + fadeOut(tween(90))) {
+                            IconButton(onClick = { scope.launch { scrollState.animateScrollToBoundary(towardTop = false) } }, modifier = Modifier.size(48.dp)) {
+                                Icon(Icons.Outlined.KeyboardArrowDown, "Scroll to bottom")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Scroll measured pixels each frame so distant items never trigger lazy-list seeking jumps.
+private suspend fun LazyListState.animateScrollToBoundary(towardTop: Boolean) {
+    val durationScale = coroutineContext[MotionDurationScale]?.scaleFactor ?: 1f
+    if (durationScale == 0f) {
+        if (layoutInfo.totalItemsCount > 0) {
+            scrollToItem(if (towardTop) 0 else layoutInfo.totalItemsCount - 1)
+            if (!towardTop) scrollBy(layoutInfo.viewportSize.height.toFloat())
+        }
+        return
+    }
+    scroll {
+        val maximumSpeed = layoutInfo.viewportSize.height.coerceAtLeast(1) * 8f / durationScale
+        val acceleration = maximumSpeed * 5f
+        var speed = 0f
+        var previousFrame = withFrameNanos { it }
+        while (if (towardTop) canScrollBackward else canScrollForward) {
+            val frame = withFrameNanos { it }
+            val seconds = ((frame - previousFrame) / 1_000_000_000f).coerceIn(0f, 0.032f)
+            previousFrame = frame
+            val layout = layoutInfo
+            val last = layout.visibleItemsInfo.lastOrNull() ?: break
+            val averageSize = layout.visibleItemsInfo.sumOf { it.size }.toFloat() / layout.visibleItemsInfo.size
+            // Unmeasured rows only estimate braking distance; scrolling always ends at the actual boundary.
+            val remaining = if (towardTop) {
+                firstVisibleItemIndex * averageSize + firstVisibleItemScrollOffset
+            } else {
+                (layout.totalItemsCount - last.index - 1) * averageSize + last.offset + last.size + layout.afterContentPadding - layout.viewportEndOffset
+            }.coerceAtLeast(0f)
+            speed = minOf(maximumSpeed, speed + acceleration * seconds, sqrt(2f * acceleration * remaining))
+            val delta = (speed * seconds).coerceAtLeast(1f) * if (towardTop) -1f else 1f
+            if (scrollBy(delta) == 0f) break
+        }
     }
 }
 
@@ -1408,7 +1513,6 @@ private fun EditorToolbar(
     onOpenRevision: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var validationDetailsVisible by remember { mutableStateOf(false) }
     val clipboard = LocalBlockClipboardActions.current
     Surface(modifier = modifier.testTag("workflow-toolbar"), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.92f), tonalElevation = 0.dp) {
         Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1458,6 +1562,7 @@ private fun EditorToolbar(
                     }
                 }
                 RevisionSelector(
+                    session = session,
                     currentRevision = draft.lastSavedRevision,
                     dirty = session.isDirty,
                     revisions = revisions,
@@ -1495,7 +1600,7 @@ private fun EditorToolbar(
                             enabled = !isBusy,
                             onClick = onValidate,
                             onLongClick = {
-                                if (validation.issues.isNotEmpty()) validationDetailsVisible = true
+                                if (validation.issues.isNotEmpty()) session.validationDetailsVisible = true
                             },
                         ),
                     contentAlignment = Alignment.Center,
@@ -1527,25 +1632,6 @@ private fun EditorToolbar(
             }
         }
     }
-    if (validationDetailsVisible) {
-        AlertDialog(
-            onDismissRequest = { validationDetailsVisible = false },
-            title = { Text("Validation issues") },
-            text = {
-                Column(
-                    modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    validation.issues.forEach { issue ->
-                        Text(issue.displayMessage())
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { validationDetailsVisible = false }) { Text("Done") }
-            },
-        )
-    }
 }
 
 private fun DraftIssue.displayMessage(): String = if (path == "/assets" && " is still used" in message) {
@@ -1556,13 +1642,14 @@ private fun DraftIssue.displayMessage(): String = if (path == "/assets" && " is 
 
 @Composable
 private fun RevisionSelector(
+    session: WorkflowEditorSession,
     currentRevision: Int?,
     dirty: Boolean,
     revisions: List<RevisionSummary>,
     onOpenRevision: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by session::revisionPickerExpanded
     Box(modifier) {
         Surface(
             onClick = { expanded = !expanded },
@@ -1577,30 +1664,19 @@ private fun RevisionSelector(
                 )
             }
         }
-        if (expanded) {
-            VeyarcChoicePicker(
-                title = "Choose revision",
-                options = revisions.map { VeyarcChoice(it.revision.toString(), "Revision ${it.revision}") },
-                selectedId = currentRevision?.toString(),
-                onDismiss = { expanded = false },
-                onSelect = { choice ->
-                    expanded = false
-                    onOpenRevision(choice.id.toInt())
-                },
-            )
-        }
     }
 }
 
 @Composable
 private fun AllowedApplications(
+    session: WorkflowEditorSession,
     packages: String,
     onPickApplication: () -> Unit,
     onRemoveApplication: (String) -> Unit,
     onReorderApplications: (List<String>) -> Unit,
 ) {
     val packageNames = remember(packages) { packages.packageNames() }
-    var expanded by rememberSaveable { mutableStateOf(true) }
+    var expanded by session::allowedAppsExpanded
     EditorSetupSection("Allowed apps", Icons.Outlined.Apps, expanded, { expanded = !expanded }, onPickApplication, "Add allowed app") {
         if (packageNames.isEmpty()) {
             Text("No apps added.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1646,19 +1722,19 @@ private fun BlockInspector(
 
 @Composable
 private fun TemplateAssetSection(
+    session: WorkflowEditorSession,
     assets: List<com.veyarc.data.storage.WorkflowAssetDescriptor>,
     assetNames: Map<String, String>,
     referencedAssetIds: Set<String>,
-    usageNumbers: Map<String, List<String>>,
+    usageNumbers: Map<String, TemplateUsageNumbers>,
     onAddTemplate: () -> Unit,
     loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
     onRemoveTemplate: (com.veyarc.model.AssetId) -> Unit,
-    onRenameTemplate: (com.veyarc.model.AssetId, String) -> Unit,
 ) {
     val context = LocalContext.current
-    var expanded by remember { mutableStateOf(true) }
-    var renameTarget by remember { mutableStateOf<com.veyarc.model.AssetId?>(null) }
-    val templateScroll = rememberLazyListState()
+    var expanded by session::templatesExpanded
+    var renameTarget by session::renameTemplateTarget
+    val templateScroll = session.templateScrollState
     val edgeScroll = remember(templateScroll) { TemplateListScroll(templateScroll) }
     EditorSetupSection("Image templates", Icons.Outlined.Image, expanded, { expanded = !expanded }, onAddTemplate, "Add image template") {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1678,7 +1754,10 @@ private fun TemplateAssetSection(
                 ) {
                     itemsIndexed(assets, key = { _, asset -> asset.assetId.value }) { index, asset ->
                         Row(
-                            modifier = Modifier.fillMaxWidth().clickable { renameTarget = asset.assetId },
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                session.renameTemplateName = assetNames[asset.assetId.value].orEmpty()
+                                renameTarget = asset.assetId
+                            },
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
@@ -1692,13 +1771,16 @@ private fun TemplateAssetSection(
                                 )
                                 Text(
                                     listOfNotNull(
-                                        asset.addedAtMs?.let { "Added ${java.text.SimpleDateFormat("dd/MM/yy HH:mm", java.util.Locale.ROOT).format(java.util.Date(it))}" },
+                                        asset.addedAtMs?.let { java.text.SimpleDateFormat("dd/MM/yy HH:mm", java.util.Locale.ROOT).format(java.util.Date(it)) },
                                         asset.byteCount?.let { android.text.format.Formatter.formatShortFileSize(context, it) },
-                                        usageNumbers[asset.assetId.value]?.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "Steps: "),
+                                        usageNumbers[asset.assetId.value]?.subtitle()?.takeIf { it.isNotEmpty() },
                                     ).joinToString(" · "),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                            }
+                            IconButton(onClick = { session.editTemplateTarget = asset.assetId }) {
+                                Icon(Icons.Outlined.Edit, contentDescription = "Edit image template")
                             }
                             IconButton(onClick = { onRemoveTemplate(asset.assetId) }) {
                                 Icon(Icons.Outlined.Delete, contentDescription = "Remove image template")
@@ -1708,74 +1790,6 @@ private fun TemplateAssetSection(
                 }
             }
         }
-    }
-    renameTarget?.let { assetId ->
-        var name by remember(assetId) { mutableStateOf(assetNames[assetId.value].orEmpty()) }
-        val preview by produceState(cachedTemplatePreview(assetId, 640), assetId) {
-            value = loadPreview(assetId, 640)
-        }
-        val valid = name.trim().let { candidate ->
-            candidate.isNotEmpty() && candidate.length <= 64 &&
-                assetNames.none { (id, existing) -> id != assetId.value && existing.equals(candidate, ignoreCase = true) }
-        }
-        val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val renameButton: @Composable () -> Unit = {
-            TextButton(enabled = valid, onClick = {
-                onRenameTemplate(assetId, name.trim())
-                renameTarget = null
-            }) { Text("Rename") }
-        }
-        val cancelButton: @Composable () -> Unit = { TextButton(onClick = { renameTarget = null }) { Text("Cancel") } }
-        AlertDialog(
-            onDismissRequest = { renameTarget = null },
-            modifier = if (landscape) Modifier.widthIn(min = 560.dp, max = 760.dp) else Modifier,
-            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = !landscape),
-            title = { Text("Rename template") },
-            text = {
-                val nameField: @Composable () -> Unit = {
-                    OutlinedTextField(
-                        value = name,
-                        onValueChange = { name = it },
-                        modifier = Modifier.fillMaxWidth().testTag("rename-template-name"),
-                        singleLine = true,
-                        label = { Text("Template name") },
-                        supportingText = if (valid) null else ({ Text("Use a unique name with 1 to 64 characters.") }),
-                    )
-                }
-                val imagePreview: @Composable (Modifier) -> Unit = { modifier ->
-                    Box(modifier.clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh), contentAlignment = Alignment.Center) {
-                        val image = preview
-                        if (image != null) {
-                            Image(image.image, "Image template preview", Modifier.fillMaxSize().testTag("rename-template-preview"), contentScale = ContentScale.Fit)
-                        } else {
-                            Icon(Icons.Outlined.Image, "Image template preview", Modifier.size(28.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
-                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (landscape) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                            imagePreview(Modifier.weight(1f).heightIn(min = 140.dp, max = 220.dp).height(LocalConfiguration.current.screenHeightDp.dp * 0.42f))
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                nameField()
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                                    cancelButton()
-                                    renameButton()
-                                }
-                            }
-                        }
-                    } else {
-                        BoxWithConstraints(Modifier.fillMaxWidth()) {
-                            val previewHeight = minOf(maxWidth, LocalConfiguration.current.screenHeightDp.dp * 0.35f)
-                            imagePreview(Modifier.fillMaxWidth().height(previewHeight))
-                        }
-                        nameField()
-                    }
-                }
-            },
-            confirmButton = { if (!landscape) renameButton() },
-            dismissButton = { if (!landscape) cancelButton() },
-        )
     }
 }
 
@@ -2532,7 +2546,7 @@ private fun EditableStepSummary(
         when (step) {
             is Wait -> {
                 Text("Wait", style = MaterialTheme.typography.bodyMedium)
-                InlineLongField(step.durationMs.value, 0) { value ->
+                InlineLongField(step.durationMs.value, 0, resetKey = draft.lastSavedRevision) { value ->
                     onDraftChange(draft.updateStep(path, index) { step.copy(durationMs = com.veyarc.model.DurationMillis(value)) })
                 }
                 Text("ms", style = MaterialTheme.typography.bodyMedium)
@@ -2540,18 +2554,18 @@ private fun EditableStepSummary(
 
             is WaitUntil -> {
                 Text("Wait until ${step.condition.summary(draft.assetNames)} · timeout", style = MaterialTheme.typography.bodyMedium)
-                InlineLongField(step.timeoutMs.value, 0) { value ->
+                InlineLongField(step.timeoutMs.value, 0, resetKey = draft.lastSavedRevision) { value ->
                     onDraftChange(draft.updateStep(path, index) { step.copy(timeoutMs = com.veyarc.model.DurationMillis(value)) })
                 }
                 Text("ms, poll every", style = MaterialTheme.typography.bodyMedium)
-                InlineLongField(step.pollIntervalMs.value, 1) { value ->
+                InlineLongField(step.pollIntervalMs.value, 1, resetKey = draft.lastSavedRevision) { value ->
                     onDraftChange(draft.updateStep(path, index) { step.copy(pollIntervalMs = com.veyarc.model.DurationMillis(value)) })
                 }
                 Text("ms", style = MaterialTheme.typography.bodyMedium)
             }
 
             is Repeat -> {
-                InlineLongField(step.count.toLong(), 0, Int.MAX_VALUE.toLong()) { value ->
+                InlineLongField(step.count.toLong(), 0, Int.MAX_VALUE.toLong(), draft.lastSavedRevision) { value ->
                     onDraftChange(draft.updateStep(path, index) { step.copy(count = value.toInt()) })
                 }
                 Text("iterations, ${step.bodySteps.size} nested blocks", style = MaterialTheme.typography.bodyMedium)
@@ -2559,7 +2573,7 @@ private fun EditableStepSummary(
 
             is WhileStep -> {
                 Text("While ${step.condition.summary(draft.assetNames)} · up to", style = MaterialTheme.typography.bodyMedium)
-                InlineLongField(step.maxIterations.toLong(), 1, Int.MAX_VALUE.toLong()) { value ->
+                InlineLongField(step.maxIterations.toLong(), 1, Int.MAX_VALUE.toLong(), draft.lastSavedRevision) { value ->
                     onDraftChange(draft.updateStep(path, index) { step.copy(maxIterations = value.toInt()) })
                 }
                 Text("iterations, ${step.bodySteps.size} nested blocks", style = MaterialTheme.typography.bodyMedium)
@@ -2567,7 +2581,7 @@ private fun EditableStepSummary(
 
             is LaunchApp -> {
                 Text("Open ${step.packageName.value} · wait up to", style = MaterialTheme.typography.bodyMedium)
-                InlineLongField(step.foregroundTimeoutMs.value, 1) { value ->
+                InlineLongField(step.foregroundTimeoutMs.value, 1, resetKey = draft.lastSavedRevision) { value ->
                     onDraftChange(
                         draft.updateStep(path, index) {
                             step.copy(foregroundTimeoutMs = com.veyarc.model.DurationMillis(value))
@@ -2588,7 +2602,7 @@ private fun EditableStepSummary(
                     },
                 )
                 Text("until this section has run", style = MaterialTheme.typography.bodyMedium)
-                InlineLongField(step.maxVisits.toLong(), 1, draft.runLimits.maxLoopIterations.toLong()) { value ->
+                InlineLongField(step.maxVisits.toLong(), 1, draft.runLimits.maxLoopIterations.toLong(), draft.lastSavedRevision) { value ->
                     onDraftChange(draft.updateStep(path, index) { step.copy(maxVisits = value.toInt()) })
                 }
                 Text("times", style = MaterialTheme.typography.bodyMedium)
@@ -2642,9 +2656,10 @@ private fun InlineLongField(
     value: Long,
     minimum: Long,
     maximum: Long = Long.MAX_VALUE,
+    resetKey: Int?,
     onValueChange: (Long) -> Unit,
 ) {
-    var text by remember(value) { mutableStateOf(value.toString()) }
+    var text by rememberNumericEditorText(value.toString(), resetKey)
     Box(Modifier.widthIn(min = 16.dp, max = 96.dp)) {
         Text(
             text.ifEmpty { "0" },
@@ -2708,17 +2723,13 @@ private fun StepEditorFields(
 @Composable
 internal fun LongEditorField(
     label: String,
-    value: Long,
-    onValueChange: (Long) -> Unit,
+    value: String,
+    onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var text by remember(value) { mutableStateOf(value.toString()) }
     OutlinedTextField(
-        value = text,
-        onValueChange = { candidate ->
-            text = candidate
-            candidate.toLongOrNull()?.let(onValueChange)
-        },
+        value = value,
+        onValueChange = onValueChange,
         modifier = modifier.fillMaxWidth(),
         label = { Text(label) },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -2808,4 +2819,82 @@ private fun viewportFor(context: Context): com.veyarc.model.ViewportSpec {
 private fun Throwable.userMessage(): String = when (this) {
     is WorkflowStorageException -> message ?: "storage operation failed"
     else -> message ?: "unexpected error"
+}
+
+@Composable
+private fun TemplateRenameDialog(
+    session: WorkflowEditorSession,
+    assetNames: Map<String, String>,
+    loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
+    onRenameTemplate: (AssetId, String) -> Unit,
+) {
+    var renameTarget by session::renameTemplateTarget
+    renameTarget?.let { assetId ->
+        var name by session::renameTemplateName
+        val preview by produceState(cachedTemplatePreview(assetId, 640), assetId) {
+            value = loadPreview(assetId, 640)
+        }
+        val valid = name.trim().let { candidate ->
+            candidate.isNotEmpty() && candidate.length <= 64 &&
+                assetNames.none { (id, existing) -> id != assetId.value && existing.equals(candidate, ignoreCase = true) }
+        }
+        val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val renameButton: @Composable () -> Unit = {
+            TextButton(enabled = valid, onClick = {
+                onRenameTemplate(assetId, name.trim())
+                renameTarget = null
+            }) { Text("Rename") }
+        }
+        val cancelButton: @Composable () -> Unit = { TextButton(onClick = { renameTarget = null }) { Text("Cancel") } }
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            modifier = if (landscape) Modifier.widthIn(min = 560.dp, max = 760.dp) else Modifier,
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = !landscape),
+            title = { Text("Rename template") },
+            text = {
+                val nameField: @Composable () -> Unit = {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        modifier = Modifier.fillMaxWidth().testTag("rename-template-name"),
+                        singleLine = true,
+                        label = { Text("Template name") },
+                        supportingText = if (valid) null else ({ Text("Use a unique name with 1 to 64 characters.") }),
+                    )
+                }
+                val imagePreview: @Composable (Modifier) -> Unit = { modifier ->
+                    Box(modifier.clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh), contentAlignment = Alignment.Center) {
+                        val image = preview
+                        if (image != null) {
+                            Image(image.image, "Image template preview", Modifier.fillMaxSize().testTag("rename-template-preview"), contentScale = ContentScale.Fit)
+                        } else {
+                            Icon(Icons.Outlined.Image, "Image template preview", Modifier.size(28.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (landscape) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+                            imagePreview(Modifier.weight(1f).heightIn(min = 140.dp, max = 220.dp).height(LocalConfiguration.current.screenHeightDp.dp * 0.42f))
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                nameField()
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                    cancelButton()
+                                    renameButton()
+                                }
+                            }
+                        }
+                    } else {
+                        BoxWithConstraints(Modifier.fillMaxWidth()) {
+                            val previewHeight = minOf(maxWidth, LocalConfiguration.current.screenHeightDp.dp * 0.35f)
+                            imagePreview(Modifier.fillMaxWidth().height(previewHeight))
+                        }
+                        nameField()
+                    }
+                }
+            },
+            confirmButton = { if (!landscape) renameButton() },
+            dismissButton = { if (!landscape) cancelButton() },
+        )
+    }
 }

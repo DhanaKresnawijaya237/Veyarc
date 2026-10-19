@@ -1,5 +1,8 @@
 package com.veyarc.automation.android
 
+import com.veyarc.engine.CancellationSignal
+import com.veyarc.engine.CancellationSignals
+import com.veyarc.engine.ColorMatchObservation
 import com.veyarc.engine.ConditionObservation
 import com.veyarc.engine.ConditionObserver
 import com.veyarc.model.AssetId
@@ -10,6 +13,7 @@ import com.veyarc.model.ImagePresentCondition
 import com.veyarc.model.NormalizedRect
 import com.veyarc.model.PixelColorCondition
 import java.io.Closeable
+import java.util.concurrent.CancellationException
 import kotlin.math.abs
 import kotlin.math.roundToLong
 
@@ -49,8 +53,7 @@ class RgbaTemplate private constructor(
     /** Clears the decoded template after the run releases its condition assets. */
     fun clear() {
         rgbaBytes.fill(0)
-        prefilterData.cellSums.fill(0)
-        prefilterData.bandSums.fill(0)
+        prefilterData.clear()
     }
 
     internal fun <T> withRgbaBytes(block: (ByteArray) -> T): T = block(rgbaBytes)
@@ -70,13 +73,20 @@ class RgbaTemplate private constructor(
 internal data class TemplatePrefilterData(
     val xBandCount: Int,
     val yBandCount: Int,
+    val xStarts: IntArray,
+    val xEnds: IntArray,
     val cellSums: IntArray,
     val bandSums: IntArray,
 ) {
+    fun clear() {
+        cellSums.fill(0)
+        bandSums.fill(0)
+    }
+
     companion object {
-        fun create(widthPx: Int, heightPx: Int, bytes: ByteArray): TemplatePrefilterData {
-            val xBandCount = minOf(PREFILTER_BANDS, widthPx)
-            val yBandCount = minOf(PREFILTER_BANDS, heightPx)
+        fun create(widthPx: Int, heightPx: Int, bytes: ByteArray, bandLimit: Int = PREFILTER_BANDS): TemplatePrefilterData {
+            val xBandCount = minOf(bandLimit, widthPx)
+            val yBandCount = minOf(bandLimit, heightPx)
             val xStarts = partitionStarts(widthPx, xBandCount)
             val xEnds = partitionEnds(widthPx, xBandCount)
             val yStarts = partitionStarts(heightPx, yBandCount)
@@ -96,7 +106,7 @@ internal data class TemplatePrefilterData(
                     for (channel in 0 until CHANNEL_COUNT) bands[yBand * CHANNEL_COUNT + channel] += sums[cellOffset + channel]
                 }
             }
-            return TemplatePrefilterData(xBandCount, yBandCount, sums, bands)
+            return TemplatePrefilterData(xBandCount, yBandCount, xStarts, xEnds, sums, bands)
         }
     }
 }
@@ -113,6 +123,7 @@ class VisualConditionEvaluator(
     private val templateSource: ImageTemplateSource,
     private val maxComparisons: Long = DEFAULT_MAX_COMPARISONS,
     private val maxSearchOrigins: Long = DEFAULT_MAX_SEARCH_ORIGINS,
+    private val cancellation: CancellationSignal = CancellationSignals.NONE,
 ) : ConditionObserver {
     init {
         require(maxComparisons > 0L) { "Visual comparison budget must be positive" }
@@ -122,35 +133,78 @@ class VisualConditionEvaluator(
     /** Evaluates only visual conditions; other condition types are owned by the engine/driver. */
     fun evaluate(condition: Condition): Boolean = observe(condition).result
 
-    override fun observe(condition: Condition): ConditionObservation = when (condition) {
-        is PixelColorCondition -> ConditionObservation(evaluatePixelColor(condition))
+    override fun observe(condition: Condition): ConditionObservation {
+        checkCancellation()
+        return when (condition) {
+            is PixelColorCondition -> evaluatePixelColor(condition)
 
-        is ImagePresentCondition -> evaluateImage(
-            assetId = condition.assetId,
-            region = condition.region,
-            threshold = condition.matchThreshold,
-            present = true,
-            matchMode = condition.matchMode,
-        )
+            is ImagePresentCondition -> evaluateImage(
+                assetId = condition.assetId,
+                region = condition.region,
+                threshold = condition.matchThreshold,
+                present = true,
+                matchMode = condition.matchMode,
+            )
 
-        is ImageAbsentCondition -> evaluateImage(
-            assetId = condition.assetId,
-            region = condition.region,
-            threshold = condition.matchThreshold,
-            present = false,
-            matchMode = ImageMatchMode.APPEARS_WITHIN_REGION,
-        )
+            is ImageAbsentCondition -> evaluateImage(
+                assetId = condition.assetId,
+                region = condition.region,
+                threshold = condition.matchThreshold,
+                present = false,
+                matchMode = ImageMatchMode.APPEARS_WITHIN_REGION,
+            )
 
-        else -> throw AndroidAutomationException(
-            "Visual evaluator does not support ${condition::class.simpleName} conditions",
-        )
+            else -> throw AndroidAutomationException(
+                "Visual evaluator does not support ${condition::class.simpleName} conditions",
+            )
+        }
     }
 
-    private fun evaluatePixelColor(condition: PixelColorCondition): Boolean {
-        val frame = requireFrame(ScreenCaptureArea.Pixel(condition.point))
+    private fun checkCancellation() {
+        if (cancellation.isCancellationRequested() || Thread.currentThread().isInterrupted) {
+            throw CancellationException("Image check cancelled")
+        }
+    }
+
+    private fun evaluatePixelColor(condition: PixelColorCondition): ConditionObservation {
+        val frame = requireFrame(condition.region?.let { ScreenCaptureArea.Region(it) } ?: ScreenCaptureArea.Pixel(condition.point))
         return try {
-            val point = FramePixelBounds.pixel(condition.point, frame.widthPx, frame.heightPx)
-            withinTolerance(frame.pixelAt(point.left, point.top), argbColor(condition.expectedArgb), condition.tolerance)
+            val bounds = (
+                condition.region?.let { FramePixelBounds.from(it, frame.widthPx, frame.heightPx) }
+                    ?: FramePixelBounds.pixel(condition.point, frame.widthPx, frame.heightPx)
+                ).relativeTo(frame.capturedBounds)
+            val expected = argbColor(condition.expectedArgb)
+            val match = frame.withRgbaBytes { bytes ->
+                var bestDifference = 256
+                var bestOffset = 0
+                search@ for (y in bounds.top until bounds.bottomExclusive) {
+                    checkCancellation()
+                    var nextOffset = rgbaOffset(bounds.left, y, frame.capturedBounds.width)
+                    val end = rgbaOffset(bounds.rightExclusive, y, frame.capturedBounds.width)
+                    while (nextOffset < end) {
+                        val offset = nextOffset
+                        nextOffset += BYTES_PER_PIXEL
+                        var difference = abs(channelValue(bytes, offset) - expected.red)
+                        if (difference >= bestDifference) continue
+                        difference = maxOf(difference, abs(channelValue(bytes, offset + 1) - expected.green))
+                        if (difference >= bestDifference) continue
+                        difference = maxOf(difference, abs(channelValue(bytes, offset + 2) - expected.blue))
+                        if (difference >= bestDifference) continue
+                        difference = maxOf(difference, abs(channelValue(bytes, offset + 3) - expected.alpha))
+                        if (difference >= bestDifference) continue
+                        bestDifference = difference
+                        bestOffset = offset
+                        // Only an exact colour can prove there is no better pixel later in the area.
+                        if (difference == 0) break@search
+                    }
+                }
+                val closestArgb = (channelValue(bytes, bestOffset + 3).toLong() shl 24) or
+                    (channelValue(bytes, bestOffset).toLong() shl 16) or
+                    (channelValue(bytes, bestOffset + 1).toLong() shl 8) or
+                    channelValue(bytes, bestOffset + 2).toLong()
+                ColorMatchObservation(condition.expectedArgb, closestArgb, bestDifference, condition.tolerance)
+            }
+            ConditionObservation(match.difference <= match.tolerance, colorMatch = match)
         } finally {
             frame.close()
         }
@@ -246,6 +300,7 @@ class VisualConditionEvaluator(
         var error = 0L
         template.withRgbaBytes {
             for (templateY in 0 until template.heightPx) {
+                checkCancellation()
                 for (templateX in 0 until template.widthPx) {
                     budget.consume()
                     val frameOffset = rgbaOffset(originX + templateX, originY + templateY, frameWidth)
@@ -303,12 +358,24 @@ class VisualConditionEvaluator(
                 if (match.matched) return match
             }
         }
-        TemplateWindowPrefilter(frame.capturedBounds.width, frameBytes, template, bounds).use { prefilter ->
+        var closestX = bounds.left
+        var closestY = bounds.top
+        var leastBound = Long.MAX_VALUE
+        // Extra exact-search headroom must not make optional filtering spend more work.
+        TemplateWindowPrefilter(frame.capturedBounds.width, frameBytes, template, bounds, budget = ComparisonBudget(minOf(maxComparisons, MAX_OPTIONAL_COMPARISONS), "pattern filter")).use { prefilter ->
             for (originY in bounds.top..maxOriginY) {
+                checkCancellation()
                 if (originY > bounds.top) prefilter.moveDown()
                 for (originX in bounds.left..maxOriginX) {
+                    val lowerBound = prefilter.minimumError(maxError)
+                    // Rejected partial bounds exceed maxError, so they cannot beat a complete passing bound.
+                    if (lowerBound.toDouble() <= maxError && lowerBound < leastBound) {
+                        leastBound = lowerBound
+                        closestX = originX
+                        closestY = originY
+                    }
                     val isPreferredOrigin = originX == preferredOriginX && originY == preferredOriginY
-                    if (!isPreferredOrigin && prefilter.mayMatch(maxError)) {
+                    if (!isPreferredOrigin && prefilter.mayMatch(maxError, detailed = true, lowerBound = lowerBound)) {
                         val match = matchesAt(frame.capturedBounds.width, frameBytes, template, templateBytes, originX, originY, maxError, budget)
                         if (match.matched) return match
                     }
@@ -316,7 +383,7 @@ class VisualConditionEvaluator(
                 }
             }
         }
-        return closestCheckedMatch(frame.capturedBounds.width, frameBytes, template, templateBytes, bounds, maxError, budget)
+        return closestCheckedMatch(frame.capturedBounds.width, frameBytes, template, templateBytes, bounds, maxError, ComparisonBudget(minOf(budget.remaining, MAX_OPTIONAL_COMPARISONS), "match score"), closestX, closestY, leastBound)
     }
 
     /** Scores rejected searches without changing their result or exceeding the remaining work budget. */
@@ -328,24 +395,31 @@ class VisualConditionEvaluator(
         bounds: FramePixelBounds,
         maxError: Double,
         budget: ComparisonBudget,
+        candidateX: Int,
+        candidateY: Int,
+        candidateBound: Long,
     ): ImageMatchResult {
         val pixels = template.widthPx.toLong() * template.heightPx
-        if (budget.remaining < pixels || Thread.currentThread().isInterrupted) return ImageMatchResult.Unmatched
-        var closestX = bounds.left
-        var closestY = bounds.top
-        var leastBound = Long.MAX_VALUE
-        TemplateWindowPrefilter(frameWidth, frameBytes, template, bounds).use { prefilter ->
-            for (y in bounds.top..bounds.bottomExclusive - template.heightPx) {
-                if (Thread.currentThread().isInterrupted) return ImageMatchResult.Unmatched
-                if (y > bounds.top) prefilter.moveDown()
-                for (x in bounds.left..bounds.rightExclusive - template.widthPx) {
-                    val lowerBound = prefilter.minimumError(leastBound.toDouble() - 1.0)
-                    if (lowerBound < leastBound) {
-                        leastBound = lowerBound
-                        closestX = x
-                        closestY = y
+        checkCancellation()
+        if (budget.remaining < pixels) return ImageMatchResult.Unmatched
+        var closestX = candidateX
+        var closestY = candidateY
+        var leastBound = candidateBound
+        if (leastBound == Long.MAX_VALUE) {
+            TemplateWindowPrefilter(frameWidth, frameBytes, template, bounds).use { prefilter ->
+                origins@ for (y in bounds.top..bounds.bottomExclusive - template.heightPx) {
+                    checkCancellation()
+                    if (y > bounds.top) prefilter.moveDown()
+                    for (x in bounds.left..bounds.rightExclusive - template.widthPx) {
+                        val lowerBound = prefilter.minimumError(leastBound.toDouble() - 1.0)
+                        if (lowerBound < leastBound) {
+                            leastBound = lowerBound
+                            closestX = x
+                            closestY = y
+                            if (leastBound == 0L) break@origins
+                        }
+                        if (x < bounds.rightExclusive - template.widthPx) prefilter.moveRight()
                     }
-                    if (x < bounds.rightExclusive - template.widthPx) prefilter.moveRight()
                 }
             }
         }
@@ -354,10 +428,11 @@ class VisualConditionEvaluator(
         val measuredError = ((1.0 - best.score!!) * maximumError).roundToLong()
         if (measuredError == leastBound) return best
         var bestError = measuredError - 1.0
-        // ponytail: bounded nearest-candidate search; report "best checked" if the budget stops it early.
+        // shortcut: report the best checked score if the remaining comparison budget ends refinement.
         TemplateWindowPrefilter(frameWidth, frameBytes, template, bounds).use { prefilter ->
             for (y in bounds.top..bounds.bottomExclusive - template.heightPx) {
-                if (budget.remaining < pixels || Thread.currentThread().isInterrupted) return best
+                checkCancellation()
+                if (budget.remaining < pixels) return best
                 if (y > bounds.top) prefilter.moveDown()
                 for (x in bounds.left..bounds.rightExclusive - template.widthPx) {
                     if ((x != closestX || y != closestY) && prefilter.mayMatch(bestError)) {
@@ -380,31 +455,34 @@ class VisualConditionEvaluator(
      * across rolling vertical bands provide those same bounds without updating every horizontal
      * cell for every search position. Memory depends on region width, not screen pixel count.
      */
-    private class TemplateWindowPrefilter(
+    private inner class TemplateWindowPrefilter(
         private val frameWidth: Int,
         private val frameBytes: ByteArray,
-        template: RgbaTemplate,
+        private val template: RgbaTemplate,
         private val bounds: FramePixelBounds,
+        private val data: TemplatePrefilterData = template.prefilterData,
+        initialOriginX: Int = bounds.left,
+        initialOriginY: Int = bounds.top,
+        private val ownsData: Boolean = false,
+        private val budget: ComparisonBudget? = null,
     ) : Closeable {
-        private val xBandCount = template.prefilterData.xBandCount
-        private val yBandCount = template.prefilterData.yBandCount
-        private val xStarts = partitionStarts(template.widthPx, xBandCount)
-        private val xEnds = partitionEnds(template.widthPx, xBandCount)
+        private val yBandCount = data.yBandCount
         private val yStarts = partitionStarts(template.heightPx, yBandCount)
         private val yEnds = partitionEnds(template.heightPx, yBandCount)
-        private val templateCellSums = template.prefilterData.cellSums
-        private val templateBandSums = template.prefilterData.bandSums
+        private val templateBandSums = data.bandSums
         private val templateWidth = template.widthPx
         private val prefixStride = (bounds.width + 1) * CHANNEL_COUNT
 
         // Capture dimensions cap a band's per-channel prefix below Int.MAX_VALUE.
         private val prefixes = IntArray(yBandCount * prefixStride)
-        private var originY = bounds.top
-        private var originX = bounds.left
+        private var originY = initialOriginY
+        private var originX = initialOriginX
+        private var detailedFilter: TemplateWindowPrefilter? = null
 
         init {
             for (yBand in 0 until yBandCount) {
                 for (y in yStarts[yBand] until yEnds[yBand]) {
+                    checkCancellation()
                     var frameOffset = rgbaOffset(bounds.left, originY + y, frameWidth)
                     var prefixOffset = yBand * prefixStride + CHANNEL_COUNT
                     for (x in bounds.left until bounds.rightExclusive) {
@@ -418,14 +496,18 @@ class VisualConditionEvaluator(
             }
         }
 
-        fun mayMatch(maxError: Double): Boolean = minimumError(maxError).toDouble() <= maxError
+        fun mayMatch(maxError: Double, detailed: Boolean = false, lowerBound: Long = minimumError(maxError)): Boolean = lowerBound.toDouble() <= maxError &&
+            (!detailed || budget?.remaining == 0L || (template.widthPx <= PREFILTER_BANDS && template.heightPx <= PREFILTER_BANDS) || fineFilter().minimumError(maxError).toDouble() <= maxError)
 
         fun minimumError(maxError: Double): Long {
+            checkCancellation()
+            val xBandCount = data.xBandCount
             var lowerBound = 0L
             val relativeX = originX - bounds.left
             // Whole-band bounds cheaply reject unrelated backgrounds before the finer cells.
             if (xBandCount > 1) {
                 for (yBand in 0 until yBandCount) {
+                    if (ownsData && budget?.tryConsume(1L) == false) return 0L
                     val left = yBand * prefixStride + relativeX * CHANNEL_COUNT
                     val right = left + templateWidth * CHANNEL_COUNT
                     for (channel in 0 until CHANNEL_COUNT) lowerBound += abs(prefixes[right + channel] - prefixes[left + channel] - templateBandSums[yBand * CHANNEL_COUNT + channel]).toLong()
@@ -435,10 +517,11 @@ class VisualConditionEvaluator(
             }
             for (yBand in 0 until yBandCount) {
                 for (xBand in 0 until xBandCount) {
-                    val left = yBand * prefixStride + (relativeX + xStarts[xBand]) * CHANNEL_COUNT
-                    val right = yBand * prefixStride + (relativeX + xEnds[xBand]) * CHANNEL_COUNT
+                    if (ownsData && budget?.tryConsume(1L) == false) return 0L
+                    val left = yBand * prefixStride + (relativeX + data.xStarts[xBand]) * CHANNEL_COUNT
+                    val right = yBand * prefixStride + (relativeX + data.xEnds[xBand]) * CHANNEL_COUNT
                     val cell = (yBand * xBandCount + xBand) * CHANNEL_COUNT
-                    for (channel in 0 until CHANNEL_COUNT) lowerBound += abs(prefixes[right + channel] - prefixes[left + channel] - templateCellSums[cell + channel]).toLong()
+                    for (channel in 0 until CHANNEL_COUNT) lowerBound += abs(prefixes[right + channel] - prefixes[left + channel] - data.cellSums[cell + channel]).toLong()
                     if (lowerBound.toDouble() > maxError) return lowerBound
                 }
             }
@@ -447,9 +530,12 @@ class VisualConditionEvaluator(
 
         fun moveRight() {
             originX++
+            detailedFilter?.moveRight()
         }
 
         fun moveDown() {
+            checkCancellation()
+            if (ownsData && budget?.tryConsume(2L * yBandCount * bounds.width) == false) return
             val previousY = originY++
             for (yBand in 0 until yBandCount) {
                 var removeOffset = rgbaOffset(bounds.left, previousY + yStarts[yBand], frameWidth)
@@ -474,10 +560,30 @@ class VisualConditionEvaluator(
                 }
             }
             originX = bounds.left
+            detailedFilter?.moveDown()
         }
 
         override fun close() {
             prefixes.fill(0)
+            detailedFilter?.close()
+            detailedFilter = null
+            if (ownsData) data.clear()
+        }
+
+        // Allocate the stronger filter only for ambiguous candidates; release it with this frame.
+        private fun fineFilter(): TemplateWindowPrefilter = detailedFilter ?: template.withRgbaBytes { bytes ->
+            if (budget?.tryConsume(template.widthPx.toLong() * template.heightPx + bounds.width.toLong() * (template.heightPx + minOf(PREFILTER_FINE_BANDS, template.heightPx))) == false) return@withRgbaBytes this
+            TemplateWindowPrefilter(
+                frameWidth,
+                frameBytes,
+                template,
+                bounds,
+                data = TemplatePrefilterData.create(template.widthPx, template.heightPx, bytes, PREFILTER_FINE_BANDS),
+                initialOriginX = originX,
+                initialOriginY = originY,
+                ownsData = true,
+                budget = budget,
+            ).also { detailedFilter = it }
         }
     }
 
@@ -495,6 +601,7 @@ class VisualConditionEvaluator(
         var error = 0L
         return template.withRgbaBytes {
             for (templateY in 0 until template.heightPx) {
+                checkCancellation()
                 for (templateX in 0 until template.widthPx) {
                     budget.consume()
                     val frameOffset = rgbaOffset(originX + templateX, originY + templateY, frameWidth)
@@ -528,11 +635,21 @@ class VisualConditionEvaluator(
 
         val remaining: Long get() = limit - comparisons
 
-        fun consume() {
-            comparisons++
+        // Refinement is optional; exhausting its own work budget falls back to exact verification.
+        fun tryConsume(amount: Long): Boolean {
+            if (amount > remaining) {
+                comparisons = limit
+                return false
+            }
+            comparisons += amount
+            return true
+        }
+
+        fun consume(amount: Long = 1L) {
+            comparisons += amount
             if (comparisons > limit) {
                 throw VisualConditionEvaluationException(
-                    "Image template exact comparison exceeded its safety budget. " +
+                    "Image template comparison exceeded its safety budget. " +
                         "Narrow the screen search region or use a smaller crop ($context).",
                 )
             }
@@ -540,9 +657,12 @@ class VisualConditionEvaluator(
     }
 
     companion object {
-        /** Limits worst-case CPU work for a single image-condition observation. */
-        const val DEFAULT_MAX_COMPARISONS = 12_000_000L
-        const val DEFAULT_MAX_SEARCH_ORIGINS = 1_000_000L
+        /** Leaves headroom for ambiguous patterns; searches remain cancellable and CPU-bounded. */
+        const val DEFAULT_MAX_COMPARISONS = 1_200_000_000L
+
+        /** Covers every possible origin in a supported full-screen capture. */
+        const val DEFAULT_MAX_SEARCH_ORIGINS = 16_777_216L
+        private const val MAX_OPTIONAL_COMPARISONS = 12_000_000L
         private const val MAX_CHANNEL_ERROR = 255L * 4L
         private const val BYTES_PER_PIXEL = 4
 
@@ -552,11 +672,6 @@ class VisualConditionEvaluator(
             blue = (value and 0xFF).toInt(),
             alpha = ((value shr 24) and 0xFF).toInt(),
         )
-
-        private fun withinTolerance(actual: RgbaColor, expected: RgbaColor, tolerance: Int): Boolean = abs(actual.red - expected.red) <= tolerance &&
-            abs(actual.green - expected.green) <= tolerance &&
-            abs(actual.blue - expected.blue) <= tolerance &&
-            abs(actual.alpha - expected.alpha) <= tolerance
 
         private fun channelError(
             first: ByteArray,
@@ -575,6 +690,7 @@ class VisualConditionEvaluator(
 
 private const val CHANNEL_COUNT = 4
 private const val PREFILTER_BANDS = 16
+private const val PREFILTER_FINE_BANDS = 64
 
 private fun partitionStarts(size: Int, bands: Int): IntArray = IntArray(bands) { band ->
     band * size / bands

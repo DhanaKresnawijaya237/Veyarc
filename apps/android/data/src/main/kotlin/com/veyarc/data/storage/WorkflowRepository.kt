@@ -131,6 +131,8 @@ data class StoredRunRecord(
 data class StoredRunEvent(
     val atMs: Long,
     val message: String,
+    val blockLabel: String? = null,
+    val contextLabel: String? = null,
 )
 
 const val STORED_RUN_EVENT_LIMIT = 500
@@ -879,6 +881,11 @@ class WorkflowRepository internal constructor(
         ?.let(::toStoredRunRecord)
         ?: throw WorkflowStorageException("Run record does not exist")
 
+    fun listEarlierRunSummaries(before: StoredRunRecord, limit: Int): List<StoredRunRecord> {
+        require(limit in 1..MAX_HISTORY_LIMIT) { "Run history limit must be between 1 and $MAX_HISTORY_LIMIT" }
+        return database.workflowDao().listEarlierRunSummaries(before.startedAtMs, before.runId, limit).map(::toStoredRunSummary)
+    }
+
     fun exportRun(runId: String): ByteArray = synchronized(this) {
         val record = loadRunDetails(runId)
         require(record.status != StoredRunStatus.RUNNING) { "Finish the run before exporting it." }
@@ -916,6 +923,10 @@ class WorkflowRepository internal constructor(
                 recentRuns = dao.listRunSummaries(recentLimit).map(::toStoredRunSummary),
             )
         }
+    }
+
+    fun loadAggregateStatistics(): AggregateStatistics = database.runInTransaction<AggregateStatistics> {
+        AggregateStatistics(listWorkflowSummaries(), database.workflowDao().storageStatistics(), database.workflowDao().runAggregates(), database.assistantUsageDao().summaries())
     }
 
     /** Deletes a terminal run record. Running records stay protected until they finish. */
@@ -1020,7 +1031,9 @@ class WorkflowRepository internal constructor(
             put(
                 JSONObject()
                     .put("atMs", event.atMs)
-                    .put("message", event.message),
+                    .put("message", event.message)
+                    .put("blockLabel", event.blockLabel)
+                    .put("contextLabel", event.contextLabel),
             )
         }
     }.toString()
@@ -1036,6 +1049,8 @@ class WorkflowRepository internal constructor(
                         StoredRunEvent(
                             atMs = item.getLong("atMs"),
                             message = item.getString("message"),
+                            blockLabel = item.optString("blockLabel").takeIf { it.isNotBlank() && it != "null" },
+                            contextLabel = item.optString("contextLabel").takeIf { it.isNotBlank() && it != "null" },
                         ),
                     )
                 }
@@ -1103,7 +1118,8 @@ class WorkflowRepository internal constructor(
                     producerVersion = bundle.producerVersion,
                     assets = descriptors,
                 )
-                val byteLength = writeAndVerifyManifest(manifestFileName, manifest)
+                // Preserve old revisions so invalid image areas can still be opened and repaired.
+                val byteLength = writeAndVerifyManifest(manifestFileName, manifest, validateImageBounds = false)
                 check(
                     database.workflowDao().replaceRevisionStorage(
                         workflowId = authoritative.workflowId,
@@ -1183,7 +1199,20 @@ class WorkflowRepository internal constructor(
     private fun writeAndVerifyManifest(
         fileName: String,
         manifest: StoredRevisionManifest,
+        validateImageBounds: Boolean = true,
     ): Long {
+        if (validateImageBounds) {
+            val dimensions = manifest.assets.associateBy { it.assetId }
+            val verified = manifest.document.copy(
+                assets = manifest.document.assets.map { reference ->
+                    val asset = requireNotNull(dimensions[reference.assetId])
+                    require(reference.widthPx == null || (reference.widthPx == asset.widthPx && reference.heightPx == asset.heightPx)) { "Image dimensions do not match stored pixels" }
+                    reference.copy(widthPx = asset.widthPx, heightPx = asset.heightPx)
+                },
+            )
+            val issues = com.veyarc.model.WorkflowValidator.validate(verified)
+            require(issues.isEmpty()) { issues.joinToString { it.message } }
+        }
         val canonical = manifest.copy(assets = manifest.assets.sortedBy { it.assetId.value })
         val encoded = StoredRevisionManifestCodec.encode(canonical)
         val byteLength = try {

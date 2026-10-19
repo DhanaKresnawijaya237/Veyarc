@@ -1,6 +1,7 @@
 package com.veyarc.app
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -21,6 +22,7 @@ enum class ThemePreference {
 
 data class AppUiPreferences(
     val theme: ThemePreference = ThemePreference.SYSTEM,
+    val particlesEnabled: Boolean = true,
     val assistantModel: DeepSeekModel = DeepSeekModel.FLASH,
     val assistantEffort: DeepSeekEffort = DeepSeekEffort.OFF,
 )
@@ -29,6 +31,7 @@ private val Context.uiPreferencesStore by preferencesDataStore(name = "veyarc_ui
 
 object AppPreferences {
     private val themeKey = stringPreferencesKey("theme")
+    private val particlesKey = booleanPreferencesKey("particles_enabled")
     private val assistantModelKey = stringPreferencesKey("assistant_model")
     private val assistantEffortKey = stringPreferencesKey("assistant_effort")
     private val workflowFolderOrderKey = stringPreferencesKey("workflow_folder_order")
@@ -41,6 +44,7 @@ object AppPreferences {
                 theme = preferences[themeKey]
                     ?.let { saved -> ThemePreference.entries.firstOrNull { it.name == saved } }
                     ?: ThemePreference.SYSTEM,
+                particlesEnabled = preferences[particlesKey] ?: true,
                 assistantModel = DeepSeekModel.entries.firstOrNull { it.name == preferences[assistantModelKey] } ?: DeepSeekModel.FLASH,
                 assistantEffort = DeepSeekEffort.entries.firstOrNull { it.name == preferences[assistantEffortKey] } ?: DeepSeekEffort.OFF,
             )
@@ -48,6 +52,10 @@ object AppPreferences {
 
     suspend fun setTheme(context: Context, theme: ThemePreference) {
         context.applicationContext.uiPreferencesStore.edit { it[themeKey] = theme.name }
+    }
+
+    suspend fun setParticlesEnabled(context: Context, enabled: Boolean) {
+        context.applicationContext.uiPreferencesStore.edit { it[particlesKey] = enabled }
     }
 
     suspend fun setAssistantModel(context: Context, model: DeepSeekModel) {

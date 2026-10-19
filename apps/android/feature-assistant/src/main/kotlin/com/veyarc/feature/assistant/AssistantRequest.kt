@@ -28,6 +28,13 @@ class AssistantRequest internal constructor(
     @Volatile internal var latestThinking: AssistantThinking? = null
         private set
 
+    @Volatile internal var latestUsage: com.veyarc.data.storage.AssistantTokenUsage? = null
+        private set
+
+    internal fun captureUsage(fields: kotlinx.serialization.json.JsonObject?) {
+        decodeTokenUsage(fields, protocol)?.let { latestUsage = it }
+    }
+
     /** Progress is display-only. Proposals come exclusively from the validated final response. */
     fun reportReply(text: String) {
         require(text.length <= AssistantResponseCodec.MAX_TEXT_LENGTH)

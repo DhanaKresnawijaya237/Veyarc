@@ -76,7 +76,7 @@ internal fun assistantStepNames(steps: JsonArray?): Map<String, String> = buildM
 private fun readableValue(value: JsonElement, names: Map<String, String>, field: String): String = when (value) {
     JsonNull -> "None"
     is JsonPrimitive -> names[value.content] ?: if (field.endsWith("Ms") && !value.isString) "${value.content} ms" else value.content
-    is JsonArray -> value.joinToString("; ") { readableValue(it, names, field) }.ifEmpty { "None" }
+    is JsonArray -> value.joinToString("\n") { readableValue(it, names, field) }.ifEmpty { "None" }
     is JsonObject -> value.entries.joinToString("\n") { (key, item) -> "${friendlyField(key)}: ${readableValue(item, names, key)}" }.ifEmpty { "None" }
 }
 

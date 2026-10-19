@@ -2,6 +2,8 @@ package com.veyarc.automation.android
 
 import android.app.KeyguardManager
 import android.content.Context
+import java.io.Closeable
+import java.util.concurrent.CopyOnWriteArraySet
 
 /** Transient Android states in which Veyarc must not dispatch or continue automation input. */
 enum class AndroidUnsafeDeviceState(
@@ -16,6 +18,18 @@ enum class AndroidUnsafeDeviceState(
 
 /** Reads only device state needed to refuse unsafe automation. It never changes Android settings. */
 object AndroidDeviceSafety {
+    private val windowListeners = CopyOnWriteArraySet<() -> Unit>()
+
+    /** Rechecks readiness when Android updates window metadata, without polling or changing input. */
+    fun observeWindowChanges(onChanged: () -> Unit): Closeable {
+        windowListeners.add(onChanged)
+        return Closeable { windowListeners.remove(onChanged) }
+    }
+
+    internal fun notifyWindowChanges() {
+        windowListeners.forEach { runCatching(it) }
+    }
+
     fun current(context: Context): AndroidUnsafeDeviceState? {
         val appContext = context.applicationContext
         val keyguardLocked = appContext

@@ -153,8 +153,11 @@
       "properties": {
         "assetId": { "$ref": "#/$defs/assetId" },
         "kind": { "const": "imageTemplate" },
-        "displayName": { "type": "string", "minLength": 1, "maxLength": 64 }
-      }
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "widthPx": { "type": "integer", "minimum": 1, "description": "Current stored image width in pixels, paired with heightPx. Use these dimensions to check image-search bounds." },
+        "heightPx": { "type": "integer", "minimum": 1, "description": "Current stored image height in pixels, paired with widthPx." }
+      },
+      "dependentRequired": { "widthPx": ["heightPx"], "heightPx": ["widthPx"] }
     },
     "scalarValue": {
       "oneOf": [
@@ -226,9 +229,11 @@
           "required": ["type", "point", "expectedArgb", "tolerance"],
           "properties": {
             "type": { "const": "pixelColor" },
+            "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor-only background. Cleared when its image is cropped or resized on replacement; saving a copy keeps the original. Does not change replay or color matching. Omit to remove." },
             "point": { "$ref": "#/$defs/coordinate" },
             "expectedArgb": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
-            "tolerance": { "type": "integer", "minimum": 0, "maximum": 255 }
+            "tolerance": { "type": "integer", "minimum": 0, "maximum": 255 },
+            "region": { "$ref": "#/$defs/rect", "description": "Optional area to search for any pixel of this color. Omit to check only point." }
           }
         },
         {
@@ -237,7 +242,7 @@
           "required": ["type", "assetId", "region", "matchThreshold"],
           "properties": {
             "type": { "const": "imagePresent" },
-            "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor background reference. Does not change replay or image matching. Omit to remove." },
+            "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor-only background. Cleared when its image is cropped or resized on replacement; saving a copy keeps the original. Does not change replay or image matching. Omit to remove." },
             "assetId": { "$ref": "#/$defs/assetId" },
             "region": { "$ref": "#/$defs/rect" },
             "matchThreshold": { "type": "number", "minimum": 0, "maximum": 1 },
@@ -253,7 +258,7 @@
           "required": ["type", "assetId", "region", "matchThreshold"],
           "properties": {
             "type": { "const": "imageAbsent" },
-            "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor background reference. Does not change replay or image matching. Omit to remove." },
+            "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor-only background. Cleared when its image is cropped or resized on replacement; saving a copy keeps the original. Does not change replay or image matching. Omit to remove." },
             "assetId": { "$ref": "#/$defs/assetId" },
             "region": { "$ref": "#/$defs/rect" },
             "matchThreshold": { "type": "number", "minimum": 0, "maximum": 1 }
@@ -326,7 +331,7 @@
               "type": "object",
               "additionalProperties": false,
               "required": ["type", "id", "point"],
-              "properties": { "type": { "const": "tapPoint" }, "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor background reference. Does not change replay or image matching. Omit to remove." }, "id": { "$ref": "#/$defs/uuid" }, "point": { "$ref": "#/$defs/coordinate" } }
+              "properties": { "type": { "const": "tapPoint" }, "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor-only background. Cleared when its image is cropped or resized on replacement; saving a copy keeps the original. Does not change replay or image matching. Omit to remove." }, "id": { "$ref": "#/$defs/uuid" }, "point": { "$ref": "#/$defs/coordinate" } }
             }
           ]
         },
@@ -334,19 +339,19 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["type", "id", "region", "anchor"],
-          "properties": { "type": { "const": "tapRegion" }, "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor background reference. Does not change replay or image matching. Omit to remove." }, "id": { "$ref": "#/$defs/uuid" }, "region": { "$ref": "#/$defs/rect" }, "anchor": { "$ref": "#/$defs/anchor" } }
+          "properties": { "type": { "const": "tapRegion" }, "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor-only background. Cleared when its image is cropped or resized on replacement; saving a copy keeps the original. Does not change replay or image matching. Omit to remove." }, "id": { "$ref": "#/$defs/uuid" }, "region": { "$ref": "#/$defs/rect" }, "anchor": { "$ref": "#/$defs/anchor" } }
         },
         {
           "type": "object",
           "additionalProperties": false,
           "required": ["type", "id", "point", "durationMs"],
-          "properties": { "type": { "const": "longPress" }, "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor background reference. Does not change replay or image matching. Omit to remove." }, "id": { "$ref": "#/$defs/uuid" }, "point": { "$ref": "#/$defs/coordinate" }, "durationMs": { "type": "integer", "exclusiveMinimum": 0 } }
+          "properties": { "type": { "const": "longPress" }, "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor-only background. Cleared when its image is cropped or resized on replacement; saving a copy keeps the original. Does not change replay or image matching. Omit to remove." }, "id": { "$ref": "#/$defs/uuid" }, "point": { "$ref": "#/$defs/coordinate" }, "durationMs": { "type": "integer", "exclusiveMinimum": 0 } }
         },
         {
           "type": "object",
           "additionalProperties": false,
           "required": ["type", "id", "durationMs", "points"],
-          "properties": { "type": { "const": "swipePath" }, "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor background reference. Does not change replay or image matching. Omit to remove." }, "id": { "$ref": "#/$defs/uuid" }, "durationMs": { "type": "integer", "exclusiveMinimum": 0 }, "points": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/timedPoint" } } }
+          "properties": { "type": { "const": "swipePath" }, "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor-only background. Cleared when its image is cropped or resized on replacement; saving a copy keeps the original. Does not change replay or image matching. Omit to remove." }, "id": { "$ref": "#/$defs/uuid" }, "durationMs": { "type": "integer", "exclusiveMinimum": 0 }, "points": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/timedPoint" } } }
         },
         {
           "type": "object",

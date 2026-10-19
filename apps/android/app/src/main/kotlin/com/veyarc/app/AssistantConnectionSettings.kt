@@ -5,20 +5,28 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.view.WindowManager
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -28,6 +36,7 @@ import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.NetworkCheck
+import androidx.compose.material.icons.outlined.PowerSettingsNew
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
@@ -53,8 +62,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -63,6 +73,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.SecureFlagPolicy
@@ -72,7 +83,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.veyarc.data.storage.AssistantConnection
 import com.veyarc.data.storage.AssistantConnections
 import com.veyarc.data.storage.AssistantKeyStore
-import com.veyarc.data.storage.AssistantProtocol
 import com.veyarc.feature.assistant.AssistantPanel
 import com.veyarc.feature.assistant.DeepSeekEffort
 import kotlinx.coroutines.Dispatchers
@@ -80,10 +90,18 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: com.veyarc.feature.assistant.AssistantPreviewState? = null, onHelp: (() -> Unit)? = null) {
+internal fun AssistantConnectionSettings(
+    store: AssistantKeyStore,
+    assistant: com.veyarc.feature.assistant.AssistantPreviewState? = null,
+    layout: @Composable (@Composable () -> Unit, @Composable () -> Unit) -> Unit = { toggle, connections ->
+        Column {
+            toggle()
+            connections()
+        }
+    },
+) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current.applicationContext
-    val uri = LocalUriHandler.current
     val profiles = assistant?.connections ?: AssistantConnections(listOf(AssistantConnection.deepSeek()), AssistantConnection.DEEPSEEK_ID)
     var hasKeys by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
     var busy by remember { mutableStateOf(true) }
@@ -91,9 +109,8 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
     var keyProfile by remember { mutableStateOf<AssistantConnection?>(null) }
     var removingKey by remember { mutableStateOf<AssistantConnection?>(null) }
     var removingProfile by remember { mutableStateOf<AssistantConnection?>(null) }
-    var enabling by remember { mutableStateOf(false) }
-    var testing by remember { mutableStateOf(false) }
-    var privacyVisible by remember { mutableStateOf(false) }
+    var enabling by rememberSaveable { mutableStateOf(false) }
+    var testing by rememberSaveable { mutableStateOf(false) }
     var modelProfile by remember { mutableStateOf<AssistantConnection?>(null) }
     var editProfile by remember { mutableStateOf<AssistantConnection?>(null) }
     var adding by remember { mutableStateOf(false) }
@@ -134,114 +151,115 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
     val currentDefault = profiles.connections.first { it.id == profiles.defaultConnectionId }
     val enabled = assistant?.providerEnabled == true
     val canEnable = !busy && hasKeys[currentDefault.id] == true && assistant?.usesProvider == true && assistant.connectionsReady
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(
-            Modifier.fillMaxWidth().toggleable(value = enabled, enabled = enabled || canEnable, role = Role.Switch, onValueChange = {
-                if (it) enabling = true else assistant?.disableProvider()
-            }).testTag("assistant-enable").padding(vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(if (enabled) "Disable AI" else "Enable AI", style = MaterialTheme.typography.bodyLarge, color = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(if (enabled) "Enabled until app restart" else "AI disabled", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            IconButton(onClick = { if (assistant?.testingConnection == true) assistant.stop() else testing = true }, enabled = assistant?.testingConnection == true || (!busy && hasKeys.values.any { it } && assistant?.isResponding == false && assistant.connectionsReady)) {
+    val canTest = enabled && (assistant?.testingConnection == true || (!busy && hasKeys.values.any { it } && assistant?.isResponding == false && assistant.connectionsReady))
+    layout({
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(
+                onClick = { if (assistant?.testingConnection == true) assistant.stop() else testing = true },
+                enabled = canTest,
+                modifier = Modifier.testTag("assistant-test-connections"),
+            ) {
                 if (assistant?.testingConnection == true) {
                     CircularProgressIndicator(Modifier.size(22.dp).semantics { contentDescription = "Stop connection test" }, strokeWidth = 2.dp)
                 } else {
                     Icon(Icons.Outlined.NetworkCheck, "Test all connections")
                 }
             }
+            SettingsEnableSwitch("Enable AI", checked = enabled, enabled = enabled || canEnable, modifier = Modifier.testTag("assistant-enable"), onCheckedChange = {
+                if (it) enabling = true else assistant?.disableProvider()
+            })
         }
-        assistant?.connectionTestStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-        HorizontalDivider(Modifier.padding(vertical = 8.dp))
-        profiles.connections.forEach { profile ->
-            val expanded = profile.id in expandedProviders
-            Surface(Modifier.fillMaxWidth().padding(bottom = 12.dp).testTag("connection-group-${profile.id}"), shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(
-                        Modifier.fillMaxWidth().semantics {
-                            stateDescription = if (expanded) "Expanded" else "Collapsed"
-                            contentDescription = "${if (expanded) "Collapse" else "Expand"} ${profile.name}"
-                        }.clickable(role = Role.Button) { expandedProviders = if (expanded) expandedProviders - profile.id else expandedProviders + profile.id }
-                            .padding(vertical = 8.dp).testTag(if (profile.id == AssistantConnection.DEEPSEEK_ID) "deepseek-provider-section" else "provider-${profile.id}"),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        ProviderLogo(profile.catalogProviderId, Modifier.size(48.dp))
-                        Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                            Text(profile.name, style = MaterialTheme.typography.titleMedium)
-                            if (profiles.defaultConnectionId == profile.id) Text("Default", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                        }
-                        if (assistant != null) {
-                            IconButton(onClick = { save(profiles.copy(defaultConnectionId = profile.id)) }, enabled = !busy && assistant.connectionsReady) {
-                                Icon(Icons.Outlined.Star, if (profiles.defaultConnectionId == profile.id) "Default for new chats" else "Use ${profile.name} for new chats", tint = if (profiles.defaultConnectionId == profile.id) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+    }, {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            assistant?.connectionTestStatus?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall)
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            }
+            profiles.connections.forEach { profile ->
+                val expanded = profile.id in expandedProviders
+                Surface(Modifier.fillMaxWidth().padding(bottom = 12.dp).testTag("connection-group-${profile.id}"), shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            Modifier.fillMaxWidth().semantics {
+                                stateDescription = if (expanded) "Expanded" else "Collapsed"
+                                contentDescription = "${if (expanded) "Collapse" else "Expand"} ${profile.name}"
+                            }.clickable(role = Role.Button) { expandedProviders = if (expanded) expandedProviders - profile.id else expandedProviders + profile.id }
+                                .padding(vertical = 8.dp).testTag(if (profile.id == AssistantConnection.DEEPSEEK_ID) "deepseek-provider-section" else "provider-${profile.id}"),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            ProviderLogo(profile.catalogProviderId, Modifier.size(48.dp))
+                            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                                Text(profile.name, style = MaterialTheme.typography.titleMedium)
+                                if (profiles.defaultConnectionId == profile.id) Text("Default", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                             }
-                            IconButton(onClick = { editProfile = profile }, enabled = !busy && assistant.connectionsReady) { Icon(Icons.Outlined.Edit, "Edit ${profile.name}", tint = MaterialTheme.colorScheme.onSurface.copy(alpha = if (assistant.connectionsReady) 1f else 0.38f)) }
-                            IconButton(onClick = { removingProfile = profile }, enabled = !busy && profiles.connections.size > 1 && assistant.connectionsReady) { Icon(Icons.Outlined.DeleteOutline, "Remove ${profile.name} connection", tint = MaterialTheme.colorScheme.onSurface.copy(alpha = if (profiles.connections.size > 1 && assistant.connectionsReady) 1f else 0.38f)) }
-                        }
-                    }
-                    AnimatedVisibility(expanded, enter = expandVertically(tween(140)) + fadeIn(tween(100)), exit = shrinkVertically(tween(120)) + fadeOut(tween(80))) {
-                        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            HorizontalDivider()
                             if (assistant != null) {
-                                Surface(
-                                    Modifier.fillMaxWidth().clickable(enabled = !busy && assistant.connectionsReady) {
-                                        assistant.stopModelDiscovery()
-                                        modelProfile = profile
-                                    }.testTag("manage-models-${profile.id}"),
-                                    shape = RoundedCornerShape(16.dp),
-                                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                ) {
-                                    Row(Modifier.padding(horizontal = 14.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Column(Modifier.weight(1f)) {
-                                            Text("Models", style = MaterialTheme.typography.bodyMedium)
-                                            Text("${profile.models.size} added", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                IconButton(onClick = { save(profiles.copy(defaultConnectionId = profile.id)) }, enabled = !busy && assistant.connectionsReady) {
+                                    Icon(Icons.Outlined.Star, if (profiles.defaultConnectionId == profile.id) "Default for new chats" else "Use ${profile.name} for new chats", tint = if (profiles.defaultConnectionId == profile.id) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                IconButton(onClick = { editProfile = profile }, enabled = !busy && assistant.connectionsReady) { Icon(Icons.Outlined.Edit, "Edit ${profile.name}", tint = MaterialTheme.colorScheme.onSurface.copy(alpha = if (assistant.connectionsReady) 1f else 0.38f)) }
+                                IconButton(onClick = { removingProfile = profile }, enabled = !busy && profiles.connections.size > 1 && assistant.connectionsReady) { Icon(Icons.Outlined.DeleteOutline, "Remove ${profile.name} connection", tint = MaterialTheme.colorScheme.onSurface.copy(alpha = if (profiles.connections.size > 1 && assistant.connectionsReady) 1f else 0.38f)) }
+                            }
+                        }
+                        AnimatedVisibility(expanded, enter = expandVertically(tween(140)) + fadeIn(tween(100)), exit = shrinkVertically(tween(120)) + fadeOut(tween(80))) {
+                            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                HorizontalDivider()
+                                if (assistant != null) {
+                                    Surface(
+                                        Modifier.fillMaxWidth().clickable(enabled = !busy && assistant.connectionsReady) {
+                                            assistant.stopModelDiscovery()
+                                            modelProfile = profile
+                                        }.testTag("manage-models-${profile.id}"),
+                                        shape = RoundedCornerShape(16.dp),
+                                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                    ) {
+                                        Row(Modifier.padding(horizontal = 14.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Column(Modifier.weight(1f)) {
+                                                Text("Models", style = MaterialTheme.typography.bodyMedium)
+                                                Text("${profile.models.size} added", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                            Icon(Icons.Outlined.Tune, "Manage ${profile.name} models", tint = MaterialTheme.colorScheme.primary)
                                         }
-                                        Icon(Icons.Outlined.Tune, "Manage ${profile.name} models", tint = MaterialTheme.colorScheme.primary)
                                     }
                                 }
-                            }
-                            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text("Default model", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                                Text(profile.defaultModel.name, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            if (profile.defaultModel.efforts.size > 1) {
                                 Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Default effort", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                                    Text(DeepSeekEffort.entries.firstOrNull { it.name == profile.defaultEffort }?.label ?: "Off", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text("Default model", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                                    Text(profile.defaultModel.name, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                            }
-                            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Outlined.Key, null)
-                                Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                                    Text("API key", style = MaterialTheme.typography.bodyMedium)
-                                    Text(if (hasKeys[profile.id] == true) "Key saved" else "No API key", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (profile.defaultModel.efforts.size > 1) {
+                                    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Text("Default effort", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                                        Text(DeepSeekEffort.entries.firstOrNull { it.name == profile.defaultEffort }?.label ?: "Off", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
                                 }
-                                IconButton(onClick = { keyProfile = profile }, enabled = !busy) { Icon(if (hasKeys[profile.id] == true) Icons.Outlined.Edit else Icons.Outlined.Add, if (hasKeys[profile.id] == true) "Replace API key" else "Add API key", tint = MaterialTheme.colorScheme.onSurface) }
-                                IconButton(onClick = { removingKey = profile }, enabled = !busy) { Icon(Icons.Outlined.DeleteOutline, "Remove API key", tint = MaterialTheme.colorScheme.onSurface) }
+                                Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Outlined.Key, null)
+                                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                                        Text("API key", style = MaterialTheme.typography.bodyMedium)
+                                        Text(if (hasKeys[profile.id] == true) "Key saved" else "No API key", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    IconButton(onClick = { keyProfile = profile }, enabled = !busy) { Icon(if (hasKeys[profile.id] == true) Icons.Outlined.Edit else Icons.Outlined.Add, if (hasKeys[profile.id] == true) "Replace API key" else "Add API key", tint = MaterialTheme.colorScheme.onSurface) }
+                                    IconButton(onClick = { removingKey = profile }, enabled = !busy) { Icon(Icons.Outlined.DeleteOutline, "Remove API key", tint = MaterialTheme.colorScheme.onSurface) }
+                                }
                             }
                         }
-                    }
-                    com.veyarc.feature.editor.ExpansionScrollAnchor(expanded)
-                    assistant?.connectionTestResults?.get(profile.id)?.let { result ->
-                        Text(result, style = MaterialTheme.typography.bodySmall, color = if (result.startsWith("Not connected")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                        com.veyarc.feature.editor.ExpansionScrollAnchor(expanded)
+                        assistant?.connectionTestResults?.get(profile.id)?.let { result ->
+                            Text(result, style = MaterialTheme.typography.bodySmall, color = if (result.startsWith("Not connected")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
             }
-        }
-        if (assistant != null) {
-            HorizontalDivider(Modifier.padding(vertical = 12.dp))
-            OutlinedButton(onClick = { adding = true }, enabled = !busy && assistant.connectionsReady, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp).testTag("assistant-add-connection")) {
-                Icon(Icons.Outlined.Add, null, Modifier.size(20.dp))
-                Text("Add connection", Modifier.padding(start = 8.dp))
+            if (assistant != null) {
+                HorizontalDivider(Modifier.padding(vertical = 12.dp))
+                OutlinedButton(onClick = { adding = true }, enabled = !busy && assistant.connectionsReady, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp).testTag("assistant-add-connection")) {
+                    Icon(Icons.Outlined.Add, null, Modifier.size(20.dp))
+                    Text("Add connection", Modifier.padding(start = 8.dp))
+                }
             }
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            assistant?.connectionError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        assistant?.connectionError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        HorizontalDivider()
-        TextButton(onClick = { privacyVisible = true }, modifier = Modifier.fillMaxWidth()) { Text("Privacy and costs") }
-        if (onHelp != null) TextButton(onClick = onHelp, modifier = Modifier.fillMaxWidth()) { Text("AI chat help") }
-    }
+    })
     modelProfile?.let { selected ->
         val profile = profiles.connections.first { it.id == selected.id }
         ConnectionModels(
@@ -280,21 +298,6 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
             }
         }
     }
-    if (privacyVisible) {
-        AssistantPanel("Privacy and costs", onDismiss = { privacyVisible = false }) {
-            Text("• Sends chat, workflow text and files you attach.")
-            Text("• Recordings and run history stay on this device.")
-            Text("• Your API account pays. Stop may still cost.")
-            Text("• Deleting locally doesn't erase provider records.")
-            if (currentDefault.protocol == AssistantProtocol.DEEPSEEK) {
-                TextButton(onClick = { uri.openUri("https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html") }, modifier = Modifier.fillMaxWidth()) { Text("Provider privacy policy") }
-                TextButton(onClick = { uri.openUri("https://cdn.deepseek.com/policies/en-US/deepseek-open-platform-terms-of-service.html") }, modifier = Modifier.fillMaxWidth()) { Text("Provider API terms") }
-                TextButton(onClick = { uri.openUri("https://api-docs.deepseek.com/quick_start/pricing/") }, modifier = Modifier.fillMaxWidth()) { Text("Provider pricing") }
-            } else {
-                Text("Check your provider's privacy policy and pricing.", style = MaterialTheme.typography.bodySmall)
-            }
-        }
-    }
     if (enabling || testing) {
         val isTest = testing
         AlertDialog(onDismissRequest = {
@@ -304,7 +307,7 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(if (isTest) "• Sends a small test through each saved key. No chat or workflow data." else "• Sends chat and attachments to the connection you choose.")
                 Text("• Your API account pays. Stop may still cost.")
-                Text(if (isTest) "• Tests the connection, not workflow quality." else "• Review changes. Save separately. AI turns off on restart.")
+                Text(if (isTest) "• Tests the connection, not workflow quality." else "• Approve edits to save a revision. AI turns off on restart.")
             }
         }, confirmButton = {
             TextButton(onClick = {
@@ -369,6 +372,25 @@ internal fun AssistantConnectionSettings(store: AssistantKeyStore, assistant: co
                 }
             }) { Text("Remove connection") }
         }, dismissButton = { TextButton(onClick = { removingProfile = null }) { Text("Cancel") } })
+    }
+}
+
+@Composable
+internal fun SettingsEnableSwitch(label: String, checked: Boolean, enabled: Boolean = true, modifier: Modifier = Modifier, onCheckedChange: (Boolean) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val offset by animateDpAsState(if (checked) 32.dp else 0.dp, tween(140), label = "Settings switch thumb")
+    val track by animateColorAsState(if (checked) colors.primary.copy(alpha = 0.2f) else colors.surfaceContainerHighest, tween(140), label = "Settings switch track")
+    Box(
+        modifier.width(68.dp).height(48.dp).alpha(if (enabled) 1f else 0.45f)
+            .toggleable(checked, enabled = enabled, role = Role.Switch, onValueChange = onCheckedChange)
+            .semantics { contentDescription = label },
+    ) {
+        Box(Modifier.align(Alignment.Center).width(68.dp).height(36.dp).clip(RoundedCornerShape(18.dp)).background(track)) {
+            Text(if (checked) "On" else "Off", Modifier.width(32.dp).align(if (checked) Alignment.CenterStart else Alignment.CenterEnd), style = MaterialTheme.typography.labelSmall, color = if (checked) colors.primary else colors.onSurfaceVariant, textAlign = TextAlign.Center, maxLines = 1)
+            Box(Modifier.padding(4.dp).offset(x = offset).size(28.dp).background(if (checked) colors.primary else colors.onSurfaceVariant, CircleShape), contentAlignment = Alignment.Center) {
+                Icon(Icons.Outlined.PowerSettingsNew, null, Modifier.size(16.dp), tint = if (checked) colors.onPrimary else colors.surface)
+            }
+        }
     }
 }
 

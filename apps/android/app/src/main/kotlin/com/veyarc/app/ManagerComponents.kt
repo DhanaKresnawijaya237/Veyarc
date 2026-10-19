@@ -12,8 +12,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -48,7 +46,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
@@ -56,6 +53,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -174,14 +172,7 @@ internal fun CompactManagerHeader(
                 targetState = heading,
                 modifier = Modifier.weight(1f).graphicsLayer { alpha = headingAlpha },
                 transitionSpec = {
-                    (
-                        fadeIn(tween(transitionDurationMs)) +
-                            slideInVertically(tween(transitionDurationMs)) { it / 3 }
-                        ) togetherWith
-                        (
-                            fadeOut(tween(transitionDurationMs)) +
-                                slideOutVertically(tween(transitionDurationMs)) { -it / 3 }
-                            )
+                    fadeIn(tween(140)) togetherWith fadeOut(tween(90))
                 },
                 label = "manager heading",
             ) { current ->
@@ -194,7 +185,7 @@ internal fun CompactManagerHeader(
             ) {
                 AnimatedContent(selectionMode, label = "manager selection toggle") { selecting ->
                     Icon(
-                        if (selecting) Icons.Filled.Close else Icons.Filled.CheckBox,
+                        if (selecting) Icons.Filled.Close else Icons.Outlined.Checklist,
                         contentDescription = if (selecting) "Leave selection mode" else "Select items",
                     )
                 }

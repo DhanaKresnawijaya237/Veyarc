@@ -1,5 +1,6 @@
 package com.veyarc.feature.editor
 
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -47,6 +48,9 @@ import com.veyarc.model.WorkflowValidator
 import com.veyarc.model.backgroundAssetId
 import com.veyarc.model.bundle.BundleAsset
 import com.veyarc.model.bundle.WorkflowBundle
+import com.veyarc.model.withBackgroundAsset
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 enum class WorkflowStepKind {
     TAP_POINT,
@@ -97,6 +101,13 @@ data class DraftBuildResult(
     val document: WorkflowDocument? = bundle?.document,
 )
 
+data class TemplateUsageNumbers(val crop: List<String>, val background: List<String>) {
+    fun subtitle(): String = listOfNotNull(
+        crop.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "Crop: "),
+        background.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = "BG: "),
+    ).joinToString(" · ")
+}
+
 class WorkflowEditorSession {
     var isSaving by mutableStateOf(false)
         private set
@@ -111,6 +122,16 @@ class WorkflowEditorSession {
         isSaving = false
     }
 
+    suspend fun persistSave(expected: WorkflowDraft, persist: suspend () -> WorkflowRevisionEditorData): WorkflowRevisionEditorData {
+        check(isSaving && draft === expected)
+        // A committed revision must reach the retained editor even if its screen is recreated.
+        return withContext(NonCancellable) {
+            persist().also { stored ->
+                if (draft === expected) markSaved(WorkflowDraft.fromRevision(stored, expected.recordingJournalFileName))
+            }
+        }
+    }
+
     var draft by mutableStateOf<WorkflowDraft?>(null)
         private set
     var destinationFolderId by mutableStateOf<String?>(null)
@@ -118,6 +139,20 @@ class WorkflowEditorSession {
     internal var geometryTarget by mutableStateOf<GeometryTarget?>(null)
     internal var conditionTarget by mutableStateOf<ConditionTarget?>(null)
     internal var pendingTemplateCrop by mutableStateOf<TemplateCropDraft?>(null)
+    internal var editTemplateTarget by mutableStateOf<com.veyarc.model.AssetId?>(null)
+    internal val colorPickerImages = ColorPickerImages()
+    internal var allowedAppsExpanded by mutableStateOf(true)
+    internal var templatesExpanded by mutableStateOf(true)
+    internal var revisionPickerExpanded by mutableStateOf(false)
+    internal var validationDetailsVisible by mutableStateOf(false)
+    internal var renameTemplateTarget by mutableStateOf<com.veyarc.model.AssetId?>(null)
+    internal var renameTemplateName by mutableStateOf("")
+    internal var blockSelection by mutableStateOf<BlockSelection?>(null)
+    internal var blockSelectionMode by mutableStateOf(false)
+    internal var selectedBlockPath by mutableStateOf<StepListPath?>(null)
+    internal var selectedBlockIds by mutableStateOf<Set<String>>(emptySet())
+    internal var canvasScrollState by mutableStateOf(LazyListState())
+    internal var templateScrollState by mutableStateOf(LazyListState())
     private var savedDraft by mutableStateOf<WorkflowDraft?>(null)
     private var undoStack by mutableStateOf<List<WorkflowDraft>>(emptyList())
     private var redoStack by mutableStateOf<List<WorkflowDraft>>(emptyList())
@@ -186,6 +221,7 @@ class WorkflowEditorSession {
     }
 
     fun update(updated: WorkflowDraft) {
+        if (isSaving) return
         val current = draft ?: return
         if (current.persistedContent() != updated.persistedContent()) {
             undoStack = (undoStack + current).takeLast(MAX_HISTORY_ENTRIES)
@@ -195,6 +231,7 @@ class WorkflowEditorSession {
     }
 
     fun undo() {
+        if (isSaving) return
         val current = draft ?: return
         val previous = undoStack.lastOrNull() ?: return
         undoStack = undoStack.dropLast(1)
@@ -203,6 +240,7 @@ class WorkflowEditorSession {
     }
 
     fun redo() {
+        if (isSaving) return
         val current = draft ?: return
         val next = redoStack.lastOrNull() ?: return
         redoStack = redoStack.dropLast(1)
@@ -268,9 +306,23 @@ class WorkflowEditorSession {
     }
 
     private fun dismissEditors() {
+        colorPickerImages.clear()
         geometryTarget = null
         conditionTarget = null
         pendingTemplateCrop = null
+        editTemplateTarget = null
+        allowedAppsExpanded = true
+        templatesExpanded = true
+        revisionPickerExpanded = false
+        validationDetailsVisible = false
+        renameTemplateTarget = null
+        renameTemplateName = ""
+        blockSelection = null
+        blockSelectionMode = false
+        selectedBlockPath = null
+        selectedBlockIds = emptySet()
+        canvasScrollState = LazyListState()
+        templateScrollState = LazyListState()
     }
 
     private fun clearHistory() {
@@ -348,7 +400,7 @@ data class WorkflowDraft(
                 runLimits = runLimits,
                 variables = variables,
                 assets = assetDescriptors.map { asset ->
-                    AssetReference(asset.assetId, asset.kind, assetNames[asset.assetId.value] ?: asset.displayName)
+                    AssetReference(asset.assetId, asset.kind, assetNames[asset.assetId.value] ?: asset.displayName, asset.widthPx, asset.heightPx)
                 },
                 steps = steps,
             )
@@ -365,8 +417,8 @@ data class WorkflowDraft(
             if (error.code == ValidationErrorCode.MISSING_ASSET) {
                 val missingId = missingAssetIds.firstOrNull { it in error.message }
                 val displayName = missingId?.let(assetNames::get) ?: "Deleted image"
-                val numbers = missingId?.let { assetUsageNumbers()[it] }.orEmpty()
-                DraftIssue(error.path, "$displayName is still used" + if (numbers.isEmpty()) "" else " · ${numbers.joinToString(", ")}")
+                val usage = missingId?.let { assetUsageNumbers()[it]?.subtitle() }
+                DraftIssue(error.path, "$displayName is still used" + usage?.takeIf { it.isNotEmpty() }?.let { " · $it" }.orEmpty())
             } else {
                 DraftIssue(error.path, error.message)
             }
@@ -477,24 +529,33 @@ data class WorkflowDraft(
 
     fun referencedAssetIds(): Set<String> = buildSet { steps.forEach { addStepAssetReferences(it) } }
 
-    fun assetUsageNumbers(): Map<String, List<String>> {
-        val uses = linkedMapOf<String, MutableList<String>>()
+    fun assetUsageNumbers(): Map<String, TemplateUsageNumbers> {
+        val crops = linkedMapOf<String, MutableSet<String>>()
+        val backgrounds = linkedMapOf<String, MutableSet<String>>()
+        fun conditionUses(condition: Condition, label: String) {
+            condition.backgroundAssetId()?.let { backgrounds.getOrPut(it.value) { linkedSetOf() }.add(label) }
+            when (condition) {
+                is ImagePresentCondition -> crops.getOrPut(condition.assetId.value) { linkedSetOf() }.add(label)
+                is ImageAbsentCondition -> crops.getOrPut(condition.assetId.value) { linkedSetOf() }.add(label)
+                is AndCondition -> condition.conditions.forEach { conditionUses(it, label) }
+                is OrCondition -> condition.conditions.forEach { conditionUses(it, label) }
+                is NotCondition -> conditionUses(condition.condition, label)
+                else -> Unit
+            }
+        }
         fun visit(items: List<WorkflowStep>, prefix: String) {
             var number = 0
             items.forEach { step ->
                 if (step is StageBoundary) return@forEach
                 number++
                 val label = "$prefix$number"
-                val ownReferences = buildSet {
-                    step.backgroundAssetId()?.let { add(it.value) }
-                    when (step) {
-                        is WaitUntil -> addConditionAssetReferences(step.condition)
-                        is IfElse -> addConditionAssetReferences(step.condition)
-                        is WhileStep -> addConditionAssetReferences(step.condition)
-                        else -> Unit
-                    }
+                step.backgroundAssetId()?.let { backgrounds.getOrPut(it.value) { linkedSetOf() }.add(label) }
+                when (step) {
+                    is WaitUntil -> conditionUses(step.condition, label)
+                    is IfElse -> conditionUses(step.condition, label)
+                    is WhileStep -> conditionUses(step.condition, label)
+                    else -> Unit
                 }
-                ownReferences.forEach { uses.getOrPut(it) { mutableListOf() }.add(label) }
                 when (step) {
                     is IfElse -> {
                         visit(step.thenSteps, "$label.")
@@ -510,7 +571,9 @@ data class WorkflowDraft(
             }
         }
         visit(steps, "")
-        return uses.mapValues { (_, numbers) -> numbers.distinct() }
+        return (crops.keys + backgrounds.keys).associateWith { id ->
+            TemplateUsageNumbers(crops[id]?.toList().orEmpty(), backgrounds[id]?.toList().orEmpty())
+        }
     }
 
     fun addAsset(asset: BundleAsset, defaultNamePrefix: String = "Template"): WorkflowDraft {
@@ -526,11 +589,12 @@ data class WorkflowDraft(
         )
     }
 
-    fun replaceAsset(asset: BundleAsset): WorkflowDraft = copy(
+    fun replaceAsset(asset: BundleAsset, removeBackgrounds: Boolean = assetDescriptors.any { it.assetId == asset.assetId && (it.widthPx != asset.widthPx || it.heightPx != asset.heightPx) }): WorkflowDraft = copy(
         assets = (assets.filterNot { it.assetId == asset.assetId } + asset).sortedBy { it.assetId.value },
         assetDescriptors = assetDescriptors.map { existing ->
             if (existing.assetId == asset.assetId) asset.toDescriptor(existing.displayName, existing.addedAtMs) else existing
         },
+        steps = if (removeBackgrounds) steps.withoutBackground(asset.assetId) else steps,
     )
 
     fun removeAsset(assetId: com.veyarc.model.AssetId): WorkflowDraft = copy(
@@ -673,6 +737,28 @@ data class WorkflowDraft(
                 used += name.lowercase()
                 asset.assetId.value to name
             }
+        }
+    }
+}
+
+private fun List<WorkflowStep>.withoutBackground(assetId: com.veyarc.model.AssetId): List<WorkflowStep> {
+    fun condition(value: Condition): Condition = when (value) {
+        is PixelColorCondition -> if (value.backgroundAssetId == assetId) value.copy(backgroundAssetId = null) else value
+        is ImagePresentCondition -> if (value.backgroundAssetId == assetId) value.copy(backgroundAssetId = null) else value
+        is ImageAbsentCondition -> if (value.backgroundAssetId == assetId) value.copy(backgroundAssetId = null) else value
+        is AndCondition -> value.copy(conditions = value.conditions.map(::condition))
+        is OrCondition -> value.copy(conditions = value.conditions.map(::condition))
+        is NotCondition -> value.copy(condition = condition(value.condition))
+        else -> value
+    }
+    return map { original ->
+        val step = if (original.backgroundAssetId() == assetId) original.withBackgroundAsset(null) else original
+        when (step) {
+            is WaitUntil -> step.copy(condition = condition(step.condition))
+            is IfElse -> step.copy(condition = condition(step.condition), thenSteps = step.thenSteps.withoutBackground(assetId), elseSteps = step.elseSteps.withoutBackground(assetId))
+            is WhileStep -> step.copy(condition = condition(step.condition), bodySteps = step.bodySteps.withoutBackground(assetId))
+            is Repeat -> step.copy(bodySteps = step.bodySteps.withoutBackground(assetId))
+            else -> step
         }
     }
 }
@@ -873,7 +959,7 @@ fun WorkflowStep.summary(assetNames: Map<String, String> = emptyMap()): String =
 }
 
 fun Condition.summary(assetNames: Map<String, String> = emptyMap()): String = when (this) {
-    is PixelColorCondition -> "the pixel at ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}% has the selected color"
+    is PixelColorCondition -> if (region == null) "the pixel at ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}% has the selected color" else "the selected color appears in the search area"
 
     is ImagePresentCondition -> when (matchMode) {
         ImageMatchMode.APPEARS_WITHIN_REGION -> "${assetNames[assetId.value] ?: "the selected image"} appears"

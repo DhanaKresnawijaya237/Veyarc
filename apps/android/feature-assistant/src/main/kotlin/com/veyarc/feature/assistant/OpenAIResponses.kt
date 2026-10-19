@@ -94,6 +94,7 @@ internal object OpenAIResponses {
         }
         val bytes = text.toString().toByteArray(Charsets.UTF_8)
         AssistantResponseCodec.decode(bytes, request.requestId, request.conversationId, request.baseSnapshotId)
+        request.captureUsage(response["usage"] as? JsonObject)
         val summary = summary(response)
         if (publishSummary && wantsSummary(request) && summary.isNotBlank()) {
             AssistantThinkingBuffer(request).apply {

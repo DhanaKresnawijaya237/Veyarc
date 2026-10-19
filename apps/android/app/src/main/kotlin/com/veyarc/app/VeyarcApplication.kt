@@ -8,4 +8,5 @@ import android.app.Application
  */
 class VeyarcApplication : Application() {
     internal val editor by lazy { EditorSessionOwner(this) }
+    internal val assistantUsage by lazy { com.veyarc.data.storage.AssistantUsageRepository(this) }
 }

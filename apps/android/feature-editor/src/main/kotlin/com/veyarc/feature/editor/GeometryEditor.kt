@@ -35,6 +35,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material3.Button
@@ -212,12 +213,14 @@ internal fun TemplatePickerSheet(
     onDismiss: () -> Unit,
     onSelect: (AssetId?) -> Unit,
     loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
+    allowAnySize: Boolean = false,
+    onAddImage: (() -> Unit)? = null,
 ) {
     if (!visible) return
     val options = assets.filter { asset ->
         val widthPx = asset.widthPx
         val heightPx = asset.heightPx
-        widthPx == null || heightPx == null || templateCanAppearInPicker(
+        allowAnySize || widthPx == null || heightPx == null || templateCanAppearInPicker(
             widthPx = widthPx,
             heightPx = heightPx,
             displayWidthPx = displayWidthPx,
@@ -244,11 +247,12 @@ internal fun TemplatePickerSheet(
                 .fillMaxWidth()
                 .height((configuration.screenHeightDp * 0.76f).dp),
         ) {
-            Text(
-                title,
-                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
-                style = MaterialTheme.typography.titleLarge,
-            )
+            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                onAddImage?.let { add ->
+                    IconButton(onClick = add) { Icon(Icons.Outlined.AddPhotoAlternate, contentDescription = "Add image") }
+                }
+            }
             if (allowNone) {
                 Surface(
                     onClick = { onSelect(null) },
@@ -269,7 +273,13 @@ internal fun TemplatePickerSheet(
             }
             if (options.isEmpty()) {
                 Text(
-                    if (fullScreenOnly) "No full-screen images." else "No cropped images.",
+                    if (allowAnySize) {
+                        "No images yet."
+                    } else if (fullScreenOnly) {
+                        "No full-screen images."
+                    } else {
+                        "No cropped images."
+                    },
                     modifier = Modifier.padding(16.dp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -278,7 +288,7 @@ internal fun TemplatePickerSheet(
                     modifier = Modifier.weight(1f).testTag("template-picker-list"),
                     state = gridState,
                     overscrollEffect = null,
-                    columns = GridCells.Fixed(2),
+                    columns = if (allowAnySize) GridCells.Adaptive(140.dp) else GridCells.Fixed(2),
                     contentPadding = PaddingValues(start = 12.dp, top = 14.dp, end = 12.dp, bottom = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -293,6 +303,7 @@ internal fun TemplatePickerSheet(
                             selected = selectedAssetId == asset.assetId.value,
                             onSelect = { onSelect(asset.assetId) },
                             loadPreview = loadPreview,
+                            allowAnySize = allowAnySize,
                         )
                     }
                 }
@@ -311,6 +322,7 @@ private fun TemplatePickerItem(
     selected: Boolean,
     onSelect: () -> Unit,
     loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
+    allowAnySize: Boolean = false,
 ) {
     val previewState by produceState<TemplatePickerPreviewState>(TemplatePickerPreviewState.Loading, asset.assetId) {
         value = withContext(Dispatchers.Default) {
@@ -330,7 +342,7 @@ private fun TemplatePickerItem(
     )
     Surface(
         onClick = onSelect,
-        enabled = correctSize == true,
+        enabled = if (allowAnySize) preview != null else correctSize == true,
         modifier = Modifier.testTag("template-picker-${asset.assetId.value}"),
         color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant,
         shape = MaterialTheme.shapes.medium,
@@ -340,7 +352,9 @@ private fun TemplatePickerItem(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(
-                        if (fullScreenOnly) {
+                        if (allowAnySize) {
+                            1f
+                        } else if (fullScreenOnly) {
                             displayWidthPx.toFloat() / displayHeightPx
                         } else {
                             preview?.let { it.widthPx.toFloat() / it.heightPx } ?: 1f
@@ -357,7 +371,7 @@ private fun TemplatePickerItem(
                         bitmap = state.preview.image,
                         contentDescription = name,
                         modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.FillBounds,
+                        contentScale = if (allowAnySize) ContentScale.Fit else ContentScale.FillBounds,
                     )
                 }
             }
@@ -509,8 +523,8 @@ private fun LongPressGeometryEditor(
         }
         LongEditorField(
             label = "Hold duration (ms)",
-            value = durationText.toLongOrNull() ?: 0L,
-            onValueChange = { durationText = it.toString() },
+            value = durationText,
+            onValueChange = { durationText = it },
         )
         if (!validDuration) {
             Text(
@@ -708,8 +722,8 @@ private fun PathGeometryEditor(
         }
         LongEditorField(
             label = "Path duration (ms)",
-            value = duration ?: 0L,
-            onValueChange = { durationText = it.toString() },
+            value = durationText,
+            onValueChange = { durationText = it },
             modifier = Modifier.fillMaxWidth(),
         )
         Text(

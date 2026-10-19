@@ -994,17 +994,19 @@ object ReplayFloatingController {
                         recording.onStart()
                     }
                 }
-                ReplayWorkflowCatalog.load(activeService)
-                val playTarget = playTarget(activeService)
-                val selectedWorkflow = ReplayWorkflowCatalog.selected(playTarget)
+                val displayedTarget = playTarget(activeService)
                 actions += ControlAction(
                     android.R.drawable.ic_media_play,
-                    "Replay ${playTarget.label.lowercase()}",
+                    "Replay ${displayedTarget.label.lowercase()}",
                 ) {
+                    // The drawer can outlive changes to its settings or workflow catalog.
+                    val currentTarget = playTarget(activeService)
+                    ReplayWorkflowCatalog.load(activeService)
+                    val selectedWorkflow = ReplayWorkflowCatalog.selected(currentTarget)
                     if (selectedWorkflow == null) {
                         Toast.makeText(
                             activeService,
-                            "No ${playTarget.label.lowercase()} workflow to replay",
+                            "No ${currentTarget.label.lowercase()} workflow to replay",
                             Toast.LENGTH_SHORT,
                         ).show()
                     } else {

@@ -18,14 +18,16 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         RunFolderEntity::class,
         RunRecordEntity::class,
         ChatEntity::class,
+        AssistantUsageEntity::class,
     ],
-    version = 11,
+    version = 12,
     exportSchema = false,
 )
 internal abstract class VeyarcDatabase : RoomDatabase() {
     abstract fun workflowDao(): WorkflowDao
     abstract fun workflowAssetDao(): WorkflowAssetDao
     abstract fun chatDao(): ChatDao
+    abstract fun assistantUsageDao(): AssistantUsageDao
 
     companion object {
         fun create(context: Context): VeyarcDatabase = Room.databaseBuilder(
@@ -43,6 +45,7 @@ internal abstract class VeyarcDatabase : RoomDatabase() {
             MIGRATION_8_9,
             MIGRATION_9_10,
             MIGRATION_10_11,
+            MIGRATION_11_12,
         ).build()
 
         internal val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -182,6 +185,13 @@ internal abstract class VeyarcDatabase : RoomDatabase() {
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_chat_conversations_savedWorkflowId ON chat_conversations(savedWorkflowId)")
                 db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_chat_conversations_encryptedFileName ON chat_conversations(encryptedFileName)")
+            }
+        }
+
+        internal val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS assistant_usage (requestId TEXT NOT NULL PRIMARY KEY, providerId TEXT NOT NULL, providerName TEXT NOT NULL, modelId TEXT NOT NULL, modelName TEXT NOT NULL, atMs INTEGER NOT NULL, input INTEGER, output INTEGER, cached INTEGER, cacheWrite INTEGER, reasoning INTEGER)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_assistant_usage_providerId_modelId ON assistant_usage(providerId, modelId)")
             }
         }
 

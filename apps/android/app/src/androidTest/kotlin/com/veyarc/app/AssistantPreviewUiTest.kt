@@ -74,12 +74,12 @@ class AssistantPreviewNavigationTest {
     fun settingsKeepsAiConnectionCollapsedUntilOpened() {
         compose.onNodeWithContentDescription("Settings", useUnmergedTree = true).performClick()
         compose.onNodeWithText("AI connection").assertIsDisplayed()
-        compose.onNodeWithText("AI chat help").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Test all connections").assertDoesNotExist()
         compose.onNodeWithText("AI connection").performClick()
-        compose.onNodeWithText("AI chat help").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("Test all connections").performScrollTo().assertIsDisplayed()
         compose.onNodeWithContentDescription("Home", useUnmergedTree = true).performClick()
         compose.onNodeWithContentDescription("Settings", useUnmergedTree = true).performClick()
-        compose.onNodeWithText("AI chat help").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Test all connections").assertDoesNotExist()
     }
 
     @Test
@@ -131,10 +131,14 @@ class AssistantPreviewNavigationTest {
         compose.waitUntil(10_000) { runCatching { compose.onNodeWithText("Enable AI in Settings").assertExists() }.isSuccess }
         compose.onNodeWithText("Enable AI in Settings").performClick()
         compose.onNodeWithText("AI connection").assertIsDisplayed()
-        compose.onNodeWithText("AI chat help").performScrollTo().performClick()
-        compose.onNodeWithText("Get started").assertIsDisplayed()
-        compose.onNodeWithText("Apply updates your draft. Undo is in the editor.").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithContentDescription("Close AI chat help").performClick()
+        compose.onNodeWithText("AI chat help").assertDoesNotExist()
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Guide"))
+        compose.onNodeWithText("Guide").performClick()
+        compose.onNodeWithText("Recommended way to use").performScrollTo().performClick()
+        compose.onNodeWithText("Record, edit, test").assertIsDisplayed()
+        compose.onNodeWithText("Let AI handle the logic").performScrollTo().performClick()
+        compose.onNodeWithText("Attach screenshots when useful. Review, Apply, Save, then test.").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("Close Recommended way to use").performClick()
         compose.onNodeWithContentDescription("Home", useUnmergedTree = true).performClick()
         compose.onNodeWithContentDescription("Settings", useUnmergedTree = true).performClick()
         compose.onNodeWithText("AI chat help").assertDoesNotExist()
@@ -154,20 +158,8 @@ class AssistantPreviewNavigationTest {
             compose.onNodeWithText("AI connection").performClick()
             compose.onNodeWithTag("deepseek-logo", useUnmergedTree = true).assertExists()
             capture("connection-settings")
-            compose.onNodeWithText("Privacy and costs").performScrollTo().performClick()
-            compose.onNodeWithText("Done").assertDoesNotExist()
-            compose.onNodeWithText("Provider pricing").performScrollTo().assertIsDisplayed()
-            capture("connection-privacy")
-            compose.onNodeWithContentDescription("Close Privacy and costs").performClick()
-            compose.onNodeWithText("AI chat help").performScrollTo().performClick()
-            compose.onNode(hasScrollToIndexAction() and hasAnyAncestor(hasTestTag("assistant-panel-scroll")))
-                .performScrollToNode(hasText("See Privacy and costs for shared data and charges."))
-            val last = compose.onNodeWithText("See Privacy and costs for shared data and charges.").fetchSemanticsNode().boundsInRoot
-            val panel = compose.onNodeWithTag("assistant-panel").fetchSemanticsNode().boundsInRoot
-            val density = compose.activity.resources.displayMetrics.density
-            org.junit.Assert.assertTrue("Help must not reserve a blank footer: ${panel.bottom - last.bottom}", panel.bottom - last.bottom in 0f..24f * density)
-            capture("connection-help")
-            compose.onNodeWithContentDescription("Close AI chat help").performClick()
+            compose.onNodeWithText("Privacy and costs").assertDoesNotExist()
+            compose.onNodeWithText("AI chat help").assertDoesNotExist()
             val profile = owner.assistant.defaultConnection
             val pro = profile.models.first { it.name.contains("Pro") }
             compose.onNodeWithContentDescription("Expand DeepSeek").performScrollTo().performClick()

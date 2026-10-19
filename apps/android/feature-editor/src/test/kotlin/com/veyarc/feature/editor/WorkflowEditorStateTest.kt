@@ -367,7 +367,7 @@ class WorkflowEditorStateTest {
             )
             .removeAsset(assetId)
 
-        assertEquals("Full screen 3 is still used · 1", draft.buildBundle().issues.single().message)
+        assertEquals("Full screen 3 is still used · Crop: 1", draft.buildBundle().issues.single().message)
     }
 
     @Test

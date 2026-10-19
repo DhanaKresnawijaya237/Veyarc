@@ -83,6 +83,9 @@ class CoordinateRecordingController(
     private var paused = false
 
     @Volatile
+    private var resumeRequested = false
+
+    @Volatile
     private var sessionStartedElapsedRealtime = 0L
 
     private var emergencyControlDeadline = 0L
@@ -100,9 +103,6 @@ class CoordinateRecordingController(
 
     // ponytail: exclusion boundaries are session-only; persist them if journal re-import is added.
     private val excludedControlTransitions = mutableSetOf<Long>()
-
-    /** False until a complete touch starts after the session source is armed. */
-    private var captureReady = false
 
     /** App-process monotonic origin for frame timing; avoids device/helper clock mismatches. */
     private var recordingStartReceivedTimestampMicros: Long? = null
@@ -133,6 +133,10 @@ class CoordinateRecordingController(
         onStop = ::stop,
         onServiceLost = { onRecordingServiceLost() },
     )
+
+    private val stopLatchObservation = ReplayFloatingController.observeEnabled(appContext) { enabled ->
+        if (!enabled && active) stop()
+    }
 
     init {
         ReplayFloatingController.setRecordingActions(controlCenterActions)
@@ -221,9 +225,9 @@ class CoordinateRecordingController(
 
     private val startSourceWhenEmergencyReadyRunnable = object : Runnable {
         override fun run() {
-            if (!active || stopRequested) return
+            if (!active || stopRequested || paused || pauseRequested) return
             if (RecordingForegroundService.isReady()) {
-                startInputSource(MAX_RECORDING_DURATION_MILLIS)
+                startInputSource(MAX_RECORDING_DURATION_MILLIS - elapsedMillis())
                 return
             }
             if (SystemClock.elapsedRealtime() >= emergencyControlDeadline) {
@@ -240,6 +244,10 @@ class CoordinateRecordingController(
 
     fun start(destinationFolderId: String?) {
         if (active) return
+        if (!ReplayFloatingController.isEnabled(appContext)) {
+            showUnavailable("Turn on the edge latch before recording.")
+            return
+        }
         AndroidDeviceSafety.current(appContext)?.takeUnless { it == AndroidUnsafeDeviceState.SYSTEM_WINDOW_ACTIVE }?.let {
             showUnavailable("Recording unavailable: ${it.reason}.")
             return
@@ -304,7 +312,6 @@ class CoordinateRecordingController(
         excludedControlTransitions.clear()
         controlPackages = sessionControlPackages
         hasForegroundObservation = false
-        captureReady = false
         recordingStartReceivedTimestampMicros = null
         frameCount = 0L
         sourceError = null
@@ -316,6 +323,7 @@ class CoordinateRecordingController(
         stopRequested = false
         pauseRequested = false
         paused = false
+        resumeRequested = false
         stopFailureReason = null
         if (!sessionCleanup.begin()) {
             runCatching { openedJournal.close() }
@@ -350,7 +358,11 @@ class CoordinateRecordingController(
     }
 
     private fun startInputSource(durationMillis: Long) {
-        if (!active || stopRequested) return
+        if (!active || stopRequested || paused || pauseRequested) return
+        if (!ReplayFloatingController.isEnabled(appContext)) {
+            stop()
+            return
+        }
         val startError = runCatching {
             source.start(durationMillis = durationMillis, listener = ::onSourceEvent)
         }.getOrElse { error ->
@@ -386,6 +398,7 @@ class CoordinateRecordingController(
         if (!active || stopRequested || paused || pauseRequested) return
         pauseRequested = true
         paused = true
+        mainHandler.removeCallbacks(startSourceWhenEmergencyReadyRunnable)
         mainHandler.removeCallbacks(timerRunnable)
         mainHandler.removeCallbacks(foregroundPollRunnable)
         _state.value = CoordinateRecordingState.Paused(
@@ -395,12 +408,21 @@ class CoordinateRecordingController(
         )
         ReplayFloatingController.setRecordingState(ControlCenterRecordingState.PAUSED)
         RecordingForegroundService.update(appContext, "Recording paused")
-        runCatching { source.stop() }
+        if (!source.stop()) enqueue { completePause() }
     }
 
     /** Resumes raw observation using the same encrypted journal and session clock. */
     fun resume() {
-        if (!active || stopRequested || !paused || pauseRequested) return
+        if (!active || stopRequested || !paused) return
+        if (!ReplayFloatingController.isEnabled(appContext)) {
+            stop()
+            return
+        }
+        if (pauseRequested) {
+            resumeRequested = true
+            return
+        }
+        resumeRequested = false
         if (isKeyguardLocked()) {
             failSession("Recording stopped because the lock screen became active.")
             return
@@ -419,7 +441,7 @@ class CoordinateRecordingController(
             return
         }
         paused = false
-        captureReady = false
+        recordingStartReceivedTimestampMicros = null
         pendingTouchLines = null
         pendingTouchSawControlSurface = false
         ignoredTouchActive = false
@@ -428,7 +450,8 @@ class CoordinateRecordingController(
         _state.value = CoordinateRecordingState.Arming(elapsedMillis = elapsed)
         ReplayFloatingController.setRecordingState(ControlCenterRecordingState.RECORDING)
         RecordingForegroundService.update(appContext, "Recording resumed")
-        startInputSource(remaining)
+        emergencyControlDeadline = SystemClock.elapsedRealtime() + EMERGENCY_CONTROL_READY_TIMEOUT_MILLIS
+        mainHandler.post(startSourceWhenEmergencyReadyRunnable)
     }
 
     /** Stops safely when Android destroys the foreground-service control unexpectedly. */
@@ -496,17 +519,7 @@ class CoordinateRecordingController(
             ShizukuTouchRecordingEvent.Completed -> enqueue {
                 if (!active) return@enqueue
                 if (pauseRequested && !stopRequested) {
-                    pauseRequested = false
-                    paused = true
-                    settlePendingTouchBeforeClose(preservePartialTouch = false)
-                    observeForeground(null, isPause = true)
-                    _state.value = CoordinateRecordingState.Paused(
-                        foregroundPackage = lastThirdPartyForegroundPackage?.value,
-                        elapsedMillis = elapsedMillis(),
-                        frameCount = frameCount,
-                    )
-                    ReplayFloatingController.setRecordingState(ControlCenterRecordingState.PAUSED)
-                    RecordingForegroundService.update(appContext, "Recording paused")
+                    completePause()
                     return@enqueue
                 }
                 val reason = sourceError ?: stopFailureReason ?: if (!stopRequested) {
@@ -520,6 +533,24 @@ class CoordinateRecordingController(
                 }
                 if (reason == null) finishSession() else failSession(reason)
             }
+        }
+    }
+
+    private fun completePause() {
+        if (!active || stopRequested || !pauseRequested) return
+        settlePendingTouchBeforeClose(preservePartialTouch = false)
+        observeForeground(null, isPause = true)
+        if (!active) return
+        _state.value = CoordinateRecordingState.Paused(
+            foregroundPackage = lastThirdPartyForegroundPackage?.value,
+            elapsedMillis = elapsedMillis(),
+            frameCount = frameCount,
+        )
+        ReplayFloatingController.setRecordingState(ControlCenterRecordingState.PAUSED)
+        RecordingForegroundService.update(appContext, "Recording paused")
+        pauseRequested = false
+        mainHandler.post {
+            if (resumeRequested) resume()
         }
     }
 
@@ -547,6 +578,8 @@ class CoordinateRecordingController(
             failSession("Recording stopped because the display rotated during recording.")
             return
         }
+        // Restarting observation can leave an orphan MOVE/UP from the resume control tap.
+        if (!startingTouch && pendingTouchLines == null && !ignoredTouchActive) return
         if (startingTouch) {
             activeTouchRotation = rotation
         } else if (activeTouchRotation != rotation) {
@@ -583,19 +616,18 @@ class CoordinateRecordingController(
         )
         val controlSurface = packageControlSurface || controllerControlSurface
         if (ignoredTouchActive) {
-            if (event.action == ShizukuTouchRecordingEvent.Action.UP) ignoredTouchActive = false
+            if (event.action == ShizukuTouchRecordingEvent.Action.UP) {
+                ignoredTouchActive = false
+                activeTouchRotation = null
+            }
             return
         }
 
-        // A start action can leave a final control-tap UP in the raw stream. Do not append
-        // that orphan; begin the global trace at the next complete third-party touch.
-        if (!captureReady && event.action != ShizukuTouchRecordingEvent.Action.DOWN) return
         if (pendingTouchLines == null && packageControlSurface) {
             if (event.action == ShizukuTouchRecordingEvent.Action.DOWN) ignoredTouchActive = true
             return
         }
         if (startingTouch) {
-            captureReady = true
             pendingTouchLines = ArrayList(PENDING_TOUCH_FRAME_LIMIT)
             pendingTouchSawControlSurface = false
             if (controllerControlSurface) {
@@ -872,6 +904,7 @@ class CoordinateRecordingController(
 
     /** Process-lifecycle cleanup; the activity ViewModel calls this only when the process exits. */
     fun close() {
+        stopLatchObservation()
         if (active) {
             sessionCleanup.requestStop(RecordingStopCause.PROCESS_CLOSE)
             if (!sessionCleanup.claimTerminal()) return
@@ -914,7 +947,6 @@ class CoordinateRecordingController(
         observedThirdPartyPackages.clear()
         excludedControlTransitions.clear()
         hasForegroundObservation = false
-        captureReady = false
         recordingStartReceivedTimestampMicros = null
         sourceError = null
         stopFailureReason = null
@@ -933,6 +965,7 @@ class CoordinateRecordingController(
         stopRequested = false
         pauseRequested = false
         paused = false
+        resumeRequested = false
         sessionCleanup.reset()
         if (!keepJournalFile) journalFile = null
     }

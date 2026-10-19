@@ -11,6 +11,7 @@ import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -39,8 +40,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,8 +52,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.veyarc.automation.android.AccessibilityGestureDispatcher
 import com.veyarc.automation.android.MediaProjectionConsent
+import com.veyarc.automation.android.ReplayFloatingController
 import com.veyarc.data.storage.StoredRunEvent
 import com.veyarc.data.storage.StoredRunRecord
 import com.veyarc.data.storage.StoredRunStatus
@@ -70,10 +71,18 @@ fun WorkflowRunScreen(
     onStart: () -> Unit = controller::start,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    onOpenConnectionSettings: () -> Unit = {},
+    onOpenLatchSettings: () -> Unit = {},
 ) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
     val state by controller.state.collectAsState()
+    DisposableEffect(context, controller) {
+        val stopObserving = ReplayFloatingController.observeEnabled(context) { enabled ->
+            if (controller.state.value.review.latchEnabled != enabled) controller.refreshReview()
+        }
+        onDispose { stopObserving() }
+    }
     var permissionRequestPending by remember { mutableStateOf(false) }
     var projectionRequestPending by remember { mutableStateOf(false) }
     lateinit var requestStart: () -> Unit
@@ -127,7 +136,8 @@ fun WorkflowRunScreen(
             onStart = requestStart,
             onRefresh = controller::refreshReview,
             onBack = onBack,
-            onOpenNotificationSettings = { openNotificationSettings(context) },
+            onOpenConnectionSettings = onOpenConnectionSettings,
+            onOpenLatchSettings = onOpenLatchSettings,
             canStart = canStart,
             startBlockMessage = startBlockMessage,
             requiresMediaProjectionConsent = controller.requiresMediaProjectionConsent(),
@@ -158,7 +168,7 @@ fun WorkflowRunScreen(
             interruptionReason = state.failureMessage ?: state.message?.takeUnless { it == state.eventHistory.lastOrNull()?.message || it == "Running" || it == "Workflow completed" },
             completedSteps = state.completedSteps,
             totalSteps = state.review.plan?.analysis?.worstCaseStepCount,
-            eventHistory = state.eventHistory.map { StoredRunEvent(it.atMs, it.message) },
+            eventHistory = state.eventHistory.map { StoredRunEvent(it.atMs, it.message, it.blockLabel, it.contextLabel) },
             hasStoredDetails = true,
             folderId = null,
         ),
@@ -187,7 +197,8 @@ private fun ReviewContent(
     onStart: () -> Unit,
     onRefresh: () -> Unit,
     onBack: () -> Unit,
-    onOpenNotificationSettings: () -> Unit,
+    onOpenConnectionSettings: () -> Unit,
+    onOpenLatchSettings: () -> Unit,
     canStart: Boolean,
     startBlockMessage: String?,
     requiresMediaProjectionConsent: Boolean,
@@ -211,27 +222,24 @@ private fun ReviewContent(
                 if (wide) {
                     Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                         WorkflowReviewSummary(bundle, state, requiresMediaProjectionConsent, Modifier.weight(0.46f))
-                        WorkflowReviewChecks(state, onOpenNotificationSettings, Modifier.weight(0.54f))
+                        WorkflowReviewChecks(state, onOpenConnectionSettings, onOpenLatchSettings, startBlockMessage, Modifier.weight(0.54f))
                     }
                 } else {
                     WorkflowReviewSummary(bundle, state, requiresMediaProjectionConsent, Modifier.fillMaxWidth())
-                    WorkflowReviewChecks(state, onOpenNotificationSettings, Modifier.fillMaxWidth())
+                    WorkflowReviewChecks(state, onOpenConnectionSettings, onOpenLatchSettings, startBlockMessage, Modifier.fillMaxWidth())
                 }
-                if (state.review.compilation.errors.isNotEmpty()) {
+                val compilationErrors = state.review.visibleCompilationErrors
+                if (compilationErrors.isNotEmpty()) {
                     Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.errorContainer) {
                         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Fix these before running", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onErrorContainer)
-                            state.review.compilation.errors.forEach { error ->
+                            compilationErrors.forEach { error ->
                                 Text(error.message, color = MaterialTheme.colorScheme.onErrorContainer)
                                 Text(error.path, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
                             }
                         }
                     }
                 }
-                state.message?.takeUnless { it == "Review workflow before starting" }?.let { message ->
-                    Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                startBlockMessage?.let { message -> Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 pendingMessage?.let { message -> Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary) }
             }
             Row(
@@ -282,14 +290,15 @@ private fun WorkflowReviewSummary(bundle: WorkflowBundle, state: WorkflowRunUiSt
             }
             if (requiresMediaProjectionConsent) {
                 Text("Screen capture", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                Text("Android will ask for permission when you start.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val captureError = state.message?.takeIf { it.startsWith("Screen capture") || it.startsWith("Screen-capture") }
+                Text(captureError ?: "Android will ask for permission when you start.", style = MaterialTheme.typography.bodyMedium, color = if (captureError == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
             }
         }
     }
 }
 
 @Composable
-private fun WorkflowReviewChecks(state: WorkflowRunUiState, onOpenNotificationSettings: () -> Unit, modifier: Modifier) {
+private fun WorkflowReviewChecks(state: WorkflowRunUiState, onOpenConnectionSettings: () -> Unit, onOpenLatchSettings: () -> Unit, startBlockMessage: String?, modifier: Modifier) {
     val context = LocalContext.current
     val review = state.review
     val accessibilityReady = review.capabilities.gestureDispatchReady
@@ -304,30 +313,55 @@ private fun WorkflowReviewChecks(state: WorkflowRunUiState, onOpenNotificationSe
                     !review.capabilities.serviceConnected -> "Disconnected"
                     else -> "Ready"
                 },
+                message = review.capabilities.runBlockReason,
+                onClick = onOpenConnectionSettings,
             )
-            if (!accessibilityReady) {
-                TextButton(onClick = { AccessibilityGestureDispatcher.openAccessibilitySettings(context) }) { Text("Open accessibility settings") }
-            }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-            ReviewCheckRow("Orientation", review.orientationBlockReason == null, review.currentOrientation?.name?.lowercase()?.replaceFirstChar { it.titlecase() } ?: "Unknown")
-            review.orientationBlockReason?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+            ReviewCheckRow(
+                "Edge latch",
+                review.latchEnabled,
+                if (review.latchEnabled) "On" else "Off",
+                message = state.message?.takeIf { it.startsWith("Veyarc edge-latch controller") }
+                    ?: if (review.latchEnabled) null else "Turn on the edge latch in Settings.",
+                onClick = onOpenLatchSettings,
+            )
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-            ReviewCheckRow("Notifications", state.notificationReady, if (state.notificationReady) "On" else "Off")
-            if (!state.notificationReady) {
-                Text("Keep run controls within reach.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                TextButton(onClick = onOpenNotificationSettings) { Text("Open notification settings") }
+            ReviewCheckRow(
+                "Orientation",
+                review.orientationBlockReason == null,
+                review.currentOrientation?.name?.lowercase()?.replaceFirstChar { it.titlecase() } ?: "Unknown",
+                message = review.orientationBlockReason,
+                onClick = { runCatching { context.startActivity(Intent(Settings.ACTION_DISPLAY_SETTINGS)) } },
+            )
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+            ReviewCheckRow(
+                "Notifications",
+                state.notificationReady,
+                if (state.notificationReady) "On" else "Off",
+                message = if (state.notificationReady) null else "Enable notifications for the emergency Stop control.",
+                onClick = onOpenConnectionSettings,
+            )
+            startBlockMessage?.let {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                ReviewCheckRow("Current activity", false, "Wait", message = it, onClick = null)
             }
+            state.message?.takeIf {
+                it == "The workflow is no longer ready to start. Refresh the run checks."
+            }?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
         }
     }
 }
 
 @Composable
-private fun ReviewCheckRow(title: String, ready: Boolean, detail: String) {
+private fun ReviewCheckRow(title: String, ready: Boolean, detail: String, message: String? = null, onClick: (() -> Unit)?) {
     val color = if (ready) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Icon(if (ready) Icons.Outlined.CheckCircle else Icons.Outlined.WarningAmber, contentDescription = null, tint = color, modifier = Modifier.size(20.dp))
-        Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-        Text(detail, style = MaterialTheme.typography.labelLarge, color = color)
+    Column(Modifier.fillMaxWidth().then(if (onClick == null) Modifier else Modifier.clickable(onClick = onClick)), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Icon(if (ready) Icons.Outlined.CheckCircle else Icons.Outlined.WarningAmber, contentDescription = null, tint = color, modifier = Modifier.size(20.dp))
+            Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+            Text(detail, style = MaterialTheme.typography.labelLarge, color = color)
+        }
+        message?.let { Text(it, Modifier.padding(start = 30.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
     }
 }
 

@@ -117,6 +117,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
@@ -165,18 +166,24 @@ fun AssistantPreviewHost(
     editorContent: @Composable (onAskAi: (() -> Unit)?) -> Unit,
 ) {
     val openChat: (() -> Unit)? = if (enabled) ({ state.open(context) }) else null
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        val wide = maxWidth >= 1000.dp && LocalDensity.current.fontScale <= 1.5f
-        if (!enabled || !state.isOpen) {
-            editorContent(openChat)
-        } else if (wide) {
-            Row(Modifier.fillMaxSize().testTag("assistant-split")) {
-                Box(Modifier.weight(1f)) { editorContent(openChat) }
-                VerticalDivider()
-                Box(Modifier.weight(1f)) { AssistantPreviewScreen(state, onOpenSettings) }
+    key(context.workflowId) {
+        val editorStates = rememberSaveableStateHolder()
+        val retainedEditor: @Composable () -> Unit = {
+            editorStates.SaveableStateProvider("editor") { editorContent(openChat) }
+        }
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val wide = maxWidth >= 1000.dp && LocalDensity.current.fontScale <= 1.5f
+            if (!enabled || !state.isOpen) {
+                retainedEditor()
+            } else if (wide) {
+                Row(Modifier.fillMaxSize().testTag("assistant-split")) {
+                    Box(Modifier.weight(1f)) { retainedEditor() }
+                    VerticalDivider()
+                    Box(Modifier.weight(1f)) { AssistantPreviewScreen(state, onOpenSettings) }
+                }
+            } else {
+                AssistantPreviewScreen(state, onOpenSettings)
             }
-        } else {
-            AssistantPreviewScreen(state, onOpenSettings)
         }
     }
 }
@@ -578,17 +585,9 @@ private fun ConversationBody(state: AssistantPreviewState, onContext: (PreviewTu
         withFrameNanos { }
         if (followLatest && chat.turns.isNotEmpty()) list.scrollToItem((list.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
     }
-    Box(modifier.fillMaxWidth()) {
+    com.veyarc.ui.VeyarcParticles(interactive = chat.turns.isEmpty(), modifier = modifier.fillMaxWidth()) {
         if (chat.turns.isEmpty()) {
-            Column(Modifier.align(Alignment.Center).padding(24.dp).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("How can I help?", style = MaterialTheme.typography.headlineSmall)
-                Text("Explain, create or edit a workflow.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (state.context.needsSetup) Text("Choose an app and orientation in the editor first.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                val suggestions = if (state.context.needsSetup || state.context.workflowId == null) listOf("Help me create a workflow", "What details do you need?") else listOf("Explain this workflow", "Suggest an improvement", "Describe a change")
-                suggestions.forEach { suggestion ->
-                    OutlinedButton(onClick = { state.compose(suggestion) }, shape = RoundedCornerShape(24.dp)) { Text(suggestion) }
-                }
-            }
+            AssistantWelcome(state)
         }
         if (chat.turns.isNotEmpty()) {
             LazyColumn(state = list, modifier = Modifier.fillMaxSize().testTag("assistant-messages"), verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.Bottom)) {
@@ -654,6 +653,20 @@ private fun PreviewTurnContent(state: AssistantPreviewState, turn: PreviewTurn, 
         }
         val reply = remember(turn.reply, turn.baseSnapshot) { readableReply(turn) }
         ThinkingDisclosure(turn, followLatest)
+        turn.imageCheckResults.forEach { test ->
+            Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(test.block, style = MaterialTheme.typography.titleSmall)
+                    if (test.error != null) {
+                        Text(test.error, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                    } else {
+                        Text("Score ${imageTestPercent(test.score)} · Threshold ${imageTestPercent(test.threshold)}", style = MaterialTheme.typography.bodyMedium)
+                        Text(if (test.conditionMet == true) "Condition met" else "Condition not met", style = MaterialTheme.typography.labelMedium, color = if (test.conditionMet == true) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
+                        test.background?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    }
+                }
+            }
+        }
         if (turn.reply.isNotEmpty()) MessageText(reply, if (turn.provider) "DeepSeek reply" else "Sample reply", Modifier.fillMaxWidth().testTag("assistant-reply-${turn.id}"), markdown = true, onContext = if (turn.baseSnapshot != null) onContext else null)
         if (turn.status == PreviewReplyStatus.COMPLETE && reply.isNotBlank()) {
             val clipboard = LocalClipboard.current
@@ -835,61 +848,63 @@ fun AssistantPanel(title: String, onDismiss: () -> Unit, onBack: (() -> Unit)? =
             properties = ModalBottomSheetProperties(isAppearanceLightStatusBars = !dark, isAppearanceLightNavigationBars = !dark),
         ) {
             CompositionLocalProvider(LocalDensity provides density) {
-                Column(
-                    Modifier.fillMaxWidth().testTag("assistant-panel").pointerInput(sheetState, routing) {
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                            routing.pullSheet = !scrolling.canScrollBackward
-                            val fromHeader = down.position.y <= headerHeight
-                            val tracker = VelocityTracker()
+                Box(Modifier.fillMaxWidth()) {
+                    Column(
+                        Modifier.fillMaxWidth().testTag("assistant-panel").pointerInput(sheetState, routing) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                routing.pullSheet = !scrolling.canScrollBackward
+                                val fromHeader = down.position.y <= headerHeight
+                                val tracker = VelocityTracker()
 
-                            // Sheet-local pointer positions move with the sheet; measure velocity in the window.
-                            fun windowPosition(position: Offset) = position + Offset(0f, sheetState.requireOffset())
-                            val start = windowPosition(down.position)
-                            tracker.addPosition(down.uptimeMillis, start)
-                            var last = start
-                            var released = false
-                            do {
-                                val event = awaitPointerEvent(PointerEventPass.Initial)
-                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                last = windowPosition(change.position)
-                                tracker.addPosition(change.uptimeMillis, last)
-                                released = !change.pressed
-                            } while (!released)
-                            val distance = last - start
-                            val clearPull = distance.y > viewConfiguration.touchSlop && distance.y > kotlin.math.abs(distance.x)
-                            val dismissPull = distance.y >= 56.dp.toPx() || tracker.calculateVelocity().y >= 125.dp.toPx()
-                            if (released && !closing && (fromHeader || routing.pullSheet) && clearPull && dismissPull) {
-                                closing = true
-                                scope.launch {
-                                    // Finish after the native drag/fling callbacks, so they cannot cancel closing.
-                                    withFrameNanos { }
-                                    sheetState.hide()
-                                    if (!sheetState.isVisible) dismiss()
+                                // Sheet-local pointer positions move with the sheet; measure velocity in the window.
+                                fun windowPosition(position: Offset) = position + Offset(0f, sheetState.requireOffset())
+                                val start = windowPosition(down.position)
+                                tracker.addPosition(down.uptimeMillis, start)
+                                var last = start
+                                var released = false
+                                do {
+                                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                    last = windowPosition(change.position)
+                                    tracker.addPosition(change.uptimeMillis, last)
+                                    released = !change.pressed
+                                } while (!released)
+                                val distance = last - start
+                                val clearPull = distance.y > viewConfiguration.touchSlop && distance.y > kotlin.math.abs(distance.x)
+                                val dismissPull = distance.y >= 56.dp.toPx() || tracker.calculateVelocity().y >= 125.dp.toPx()
+                                if (released && !closing && (fromHeader || routing.pullSheet) && clearPull && dismissPull) {
+                                    closing = true
+                                    scope.launch {
+                                        // Finish after the native drag/fling callbacks, so they cannot cancel closing.
+                                        withFrameNanos { }
+                                        sheetState.hide()
+                                        if (!sheetState.isVisible) dismiss()
+                                    }
                                 }
                             }
+                        },
+                    ) {
+                        Box(Modifier.fillMaxWidth().onSizeChanged { headerHeight = it.height }.testTag("assistant-panel-header").padding(horizontal = 12.dp, vertical = 4.dp).heightIn(min = 56.dp)) {
+                            Column(Modifier.align(Alignment.Center).padding(horizontal = if (headerActions == null) 52.dp else 96.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            IconButton(onClick = onBack ?: onDismiss, modifier = Modifier.align(Alignment.CenterStart)) {
+                                Icon(if (onBack == null) Icons.Outlined.Close else Icons.AutoMirrored.Outlined.ArrowBack, if (onBack == null) "Close $title" else backDescription)
+                            }
+                            if (headerActions != null) {
+                                Row(Modifier.align(Alignment.CenterEnd), content = headerActions)
+                            } else if (onBack != null) {
+                                IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterEnd)) { Icon(Icons.Outlined.Close, "Close $title") }
+                            }
                         }
-                    },
-                ) {
-                    Box(Modifier.fillMaxWidth().onSizeChanged { headerHeight = it.height }.testTag("assistant-panel-header").padding(horizontal = 12.dp, vertical = 4.dp).heightIn(min = 56.dp)) {
-                        Column(Modifier.align(Alignment.Center).padding(horizontal = if (headerActions == null) 52.dp else 96.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        IconButton(onClick = onBack ?: onDismiss, modifier = Modifier.align(Alignment.CenterStart)) {
-                            Icon(if (onBack == null) Icons.Outlined.Close else Icons.AutoMirrored.Outlined.ArrowBack, if (onBack == null) "Close $title" else backDescription)
-                        }
-                        if (headerActions != null) {
-                            Row(Modifier.align(Alignment.CenterEnd), content = headerActions)
-                        } else if (onBack != null) {
-                            IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterEnd)) { Icon(Icons.Outlined.Close, "Close $title") }
-                        }
+                        Column(
+                            Modifier.fillMaxWidth().weight(1f, fill = false).testTag("assistant-panel-scroll")
+                                .nestedScroll(routing).then(if (scrollBody) Modifier.verticalScroll(scroll, overscrollEffect = null) else Modifier).padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) { content() }
                     }
-                    Column(
-                        Modifier.fillMaxWidth().weight(1f, fill = false).testTag("assistant-panel-scroll")
-                            .nestedScroll(routing).then(if (scrollBody) Modifier.verticalScroll(scroll, overscrollEffect = null) else Modifier).padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) { content() }
                 }
             }
         }
@@ -939,8 +954,8 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
     }
     val reviewLabel = when (turn.applyState) {
         ProposalApplyState.NONE -> status.label
-        ProposalApplyState.RESERVED -> if (state.isApplyingImages) "Adding images…" else "Apply attempt recorded"
-        ProposalApplyState.APPLIED -> "Applied to draft"
+        ProposalApplyState.RESERVED -> if (state.isApplyingProposal) "Saving changes…" else "Save interrupted"
+        ProposalApplyState.APPLIED -> turn.appliedRevision?.let { "Saved revision $it" } ?: "Applied to draft"
         ProposalApplyState.REJECTED -> "Apply was blocked"
     }
     val colors = MaterialTheme.colorScheme
@@ -979,11 +994,11 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
             AnimatedVisibility(expanded, enter = expandVertically(tween(140), expandFrom = Alignment.Top) + fadeIn(tween(90)), exit = shrinkVertically(tween(120), shrinkTowards = Alignment.Top) + fadeOut(tween(70))) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     when (turn.applyState) {
-                        ProposalApplyState.RESERVED -> if (state.isApplyingImages) LinearProgressIndicator(Modifier.fillMaxWidth()) else Text("Check your draft in the editor before continuing.")
+                        ProposalApplyState.RESERVED -> if (state.isApplyingProposal) LinearProgressIndicator(Modifier.fillMaxWidth()) else Text("Check saved revisions before sending another request.")
 
                         ProposalApplyState.APPLIED -> Unit
 
-                        ProposalApplyState.REJECTED -> Text("Nothing applied. Send a new request.")
+                        ProposalApplyState.REJECTED -> Text(turn.applyError ?: "Nothing saved. Send a new request.")
 
                         ProposalApplyState.NONE -> when (status) {
                             AssistantReviewStatus.STALE -> Text("Draft changed. Send a new request.", color = MaterialTheme.colorScheme.error)
@@ -1004,8 +1019,8 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
                         SelectionContainer {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("Wait", style = MaterialTheme.typography.titleSmall)
-                                DiffValue("Before", "1 second", false)
-                                DiffValue("After", "2 seconds", true)
+                                DiffValue("1 second", false)
+                                DiffValue("2 seconds", true)
                             }
                         }
                     } else {
@@ -1015,9 +1030,9 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
                         }
                         if (compact) OutlinedButton(onClick = { allChangesVisible = true }, modifier = Modifier.fillMaxWidth()) { Text("View all changes") }
                     }
-                    Text(if (state.supportsApply && proposal != null) "Draft only. Save and Run are separate." else "Sample only. Apply is unavailable.", style = MaterialTheme.typography.bodySmall)
+                    Text(if (state.supportsApply && proposal != null) "Saves a new revision. Does not run it." else "Sample only. Apply is unavailable.", style = MaterialTheme.typography.bodySmall)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { state.applyProposal(turn.id) }, enabled = changes.isSuccess && state.canApply(turn)) { Text(if (compact) "Apply all changes" else "Apply to draft") }
+                        Button(onClick = { state.applyProposal(turn.id) }, enabled = changes.isSuccess && state.canApply(turn)) { Text("Apply and save") }
                         if (proposal != null && !turn.proposalDismissed && turn.applyState == ProposalApplyState.NONE) TextButton(onClick = { state.dismissProposal(turn.id) }, enabled = state.canChange) { Text("Dismiss proposal") }
                     }
                 }
@@ -1031,23 +1046,46 @@ private fun InlineProposal(state: AssistantPreviewState, turn: PreviewTurn) {
 private fun ProposalChanges(changes: List<AssistantValueChange>, compact: Boolean = false, modifier: Modifier = Modifier) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         changes.forEach { change ->
+            val diff = remember(change.before, change.after) { changedTextRanges(change.before, change.after) }
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 HorizontalDivider()
                 Text(change.label, style = MaterialTheme.typography.titleSmall, maxLines = if (compact) 1 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis)
-                change.before?.let { DiffValue("Before", it, false, compact) }
-                change.after?.let { DiffValue("After", it, true, compact) }
+                change.before?.let { DiffValue(it, false, compact, diff.before) }
+                change.after?.let { DiffValue(it, true, compact, diff.after) }
             }
         }
     }
 }
 
 @Composable
-private fun DiffValue(label: String, value: String, added: Boolean, compact: Boolean = false) {
+private fun DiffValue(value: String, added: Boolean, compact: Boolean = false, changed: List<IntRange> = listOf(value.indices)) {
     val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-    val background = if (added) Color(if (dark) 0xFF173326 else 0xFFE5F2E9) else Color(if (dark) 0xFF381E22 else 0xFFFBE9E8)
+    val emphasis = if (added) Color(if (dark) 0xFF315F43 else 0xFFA7D9B8) else Color(if (dark) 0xFF783D46 else 0xFFE9ABB4)
+    val rowColor = if (added) Color(if (dark) 0xFF192D23 else 0xFFE6F4E9) else Color(if (dark) 0xFF352025 else 0xFFFCEBED)
     val foreground = if (added) Color(if (dark) 0xFFD4EDDD else 0xFF173F25) else Color(if (dark) 0xFFF4D4D4 else 0xFF603232)
-    Surface(color = background, shape = RoundedCornerShape(8.dp)) {
-        Text("$label: $value", Modifier.fillMaxWidth().padding(if (compact) 8.dp else 10.dp), style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium, color = foreground, maxLines = if (compact) 2 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis)
+    val lines = remember(value, changed) { changedDiffLines(value, changed) }
+    if (lines.isEmpty()) return
+    val hidden = value.lines().size - lines.size
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        if (hidden > 0 && !compact) Text("$hidden unchanged line${if (hidden == 1) "" else "s"} hidden", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Surface(color = rowColor, shape = RoundedCornerShape(8.dp)) {
+            Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                (if (compact) lines.take(2) else lines).forEach { line ->
+                    val text = remember(line, emphasis) {
+                        androidx.compose.ui.text.buildAnnotatedString {
+                            append(line.text)
+                            line.changed.forEach { range ->
+                                addStyle(androidx.compose.ui.text.SpanStyle(background = emphasis), range.first, range.last + 1)
+                            }
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 3.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(if (added) "+" else "−", color = foreground, style = MaterialTheme.typography.bodySmall)
+                        Text(text, Modifier.weight(1f), style = if (compact) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium, color = foreground, maxLines = if (compact) 2 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1201,3 +1239,5 @@ private fun ComposerSendButton(state: AssistantPreviewState) {
 
 @Composable
 private fun chatControlColor(): Color = MaterialTheme.colorScheme.surfaceContainerHighest
+
+private fun imageTestPercent(value: Double?): String = value?.let { String.format(java.util.Locale.getDefault(), "%.1f%%", it * 100) } ?: "unavailable"

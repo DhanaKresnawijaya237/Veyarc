@@ -21,7 +21,7 @@ internal fun WorkflowDraft?.captureAssistantContext(): AssistantContextCapture {
                     viewport = draft.viewport,
                     runLimits = draft.runLimits,
                     variables = draft.variables,
-                    assets = draft.assetDescriptors.map { AssetReference(it.assetId, it.kind, draft.assetNames[it.assetId.value] ?: it.displayName) },
+                    assets = draft.assetDescriptors.map { AssetReference(it.assetId, it.kind, draft.assetNames[it.assetId.value] ?: it.displayName, it.widthPx, it.heightPx) },
                     steps = draft.steps,
                 ),
             ),

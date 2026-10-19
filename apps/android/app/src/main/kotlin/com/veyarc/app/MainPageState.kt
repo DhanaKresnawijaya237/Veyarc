@@ -15,9 +15,10 @@ internal class MainPageState : ViewModel() {
 }
 
 class HomeDashboardState {
+    internal val aiUsage = mutableStateOf<List<com.veyarc.data.storage.AssistantUsageSummary>>(emptyList())
     internal val dashboard = mutableStateOf<RunDashboardSummary?>(null)
     internal val workflows = mutableStateOf<List<WorkflowSummary>>(emptyList())
-    internal val latestRecording = mutableStateOf<WorkflowSummary?>(null)
+    internal val quickPlayWorkflow = mutableStateOf<WorkflowSummary?>(null)
 }
 
 internal class WorkflowManagerState {

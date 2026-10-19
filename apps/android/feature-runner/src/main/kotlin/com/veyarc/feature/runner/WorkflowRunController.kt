@@ -21,6 +21,8 @@ import com.veyarc.data.storage.STORED_RUN_EVENT_LIMIT
 import com.veyarc.data.storage.StoredRunEvent
 import com.veyarc.data.storage.StoredRunStatus
 import com.veyarc.data.storage.WorkflowRepository
+import com.veyarc.engine.CompilationErrorCode
+import com.veyarc.engine.EngineCapability
 import com.veyarc.engine.MutableExecutionControl
 import com.veyarc.engine.RunEvent
 import com.veyarc.engine.RunFailureCode
@@ -63,20 +65,39 @@ data class WorkflowRunReview(
     val compilation: WorkflowCompilationResult,
     val currentOrientation: DisplayOrientation?,
     val orientationBlockReason: String?,
+    val latchEnabled: Boolean,
 ) {
     val isValid: Boolean
         get() = compilation.isSuccess
 
     val isRunnable: Boolean
-        get() = isValid && capabilities.runReady && orientationBlockReason == null
+        get() = isValid && capabilities.runReady && latchEnabled && orientationBlockReason == null
+
+    val visibleCompilationErrors
+        get() = compilation.errors.filterNot {
+            !capabilities.gestureDispatchReady && it.code == CompilationErrorCode.UNSUPPORTED_CAPABILITY &&
+                it.capability in ACCESSIBILITY_CAPABILITIES
+        }
 
     val plan
         get() = compilation.plan
+
+    private companion object {
+        val ACCESSIBILITY_CAPABILITIES = setOf(
+            EngineCapability.TAP_POINT,
+            EngineCapability.TAP_REGION,
+            EngineCapability.LONG_PRESS,
+            EngineCapability.SWIPE_PATH,
+            EngineCapability.FOREGROUND_PACKAGE_CONDITION,
+        )
+    }
 }
 
 data class RedactedRunEvent(
     val atMs: Long,
     val message: String,
+    val blockLabel: String? = null,
+    val contextLabel: String? = null,
 )
 
 data class WorkflowRunUiState(
@@ -139,9 +160,11 @@ class WorkflowRunController(
     }
 
     fun refreshReview() {
-        if (_state.value.phase != WorkflowRunPhase.REVIEW) return
+        if (closed || _state.value.phase != WorkflowRunPhase.REVIEW) return
         val capabilities = AndroidAutomationCapabilities.snapshot(appContext)
-        val compilation = WorkflowCompiler.compile(document, capabilities.engineCapabilities)
+        val latchEnabled = ReplayFloatingController.isEnabled(appContext)
+        val previousReview = _state.value.review
+        val compilation = if (capabilities.engineCapabilities == previousReview.capabilities.engineCapabilities) previousReview.compilation else WorkflowCompiler.compile(document, capabilities.engineCapabilities)
         val currentOrientation = currentRecordingViewport(appContext)?.recordedOrientation
         val orientationBlockReason = workflowOrientationBlockReason(
             required = document.viewport.recordedOrientation,
@@ -154,8 +177,9 @@ class WorkflowRunController(
                     compilation,
                     currentOrientation,
                     orientationBlockReason,
+                    latchEnabled,
                 ),
-                message = reviewMessage(capabilities, compilation, orientationBlockReason),
+                message = reviewMessage(capabilities, compilation, orientationBlockReason, latchEnabled),
                 notificationReady = notifications.isReady(),
             )
         }
@@ -165,6 +189,8 @@ class WorkflowRunController(
 
     /** Handles the one-shot ActivityResult returned by Android's screen-capture consent dialog. */
     fun startAfterMediaProjectionConsent(resultCode: Int, data: Intent?) {
+        if (closed) return
+        refreshReview()
         if (!MediaProjectionConsent.wasGranted(resultCode, data)) {
             _state.update {
                 it.copy(message = "Screen-capture consent was denied. The workflow did not start.")
@@ -261,6 +287,8 @@ class WorkflowRunController(
     }
 
     private fun isStartReady(): Boolean {
+        if (closed) return false
+        refreshReview()
         val current = _state.value
         return current.phase == WorkflowRunPhase.REVIEW &&
             current.review.isRunnable &&
@@ -458,7 +486,7 @@ class WorkflowRunController(
                 val status = terminalStatus
                 val reason = terminalReason
                 val terminalState = _state.value
-                val savedHistory = synchronized(savedEvents) { savedEvents.map { StoredRunEvent(it.atMs, it.message) } }
+                val savedHistory = synchronized(savedEvents) { savedEvents.map { StoredRunEvent(it.atMs, it.message, it.blockLabel, it.contextLabel) } }
                 withContext(NonCancellable + Dispatchers.IO) {
                     runCatching {
                         repository.finishRun(
@@ -526,7 +554,7 @@ class WorkflowRunController(
     }
 
     private fun onEvent(event: RunEvent) {
-        val redacted = RedactedRunEvent(event.atMs, eventFormatter.format(event))
+        val redacted = eventFormatter.event(event)
         rememberEvent(redacted)
         _state.update { current ->
             val nextPhase = when (event) {
@@ -578,6 +606,7 @@ class WorkflowRunController(
 
     private fun initialState(): WorkflowRunUiState {
         val capabilities = AndroidAutomationCapabilities.snapshot(appContext)
+        val latchEnabled = ReplayFloatingController.isEnabled(appContext)
         val compilation = WorkflowCompiler.compile(document, capabilities.engineCapabilities)
         val currentOrientation = currentRecordingViewport(appContext)?.recordedOrientation
         val orientationBlockReason = workflowOrientationBlockReason(
@@ -593,8 +622,9 @@ class WorkflowRunController(
                 compilation,
                 currentOrientation,
                 orientationBlockReason,
+                latchEnabled,
             ),
-            message = reviewMessage(capabilities, compilation, orientationBlockReason),
+            message = reviewMessage(capabilities, compilation, orientationBlockReason, latchEnabled),
             notificationReady = notifications.isReady(),
         )
     }
@@ -614,9 +644,12 @@ private fun reviewMessage(
     capabilities: AndroidCapabilitySnapshot,
     compilation: WorkflowCompilationResult,
     orientationBlockReason: String?,
+    latchEnabled: Boolean,
 ): String {
+    capabilities.runBlockReason?.let { return it }
+    if (!latchEnabled) return "Turn on the edge latch in Settings before running."
     if (!compilation.isSuccess) return "Workflow cannot run"
-    return capabilities.runBlockReason ?: orientationBlockReason ?: "Review workflow before starting"
+    return orientationBlockReason ?: "Review workflow before starting"
 }
 
 internal fun workflowOrientationBlockReason(

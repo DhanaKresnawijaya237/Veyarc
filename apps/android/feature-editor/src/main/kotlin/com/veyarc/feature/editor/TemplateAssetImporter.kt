@@ -8,6 +8,7 @@ import android.graphics.Matrix
 import android.graphics.Rect
 import android.net.Uri
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import com.veyarc.data.storage.AndroidKeystoreKeySource
 import com.veyarc.data.storage.DecodedTemplate
@@ -15,17 +16,21 @@ import com.veyarc.data.storage.EncryptedTemplateAssetCodec
 import com.veyarc.data.storage.TEMPLATE_ASSET_KEY_ALIAS
 import com.veyarc.model.AssetId
 import com.veyarc.model.AssetKind
+import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.NormalizedRect
 import com.veyarc.model.WorkflowIds
 import com.veyarc.model.bundle.BundleAsset
 import com.veyarc.ui.AnnotationStroke
 import com.veyarc.ui.annotateCroppedImage
+import com.veyarc.ui.renderEditedImage
+import com.veyarc.ui.rotatedForEditing
 import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 private const val CROP_PREVIEW_MAX_PIXELS = DecodedTemplate.MAX_TEMPLATE_PIXELS
 private const val MAX_SOURCE_IMAGE_BYTES = 64L * 1024L * 1024L
@@ -39,7 +44,25 @@ internal data class TemplateCropSource(
     val widthPx: Int,
     val heightPx: Int,
     val preview: ImageBitmap,
+    val existingAsset: BundleAsset? = null,
 )
+
+internal fun loadTemplateCropSource(asset: BundleAsset): TemplateCropSource {
+    val preview = requireNotNull(decodeTemplatePreview(asset)) { "Image could not be opened" }
+    return TemplateCropSource(Uri.parse("veyarc-template:${asset.assetId.value}"), preview.widthPx, preview.heightPx, preview.image, asset)
+}
+
+internal fun importEditedTemplate(source: TemplateCropSource, crop: NormalizedRect, turns: Int, strokes: List<AnnotationStroke>, replace: Boolean): BundleAsset {
+    val asset = requireNotNull(source.existingAsset)
+    val image = requireNotNull(decodeTemplatePreview(asset, maxOf(source.widthPx, source.heightPx))).image.asAndroidBitmap()
+    val rotated = image.rotatedForEditing(turns)
+    val result = try {
+        renderEditedImage(rotated, crop, strokes)
+    } finally {
+        if (rotated !== image) rotated.recycle()
+    }
+    return encryptTemplateBitmap(result, if (replace) asset.assetId else AssetId("template-${WorkflowIds.newUuid()}"))
+}
 
 /** Loads a bounded display copy while retaining the original dimensions used for the final crop. */
 internal fun loadTemplateCropSource(contentResolver: ContentResolver, uri: Uri): TemplateCropSource {
@@ -52,6 +75,33 @@ internal fun loadTemplateCropSource(contentResolver: ContentResolver, uri: Uri):
         heightPx = bounds.second,
         preview = preview.asImageBitmap(),
     )
+}
+
+internal fun sampleImagePixel(resolver: ContentResolver, source: TemplateCropSource, point: NormalizedCoordinate): Long {
+    source.existingAsset?.let { asset ->
+        val decoded = EncryptedTemplateAssetCodec(AndroidKeystoreKeySource(TEMPLATE_ASSET_KEY_ALIAS)).decrypt(asset.assetId, asset.bytes)
+        val rgba = decoded.takeRgbaBytes()
+        return try {
+            val x = (point.x * (decoded.widthPx - 1)).roundToInt().coerceIn(0, decoded.widthPx - 1)
+            val y = (point.y * (decoded.heightPx - 1)).roundToInt().coerceIn(0, decoded.heightPx - 1)
+            val offset = (y * decoded.widthPx + x) * 4
+            ((rgba[offset + 3].toLong() and 255) shl 24) or
+                ((rgba[offset].toLong() and 255) shl 16) or
+                ((rgba[offset + 1].toLong() and 255) shl 8) or
+                (rgba[offset + 2].toLong() and 255)
+        } finally {
+            rgba.fill(0)
+        }
+    }
+    val x = (point.x * (source.widthPx - 1)).roundToInt().coerceIn(0, source.widthPx - 1)
+    val y = (point.y * (source.heightPx - 1)).roundToInt().coerceIn(0, source.heightPx - 1)
+    if (source.uri == Uri.EMPTY) return source.preview.asAndroidBitmap().getPixel(x, y).toLong() and 0xFFFFFFFFL
+    val pixel = decodeRegion(resolver, source.uri, Rect(x, y, x + 1, y + 1))
+    return try {
+        pixel.getPixel(0, 0).toLong() and 0xFFFFFFFFL
+    } finally {
+        pixel.recycle()
+    }
 }
 
 /** Chooses a power-of-two preview sample without overflowing on hostile image dimensions. */
@@ -337,7 +387,7 @@ private fun NormalizedRect.toPixelBounds(widthPx: Int, heightPx: Int): Rect {
     return Rect(left, top, max(left + 1, right), max(top + 1, bottom))
 }
 
-private fun Bitmap.toRgbaBytes(): ByteArray {
+internal fun Bitmap.toRgbaBytes(): ByteArray {
     val output = ByteArray(width * height * 4)
     val row = IntArray(width)
     for (y in 0 until height) {

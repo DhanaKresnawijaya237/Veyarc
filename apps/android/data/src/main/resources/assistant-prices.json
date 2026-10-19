@@ -1,0 +1,5947 @@
+{
+  "source": "@earendil-works/pi-ai@0.82.1; DeepSeek official pricing checked 2026-10-11",
+  "license": "MIT",
+  "licenseNotice": "MIT License\n\nCopyright (c) 2025 Mario Zechner\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.",
+  "prices": {
+    "deepseek/deepseek-v4-pro": {
+      "input": 0.66,
+      "output": 1.98,
+      "cached": 0.022,
+      "cacheWrite": 0.66,
+      "maximumMultiplier": 2,
+      "source": "DeepSeek pricing · 11/10/26"
+    },
+    "deepseek/deepseek-v4-flash": {
+      "input": 0.15,
+      "output": 0.6,
+      "cached": 0.003,
+      "cacheWrite": 0.15,
+      "maximumMultiplier": 2,
+      "source": "DeepSeek pricing · 11/10/26"
+    },
+    "openai/gpt-5.4": {
+      "input": 2.5,
+      "output": 15,
+      "cached": 0.25,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-4": {
+      "input": 30,
+      "output": 60,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-4-turbo": {
+      "input": 10,
+      "output": 30,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-4.1": {
+      "input": 2,
+      "output": 8,
+      "cached": 0.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-4.1-mini": {
+      "input": 0.4,
+      "output": 1.6,
+      "cached": 0.1,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-4.1-nano": {
+      "input": 0.1,
+      "output": 0.4,
+      "cached": 0.025,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-4o": {
+      "input": 2.5,
+      "output": 10,
+      "cached": 1.25,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-4o-2024-05-13": {
+      "input": 5,
+      "output": 15,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-4o-2024-08-06": {
+      "input": 2.5,
+      "output": 10,
+      "cached": 1.25,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-4o-2024-11-20": {
+      "input": 2.5,
+      "output": 10,
+      "cached": 1.25,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-4o-mini": {
+      "input": 0.15,
+      "output": 0.6,
+      "cached": 0.075,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-5": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-5-chat-latest": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-5-mini": {
+      "input": 0.25,
+      "output": 2,
+      "cached": 0.025,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-5-nano": {
+      "input": 0.05,
+      "output": 0.4,
+      "cached": 0.005,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-5-pro": {
+      "input": 15,
+      "output": 120,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-5.1": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-5.2": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-5.2-chat-latest": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-5.2-pro": {
+      "input": 21,
+      "output": 168,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-5.3-chat-latest": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-5.3-codex": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-5.3-codex-spark": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-5.4-mini": {
+      "input": 0.75,
+      "output": 4.5,
+      "cached": 0.075,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-5.4-nano": {
+      "input": 0.2,
+      "output": 1.25,
+      "cached": 0.02,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-5.4-pro": {
+      "input": 30,
+      "output": 180,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-5.5": {
+      "input": 5,
+      "output": 30,
+      "cached": 0.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-5.5-pro": {
+      "input": 30,
+      "output": 180,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/gpt-5.6-luna": {
+      "input": 1,
+      "output": 6,
+      "cached": 0.1,
+      "cacheWrite": 1.25,
+      "source": "Model catalog"
+    },
+    "openai/gpt-5.6-sol": {
+      "input": 5,
+      "output": 30,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "openai/gpt-5.6-terra": {
+      "input": 2.5,
+      "output": 15,
+      "cached": 0.25,
+      "cacheWrite": 3.125,
+      "source": "Model catalog"
+    },
+    "openai/gpt-realtime-2.1": {
+      "input": 4,
+      "output": 24,
+      "cached": 0.4,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/o1": {
+      "input": 15,
+      "output": 60,
+      "cached": 7.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/o1-pro": {
+      "input": 150,
+      "output": 600,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/o3": {
+      "input": 2,
+      "output": 8,
+      "cached": 0.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/o3-mini": {
+      "input": 1.1,
+      "output": 4.4,
+      "cached": 0.55,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/o3-pro": {
+      "input": 20,
+      "output": 80,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openai/o4-mini": {
+      "input": 1.1,
+      "output": 4.4,
+      "cached": 0.275,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "anthropic/claude-sonnet-4-6": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 3.75,
+      "source": "Model catalog"
+    },
+    "anthropic/claude-fable-5": {
+      "input": 10,
+      "output": 50,
+      "cached": 1,
+      "cacheWrite": 12.5,
+      "source": "Model catalog"
+    },
+    "anthropic/claude-haiku-4-5-20251001": {
+      "input": 1,
+      "output": 5,
+      "cached": 0.1,
+      "cacheWrite": 1.25,
+      "source": "Model catalog"
+    },
+    "anthropic/claude-haiku-4-5": {
+      "input": 1,
+      "output": 5,
+      "cached": 0.1,
+      "cacheWrite": 1.25,
+      "source": "Model catalog"
+    },
+    "anthropic/claude-opus-4-1-20250805": {
+      "input": 15,
+      "output": 75,
+      "cached": 1.5,
+      "cacheWrite": 18.75,
+      "source": "Model catalog"
+    },
+    "anthropic/claude-opus-4-1": {
+      "input": 15,
+      "output": 75,
+      "cached": 1.5,
+      "cacheWrite": 18.75,
+      "source": "Model catalog"
+    },
+    "anthropic/claude-opus-4-5-20251101": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "anthropic/claude-opus-4-5": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "anthropic/claude-opus-4-6": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "anthropic/claude-opus-4-7": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "anthropic/claude-opus-4-8": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "anthropic/claude-opus-5": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "anthropic/claude-sonnet-4-5-20250929": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 3.75,
+      "source": "Model catalog"
+    },
+    "anthropic/claude-sonnet-4-5": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 3.75,
+      "source": "Model catalog"
+    },
+    "anthropic/claude-sonnet-5": {
+      "input": 2,
+      "output": 10,
+      "cached": 0.2,
+      "cacheWrite": 2.5,
+      "source": "Model catalog"
+    },
+    "google/gemini-3.1-flash-lite-preview": {
+      "input": 0.25,
+      "output": 1.5,
+      "cached": 0.025,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "google/deep-research-max-preview-04-2026": {
+      "input": 2,
+      "output": 12,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "google/deep-research-preview-04-2026": {
+      "input": 2,
+      "output": 12,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "google/gemini-2.0-flash": {
+      "input": 0.1,
+      "output": 0.4,
+      "cached": 0.025,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "google/gemini-2.0-flash-lite": {
+      "input": 0.075,
+      "output": 0.3,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "google/gemini-2.5-computer-use-preview-10-2025": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "google/gemini-2.5-flash": {
+      "input": 0.3,
+      "output": 2.5,
+      "cached": 0.03,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "google/gemini-2.5-flash-lite": {
+      "input": 0.1,
+      "output": 0.4,
+      "cached": 0.01,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "google/gemini-2.5-pro": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "google/gemini-3-flash-preview": {
+      "input": 0.5,
+      "output": 3,
+      "cached": 0.05,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "google/gemini-3-pro-preview": {
+      "input": 2,
+      "output": 12,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "google/gemini-3.1-flash-lite": {
+      "input": 0.25,
+      "output": 1.5,
+      "cached": 0.025,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "google/gemini-3.1-flash-live-preview": {
+      "input": 0.75,
+      "output": 4.5,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "google/gemini-3.1-pro-preview": {
+      "input": 2,
+      "output": 12,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "google/gemini-3.1-pro-preview-customtools": {
+      "input": 2,
+      "output": 12,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "google/gemini-3.5-flash": {
+      "input": 1.5,
+      "output": 9,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "google/gemini-3.5-flash-lite": {
+      "input": 0.3,
+      "output": 2.5,
+      "cached": 0.03,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "google/gemini-3.6-flash": {
+      "input": 1.5,
+      "output": 7.5,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "google/gemini-flash-latest": {
+      "input": 1.5,
+      "output": 9,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "google/gemini-flash-lite-latest": {
+      "input": 0.25,
+      "output": 1.5,
+      "cached": 0.025,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "google/gemini-robotics-er-1.6-preview": {
+      "input": 1,
+      "output": 5,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "google/gemini-3.1-flash-lite-image": {
+      "input": 0.25,
+      "output": 30,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "moonshotai/kimi-k2.6": {
+      "input": 0.95,
+      "output": 4,
+      "cached": 0.16,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "moonshotai/kimi-k2-0711-preview": {
+      "input": 0.6,
+      "output": 2.5,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "moonshotai/kimi-k2-0905-preview": {
+      "input": 0.6,
+      "output": 2.5,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "moonshotai/kimi-k2-thinking": {
+      "input": 0.6,
+      "output": 2.5,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "moonshotai/kimi-k2-thinking-turbo": {
+      "input": 1.15,
+      "output": 8,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "moonshotai/kimi-k2-turbo-preview": {
+      "input": 2.4,
+      "output": 10,
+      "cached": 0.6,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "moonshotai/kimi-k2.5": {
+      "input": 0.6,
+      "output": 3,
+      "cached": 0.1,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "moonshotai/kimi-k2.7-code": {
+      "input": 0.95,
+      "output": 4,
+      "cached": 0.19,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "moonshotai/kimi-k2.7-code-highspeed": {
+      "input": 1.9,
+      "output": 8,
+      "cached": 0.38,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "moonshotai/kimi-k3": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "moonshotai-cn/kimi-k2.6": {
+      "input": 0.95,
+      "output": 4,
+      "cached": 0.16,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "moonshotai-cn/kimi-k2-0711-preview": {
+      "input": 0.6,
+      "output": 2.5,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "moonshotai-cn/kimi-k2-0905-preview": {
+      "input": 0.6,
+      "output": 2.5,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "moonshotai-cn/kimi-k2-thinking": {
+      "input": 0.6,
+      "output": 2.5,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "moonshotai-cn/kimi-k2-thinking-turbo": {
+      "input": 1.15,
+      "output": 8,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "moonshotai-cn/kimi-k2-turbo-preview": {
+      "input": 2.4,
+      "output": 10,
+      "cached": 0.6,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "moonshotai-cn/kimi-k2.5": {
+      "input": 0.6,
+      "output": 3,
+      "cached": 0.1,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "moonshotai-cn/kimi-k2.7-code": {
+      "input": 0.95,
+      "output": 4,
+      "cached": 0.19,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "moonshotai-cn/kimi-k2.7-code-highspeed": {
+      "input": 1.9,
+      "output": 8,
+      "cached": 0.38,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "moonshotai-cn/kimi-k3": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "ant-ling/Ling-2.6-1T": {
+      "input": 0.06,
+      "output": 0.25,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "ant-ling/Ling-2.6-flash": {
+      "input": 0.01,
+      "output": 0.02,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "ant-ling/Ring-2.6-1T": {
+      "input": 0.06,
+      "output": 0.25,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-4": {
+      "input": 30,
+      "output": 60,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-4-turbo": {
+      "input": 10,
+      "output": 30,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-4.1": {
+      "input": 2,
+      "output": 8,
+      "cached": 0.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-4.1-mini": {
+      "input": 0.4,
+      "output": 1.6,
+      "cached": 0.1,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-4.1-nano": {
+      "input": 0.1,
+      "output": 0.4,
+      "cached": 0.025,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-4o": {
+      "input": 2.5,
+      "output": 10,
+      "cached": 1.25,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-4o-2024-05-13": {
+      "input": 5,
+      "output": 15,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-4o-2024-08-06": {
+      "input": 2.5,
+      "output": 10,
+      "cached": 1.25,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-4o-2024-11-20": {
+      "input": 2.5,
+      "output": 10,
+      "cached": 1.25,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-4o-mini": {
+      "input": 0.15,
+      "output": 0.6,
+      "cached": 0.075,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-5": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-5-chat-latest": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-5-mini": {
+      "input": 0.25,
+      "output": 2,
+      "cached": 0.025,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-5-nano": {
+      "input": 0.05,
+      "output": 0.4,
+      "cached": 0.005,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-5-pro": {
+      "input": 15,
+      "output": 120,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-5.1": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-5.2": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-5.2-chat-latest": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-5.2-pro": {
+      "input": 21,
+      "output": 168,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-5.3-chat-latest": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-5.3-codex": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-5.3-codex-spark": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-5.4": {
+      "input": 2.5,
+      "output": 15,
+      "cached": 0.25,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-5.4-mini": {
+      "input": 0.75,
+      "output": 4.5,
+      "cached": 0.075,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-5.4-nano": {
+      "input": 0.2,
+      "output": 1.25,
+      "cached": 0.02,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-5.4-pro": {
+      "input": 30,
+      "output": 180,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-5.5": {
+      "input": 5,
+      "output": 30,
+      "cached": 0.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-5.5-pro": {
+      "input": 30,
+      "output": 180,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-5.6-luna": {
+      "input": 1,
+      "output": 6,
+      "cached": 0.1,
+      "cacheWrite": 1.25,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-5.6-sol": {
+      "input": 5,
+      "output": 30,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-5.6-terra": {
+      "input": 2.5,
+      "output": 15,
+      "cached": 0.25,
+      "cacheWrite": 3.125,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/gpt-realtime-2.1": {
+      "input": 4,
+      "output": 24,
+      "cached": 0.4,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/o1": {
+      "input": 15,
+      "output": 60,
+      "cached": 7.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/o1-pro": {
+      "input": 150,
+      "output": 600,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/o3": {
+      "input": 2,
+      "output": 8,
+      "cached": 0.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/o3-mini": {
+      "input": 1.1,
+      "output": 4.4,
+      "cached": 0.55,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/o3-pro": {
+      "input": 20,
+      "output": 80,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "azure-openai-responses/o4-mini": {
+      "input": 1.1,
+      "output": 4.4,
+      "cached": 0.275,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cerebras/gemma-4-31b": {
+      "input": 0.99,
+      "output": 1.49,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cerebras/gpt-oss-120b": {
+      "input": 0.35,
+      "output": 0.75,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cerebras/zai-glm-4.7": {
+      "input": 2.25,
+      "output": 2.75,
+      "cached": 2.25,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/claude-fable-5": {
+      "input": 10,
+      "output": 50,
+      "cached": 1,
+      "cacheWrite": 12.5,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/claude-3-haiku": {
+      "input": 0.25,
+      "output": 1.25,
+      "cached": 0.03,
+      "cacheWrite": 0.3,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/claude-3-5-haiku": {
+      "input": 0.8,
+      "output": 4,
+      "cached": 0.08,
+      "cacheWrite": 1,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/claude-3.5-haiku": {
+      "input": 0.8,
+      "output": 4,
+      "cached": 0.08,
+      "cacheWrite": 1,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/claude-haiku-4-5": {
+      "input": 1,
+      "output": 5,
+      "cached": 0.1,
+      "cacheWrite": 1.25,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/claude-3-opus": {
+      "input": 15,
+      "output": 75,
+      "cached": 1.5,
+      "cacheWrite": 18.75,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/claude-opus-4": {
+      "input": 15,
+      "output": 75,
+      "cached": 1.5,
+      "cacheWrite": 18.75,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/claude-opus-4-1": {
+      "input": 15,
+      "output": 75,
+      "cached": 1.5,
+      "cacheWrite": 18.75,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/claude-opus-4-5": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/claude-opus-4-6": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/claude-opus-4-7": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/claude-opus-4-8": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/claude-3-sonnet": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 0.3,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/claude-3.5-sonnet": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 3.75,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/claude-sonnet-4": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 3.75,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/claude-sonnet-4-5": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 3.75,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/claude-sonnet-4-6": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 3.75,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/claude-sonnet-5": {
+      "input": 2,
+      "output": 10,
+      "cached": 0.2,
+      "cacheWrite": 2.5,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/workers-ai/@cf/zai-org/glm-5.2": {
+      "input": 1.4,
+      "output": 4.4,
+      "cached": 0.26,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/workers-ai/@cf/zai-org/glm-4.7-flash": {
+      "input": 0.06,
+      "output": 0.4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/gpt-4": {
+      "input": 30,
+      "output": 60,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/gpt-4-turbo": {
+      "input": 10,
+      "output": 30,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/gpt-4o": {
+      "input": 2.5,
+      "output": 10,
+      "cached": 1.25,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/gpt-4o-mini": {
+      "input": 0.15,
+      "output": 0.6,
+      "cached": 0.08,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/gpt-5.1": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.13,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/gpt-5.1-codex": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/gpt-5.2": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/gpt-5.2-codex": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/gpt-5.3-codex": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/gpt-5.4": {
+      "input": 2.5,
+      "output": 15,
+      "cached": 0.25,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/gpt-5.5": {
+      "input": 5,
+      "output": 30,
+      "cached": 0.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/gpt-5.6-luna": {
+      "input": 1,
+      "output": 6,
+      "cached": 0.1,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/gpt-5.6-sol": {
+      "input": 5,
+      "output": 30,
+      "cached": 0.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/gpt-5.6-terra": {
+      "input": 2.5,
+      "output": 15,
+      "cached": 0.25,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/workers-ai/@cf/moonshotai/kimi-k2.5": {
+      "input": 0.6,
+      "output": 3,
+      "cached": 0.1,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/workers-ai/@cf/moonshotai/kimi-k2.6": {
+      "input": 0.95,
+      "output": 4,
+      "cached": 0.16,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/workers-ai/@cf/nvidia/nemotron-3-120b-a12b": {
+      "input": 0.5,
+      "output": 1.5,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/o1": {
+      "input": 15,
+      "output": 60,
+      "cached": 7.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/o3": {
+      "input": 2,
+      "output": 8,
+      "cached": 0.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/o3-mini": {
+      "input": 1.1,
+      "output": 4.4,
+      "cached": 0.55,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/o3-pro": {
+      "input": 20,
+      "output": 80,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-ai-gateway/o4-mini": {
+      "input": 1.1,
+      "output": 4.4,
+      "cached": 0.28,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-workers-ai/@cf/google/gemma-4-26b-a4b-it": {
+      "input": 0.1,
+      "output": 0.3,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-workers-ai/@cf/zai-org/glm-5.2": {
+      "input": 1.4,
+      "output": 4.4,
+      "cached": 0.26,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-workers-ai/@cf/zai-org/glm-4.7-flash": {
+      "input": 0.0605,
+      "output": 0.4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-workers-ai/@cf/openai/gpt-oss-120b": {
+      "input": 0.35,
+      "output": 0.75,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-workers-ai/@cf/openai/gpt-oss-20b": {
+      "input": 0.2,
+      "output": 0.3,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-workers-ai/@cf/ibm-granite/granite-4.0-h-micro": {
+      "input": 0.017,
+      "output": 0.112,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-workers-ai/@cf/moonshotai/kimi-k2.6": {
+      "input": 0.95,
+      "output": 4,
+      "cached": 0.16,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-workers-ai/@cf/moonshotai/kimi-k2.7-code": {
+      "input": 0.95,
+      "output": 4,
+      "cached": 0.19,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast": {
+      "input": 0.293,
+      "output": 2.253,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-workers-ai/@cf/meta/llama-4-scout-17b-16e-instruct": {
+      "input": 0.27,
+      "output": 0.85,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-workers-ai/@cf/mistralai/mistral-small-3.1-24b-instruct": {
+      "input": 0.351,
+      "output": 0.555,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-workers-ai/@cf/nvidia/nemotron-3-120b-a12b": {
+      "input": 0.5,
+      "output": 1.5,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "cloudflare-workers-ai/@cf/qwen/qwen3-30b-a3b-fp8": {
+      "input": 0.0509,
+      "output": 0.335,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "fireworks/accounts/fireworks/models/deepseek-v4-flash": {
+      "input": 0.14,
+      "output": 0.28,
+      "cached": 0.028,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "fireworks/accounts/fireworks/models/deepseek-v4-pro": {
+      "input": 1.74,
+      "output": 3.48,
+      "cached": 0.145,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "fireworks/accounts/fireworks/models/glm-5p1": {
+      "input": 1.4,
+      "output": 4.4,
+      "cached": 0.26,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "fireworks/accounts/fireworks/routers/glm-5p1-fast": {
+      "input": 2.8,
+      "output": 8.8,
+      "cached": 0.52,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "fireworks/accounts/fireworks/models/glm-5p2": {
+      "input": 1.4,
+      "output": 4.4,
+      "cached": 0.14,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "fireworks/accounts/fireworks/routers/glm-5p2-fast": {
+      "input": 2.1,
+      "output": 6.6,
+      "cached": 0.21,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "fireworks/accounts/fireworks/models/gpt-oss-120b": {
+      "input": 0.15,
+      "output": 0.6,
+      "cached": 0.015,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "fireworks/accounts/fireworks/models/gpt-oss-20b": {
+      "input": 0.07,
+      "output": 0.3,
+      "cached": 0.035,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "fireworks/accounts/fireworks/models/kimi-k2p6": {
+      "input": 0.95,
+      "output": 4,
+      "cached": 0.16,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "fireworks/accounts/fireworks/routers/kimi-k2p6-fast": {
+      "input": 2,
+      "output": 8,
+      "cached": 0.3,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "fireworks/accounts/fireworks/routers/kimi-k2p6-turbo": {
+      "input": 2,
+      "output": 8,
+      "cached": 0.3,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "fireworks/accounts/fireworks/models/kimi-k2p7-code": {
+      "input": 0.95,
+      "output": 4,
+      "cached": 0.19,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "fireworks/accounts/fireworks/routers/kimi-k2p7-code-fast": {
+      "input": 1.9,
+      "output": 8,
+      "cached": 0.38,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "fireworks/accounts/fireworks/models/minimax-m2p7": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.06,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "fireworks/accounts/fireworks/models/minimax-m3": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.06,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "fireworks/accounts/fireworks/models/qwen3p7-plus": {
+      "input": 0.4,
+      "output": 1.6,
+      "cached": 0.08,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "groq/openai/gpt-oss-120b": {
+      "input": 0.15,
+      "output": 0.6,
+      "cached": 0.075,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "groq/openai/gpt-oss-20b": {
+      "input": 0.075,
+      "output": 0.3,
+      "cached": 0.0375,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "groq/llama-3.1-8b-instant": {
+      "input": 0.05,
+      "output": 0.08,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "groq/llama-3.3-70b-versatile": {
+      "input": 0.59,
+      "output": 0.79,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "groq/meta-llama/llama-4-scout-17b-16e-instruct": {
+      "input": 0.11,
+      "output": 0.34,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "groq/qwen/qwen3-32b": {
+      "input": 0.29,
+      "output": 0.59,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "groq/openai/gpt-oss-safeguard-20b": {
+      "input": 0.075,
+      "output": 0.3,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/deepseek-ai/DeepSeek-V4-Flash": {
+      "input": 0.14,
+      "output": 0.28,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/deepseek-ai/DeepSeek-V4-Pro": {
+      "input": 0.435,
+      "output": 0.87,
+      "cached": 0.003625,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/deepseek-ai/DeepSeek-R1": {
+      "input": 0.7,
+      "output": 2.5,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/deepseek-ai/DeepSeek-R1-0528": {
+      "input": 3,
+      "output": 5,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/deepseek-ai/DeepSeek-V3.2": {
+      "input": 0.28,
+      "output": 0.4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/google/gemma-4-26B-A4B-it": {
+      "input": 0.13,
+      "output": 0.4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/google/gemma-4-31B-it": {
+      "input": 0.14,
+      "output": 0.4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/zai-org/GLM-4.5": {
+      "input": 0.6,
+      "output": 2.2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/zai-org/GLM-4.5-Air": {
+      "input": 0.13,
+      "output": 0.85,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/zai-org/GLM-4.5V": {
+      "input": 0.6,
+      "output": 1.8,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/zai-org/GLM-4.6": {
+      "input": 0.55,
+      "output": 2.2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/zai-org/GLM-4.7": {
+      "input": 0.6,
+      "output": 2.2,
+      "cached": 0.11,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/zai-org/GLM-5": {
+      "input": 1,
+      "output": 3.2,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/zai-org/GLM-5.1": {
+      "input": 1,
+      "output": 3.2,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/zai-org/GLM-5.2": {
+      "input": 1.4,
+      "output": 4.4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/openai/gpt-oss-120b": {
+      "input": 0.25,
+      "output": 0.69,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/openai/gpt-oss-20b": {
+      "input": 0.1,
+      "output": 0.5,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/moonshotai/Kimi-K2.7-Code": {
+      "input": 0.95,
+      "output": 4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/moonshotai/Kimi-K2-Instruct": {
+      "input": 1,
+      "output": 3,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/moonshotai/Kimi-K2-Instruct-0905": {
+      "input": 1,
+      "output": 3,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/moonshotai/Kimi-K2-Thinking": {
+      "input": 0.6,
+      "output": 2.5,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/moonshotai/Kimi-K2.5": {
+      "input": 0.6,
+      "output": 3,
+      "cached": 0.1,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/moonshotai/Kimi-K2.6": {
+      "input": 0.95,
+      "output": 4,
+      "cached": 0.16,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/meta-llama/Llama-3.3-70B-Instruct": {
+      "input": 0.59,
+      "output": 0.79,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/XiaomiMiMo/MiMo-V2-Flash": {
+      "input": 0.1,
+      "output": 0.3,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/XiaomiMiMo/MiMo-V2.5": {
+      "input": 0.4,
+      "output": 2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/XiaomiMiMo/MiMo-V2.5-Pro": {
+      "input": 1,
+      "output": 3,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/MiniMaxAI/MiniMax-M2": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/MiniMaxAI/MiniMax-M2.1": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/MiniMaxAI/MiniMax-M2.5": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.03,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/MiniMaxAI/MiniMax-M2.7": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.06,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/MiniMaxAI/MiniMax-M3": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/Qwen/Qwen3-235B-A22B": {
+      "input": 0.2,
+      "output": 0.8,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/Qwen/Qwen3-32B": {
+      "input": 0.29,
+      "output": 0.59,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/Qwen/Qwen3-235B-A22B-Thinking-2507": {
+      "input": 0.3,
+      "output": 3,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/Qwen/Qwen3-Coder-30B-A3B-Instruct": {
+      "input": 0.07,
+      "output": 0.26,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/Qwen/Qwen3-Coder-480B-A35B-Instruct": {
+      "input": 2,
+      "output": 2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/Qwen/Qwen3-Coder-Next": {
+      "input": 0.2,
+      "output": 1.5,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/Qwen/Qwen3-Next-80B-A3B-Instruct": {
+      "input": 0.25,
+      "output": 1,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/Qwen/Qwen3-Next-80B-A3B-Thinking": {
+      "input": 0.3,
+      "output": 2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/Qwen/Qwen3.5-122B-A10B": {
+      "input": 0.4,
+      "output": 3.2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/Qwen/Qwen3.5-27B": {
+      "input": 0.3,
+      "output": 2.4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/Qwen/Qwen3.5-35B-A3B": {
+      "input": 0.25,
+      "output": 2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/Qwen/Qwen3.5-9B": {
+      "input": 0.17,
+      "output": 0.25,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/Qwen/Qwen3.5-397B-A17B": {
+      "input": 0.6,
+      "output": 3.6,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/Qwen/Qwen3.6-27B": {
+      "input": 0.47,
+      "output": 3.19,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/Qwen/Qwen3.6-35B-A3B": {
+      "input": 0.15,
+      "output": 0.95,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/stepfun-ai/Step-3.5-Flash": {
+      "input": 0.1,
+      "output": 0.3,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "huggingface/stepfun-ai/Step-3.7-Flash": {
+      "input": 0.2,
+      "output": 1.15,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "kimi-coding/kimi-for-coding-highspeed": {
+      "input": 1.9,
+      "output": 8,
+      "cached": 0.38,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "kimi-coding/kimi-for-coding": {
+      "input": 0.95,
+      "output": 4,
+      "cached": 0.19,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "kimi-coding/k3": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "minimax/MiniMax-M2.7": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.06,
+      "cacheWrite": 0.375,
+      "source": "Model catalog"
+    },
+    "minimax/MiniMax-M2.7-highspeed": {
+      "input": 0.6,
+      "output": 2.4,
+      "cached": 0.06,
+      "cacheWrite": 0.375,
+      "source": "Model catalog"
+    },
+    "minimax/MiniMax-M3": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.06,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "minimax-cn/MiniMax-M2.7": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.06,
+      "cacheWrite": 0.375,
+      "source": "Model catalog"
+    },
+    "minimax-cn/MiniMax-M2.7-highspeed": {
+      "input": 0.6,
+      "output": 2.4,
+      "cached": 0.06,
+      "cacheWrite": 0.375,
+      "source": "Model catalog"
+    },
+    "minimax-cn/MiniMax-M3": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.06,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/codestral-latest": {
+      "input": 0.3,
+      "output": 0.9,
+      "cached": 0.03,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/devstral-2512": {
+      "input": 0.4,
+      "output": 2,
+      "cached": 0.04,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/devstral-latest": {
+      "input": 0.4,
+      "output": 2,
+      "cached": 0.04,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/devstral-medium-latest": {
+      "input": 0.4,
+      "output": 2,
+      "cached": 0.04,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/devstral-medium-2507": {
+      "input": 0.4,
+      "output": 2,
+      "cached": 0.04,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/devstral-small-2507": {
+      "input": 0.1,
+      "output": 0.3,
+      "cached": 0.01,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/devstral-small-2505": {
+      "input": 0.1,
+      "output": 0.3,
+      "cached": 0.01,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/magistral-medium-latest": {
+      "input": 2,
+      "output": 5,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/magistral-small": {
+      "input": 0.5,
+      "output": 1.5,
+      "cached": 0.05,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/ministral-3b-latest": {
+      "input": 0.04,
+      "output": 0.04,
+      "cached": 0.004,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/ministral-8b-latest": {
+      "input": 0.1,
+      "output": 0.1,
+      "cached": 0.01,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/open-mistral-7b": {
+      "input": 0.25,
+      "output": 0.25,
+      "cached": 0.025,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/mistral-large-latest": {
+      "input": 0.5,
+      "output": 1.5,
+      "cached": 0.05,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/mistral-large-2411": {
+      "input": 2,
+      "output": 6,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/mistral-large-2512": {
+      "input": 0.5,
+      "output": 1.5,
+      "cached": 0.05,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/mistral-medium-latest": {
+      "input": 1.5,
+      "output": 7.5,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/mistral-medium-2505": {
+      "input": 0.4,
+      "output": 2,
+      "cached": 0.04,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/mistral-medium-2508": {
+      "input": 0.4,
+      "output": 2,
+      "cached": 0.04,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/mistral-medium-2604": {
+      "input": 1.5,
+      "output": 7.5,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/mistral-medium-3.5": {
+      "input": 1.5,
+      "output": 7.5,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/mistral-nemo": {
+      "input": 0.15,
+      "output": 0.15,
+      "cached": 0.015,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/mistral-small-latest": {
+      "input": 0.15,
+      "output": 0.6,
+      "cached": 0.015,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/mistral-small-2506": {
+      "input": 0.1,
+      "output": 0.3,
+      "cached": 0.01,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/mistral-small-2603": {
+      "input": 0.15,
+      "output": 0.6,
+      "cached": 0.015,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/open-mixtral-8x22b": {
+      "input": 2,
+      "output": 6,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/open-mixtral-8x7b": {
+      "input": 0.7,
+      "output": 0.7,
+      "cached": 0.07,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/open-mistral-nemo": {
+      "input": 0.15,
+      "output": 0.15,
+      "cached": 0.015,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/pixtral-12b": {
+      "input": 0.15,
+      "output": 0.15,
+      "cached": 0.015,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "mistral/pixtral-large-latest": {
+      "input": 2,
+      "output": 6,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "nvidia/nvidia/nemotron-3-super-120b-a12b": {
+      "input": 0.2,
+      "output": 0.8,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "nvidia/nvidia/nemotron-3-ultra-550b-a55b": {
+      "input": 0.5,
+      "output": 2.5,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/claude-fable-5": {
+      "input": 10,
+      "output": 50,
+      "cached": 1,
+      "cacheWrite": 12.5,
+      "source": "Model catalog"
+    },
+    "opencode/claude-haiku-4-5": {
+      "input": 1,
+      "output": 5,
+      "cached": 0.1,
+      "cacheWrite": 1.25,
+      "source": "Model catalog"
+    },
+    "opencode/claude-opus-4-1": {
+      "input": 15,
+      "output": 75,
+      "cached": 1.5,
+      "cacheWrite": 18.75,
+      "source": "Model catalog"
+    },
+    "opencode/claude-opus-4-5": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "opencode/claude-opus-4-6": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "opencode/claude-opus-4-7": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "opencode/claude-opus-4-8": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "opencode/claude-opus-5": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "opencode/claude-sonnet-4": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 3.75,
+      "source": "Model catalog"
+    },
+    "opencode/claude-sonnet-4-5": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 3.75,
+      "source": "Model catalog"
+    },
+    "opencode/claude-sonnet-4-6": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 3.75,
+      "source": "Model catalog"
+    },
+    "opencode/claude-sonnet-5": {
+      "input": 2,
+      "output": 10,
+      "cached": 0.2,
+      "cacheWrite": 2.5,
+      "source": "Model catalog"
+    },
+    "opencode/deepseek-v4-flash": {
+      "input": 0.14,
+      "output": 0.28,
+      "cached": 0.028,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/deepseek-v4-pro": {
+      "input": 1.74,
+      "output": 3.84,
+      "cached": 0.145,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/gemini-3-flash": {
+      "input": 0.5,
+      "output": 3,
+      "cached": 0.05,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/gemini-3.1-pro": {
+      "input": 2,
+      "output": 12,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/gemini-3.5-flash": {
+      "input": 1.5,
+      "output": 9,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/gemini-3.5-flash-lite": {
+      "input": 0.3,
+      "output": 2.5,
+      "cached": 0.03,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/gemini-3.6-flash": {
+      "input": 1.5,
+      "output": 7.5,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/glm-5": {
+      "input": 1,
+      "output": 3.2,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/glm-5.1": {
+      "input": 1.4,
+      "output": 4.4,
+      "cached": 0.26,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/glm-5.2": {
+      "input": 1.4,
+      "output": 4.4,
+      "cached": 0.26,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/gpt-5": {
+      "input": 1.07,
+      "output": 8.5,
+      "cached": 0.107,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/gpt-5-codex": {
+      "input": 1.07,
+      "output": 8.5,
+      "cached": 0.107,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/gpt-5-nano": {
+      "input": 0.05,
+      "output": 0.4,
+      "cached": 0.005,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/gpt-5.1": {
+      "input": 1.07,
+      "output": 8.5,
+      "cached": 0.107,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/gpt-5.1-codex": {
+      "input": 1.07,
+      "output": 8.5,
+      "cached": 0.107,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/gpt-5.1-codex-max": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/gpt-5.1-codex-mini": {
+      "input": 0.25,
+      "output": 2,
+      "cached": 0.025,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/gpt-5.2": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/gpt-5.2-codex": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/gpt-5.3-codex": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/gpt-5.4": {
+      "input": 2.5,
+      "output": 15,
+      "cached": 0.25,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/gpt-5.4-mini": {
+      "input": 0.75,
+      "output": 4.5,
+      "cached": 0.075,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/gpt-5.4-nano": {
+      "input": 0.2,
+      "output": 1.25,
+      "cached": 0.02,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/gpt-5.4-pro": {
+      "input": 30,
+      "output": 180,
+      "cached": 30,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/gpt-5.5": {
+      "input": 5,
+      "output": 30,
+      "cached": 0.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/gpt-5.5-pro": {
+      "input": 30,
+      "output": 180,
+      "cached": 30,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/gpt-5.6-luna": {
+      "input": 1,
+      "output": 6,
+      "cached": 0.1,
+      "cacheWrite": 1.25,
+      "source": "Model catalog"
+    },
+    "opencode/gpt-5.6-sol": {
+      "input": 5,
+      "output": 30,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "opencode/gpt-5.6-terra": {
+      "input": 2.5,
+      "output": 15,
+      "cached": 0.25,
+      "cacheWrite": 3.125,
+      "source": "Model catalog"
+    },
+    "opencode/grok-4.5": {
+      "input": 2,
+      "output": 6,
+      "cached": 0.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/grok-build-0.1": {
+      "input": 1,
+      "output": 2,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/kimi-k2.5": {
+      "input": 0.6,
+      "output": 3,
+      "cached": 0.08,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/kimi-k2.6": {
+      "input": 0.95,
+      "output": 4,
+      "cached": 0.16,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/kimi-k2.7-code": {
+      "input": 0.95,
+      "output": 4,
+      "cached": 0.19,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/minimax-m2.5": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.06,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/minimax-m2.7": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.06,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/minimax-m3": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.06,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode/qwen3.5-plus": {
+      "input": 0.2,
+      "output": 1.2,
+      "cached": 0.02,
+      "cacheWrite": 0.25,
+      "source": "Model catalog"
+    },
+    "opencode/qwen3.6-plus": {
+      "input": 0.5,
+      "output": 3,
+      "cached": 0.05,
+      "cacheWrite": 0.625,
+      "source": "Model catalog"
+    },
+    "opencode-go/deepseek-v4-flash": {
+      "input": 0.14,
+      "output": 0.28,
+      "cached": 0.0028,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode-go/deepseek-v4-pro": {
+      "input": 0.435,
+      "output": 0.87,
+      "cached": 0.003625,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode-go/glm-5.1": {
+      "input": 1.4,
+      "output": 4.4,
+      "cached": 0.26,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode-go/glm-5.2": {
+      "input": 1.4,
+      "output": 4.4,
+      "cached": 0.26,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode-go/grok-4.5": {
+      "input": 2,
+      "output": 6,
+      "cached": 0.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode-go/hy3": {
+      "input": 0.14,
+      "output": 0.58,
+      "cached": 0.035,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode-go/kimi-k2.6": {
+      "input": 0.95,
+      "output": 4,
+      "cached": 0.16,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode-go/kimi-k2.7-code": {
+      "input": 0.95,
+      "output": 4,
+      "cached": 0.19,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode-go/kimi-k3": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode-go/mimo-v2.5": {
+      "input": 0.14,
+      "output": 0.28,
+      "cached": 0.0028,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode-go/mimo-v2.5-pro": {
+      "input": 0.435,
+      "output": 0.87,
+      "cached": 0.003625,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode-go/minimax-m2.7": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.06,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode-go/minimax-m3": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.06,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "opencode-go/qwen3.6-plus": {
+      "input": 0.5,
+      "output": 3,
+      "cached": 0.05,
+      "cacheWrite": 0.625,
+      "source": "Model catalog"
+    },
+    "opencode-go/qwen3.7-max": {
+      "input": 2.5,
+      "output": 7.5,
+      "cached": 0.5,
+      "cacheWrite": 3.125,
+      "source": "Model catalog"
+    },
+    "opencode-go/qwen3.7-plus": {
+      "input": 0.4,
+      "output": 1.6,
+      "cached": 0.04,
+      "cacheWrite": 0.5,
+      "source": "Model catalog"
+    },
+    "openrouter/ai21/jamba-large-1.7": {
+      "input": 2,
+      "output": 8,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/aion-labs/aion-2.0": {
+      "input": 0.8,
+      "output": 1.6,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/aion-labs/aion-3.0": {
+      "input": 3,
+      "output": 6,
+      "cached": 0.75,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/aion-labs/aion-3.0-mini": {
+      "input": 0.7,
+      "output": 1.4,
+      "cached": 0.18,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/amazon/nova-2-lite-v1": {
+      "input": 0.3,
+      "output": 2.5,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/amazon/nova-lite-v1": {
+      "input": 0.06,
+      "output": 0.24,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/amazon/nova-micro-v1": {
+      "input": 0.035,
+      "output": 0.14,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/amazon/nova-premier-v1": {
+      "input": 2.5,
+      "output": 12.5,
+      "cached": 0.625,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/amazon/nova-pro-v1": {
+      "input": 0.8,
+      "output": 3.2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/~anthropic/claude-haiku-latest": {
+      "input": 1,
+      "output": 5,
+      "cached": 0.1,
+      "cacheWrite": 1.25,
+      "source": "Model catalog"
+    },
+    "openrouter/~anthropic/claude-sonnet-latest": {
+      "input": 2,
+      "output": 10,
+      "cached": 0.2,
+      "cacheWrite": 2.5,
+      "source": "Model catalog"
+    },
+    "openrouter/anthropic/claude-3-haiku": {
+      "input": 0.25,
+      "output": 1.25,
+      "cached": 0.03,
+      "cacheWrite": 0.3,
+      "source": "Model catalog"
+    },
+    "openrouter/anthropic/claude-fable-5": {
+      "input": 10,
+      "output": 50,
+      "cached": 1,
+      "cacheWrite": 12.5,
+      "source": "Model catalog"
+    },
+    "openrouter/~anthropic/claude-fable-latest": {
+      "input": 10,
+      "output": 50,
+      "cached": 1,
+      "cacheWrite": 12.5,
+      "source": "Model catalog"
+    },
+    "openrouter/anthropic/claude-haiku-4.5": {
+      "input": 1,
+      "output": 5,
+      "cached": 0.1,
+      "cacheWrite": 1.25,
+      "source": "Model catalog"
+    },
+    "openrouter/anthropic/claude-opus-4": {
+      "input": 15,
+      "output": 75,
+      "cached": 1.5,
+      "cacheWrite": 18.75,
+      "source": "Model catalog"
+    },
+    "openrouter/anthropic/claude-opus-4.1": {
+      "input": 15,
+      "output": 75,
+      "cached": 1.5,
+      "cacheWrite": 18.75,
+      "source": "Model catalog"
+    },
+    "openrouter/anthropic/claude-opus-4.5": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "openrouter/anthropic/claude-opus-4.6": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "openrouter/anthropic/claude-opus-4.7": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "openrouter/anthropic/claude-opus-4.7-fast": {
+      "input": 30,
+      "output": 150,
+      "cached": 3,
+      "cacheWrite": 37.5,
+      "source": "Model catalog"
+    },
+    "openrouter/anthropic/claude-opus-4.8": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "openrouter/anthropic/claude-opus-4.8-fast": {
+      "input": 10,
+      "output": 50,
+      "cached": 1,
+      "cacheWrite": 12.5,
+      "source": "Model catalog"
+    },
+    "openrouter/~anthropic/claude-opus-latest": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "openrouter/anthropic/claude-sonnet-4": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 3.75,
+      "source": "Model catalog"
+    },
+    "openrouter/anthropic/claude-sonnet-4.5": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 3.75,
+      "source": "Model catalog"
+    },
+    "openrouter/anthropic/claude-sonnet-4.6": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 3.75,
+      "source": "Model catalog"
+    },
+    "openrouter/anthropic/claude-sonnet-5": {
+      "input": 2,
+      "output": 10,
+      "cached": 0.2,
+      "cacheWrite": 2.5,
+      "source": "Model catalog"
+    },
+    "openrouter/arcee-ai/trinity-large-thinking": {
+      "input": 0.22,
+      "output": 0.85,
+      "cached": 0.06,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/arcee-ai/virtuoso-large": {
+      "input": 0.75,
+      "output": 1.2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/bytedance-seed/seed-1.6": {
+      "input": 0.25,
+      "output": 2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/bytedance-seed/seed-1.6-flash": {
+      "input": 0.075,
+      "output": 0.3,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/bytedance-seed/seed-2.0-lite": {
+      "input": 0.25,
+      "output": 2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/bytedance-seed/seed-2.0-mini": {
+      "input": 0.1,
+      "output": 0.4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/anthropic/claude-opus-5": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "openrouter/anthropic/claude-opus-5-fast": {
+      "input": 10,
+      "output": 50,
+      "cached": 1,
+      "cacheWrite": 12.5,
+      "source": "Model catalog"
+    },
+    "openrouter/cohere/command-r-08-2024": {
+      "input": 0.15,
+      "output": 0.6,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/cohere/command-r-plus-08-2024": {
+      "input": 2.5,
+      "output": 10,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/deepseek/deepseek-chat": {
+      "input": 0.2002,
+      "output": 0.8001,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/deepseek/deepseek-chat-v3-0324": {
+      "input": 0.27,
+      "output": 1.12,
+      "cached": 0.135,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/deepseek/deepseek-chat-v3.1": {
+      "input": 0.25,
+      "output": 0.95,
+      "cached": 0.13,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/deepseek/deepseek-v3.1-terminus": {
+      "input": 0.27,
+      "output": 1,
+      "cached": 0.135,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/deepseek/deepseek-v3.2": {
+      "input": 0.269,
+      "output": 0.4,
+      "cached": 0.1345,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/deepseek/deepseek-v3.2-exp": {
+      "input": 0.27,
+      "output": 0.41,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/deepseek/deepseek-v4-flash": {
+      "input": 0.0938,
+      "output": 0.1876,
+      "cached": 0.01876,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/deepseek/deepseek-v4-pro": {
+      "input": 0.435,
+      "output": 0.87,
+      "cached": 0.003625,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/deepseek/deepseek-r1": {
+      "input": 0.7,
+      "output": 2.5,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/deepseek/deepseek-r1-0528": {
+      "input": 0.5,
+      "output": 2.15,
+      "cached": 0.35,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/~google/gemini-flash-latest": {
+      "input": 1.5,
+      "output": 7.5,
+      "cached": 0.15,
+      "cacheWrite": 0.083333,
+      "source": "Model catalog"
+    },
+    "openrouter/~google/gemini-pro-latest": {
+      "input": 2,
+      "output": 12,
+      "cached": 0.2,
+      "cacheWrite": 0.375,
+      "source": "Model catalog"
+    },
+    "openrouter/google/gemini-2.5-flash": {
+      "input": 0.3,
+      "output": 2.5,
+      "cached": 0.03,
+      "cacheWrite": 0.083333,
+      "source": "Model catalog"
+    },
+    "openrouter/google/gemini-2.5-flash-lite": {
+      "input": 0.1,
+      "output": 0.4,
+      "cached": 0.01,
+      "cacheWrite": 0.083333,
+      "source": "Model catalog"
+    },
+    "openrouter/google/gemini-2.5-pro": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0.375,
+      "source": "Model catalog"
+    },
+    "openrouter/google/gemini-2.5-pro-preview-05-06": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0.375,
+      "source": "Model catalog"
+    },
+    "openrouter/google/gemini-2.5-pro-preview": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0.375,
+      "source": "Model catalog"
+    },
+    "openrouter/google/gemini-3-flash-preview": {
+      "input": 0.5,
+      "output": 3,
+      "cached": 0.05,
+      "cacheWrite": 0.083333,
+      "source": "Model catalog"
+    },
+    "openrouter/google/gemini-3.1-flash-lite": {
+      "input": 0.25,
+      "output": 1.5,
+      "cached": 0.025,
+      "cacheWrite": 0.083333,
+      "source": "Model catalog"
+    },
+    "openrouter/google/gemini-3.1-flash-lite-preview": {
+      "input": 0.25,
+      "output": 1.5,
+      "cached": 0.025,
+      "cacheWrite": 0.083333,
+      "source": "Model catalog"
+    },
+    "openrouter/google/gemini-3.1-pro-preview": {
+      "input": 2,
+      "output": 12,
+      "cached": 0.2,
+      "cacheWrite": 0.375,
+      "source": "Model catalog"
+    },
+    "openrouter/google/gemini-3.1-pro-preview-customtools": {
+      "input": 2,
+      "output": 12,
+      "cached": 0.2,
+      "cacheWrite": 0.375,
+      "source": "Model catalog"
+    },
+    "openrouter/google/gemini-3.5-flash": {
+      "input": 1.5,
+      "output": 9,
+      "cached": 0.15,
+      "cacheWrite": 0.083333,
+      "source": "Model catalog"
+    },
+    "openrouter/google/gemini-3.5-flash-lite": {
+      "input": 0.3,
+      "output": 2.5,
+      "cached": 0.03,
+      "cacheWrite": 0.083333,
+      "source": "Model catalog"
+    },
+    "openrouter/google/gemini-3.6-flash": {
+      "input": 1.5,
+      "output": 7.5,
+      "cached": 0.15,
+      "cacheWrite": 0.083333,
+      "source": "Model catalog"
+    },
+    "openrouter/google/gemma-3-12b-it": {
+      "input": 0.05,
+      "output": 0.15,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/google/gemma-3-27b-it": {
+      "input": 0.08,
+      "output": 0.45,
+      "cached": 0.04,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/google/gemma-4-26b-a4b-it": {
+      "input": 0.12,
+      "output": 0.35,
+      "cached": 0.05,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/google/gemma-4-31b-it": {
+      "input": 0.14,
+      "output": 0.4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/google/gemini-3-pro-image": {
+      "input": 2,
+      "output": 12,
+      "cached": 0.2,
+      "cacheWrite": 0.375,
+      "source": "Model catalog"
+    },
+    "openrouter/ibm-granite/granite-4.1-8b": {
+      "input": 0.05,
+      "output": 0.1,
+      "cached": 0.05,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/inception/mercury-2": {
+      "input": 0.25,
+      "output": 0.75,
+      "cached": 0.025,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/inclusionai/ling-2.6-1t": {
+      "input": 0.075,
+      "output": 0.625,
+      "cached": 0.015,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/inclusionai/ling-2.6-flash": {
+      "input": 0.01,
+      "output": 0.03,
+      "cached": 0.002,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/inclusionai/ring-2.6-1t": {
+      "input": 0.075,
+      "output": 0.625,
+      "cached": 0.015,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/kwaipilot/kat-coder-air-v2.5": {
+      "input": 0.15,
+      "output": 0.6,
+      "cached": 0.03,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/kwaipilot/kat-coder-pro-v2": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.06,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/kwaipilot/kat-coder-pro-v2.5": {
+      "input": 0.74,
+      "output": 2.96,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/meituan/longcat-2.0": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.006,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/meta-llama/llama-3.1-70b-instruct": {
+      "input": 0.4,
+      "output": 0.4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/meta-llama/llama-3.1-8b-instruct": {
+      "input": 0.05,
+      "output": 0.08,
+      "cached": 0.025,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/meta-llama/llama-3.3-70b-instruct": {
+      "input": 0.13,
+      "output": 0.4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/meta-llama/llama-4-maverick": {
+      "input": 0.2,
+      "output": 0.8,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/meta-llama/llama-4-scout": {
+      "input": 0.1,
+      "output": 0.3,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/meta/muse-spark-1.1": {
+      "input": 1.25,
+      "output": 4.25,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/minimax/minimax-m1": {
+      "input": 0.55,
+      "output": 2.2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/minimax/minimax-m2": {
+      "input": 0.255,
+      "output": 1.02,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/minimax/minimax-m2.1": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.03,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/minimax/minimax-m2.5": {
+      "input": 0.15,
+      "output": 0.9,
+      "cached": 0.05,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/minimax/minimax-m2.7": {
+      "input": 0.25,
+      "output": 1,
+      "cached": 0.05,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/minimax/minimax-m3": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.06,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/mistralai/mistral-large": {
+      "input": 2,
+      "output": 6,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/mistralai/mistral-large-2407": {
+      "input": 2,
+      "output": 6,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/mistralai/codestral-2508": {
+      "input": 0.3,
+      "output": 0.9,
+      "cached": 0.03,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/mistralai/devstral-2512": {
+      "input": 0.4,
+      "output": 2,
+      "cached": 0.04,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/mistralai/ministral-14b-2512": {
+      "input": 0.2,
+      "output": 0.2,
+      "cached": 0.02,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/mistralai/ministral-3b-2512": {
+      "input": 0.1,
+      "output": 0.1,
+      "cached": 0.01,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/mistralai/ministral-8b-2512": {
+      "input": 0.15,
+      "output": 0.15,
+      "cached": 0.015,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/mistralai/mistral-large-2512": {
+      "input": 0.5,
+      "output": 1.5,
+      "cached": 0.05,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/mistralai/mistral-medium-3": {
+      "input": 0.4,
+      "output": 2,
+      "cached": 0.04,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/mistralai/mistral-medium-3.1": {
+      "input": 0.4,
+      "output": 2,
+      "cached": 0.04,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/mistralai/mistral-medium-3-5": {
+      "input": 1.5,
+      "output": 7.5,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/mistralai/mistral-nemo": {
+      "input": 0.019,
+      "output": 0.03,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/mistralai/mistral-small-3.2-24b-instruct": {
+      "input": 0.1,
+      "output": 0.3,
+      "cached": 0.01,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/mistralai/mistral-small-2603": {
+      "input": 0.15,
+      "output": 0.6,
+      "cached": 0.015,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/mistralai/mixtral-8x22b-instruct": {
+      "input": 2,
+      "output": 6,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/mistralai/mistral-saba": {
+      "input": 0.2,
+      "output": 0.6,
+      "cached": 0.02,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/mistralai/voxtral-small-24b-2507": {
+      "input": 0.1,
+      "output": 0.3,
+      "cached": 0.01,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/~moonshotai/kimi-latest": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/moonshotai/kimi-k2": {
+      "input": 0.57,
+      "output": 2.3,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/moonshotai/kimi-k2-0905": {
+      "input": 0.6,
+      "output": 2.5,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/moonshotai/kimi-k2-thinking": {
+      "input": 0.6,
+      "output": 2.5,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/moonshotai/kimi-k2.5": {
+      "input": 0.41,
+      "output": 2.06,
+      "cached": 0.07,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/moonshotai/kimi-k2.6": {
+      "input": 0.646,
+      "output": 2.72,
+      "cached": 0.1088,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/moonshotai/kimi-k2.7-code": {
+      "input": 0.78,
+      "output": 3.5,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/moonshotai/kimi-k3": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/nex-agi/nex-n2-mini": {
+      "input": 0.025,
+      "output": 0.1,
+      "cached": 0.0025,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/nex-agi/nex-n2-pro": {
+      "input": 0.25,
+      "output": 1,
+      "cached": 0.025,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/nvidia/nemotron-3-nano-30b-a3b": {
+      "input": 0.05,
+      "output": 0.2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/nvidia/nemotron-3-super-120b-a12b": {
+      "input": 0.085,
+      "output": 0.4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/nvidia/nemotron-3-ultra-550b-a55b": {
+      "input": 0.6,
+      "output": 3.6,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/~openai/gpt-latest": {
+      "input": 5,
+      "output": 30,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "openrouter/~openai/gpt-mini-latest": {
+      "input": 0.75,
+      "output": 4.5,
+      "cached": 0.075,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-audio": {
+      "input": 2.5,
+      "output": 10,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-audio-mini": {
+      "input": 0.6,
+      "output": 2.4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-chat-latest": {
+      "input": 5,
+      "output": 30,
+      "cached": 0.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-3.5-turbo": {
+      "input": 0.5,
+      "output": 1.5,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-3.5-turbo-0613": {
+      "input": 1,
+      "output": 2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-3.5-turbo-16k": {
+      "input": 3,
+      "output": 4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-4": {
+      "input": 30,
+      "output": 60,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-4-turbo": {
+      "input": 10,
+      "output": 30,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-4-turbo-preview": {
+      "input": 10,
+      "output": 30,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-4.1": {
+      "input": 2,
+      "output": 8,
+      "cached": 0.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-4.1-mini": {
+      "input": 0.4,
+      "output": 1.6,
+      "cached": 0.1,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-4.1-nano": {
+      "input": 0.1,
+      "output": 0.4,
+      "cached": 0.025,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-4o": {
+      "input": 2.5,
+      "output": 10,
+      "cached": 1.25,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-4o-2024-05-13": {
+      "input": 5,
+      "output": 15,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-4o-2024-08-06": {
+      "input": 2.5,
+      "output": 10,
+      "cached": 1.25,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-4o-2024-11-20": {
+      "input": 2.5,
+      "output": 10,
+      "cached": 1.25,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-4o-mini": {
+      "input": 0.15,
+      "output": 0.6,
+      "cached": 0.075,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-4o-mini-2024-07-18": {
+      "input": 0.15,
+      "output": 0.6,
+      "cached": 0.075,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5-codex": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5-mini": {
+      "input": 0.25,
+      "output": 2,
+      "cached": 0.025,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5-nano": {
+      "input": 0.05,
+      "output": 0.4,
+      "cached": 0.005,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5-pro": {
+      "input": 15,
+      "output": 120,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.1": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.1-chat": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.1-codex": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.1-codex-max": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.1-codex-mini": {
+      "input": 0.25,
+      "output": 2,
+      "cached": 0.025,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.2": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.2-chat": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.2-pro": {
+      "input": 21,
+      "output": 168,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.2-codex": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.3-chat": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.3-codex": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.4": {
+      "input": 2.5,
+      "output": 15,
+      "cached": 0.25,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.4-mini": {
+      "input": 0.75,
+      "output": 4.5,
+      "cached": 0.075,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.4-nano": {
+      "input": 0.2,
+      "output": 1.25,
+      "cached": 0.02,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.4-pro": {
+      "input": 30,
+      "output": 180,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.5": {
+      "input": 5,
+      "output": 30,
+      "cached": 0.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.5-pro": {
+      "input": 30,
+      "output": 180,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.6-luna": {
+      "input": 1,
+      "output": 6,
+      "cached": 0.1,
+      "cacheWrite": 1.25,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.6-luna-pro": {
+      "input": 1,
+      "output": 6,
+      "cached": 0.1,
+      "cacheWrite": 1.25,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.6-sol": {
+      "input": 5,
+      "output": 30,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.6-sol-pro": {
+      "input": 5,
+      "output": 30,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.6-terra": {
+      "input": 2.5,
+      "output": 15,
+      "cached": 0.25,
+      "cacheWrite": 3.125,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-5.6-terra-pro": {
+      "input": 2.5,
+      "output": 15,
+      "cached": 0.25,
+      "cacheWrite": 3.125,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-oss-120b": {
+      "input": 0.037,
+      "output": 0.17,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-oss-20b": {
+      "input": 0.03,
+      "output": 0.13,
+      "cached": 0.03,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/gpt-oss-safeguard-20b": {
+      "input": 0.075,
+      "output": 0.3,
+      "cached": 0.0375,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/o1": {
+      "input": 15,
+      "output": 60,
+      "cached": 7.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/o3": {
+      "input": 2,
+      "output": 8,
+      "cached": 0.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/o3-deep-research": {
+      "input": 10,
+      "output": 40,
+      "cached": 2.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/o3-mini": {
+      "input": 1.1,
+      "output": 4.4,
+      "cached": 0.55,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/o3-mini-high": {
+      "input": 1.1,
+      "output": 4.4,
+      "cached": 0.55,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/o3-pro": {
+      "input": 20,
+      "output": 80,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/o4-mini": {
+      "input": 1.1,
+      "output": 4.4,
+      "cached": 0.275,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/o4-mini-deep-research": {
+      "input": 2,
+      "output": 8,
+      "cached": 0.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/openai/o4-mini-high": {
+      "input": 1.1,
+      "output": 4.4,
+      "cached": 0.275,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/poolside/laguna-m.1": {
+      "input": 0.2,
+      "output": 0.4,
+      "cached": 0.1,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/poolside/laguna-s-2.1": {
+      "input": 0.1,
+      "output": 0.2,
+      "cached": 0.01,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/poolside/laguna-xs-2.1": {
+      "input": 0.06,
+      "output": 0.12,
+      "cached": 0.03,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen-2.5-72b-instruct": {
+      "input": 0.36,
+      "output": 0.4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen-plus-2025-07-28": {
+      "input": 0.26,
+      "output": 0.78,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen-plus-2025-07-28:thinking": {
+      "input": 0.26,
+      "output": 0.78,
+      "cached": 0,
+      "cacheWrite": 0.325,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen-plus": {
+      "input": 0.26,
+      "output": 0.78,
+      "cached": 0.052,
+      "cacheWrite": 0.325,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen-2.5-7b-instruct": {
+      "input": 0.04,
+      "output": 0.1,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-14b": {
+      "input": 0.2275,
+      "output": 0.91,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-235b-a22b": {
+      "input": 0.455,
+      "output": 1.82,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-235b-a22b-2507": {
+      "input": 0.09,
+      "output": 0.55,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-235b-a22b-thinking-2507": {
+      "input": 0.3,
+      "output": 3,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-30b-a3b": {
+      "input": 0.13,
+      "output": 0.52,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-30b-a3b-instruct-2507": {
+      "input": 0.1,
+      "output": 0.3,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-30b-a3b-thinking-2507": {
+      "input": 0.13,
+      "output": 1.56,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-32b": {
+      "input": 0.08,
+      "output": 0.28,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-8b": {
+      "input": 0.117,
+      "output": 0.455,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-coder-30b-a3b-instruct": {
+      "input": 0.07,
+      "output": 0.27,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-coder": {
+      "input": 0.3,
+      "output": 1,
+      "cached": 0.1,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-coder-flash": {
+      "input": 0.195,
+      "output": 0.975,
+      "cached": 0.039,
+      "cacheWrite": 0.24375,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-coder-next": {
+      "input": 0.11,
+      "output": 0.8,
+      "cached": 0.07,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-coder-plus": {
+      "input": 0.65,
+      "output": 3.25,
+      "cached": 0.13,
+      "cacheWrite": 0.8125,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-max": {
+      "input": 0.78,
+      "output": 3.9,
+      "cached": 0.156,
+      "cacheWrite": 0.975,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-max-thinking": {
+      "input": 0.78,
+      "output": 3.9,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-next-80b-a3b-instruct": {
+      "input": 0.1,
+      "output": 1.1,
+      "cached": 0.07,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-next-80b-a3b-thinking": {
+      "input": 0.0975,
+      "output": 0.78,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-vl-235b-a22b-instruct": {
+      "input": 0.21,
+      "output": 1.9,
+      "cached": 0.1,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-vl-235b-a22b-thinking": {
+      "input": 0.26,
+      "output": 2.6,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-vl-30b-a3b-instruct": {
+      "input": 0.15,
+      "output": 0.6,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-vl-30b-a3b-thinking": {
+      "input": 0.13,
+      "output": 1.56,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-vl-32b-instruct": {
+      "input": 0.104,
+      "output": 0.416,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-vl-8b-instruct": {
+      "input": 0.117,
+      "output": 0.455,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3-vl-8b-thinking": {
+      "input": 0.117,
+      "output": 1.365,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3.5-397b-a17b": {
+      "input": 0.39,
+      "output": 2.34,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3.5-plus-02-15": {
+      "input": 0.26,
+      "output": 1.56,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3.5-plus-20260420": {
+      "input": 0.3,
+      "output": 1.8,
+      "cached": 0,
+      "cacheWrite": 0.375,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3.5-122b-a10b": {
+      "input": 0.26,
+      "output": 2.08,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3.5-27b": {
+      "input": 0.195,
+      "output": 1.56,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3.5-35b-a3b": {
+      "input": 0.14,
+      "output": 1,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3.5-9b": {
+      "input": 0.1,
+      "output": 0.15,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3.5-flash-02-23": {
+      "input": 0.065,
+      "output": 0.26,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3.6-27b": {
+      "input": 0.289,
+      "output": 2.4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3.6-35b-a3b": {
+      "input": 0.14,
+      "output": 1,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3.6-flash": {
+      "input": 0.1875,
+      "output": 1.125,
+      "cached": 0,
+      "cacheWrite": 0.234375,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3.6-max-preview": {
+      "input": 1.04,
+      "output": 6.24,
+      "cached": 0,
+      "cacheWrite": 1.3,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3.6-plus": {
+      "input": 0.325,
+      "output": 1.95,
+      "cached": 0,
+      "cacheWrite": 0.40625,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3.7-max": {
+      "input": 1.475,
+      "output": 4.425,
+      "cached": 0.295,
+      "cacheWrite": 1.84375,
+      "source": "Model catalog"
+    },
+    "openrouter/qwen/qwen3.7-plus": {
+      "input": 0.32,
+      "output": 1.28,
+      "cached": 0.064,
+      "cacheWrite": 0.4,
+      "source": "Model catalog"
+    },
+    "openrouter/rekaai/reka-edge": {
+      "input": 0.1,
+      "output": 0.1,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/relace/relace-search": {
+      "input": 1,
+      "output": 3,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/sakana/fugu-ultra": {
+      "input": 5,
+      "output": 30,
+      "cached": 0.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/sao10k/l3.1-euryale-70b": {
+      "input": 0.85,
+      "output": 0.85,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/stepfun/step-3.5-flash": {
+      "input": 0.1,
+      "output": 0.3,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/stepfun/step-3.7-flash": {
+      "input": 0.2,
+      "output": 1.15,
+      "cached": 0.04,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/tencent/hy3": {
+      "input": 0.132,
+      "output": 0.528,
+      "cached": 0.033,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/tencent/hy3-preview": {
+      "input": 0.063,
+      "output": 0.21,
+      "cached": 0.021,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/thedrummer/unslopnemo-12b": {
+      "input": 0.4,
+      "output": 0.4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/thinkingmachines/inkling": {
+      "input": 1,
+      "output": 4.05,
+      "cached": 0.17,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/upstage/solar-pro-3": {
+      "input": 0.15,
+      "output": 0.6,
+      "cached": 0.015,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/x-ai/grok-4.20": {
+      "input": 1.25,
+      "output": 2.5,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/x-ai/grok-4.3": {
+      "input": 1.25,
+      "output": 2.5,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/x-ai/grok-4.5": {
+      "input": 2,
+      "output": 6,
+      "cached": 0.3,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/x-ai/grok-build-0.1": {
+      "input": 1,
+      "output": 2,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/~x-ai/grok-latest": {
+      "input": 2,
+      "output": 6,
+      "cached": 0.3,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/xiaomi/mimo-v2.5": {
+      "input": 0.14,
+      "output": 0.28,
+      "cached": 0.0028,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/xiaomi/mimo-v2.5-pro": {
+      "input": 0.435,
+      "output": 0.87,
+      "cached": 0.0036,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/z-ai/glm-4.5": {
+      "input": 0.6,
+      "output": 2.2,
+      "cached": 0.11,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/z-ai/glm-4.5-air": {
+      "input": 0.13,
+      "output": 0.85,
+      "cached": 0.025,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/z-ai/glm-4.5v": {
+      "input": 0.6,
+      "output": 1.8,
+      "cached": 0.11,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/z-ai/glm-4.6": {
+      "input": 0.5,
+      "output": 2,
+      "cached": 0.1,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/z-ai/glm-4.6v": {
+      "input": 0.3,
+      "output": 0.9,
+      "cached": 0.055,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/z-ai/glm-4.7": {
+      "input": 0.4,
+      "output": 1.75,
+      "cached": 0.08,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/z-ai/glm-4.7-flash": {
+      "input": 0.06,
+      "output": 0.4,
+      "cached": 0.01,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/z-ai/glm-5": {
+      "input": 0.6,
+      "output": 1.9,
+      "cached": 0.119,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/z-ai/glm-5-turbo": {
+      "input": 1.2,
+      "output": 4,
+      "cached": 0.24,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/z-ai/glm-5.1": {
+      "input": 0.966,
+      "output": 3.036,
+      "cached": 0.1794,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/z-ai/glm-5.2": {
+      "input": 0.721,
+      "output": 2.266,
+      "cached": 0.1339,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "openrouter/z-ai/glm-5v-turbo": {
+      "input": 1.2,
+      "output": 4,
+      "cached": 0.24,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "together/deepseek-ai/DeepSeek-V4-Pro": {
+      "input": 1.74,
+      "output": 3.48,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "together/google/gemma-4-31B-it": {
+      "input": 0.39,
+      "output": 0.97,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "together/zai-org/GLM-5.2": {
+      "input": 1.4,
+      "output": 4.4,
+      "cached": 0.26,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "together/openai/gpt-oss-120b": {
+      "input": 0.15,
+      "output": 0.6,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "together/openai/gpt-oss-20b": {
+      "input": 0.05,
+      "output": 0.2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "together/thinkingmachines/Inkling": {
+      "input": 1,
+      "output": 4.05,
+      "cached": 0.17,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "together/moonshotai/Kimi-K2.6": {
+      "input": 1.2,
+      "output": 4.5,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "together/moonshotai/Kimi-K2.7-Code": {
+      "input": 0.95,
+      "output": 4,
+      "cached": 0.19,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "together/meta-llama/Llama-3.3-70B-Instruct-Turbo": {
+      "input": 1.04,
+      "output": 1.04,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "together/MiniMaxAI/MiniMax-M2.7": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.06,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "together/MiniMaxAI/MiniMax-M3": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.06,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "together/nvidia/nemotron-3-ultra-550b-a55b": {
+      "input": 0.6,
+      "output": 3.6,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "together/Qwen/Qwen2.5-7B-Instruct-Turbo": {
+      "input": 0.3,
+      "output": 0.3,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "together/Qwen/Qwen3.5-9B": {
+      "input": 0.17,
+      "output": 0.25,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "together/Qwen/Qwen3.6-Plus": {
+      "input": 0.5,
+      "output": 3,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "together/Qwen/Qwen3.7-Max": {
+      "input": 1.25,
+      "output": 3.75,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/bytedance/seed-1.8": {
+      "input": 0.25,
+      "output": 2,
+      "cached": 0.05,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/anthropic/claude-3-haiku": {
+      "input": 0.25,
+      "output": 1.25,
+      "cached": 0.03,
+      "cacheWrite": 0.3,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/anthropic/claude-fable-5": {
+      "input": 10,
+      "output": 50,
+      "cached": 1,
+      "cacheWrite": 12.5,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/anthropic/claude-haiku-4.5": {
+      "input": 1,
+      "output": 5,
+      "cached": 0.1,
+      "cacheWrite": 1.25,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/anthropic/claude-opus-4": {
+      "input": 15,
+      "output": 75,
+      "cached": 1.5,
+      "cacheWrite": 18.75,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/anthropic/claude-opus-4.1": {
+      "input": 15,
+      "output": 75,
+      "cached": 1.5,
+      "cacheWrite": 18.75,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/anthropic/claude-opus-4.5": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/anthropic/claude-opus-4.6": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/anthropic/claude-opus-4.7": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/anthropic/claude-opus-4.8": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/anthropic/claude-opus-4.8-fast": {
+      "input": 10,
+      "output": 50,
+      "cached": 1,
+      "cacheWrite": 12.5,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/anthropic/claude-opus-5": {
+      "input": 5,
+      "output": 25,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/anthropic/claude-opus-5-fast": {
+      "input": 10,
+      "output": 50,
+      "cached": 1,
+      "cacheWrite": 12.5,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/anthropic/claude-sonnet-4": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 3.75,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/anthropic/claude-sonnet-4.5": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 3.75,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/anthropic/claude-sonnet-4.6": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 3.75,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/anthropic/claude-sonnet-5": {
+      "input": 2,
+      "output": 10,
+      "cached": 0.2,
+      "cacheWrite": 2.5,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/cohere/command-a": {
+      "input": 2.5,
+      "output": 10,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/deepseek/deepseek-v3": {
+      "input": 0.27,
+      "output": 1.12,
+      "cached": 0.135,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/deepseek/deepseek-v3.1": {
+      "input": 0.25,
+      "output": 0.95,
+      "cached": 0.13,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/deepseek/deepseek-v3.1-terminus": {
+      "input": 0.27,
+      "output": 1,
+      "cached": 0.135,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/deepseek/deepseek-v3.2": {
+      "input": 0.28,
+      "output": 0.42,
+      "cached": 0.028,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/deepseek/deepseek-v3.2-thinking": {
+      "input": 0.62,
+      "output": 1.85,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/deepseek/deepseek-v4-flash": {
+      "input": 0.14,
+      "output": 0.28,
+      "cached": 0.028,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/deepseek/deepseek-v4-pro": {
+      "input": 0.435,
+      "output": 0.87,
+      "cached": 0.0036,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/deepseek/deepseek-r1": {
+      "input": 1.35,
+      "output": 5.4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/mistral/devstral-2": {
+      "input": 0.4,
+      "output": 2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/mistral/devstral-small-2": {
+      "input": 0.1,
+      "output": 0.3,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/sakana/fugu-ultra": {
+      "input": 5,
+      "output": 30,
+      "cached": 0.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/google/gemini-2.5-flash": {
+      "input": 0.3,
+      "output": 2.5,
+      "cached": 0.03,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/google/gemini-2.5-flash-lite": {
+      "input": 0.1,
+      "output": 0.4,
+      "cached": 0.01,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/google/gemini-2.5-pro": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/google/gemini-3-flash": {
+      "input": 0.5,
+      "output": 3,
+      "cached": 0.05,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/google/gemini-3-pro-preview": {
+      "input": 2,
+      "output": 12,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/google/gemini-3.1-flash-lite": {
+      "input": 0.25,
+      "output": 1.5,
+      "cached": 0.03,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/google/gemini-3.1-pro-preview": {
+      "input": 2,
+      "output": 12,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/google/gemini-3.5-flash": {
+      "input": 1.5,
+      "output": 9,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/google/gemini-3.5-flash-lite": {
+      "input": 0.3,
+      "output": 2.5,
+      "cached": 0.03,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/google/gemini-3.6-flash": {
+      "input": 1.5,
+      "output": 7.5,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/google/gemma-4-26b-a4b-it": {
+      "input": 0.15,
+      "output": 0.6,
+      "cached": 0.015,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/google/gemma-4-31b-it": {
+      "input": 0.14,
+      "output": 0.4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/zai/glm-4.5": {
+      "input": 0.6,
+      "output": 2.2,
+      "cached": 0.11,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/zai/glm-4.5-air": {
+      "input": 0.2,
+      "output": 1.1,
+      "cached": 0.03,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/zai/glm-4.5v": {
+      "input": 0.6,
+      "output": 1.8,
+      "cached": 0.11,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/zai/glm-4.6": {
+      "input": 0.6,
+      "output": 2.2,
+      "cached": 0.11,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/zai/glm-4.7": {
+      "input": 0.6,
+      "output": 2.2,
+      "cached": 0.12,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/zai/glm-4.7-flash": {
+      "input": 0.07,
+      "output": 0.4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/zai/glm-4.7-flashx": {
+      "input": 0.06,
+      "output": 0.4,
+      "cached": 0.01,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/zai/glm-5": {
+      "input": 0.95,
+      "output": 3.15,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/zai/glm-5-turbo": {
+      "input": 1.2,
+      "output": 4,
+      "cached": 0.24,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/zai/glm-5.1": {
+      "input": 1.3,
+      "output": 4.3,
+      "cached": 0.26,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/zai/glm-5.2": {
+      "input": 1.4,
+      "output": 4.4,
+      "cached": 0.26,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/zai/glm-5.2-fast": {
+      "input": 2.1,
+      "output": 6.6,
+      "cached": 0.21,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/zai/glm-5v-turbo": {
+      "input": 1.2,
+      "output": 4,
+      "cached": 0.24,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/zai/glm-4.6v": {
+      "input": 0.3,
+      "output": 0.9,
+      "cached": 0.05,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5.1-codex-max": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5.1-codex-mini": {
+      "input": 0.25,
+      "output": 2,
+      "cached": 0.025,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5.1-thinking": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5.2": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5.2-pro": {
+      "input": 21,
+      "output": 168,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5.2-codex": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5.3-codex": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5.4": {
+      "input": 2.5,
+      "output": 15,
+      "cached": 0.25,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5.4-mini": {
+      "input": 0.75,
+      "output": 4.5,
+      "cached": 0.075,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5.4-nano": {
+      "input": 0.2,
+      "output": 1.25,
+      "cached": 0.02,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5.4-pro": {
+      "input": 30,
+      "output": 180,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5.5": {
+      "input": 5,
+      "output": 30,
+      "cached": 0.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5.5-pro": {
+      "input": 30,
+      "output": 180,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5.6-luna": {
+      "input": 1,
+      "output": 6,
+      "cached": 0.1,
+      "cacheWrite": 1.25,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5.6-sol": {
+      "input": 5,
+      "output": 30,
+      "cached": 0.5,
+      "cacheWrite": 6.25,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5.6-terra": {
+      "input": 2.5,
+      "output": 15,
+      "cached": 0.25,
+      "cacheWrite": 3.125,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-oss-120b": {
+      "input": 0.1,
+      "output": 0.5,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-oss-20b": {
+      "input": 0.05,
+      "output": 0.2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-oss-safeguard-20b": {
+      "input": 0.075,
+      "output": 0.3,
+      "cached": 0.037,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-3.5-turbo": {
+      "input": 0.5,
+      "output": 1.5,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-4-turbo": {
+      "input": 10,
+      "output": 30,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-4.1": {
+      "input": 2,
+      "output": 8,
+      "cached": 0.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-4.1-mini": {
+      "input": 0.4,
+      "output": 1.6,
+      "cached": 0.1,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-4.1-nano": {
+      "input": 0.1,
+      "output": 0.4,
+      "cached": 0.025,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-4o": {
+      "input": 2.5,
+      "output": 10,
+      "cached": 1.25,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-4o-mini": {
+      "input": 0.15,
+      "output": 0.6,
+      "cached": 0.075,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5-mini": {
+      "input": 0.25,
+      "output": 2,
+      "cached": 0.025,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5-nano": {
+      "input": 0.05,
+      "output": 0.4,
+      "cached": 0.005,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5-pro": {
+      "input": 15,
+      "output": 120,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5-codex": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5.1-instant": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5.1-codex": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/gpt-5.3-chat": {
+      "input": 1.75,
+      "output": 14,
+      "cached": 0.175,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/xai/grok-4.1-fast-non-reasoning": {
+      "input": 0.2,
+      "output": 0.5,
+      "cached": 0.05,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/xai/grok-4.1-fast-reasoning": {
+      "input": 0.2,
+      "output": 0.5,
+      "cached": 0.05,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/xai/grok-4.20-non-reasoning-beta": {
+      "input": 1.25,
+      "output": 2.5,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/xai/grok-4.20-reasoning-beta": {
+      "input": 1.25,
+      "output": 2.5,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/xai/grok-4.20-multi-agent-beta": {
+      "input": 1.25,
+      "output": 2.5,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/xai/grok-4.20-multi-agent": {
+      "input": 1.25,
+      "output": 2.5,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/xai/grok-4.20-non-reasoning": {
+      "input": 1.25,
+      "output": 2.5,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/xai/grok-4.20-reasoning": {
+      "input": 1.25,
+      "output": 2.5,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/xai/grok-4.3": {
+      "input": 1.25,
+      "output": 2.5,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/xai/grok-4.5": {
+      "input": 2,
+      "output": 6,
+      "cached": 0.3,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/xai/grok-build-0.1": {
+      "input": 1,
+      "output": 2,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/tencent/hy3": {
+      "input": 0.14,
+      "output": 0.58,
+      "cached": 0.035,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/thinkingmachines/inkling": {
+      "input": 1,
+      "output": 4.05,
+      "cached": 0.17,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/interfaze/interfaze-beta": {
+      "input": 1.5,
+      "output": 3.5,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/kwaipilot/kat-coder-air-v2.5": {
+      "input": 0.15,
+      "output": 0.6,
+      "cached": 0.03,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/kwaipilot/kat-coder-pro-v2": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.06,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/kwaipilot/kat-coder-pro-v2.5": {
+      "input": 0.74,
+      "output": 2.96,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/kwaipilot/kat-coder-pro-v1": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.06,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/moonshotai/kimi-k2": {
+      "input": 0.57,
+      "output": 2.3,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/moonshotai/kimi-k2-thinking": {
+      "input": 0.47,
+      "output": 2,
+      "cached": 0.141,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/moonshotai/kimi-k2.5": {
+      "input": 0.6,
+      "output": 3,
+      "cached": 0.1,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/moonshotai/kimi-k2.6": {
+      "input": 0.95,
+      "output": 4,
+      "cached": 0.16,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/moonshotai/kimi-k2.7-code": {
+      "input": 0.95,
+      "output": 4,
+      "cached": 0.19,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/moonshotai/kimi-k2.7-code-highspeed": {
+      "input": 1.9,
+      "output": 8,
+      "cached": 0.38,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/moonshotai/kimi-k3": {
+      "input": 3,
+      "output": 15,
+      "cached": 0.3,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/poolside/laguna-s-2.1": {
+      "input": 0.1,
+      "output": 0.2,
+      "cached": 0.01,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/meta/llama-3.1-70b": {
+      "input": 0.72,
+      "output": 0.72,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/meta/llama-3.1-8b": {
+      "input": 0.22,
+      "output": 0.22,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/meta/llama-3.3-70b": {
+      "input": 0.72,
+      "output": 0.72,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/meta/llama-4-maverick": {
+      "input": 0.24,
+      "output": 0.97,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/meta/llama-4-scout": {
+      "input": 0.17,
+      "output": 0.66,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/mistral/magistral-medium": {
+      "input": 2,
+      "output": 5,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/mistral/magistral-small": {
+      "input": 0.5,
+      "output": 1.5,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/inception/mercury-2": {
+      "input": 0.25,
+      "output": 0.75,
+      "cached": 0.025,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/inception/mercury-coder-small": {
+      "input": 0.25,
+      "output": 1,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/xiaomi/mimo-v2.5": {
+      "input": 0.14,
+      "output": 0.28,
+      "cached": 0.0028,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/xiaomi/mimo-v2.5-pro": {
+      "input": 0.435,
+      "output": 0.87,
+      "cached": 0.0036,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/minimax/minimax-m2": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.03,
+      "cacheWrite": 0.375,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/minimax/minimax-m2.1": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.03,
+      "cacheWrite": 0.375,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/minimax/minimax-m2.1-lightning": {
+      "input": 0.3,
+      "output": 2.4,
+      "cached": 0.03,
+      "cacheWrite": 0.375,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/minimax/minimax-m2.5": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.03,
+      "cacheWrite": 0.375,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/minimax/minimax-m2.5-highspeed": {
+      "input": 0.6,
+      "output": 2.4,
+      "cached": 0.03,
+      "cacheWrite": 0.375,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/minimax/minimax-m2.7": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.06,
+      "cacheWrite": 0.375,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/minimax/minimax-m2.7-highspeed": {
+      "input": 0.6,
+      "output": 2.4,
+      "cached": 0.06,
+      "cacheWrite": 0.375,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/minimax/minimax-m3": {
+      "input": 0.3,
+      "output": 1.2,
+      "cached": 0.06,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/mistral/ministral-14b": {
+      "input": 0.2,
+      "output": 0.2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/mistral/ministral-3b": {
+      "input": 0.1,
+      "output": 0.1,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/mistral/ministral-8b": {
+      "input": 0.15,
+      "output": 0.15,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/mistral/codestral": {
+      "input": 0.3,
+      "output": 0.9,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/mistral/mistral-large-3": {
+      "input": 0.5,
+      "output": 1.5,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/mistral/mistral-medium": {
+      "input": 0.4,
+      "output": 2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/mistral/mistral-medium-3.5": {
+      "input": 1.5,
+      "output": 7.5,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/mistral/mistral-nemo": {
+      "input": 0.15,
+      "output": 0.15,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/mistral/mistral-small": {
+      "input": 0.1,
+      "output": 0.3,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/meta/muse-spark-1.1": {
+      "input": 1.25,
+      "output": 4.25,
+      "cached": 0.15,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/nvidia/nemotron-3-nano-30b-a3b": {
+      "input": 0.05,
+      "output": 0.24,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/nvidia/nemotron-3-ultra-550b-a55b": {
+      "input": 0.6,
+      "output": 2.4,
+      "cached": 0.12,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/amazon/nova-2-lite": {
+      "input": 0.3,
+      "output": 2.5,
+      "cached": 0.075,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/amazon/nova-lite": {
+      "input": 0.06,
+      "output": 0.24,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/amazon/nova-micro": {
+      "input": 0.035,
+      "output": 0.14,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/amazon/nova-pro": {
+      "input": 0.8,
+      "output": 3.2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/nvidia/nemotron-3-super-120b-a12b": {
+      "input": 0.15,
+      "output": 0.65,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/nvidia/nemotron-nano-12b-v2-vl": {
+      "input": 0.2,
+      "output": 0.6,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/nvidia/nemotron-nano-9b-v2": {
+      "input": 0.06,
+      "output": 0.23,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/o1": {
+      "input": 15,
+      "output": 60,
+      "cached": 7.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/o3": {
+      "input": 2,
+      "output": 8,
+      "cached": 0.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/o3-pro": {
+      "input": 20,
+      "output": 80,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/o3-deep-research": {
+      "input": 10,
+      "output": 40,
+      "cached": 2.5,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/o3-mini": {
+      "input": 1.1,
+      "output": 4.4,
+      "cached": 0.55,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/openai/o4-mini": {
+      "input": 1.1,
+      "output": 4.4,
+      "cached": 0.275,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/mistral/pixtral-12b": {
+      "input": 0.15,
+      "output": 0.15,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen-3-32b": {
+      "input": 0.16,
+      "output": 0.64,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen3-coder-30b-a3b": {
+      "input": 0.15,
+      "output": 0.6,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen3-max-thinking": {
+      "input": 1.2,
+      "output": 6,
+      "cached": 0.24,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen3.5-flash": {
+      "input": 0.1,
+      "output": 0.4,
+      "cached": 0.001,
+      "cacheWrite": 0.125,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen3.5-plus": {
+      "input": 0.4,
+      "output": 2.4,
+      "cached": 0.04,
+      "cacheWrite": 0.5,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen3.6-27b": {
+      "input": 0.6,
+      "output": 3.6,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen-3.6-max-preview": {
+      "input": 1.3,
+      "output": 7.8,
+      "cached": 0.26,
+      "cacheWrite": 1.625,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen3.6-plus": {
+      "input": 0.5,
+      "output": 3,
+      "cached": 0.1,
+      "cacheWrite": 0.625,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen3.7-max": {
+      "input": 2.5,
+      "output": 7.5,
+      "cached": 0.5,
+      "cacheWrite": 3.125,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen3.7-plus": {
+      "input": 0.4,
+      "output": 1.6,
+      "cached": 0.08,
+      "cacheWrite": 0.5,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen-3-235b": {
+      "input": 0.22,
+      "output": 0.88,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen3-coder": {
+      "input": 1.5,
+      "output": 7.5,
+      "cached": 0.3,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen3-coder-next": {
+      "input": 0.5,
+      "output": 1.2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen3-coder-plus": {
+      "input": 1,
+      "output": 5,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen3-max": {
+      "input": 1.2,
+      "output": 6,
+      "cached": 0.24,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen3-max-preview": {
+      "input": 1.2,
+      "output": 6,
+      "cached": 0.24,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen3-next-80b-a3b-instruct": {
+      "input": 0.15,
+      "output": 1.2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen3-next-80b-a3b-thinking": {
+      "input": 0.15,
+      "output": 1.2,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen3-vl-235b-a22b-instruct": {
+      "input": 0.4,
+      "output": 1.6,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen3-vl-instruct": {
+      "input": 0.4,
+      "output": 1.6,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen3-235b-a22b-thinking": {
+      "input": 0.4,
+      "output": 4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen3-vl-thinking": {
+      "input": 0.4,
+      "output": 4,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen-3-14b": {
+      "input": 0.12,
+      "output": 0.24,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/alibaba/qwen-3-30b": {
+      "input": 0.12,
+      "output": 0.5,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/bytedance/seed-1.6": {
+      "input": 0.25,
+      "output": 2,
+      "cached": 0.05,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/stepfun/step-3.7-flash": {
+      "input": 0.2,
+      "output": 1.15,
+      "cached": 0.04,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/stepfun/step-3.5-flash": {
+      "input": 0.09,
+      "output": 0.3,
+      "cached": 0.02,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/arcee-ai/trinity-large-thinking": {
+      "input": 0.25,
+      "output": 0.9,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "vercel-ai-gateway/arcee-ai/trinity-mini": {
+      "input": 0.045,
+      "output": 0.15,
+      "cached": 0,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "xiaomi/mimo-v2-flash": {
+      "input": 0.14,
+      "output": 0.28,
+      "cached": 0.0028,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "xiaomi/mimo-v2-omni": {
+      "input": 0.14,
+      "output": 0.28,
+      "cached": 0.0028,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "xiaomi/mimo-v2-pro": {
+      "input": 0.435,
+      "output": 0.87,
+      "cached": 0.0036,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "xiaomi/mimo-v2.5": {
+      "input": 0.14,
+      "output": 0.28,
+      "cached": 0.0028,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "xiaomi/mimo-v2.5-pro": {
+      "input": 0.435,
+      "output": 0.87,
+      "cached": 0.0036,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "xiaomi/mimo-v2.5-pro-ultraspeed": {
+      "input": 1.305,
+      "output": 2.61,
+      "cached": 0.0108,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "xai/grok-4.3": {
+      "input": 1.25,
+      "output": 2.5,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "xai/grok-4.5": {
+      "input": 2,
+      "output": 6,
+      "cached": 0.3,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "xai/grok-build-0.1": {
+      "input": 1,
+      "output": 2,
+      "cached": 0.2,
+      "cacheWrite": 0,
+      "source": "Model catalog"
+    },
+    "deepseek/deepseek-flash": {
+      "input": 0.15,
+      "output": 0.6,
+      "cached": 0.003,
+      "cacheWrite": 0.15,
+      "maximumMultiplier": 2,
+      "source": "DeepSeek pricing · 11/10/26"
+    },
+    "deepseek/deepseek-v4-flash-vision-exp": {
+      "input": 0.15,
+      "output": 0.6,
+      "cached": 0.003,
+      "cacheWrite": 0.15,
+      "maximumMultiplier": 2,
+      "source": "DeepSeek pricing · 11/10/26"
+    }
+  }
+}

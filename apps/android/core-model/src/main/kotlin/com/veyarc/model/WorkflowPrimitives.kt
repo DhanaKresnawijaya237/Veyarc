@@ -203,7 +203,14 @@ data class AssetReference(
     val assetId: AssetId,
     val kind: AssetKind,
     val displayName: String? = null,
-)
+    val widthPx: Int? = null,
+    val heightPx: Int? = null,
+) {
+    init {
+        require((widthPx == null) == (heightPx == null)) { "Image dimensions must be supplied together" }
+        require(widthPx == null || (widthPx > 0 && heightPx!! > 0)) { "Image dimensions must be positive" }
+    }
+}
 
 @Serializable
 enum class VariableType {

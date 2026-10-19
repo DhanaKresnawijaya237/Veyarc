@@ -34,14 +34,29 @@ import com.veyarc.model.resolvePoint
 import java.util.Locale
 import kotlin.math.roundToInt
 
-/** Produces local, human-readable run history without exposing variable values or screen pixels. */
+/** Produces local, human-readable run history without exposing variable values or screen captures. */
 internal class RunEventFormatter(private val document: WorkflowDocument) {
     private val stepsById = mutableMapOf<String, WorkflowStep>()
+    private val blockLabels = mutableMapOf<String, String>()
+    private val blockContexts = mutableMapOf<String, String>()
+    private val conditionLocations = mutableMapOf<String, String>()
     private val conditionsByPath = mutableMapOf<String, Condition>()
     private val assetNames = document.assets.associate { it.assetId.value to (it.displayName ?: "Selected image") }
 
     init {
         indexSteps(document.steps)
+    }
+
+    fun event(event: RunEvent): RedactedRunEvent {
+        val stepId = when (event) {
+            is RunEvent.StepStarted -> event.stepId
+            is RunEvent.StepFinished -> event.stepId
+            is RunEvent.ConditionEvaluated -> event.stepId
+            else -> null
+        }
+        val conditionLocation = (event as? RunEvent.ConditionEvaluated)?.path?.let(conditionLocations::get)
+        val context = listOfNotNull(stepId?.let(blockContexts::get), conditionLocation?.takeIf(String::isNotBlank)).joinToString(" › ").ifBlank { null }
+        return RedactedRunEvent(event.atMs, format(event), stepId?.let(blockLabels::get), context)
     }
 
     fun format(event: RunEvent): String = when (event) {
@@ -63,6 +78,14 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
 
     private fun conditionResult(event: RunEvent.ConditionEvaluated): String {
         val condition = conditionsByPath[event.path]
+        event.colorMatch?.let { match ->
+            val location = (condition as? PixelColorCondition)?.let { if (it.region == null) " at ${formatPoint(it.point)}" else " in the search area" }.orEmpty()
+            val closest = String.format(Locale.ROOT, "#%08X", match.closestArgb)
+            val target = String.format(Locale.ROOT, "#%08X", match.targetArgb)
+            return "Colour ${if (event.result) "found" else "not found"}$location\n" +
+                "Closest $closest · Target $target\n" +
+                "Difference ${match.difference} · Tolerance ±${match.tolerance}"
+        }
         val base = condition?.let(::conditionName) ?: "Condition"
         val threshold = event.threshold ?: condition?.matchThresholdOrNull()
         if (threshold == null) return "$base: ${event.result}"
@@ -136,7 +159,7 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
     }
 
     private fun conditionName(condition: Condition): String = when (condition) {
-        is PixelColorCondition -> "Pixel color at ${formatPoint(condition.point)}"
+        is PixelColorCondition -> if (condition.region == null) "Pixel color at ${formatPoint(condition.point)}" else "Color appears in the search area"
 
         is ImagePresentCondition -> when (condition.matchMode) {
             ImageMatchMode.SCREEN_STATE -> assetNames[condition.assetId.value]?.let { "Screen matches $it" } ?: "Screen state"
@@ -172,23 +195,29 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
         return "($xPx, $yPx px recorded)"
     }
 
-    private fun indexSteps(steps: List<WorkflowStep>) {
+    private fun indexSteps(steps: List<WorkflowStep>, parent: String = "Workflow") {
+        var number = 0
+        var stage = 0
         steps.forEach { step ->
             stepsById[step.id] = step
+            val label = if (step is StageBoundary) "Stage ${++stage}" else "Block ${++number} · ${stepName(step.id)}"
+            val context = if (stage > 0 && step !is StageBoundary) "$parent › Stage $stage" else parent
+            blockLabels[step.id] = label
+            blockContexts[step.id] = context
             when (step) {
                 is WaitUntil -> indexCondition(step.condition, "${step.id}/condition")
 
                 is IfElse -> {
                     indexCondition(step.condition, "${step.id}/condition")
-                    indexSteps(step.thenSteps)
-                    indexSteps(step.elseSteps)
+                    indexSteps(step.thenSteps, "$context › $label › If true")
+                    indexSteps(step.elseSteps, "$context › $label › If false")
                 }
 
-                is Repeat -> indexSteps(step.bodySteps)
+                is Repeat -> indexSteps(step.bodySteps, "$context › $label › Body")
 
                 is WhileStep -> {
                     indexCondition(step.condition, "${step.id}/condition")
-                    indexSteps(step.bodySteps)
+                    indexSteps(step.bodySteps, "$context › $label › Body")
                 }
 
                 else -> Unit
@@ -196,18 +225,19 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
         }
     }
 
-    private fun indexCondition(condition: Condition, path: String) {
+    private fun indexCondition(condition: Condition, path: String, location: String = "") {
         conditionsByPath[path] = condition
+        conditionLocations[path] = location
         when (condition) {
             is AndCondition -> condition.conditions.forEachIndexed { index, child ->
-                indexCondition(child, "$path/conditions/$index")
+                indexCondition(child, "$path/conditions/$index", listOf(location, "Condition ${index + 1}").filter(String::isNotBlank).joinToString(" › "))
             }
 
             is OrCondition -> condition.conditions.forEachIndexed { index, child ->
-                indexCondition(child, "$path/conditions/$index")
+                indexCondition(child, "$path/conditions/$index", listOf(location, "Condition ${index + 1}").filter(String::isNotBlank).joinToString(" › "))
             }
 
-            is NotCondition -> indexCondition(condition.condition, "$path/condition")
+            is NotCondition -> indexCondition(condition.condition, "$path/condition", listOf(location, "Not").filter(String::isNotBlank).joinToString(" › "))
 
             else -> Unit
         }

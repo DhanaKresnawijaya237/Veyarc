@@ -99,7 +99,9 @@ internal object AnthropicMessages {
                 else -> error("Unsupported content")
             }
         }
-        return output.finish()
+        val bytes = output.finish()
+        request.captureUsage(root["usage"] as? JsonObject)
+        return bytes
     }
 
     private fun header(root: JsonObject, request: AssistantRequest) {
@@ -115,6 +117,7 @@ internal object AnthropicMessages {
         var stopped = false
         var index = -1
         var active: String? = null
+        var initialUsage: JsonObject? = null
         try {
             return AssistantSse.read(input, cancellation, DeepSeekStream.MAX_EVENT_BYTES) { name, payload ->
                 val event = AssistantClient.parseObject(payload.toByteArray(Charsets.UTF_8))
@@ -129,6 +132,7 @@ internal object AnthropicMessages {
                         header(message, request)
                         require((message["content"] as JsonArray).isEmpty() && message["stop_reason"] == JsonNull)
                         started = true
+                        initialUsage = message["usage"] as? JsonObject
                     }
 
                     "content_block_start" -> {
@@ -167,6 +171,7 @@ internal object AnthropicMessages {
 
                     "message_delta" -> {
                         require(started && active == null)
+                        (event["usage"] as? JsonObject)?.let { usage -> request.captureUsage(JsonObject(initialUsage.orEmpty() + usage)) }
                         val reason = (event["delta"] as JsonObject)["stop_reason"]
                         if (reason != null && reason != JsonNull) {
                             require(!stopped && reason == JsonPrimitive("end_turn"))

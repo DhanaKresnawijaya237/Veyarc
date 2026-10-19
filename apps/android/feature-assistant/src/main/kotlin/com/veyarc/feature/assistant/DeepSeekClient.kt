@@ -352,6 +352,7 @@ class AssistantClient internal constructor(
             val content = contentText(message, request).toByteArray(Charsets.UTF_8)
             if (content.size > AssistantResponseCodec.MAX_BYTES) throw DeepSeekException(DeepSeekFailure.RESPONSE_TOO_LARGE)
             AssistantResponseCodec.decode(content, request.requestId, request.conversationId, request.baseSnapshotId)
+            request.captureUsage(envelope["usage"] as? JsonObject)
             if (request.thinkingEnabled && reasoningText(message, request).isNotEmpty()) {
                 AssistantThinkingBuffer(request).apply {
                     append(reasoningText(message, request))

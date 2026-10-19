@@ -96,6 +96,7 @@ private val VeyarcShapes =
 @Composable
 fun VeyarcTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
+    particlesEnabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val view = LocalView.current
@@ -109,7 +110,7 @@ fun VeyarcTheme(
         }
     }
     // Use shared surface colors so sheets and menus keep the same tint at every elevation.
-    CompositionLocalProvider(LocalTonalElevationEnabled provides false) {
+    CompositionLocalProvider(LocalTonalElevationEnabled provides false, com.veyarc.ui.LocalParticlesEnabled provides particlesEnabled) {
         MaterialTheme(
             colorScheme = if (darkTheme) DarkColors else LightColors,
             typography = VeyarcTypography,

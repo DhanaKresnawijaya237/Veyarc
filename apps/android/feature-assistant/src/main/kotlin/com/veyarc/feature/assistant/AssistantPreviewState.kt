@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -73,6 +74,8 @@ data class PreviewTurn(
     val proposalDismissed: Boolean = false,
     val localBindingId: String? = null,
     val applyState: ProposalApplyState = ProposalApplyState.NONE,
+    val appliedRevision: Int? = null,
+    val applyError: String? = null,
     val createdAtMs: Long = System.currentTimeMillis(),
     val provider: Boolean = false,
     val effort: DeepSeekEffort = DeepSeekEffort.OFF,
@@ -83,6 +86,9 @@ data class PreviewTurn(
     val modelId: String = model.apiId,
     val providerName: String = "DeepSeek",
     val modelName: String = model.shortLabel,
+    val providerId: String? = null,
+    val usage: com.veyarc.data.storage.AssistantTokenUsage? = null,
+    val imageCheckResults: List<AssistantImageCheckResult> = emptyList(),
 )
 
 @Serializable
@@ -113,15 +119,17 @@ class AssistantPreviewState(
     private val repository: ChatRepository? = null,
     private val scope: CoroutineScope? = null,
     private val compileCandidate: ((WorkflowDocument) -> List<String>)? = null,
-    private val applyCandidate: ((String, AssistantContextSnapshot, String) -> Boolean)? = null,
+    private val applyCandidate: (suspend (String, AssistantContextSnapshot, String) -> Int?)? = null,
     private val providerCall: (suspend (AssistantRequest) -> ByteArray)? = null,
     private val onModelChanged: ((DeepSeekModel) -> Unit)? = null,
     val attachments: AssistantAttachmentImporter? = null,
-    private val applyImageCandidate: (suspend (String, AssistantContextSnapshot, String, List<AssistantImageAddition>, List<AssistantAttachment>) -> Boolean)? = null,
+    private val applyImageCandidate: (suspend (String, AssistantContextSnapshot, String, List<AssistantImageAddition>, List<AssistantAttachment>) -> Int?)? = null,
     private val onDefaultEffortChanged: ((DeepSeekEffort) -> Unit)? = null,
     private val onConnectionsChanged: (suspend (AssistantConnections) -> Unit)? = null,
     private val modelDiscovery: (suspend (AssistantConnection) -> List<AssistantModelConfig>)? = null,
     private val onRequestStarted: ((String) -> Unit)? = null,
+    private val usageRepository: com.veyarc.data.storage.AssistantUsageRepository? = null,
+    private val imageCheck: (suspend (String, AssistantContextSnapshot, AssistantImageCheckCall, List<AssistantAttachment>) -> AssistantImageCheckResult)? = null,
     private var contextSource: (() -> AssistantContextCapture)? = null,
 ) {
     private val attachmentWork = kotlinx.coroutines.sync.Mutex()
@@ -220,6 +228,7 @@ class AssistantPreviewState(
         connections = value
         connectionsReady = true
         connectionError = null
+        backfillUsage()
         syncLegacyDefaults()
         if (isOpen && conversation == null && !isLoading) createChat()
     }
@@ -283,8 +292,8 @@ class AssistantPreviewState(
     val usesProvider: Boolean get() = providerCall != null
     val isResponding: Boolean get() = requestId != null || pendingRequestId != null || testingConnection || discoveringModels
     private var providerJob: Job? = null
-    private var imageApplyJob: Job? = null
-    var isApplyingImages by mutableStateOf(false)
+    private var proposalApplyJob: Job? = null
+    var isApplyingProposal by mutableStateOf(false)
         private set
     private var pendingRequestId by mutableStateOf<String?>(null)
     val activeRequestId: String? get() = requestId ?: pendingRequestId
@@ -299,7 +308,7 @@ class AssistantPreviewState(
     // One ordered writer prevents an older composer save from replacing a newer sent turn.
     private val writes = Channel<suspend () -> Unit>(64)
     val persistent: Boolean get() = repository != null
-    val canChange: Boolean get() = !isLoading && blockingWrites == 0 && storageError == null && !isApplyingImages
+    val canChange: Boolean get() = !isLoading && blockingWrites == 0 && storageError == null && !isApplyingProposal
     val conversation: PreviewConversation? get() = conversations.firstOrNull { it.id == selectedId }
     val history: List<PreviewConversation> get() = conversations.filter { it.workflowId == context.workflowId }
         .sortedWith(compareByDescending<PreviewConversation> { it.pinned }.thenByDescending { it.updatedAtMs })
@@ -365,7 +374,7 @@ class AssistantPreviewState(
 
     fun dispose() {
         stopModelDiscovery()
-        imageApplyJob?.cancel()
+        proposalApplyJob?.cancel()
         providerEnabled = false
         testingConnection = false
         applyGeneration++
@@ -421,6 +430,7 @@ class AssistantPreviewState(
         storageError = null
         isLoading = false
         loadFailed = false
+        backfillUsage()
     }
 
     fun open(currentContext: AssistantPreviewContext, captureContext: (() -> AssistantContextCapture)? = null) {
@@ -656,7 +666,7 @@ class AssistantPreviewState(
             composer = "",
             composerAttachments = emptyList(),
             turns = source.turns.take(index + 1).map {
-                it.copy(id = UUID.randomUUID().toString(), localBindingId = null, applyState = ProposalApplyState.NONE)
+                it.copy(id = UUID.randomUUID().toString(), localBindingId = null, applyState = ProposalApplyState.NONE, appliedRevision = null, applyError = null)
             },
             createdAtMs = System.currentTimeMillis(),
             updatedAtMs = System.currentTimeMillis(),
@@ -689,7 +699,7 @@ class AssistantPreviewState(
         val token = UUID.randomUUID().toString()
         updateLast {
             it.copy(
-                reply = "", thinking = null, status = PreviewReplyStatus.RESPONDING, requestId = token, attempt = it.attempt + 1,
+                reply = "", thinking = null, imageCheckResults = emptyList(), status = PreviewReplyStatus.RESPONDING, requestId = token, attempt = it.attempt + 1,
                 outcome = null, responseError = null, proposal = null, proposalDismissed = false,
                 localBindingId = if (turn.applyState == ProposalApplyState.NONE) turn.localBindingId else null,
                 effort = requireNotNull(conversation).effort,
@@ -731,7 +741,7 @@ class AssistantPreviewState(
         val workflowId = context.workflowId
         if (workflowOnly && (workflowId == null || loadFailed)) return
         draftSave?.cancel()
-        imageApplyJob?.cancel()
+        proposalApplyJob?.cancel()
         applyGeneration++
         testingConnection = false
         requestId = null
@@ -774,50 +784,40 @@ class AssistantPreviewState(
         val chat = conversation ?: return
         val turn = chat.turns.firstOrNull { it.id == turnId } ?: return
         if (!canApply(turn)) return
-        val generation = applyGeneration
         draftSave?.cancel()
         update { it.copy(turns = it.turns.map { item -> if (item.id == turnId) item.copy(applyState = ProposalApplyState.RESERVED) else item }) }
         // Persist consumption before touching the draft. A restored RESERVED turn never retries.
         persist(requireNotNull(conversation)) {
-            if (turn.proposal!!.imageAdditions.isNotEmpty()) {
-                isApplyingImages = true
-                imageApplyJob = requireNotNull(scope).launch {
-                    try {
-                        val applied = generation == applyGeneration && isOpen && selectedId == chat.id &&
-                            applyImageCandidate!!.invoke(turn.localBindingId!!, turn.baseSnapshot!!, turn.proposal.candidateJson!!, turn.proposal.imageAdditions, imagesThrough(chat, turn.id))
-                        finishApply(chat.id, turnId, applied)
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (_: Exception) {
-                        finishApply(chat.id, turnId, false)
-                    } finally {
-                        isApplyingImages = false
-                        imageApplyJob = null
+            isApplyingProposal = true
+            val owner = scope ?: CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Unconfined)
+            proposalApplyJob = owner.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                try {
+                    // Once accepted, saving and recording its result survive leaving the page.
+                    withContext(kotlinx.coroutines.NonCancellable) {
+                        var error: String? = null
+                        val revision = try {
+                            if (turn.proposal!!.imageAdditions.isNotEmpty()) {
+                                applyImageCandidate!!.invoke(turn.localBindingId!!, turn.baseSnapshot!!, turn.proposal.candidateJson!!, turn.proposal.imageAdditions, imagesThrough(chat, turn.id))
+                            } else {
+                                applyCandidate!!.invoke(turn.localBindingId!!, turn.baseSnapshot!!, turn.proposal.candidateJson!!)
+                            }
+                        } catch (_: Exception) {
+                            error = "Could not save changes. Check the workflow and try again."
+                            null
+                        }
+                        finishApply(chat.id, turnId, revision, error)
                     }
-                }
-                return@persist
-            }
-            val applied = generation == applyGeneration && isOpen && selectedId == chat.id &&
-                runCatching { applyCandidate!!.invoke(turn.localBindingId!!, turn.baseSnapshot!!, turn.proposal!!.candidateJson!!) }.getOrDefault(false)
-            conversations = conversations.map { item ->
-                if (item.id != chat.id) {
-                    item
-                } else {
-                    item.copy(
-                        turns = item.turns.map { saved ->
-                            if (saved.id == turnId) saved.copy(applyState = if (applied) ProposalApplyState.APPLIED else ProposalApplyState.REJECTED) else saved
-                        },
-                        updatedAtMs = maxOf(item.updatedAtMs, System.currentTimeMillis()),
-                    )
+                } finally {
+                    isApplyingProposal = false
+                    proposalApplyJob = null
                 }
             }
-            conversations.firstOrNull { it.id == chat.id }?.let { persist(it) }
         }
     }
 
-    private fun finishApply(chatId: String, turnId: String, applied: Boolean) {
+    private fun finishApply(chatId: String, turnId: String, revision: Int?, error: String? = null) {
         conversations = conversations.map { chat ->
-            if (chat.id == chatId) chat.copy(turns = chat.turns.map { turn -> if (turn.id == turnId) turn.copy(applyState = if (applied) ProposalApplyState.APPLIED else ProposalApplyState.REJECTED) else turn }, updatedAtMs = maxOf(chat.updatedAtMs, System.currentTimeMillis())) else chat
+            if (chat.id == chatId) chat.copy(turns = chat.turns.map { turn -> if (turn.id == turnId) turn.copy(applyState = if (revision != null) ProposalApplyState.APPLIED else ProposalApplyState.REJECTED, appliedRevision = revision, applyError = error) else turn }, updatedAtMs = maxOf(chat.updatedAtMs, System.currentTimeMillis())) else chat
         }
         conversations.firstOrNull { it.id == chatId }?.let { persist(it) }
     }
@@ -926,10 +926,34 @@ class AssistantPreviewState(
                 val notifyReply: (String) -> Unit = { text -> scope.launch { receiveReply(token, text) } }
                 val profiles = connections
                 request = withContext(Dispatchers.Default) { providerRequest(chat, contents, notifyThinking, notifyReply, profiles) }
-                val bytes = providerCall(request)
+                var bytes = providerCall(request)
+                val turn = chat.turns.last()
+                val decoded = runCatching { AssistantResponseCodec.decode(bytes, token, chat.id, turn.responseBaseId(chat)) }.getOrNull()
+                if (decoded?.outcome == AssistantOutcome.IMAGE_CHECK) {
+                    val base = requireNotNull(turn.baseSnapshot) { "Open the workflow containing this block first." }
+                    val binding = requireNotNull(turn.localBindingId) { "Open the workflow containing this block first." }
+                    val tool = requireNotNull(imageCheck) { "Image tests are unavailable in this session." }
+                    val results = decoded.imageChecks.map { call ->
+                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        tool(binding, base, call, imagesThrough(chat, turn.id))
+                    }
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (requestId != token) return@launch
+                    val firstUsage = request.latestUsage
+                    val firstThinking = request.latestThinking
+                    updateLast { it.copy(reply = "Comparing saved images…", imageCheckResults = results) }
+                    request = withContext(Dispatchers.Default) { providerRequest(chat, contents, notifyThinking, notifyReply, profiles, results) }
+                    bytes = providerCall(request)
+                    val finalResponse = AssistantResponseCodec.decode(bytes, token, chat.id, turn.responseBaseId(chat))
+                    require(finalResponse.outcome != AssistantOutcome.IMAGE_CHECK) { "The image test finished, but the model requested another test instead of explaining the result. Send a new request to test again." }
+                    request.latestThinking?.let { receiveThinking(token, it) } ?: firstThinking?.let { receiveThinking(token, it) }
+                    receiveReply(token, request.latestReply)
+                    receive(token, bytes, combineImageTestUsage(firstUsage, request.latestUsage), request.connection.catalogProviderId ?: "custom:${request.connection.id}")
+                    return@launch
+                }
                 request.latestThinking?.let { receiveThinking(token, it) }
                 receiveReply(token, request.latestReply)
-                receive(token, bytes)
+                receive(token, bytes, request.latestUsage, request.connection.catalogProviderId ?: "custom:${request.connection.id}")
             } catch (cancelled: CancellationException) {
                 // Owner cancellation cannot publish a result. A persisted unfinished turn recovers interrupted.
                 if (requestId == token) stop(PreviewReplyStatus.INTERRUPTED)
@@ -946,7 +970,7 @@ class AssistantPreviewState(
         }
     }
 
-    internal fun providerRequest(chat: PreviewConversation, contents: Map<String, AttachmentContent> = emptyMap(), onThinking: ((AssistantThinking) -> Unit)? = null, onReply: ((String) -> Unit)? = null, profiles: AssistantConnections = connections): AssistantRequest {
+    internal fun providerRequest(chat: PreviewConversation, contents: Map<String, AttachmentContent> = emptyMap(), onThinking: ((AssistantThinking) -> Unit)? = null, onReply: ((String) -> Unit)? = null, profiles: AssistantConnections = connections, imageCheckResults: List<AssistantImageCheckResult> = emptyList()): AssistantRequest {
         val current = chat.turns.last()
         val profile = profiles.connections.firstOrNull { it.id == current.connectionId }
             ?: throw IllegalArgumentException("This chat's connection was removed. Choose another model to continue.")
@@ -971,7 +995,7 @@ class AssistantPreviewState(
                 turn.attachments.map { contents.getValue(it.id) },
             )
         }
-        return DeepSeekRequest.create(current.requestId, chat.id, current.responseBaseId(chat), current.prompt, current.baseSnapshot, history, streaming = true, effort = current.effort, onThinking = onThinking, model = current.model, attachments = current.attachments.map { contents.getValue(it.id) }, onReply = onReply, connection = profile, modelId = chosenModel.id)
+        return DeepSeekRequest.create(current.requestId, chat.id, current.responseBaseId(chat), current.prompt, current.baseSnapshot, history, streaming = true, effort = current.effort, onThinking = onThinking, model = current.model, attachments = current.attachments.map { contents.getValue(it.id) }, onReply = onReply, connection = profile, modelId = chosenModel.id, imageCheckResults = imageCheckResults, imageCheckAvailable = imageCheck != null && current.baseSnapshot != null && current.localBindingId != null)
     }
 
     private fun receiveThinking(token: String, thinking: AssistantThinking) {
@@ -1038,17 +1062,17 @@ class AssistantPreviewState(
     }
 
     /** Called only with a complete response. A stale/cancelled attempt can never change a turn. */
-    internal fun receive(token: String, bytes: ByteArray) {
+    internal fun receive(token: String, bytes: ByteArray, usage: com.veyarc.data.storage.AssistantTokenUsage? = null, providerId: String? = null) {
         if (requestId != token) return
         val chat = conversation ?: return
         val turn = chat.turns.lastOrNull() ?: return
         if (turn.requestId != token || turn.status != PreviewReplyStatus.RESPONDING) return
         val response = runCatching { AssistantResponseCodec.decode(bytes, token, chat.id, turn.responseBaseId(chat)) }.getOrNull()
-        if (response == null) {
+        if (response == null || response.outcome == AssistantOutcome.IMAGE_CHECK) {
             updateLast { it.copy(status = PreviewReplyStatus.ERROR, outcome = null, responseError = "Response rejected: invalid format, size, or request context. Your prompt is kept; retry is explicit.") }
         } else {
             val proposal = response.candidate?.let { AssistantCandidateValidator.validate(turn.baseSnapshot, AssistantWireWorkflow.restoreLocalFields(turn.baseSnapshot, it).toString(), compileCandidate, response.imageAdditions, imagesThrough(chat, turn.id)) }
-            updateLast { it.copy(reply = response.text, status = PreviewReplyStatus.COMPLETE, outcome = response.outcome, responseError = null, proposal = proposal) }
+            updateLast { it.copy(reply = response.text, status = PreviewReplyStatus.COMPLETE, outcome = response.outcome, responseError = null, proposal = proposal, usage = usage, providerId = providerId ?: it.providerId) }
             if (chat.turns.size == 1 && !chat.titleManuallySet && (chat.title == "New chat" || chat.title == turn.prompt.take(48))) {
                 response.chatTitle?.trim()?.let { title -> update { it.copy(title = title) } }
             }
@@ -1059,7 +1083,7 @@ class AssistantPreviewState(
 
     fun stop(status: PreviewReplyStatus = PreviewReplyStatus.STOPPED) {
         stopModelDiscovery()
-        imageApplyJob?.cancel()
+        proposalApplyJob?.cancel()
         applyGeneration++
         if (testingConnection) {
             connectionTestStatus = "Connection test interrupted. Retry only when ready; charges may still apply."
@@ -1084,7 +1108,7 @@ class AssistantPreviewState(
     fun retry() {
         if (!canRetry) return
         val token = UUID.randomUUID().toString()
-        updateLast { it.copy(reply = "", thinking = null, status = PreviewReplyStatus.RESPONDING, requestId = token, attempt = it.attempt + 1, outcome = null, responseError = null, proposal = null, effort = requireNotNull(conversation).effort, model = requireNotNull(conversation).model, connectionId = requireNotNull(conversation).connectionId, modelId = requireNotNull(conversation).modelId, providerName = requireNotNull(conversation).providerName, modelName = requireNotNull(conversation).modelName) }
+        updateLast { it.copy(reply = "", thinking = null, imageCheckResults = emptyList(), status = PreviewReplyStatus.RESPONDING, requestId = token, attempt = it.attempt + 1, outcome = null, responseError = null, proposal = null, effort = requireNotNull(conversation).effort, model = requireNotNull(conversation).model, connectionId = requireNotNull(conversation).connectionId, modelId = requireNotNull(conversation).modelId, providerName = requireNotNull(conversation).providerName, modelName = requireNotNull(conversation).modelName) }
         begin(token)
     }
 
@@ -1100,7 +1124,10 @@ class AssistantPreviewState(
         }
         enqueue(blocksChanges) {
             val create = chat.id !in savedIds
-            withContext(Dispatchers.IO) { repository.save(encode(chat), create) }
+            withContext(Dispatchers.IO) {
+                repository.save(encode(chat), create)
+                chat.turns.lastOrNull()?.let(::recordUsage)
+            }
             savedIds.add(chat.id)
             onSaved()
         }
@@ -1133,6 +1160,19 @@ class AssistantPreviewState(
                 }
             }.isSuccess,
         ) { "Chat write queue is full" }
+    }
+
+    private fun recordUsage(turn: PreviewTurn) {
+        if (!turn.provider || turn.status != PreviewReplyStatus.COMPLETE) return
+        val providerId = turn.providerId ?: connections.connections.firstOrNull { it.id == turn.connectionId }?.catalogProviderId ?: "custom:${turn.connectionId}"
+        usageRepository?.record(turn.requestId, providerId, turn.providerName, turn.modelId, turn.modelName, turn.createdAtMs, turn.usage)
+    }
+
+    private fun backfillUsage() {
+        if (usageRepository == null || !connectionsReady || isLoading) return
+        val completed = conversations.flatMap { it.turns }.filter { it.provider && it.status == PreviewReplyStatus.COMPLETE }.distinctBy { it.requestId }
+        if (completed.isEmpty()) return
+        enqueue(blocksChanges = false) { withContext(Dispatchers.IO) { completed.forEach(::recordUsage) } }
     }
 
     private fun updateLast(transform: (PreviewTurn) -> PreviewTurn) = update { chat ->
@@ -1233,7 +1273,12 @@ private fun sampleReply(scenario: PreviewScenario): String = when (scenario) {
             "Make waits deliberate" to "Allow the target app time to respond. A fixed wait describes timing; it does not establish that a screen is ready.",
             "Keep loops bounded" to "Review repeat counts and time limits. A condition must not create an unlimited run.",
             "Review every change" to "Compare the proposed blocks and their values. Unchanged blocks and local image references should be preserved.",
-            "Save after approval" to "Applying a proposal will update an editable draft. Saving will create a revision; playback remains a separate action.",
+            "Review before saving" to "Apply and save creates a new revision. Running it is separate.",
         ).forEachIndexed { index, (heading, body) -> append("${index + 1}. $heading\n$body\n\n") }
     }
+}
+
+private fun combineImageTestUsage(first: com.veyarc.data.storage.AssistantTokenUsage?, second: com.veyarc.data.storage.AssistantTokenUsage?): com.veyarc.data.storage.AssistantTokenUsage? {
+    if (first == null || second == null) return null
+    return com.veyarc.data.storage.AssistantTokenUsage(first.input + second.input, first.output + second.output, first.cached + second.cached, first.cacheWrite + second.cacheWrite, first.reasoning?.let { second.reasoning?.plus(it) })
 }

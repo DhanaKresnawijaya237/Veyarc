@@ -220,14 +220,19 @@ internal fun AllowedApplicationRow(packages: List<String>, onRemove: (String) ->
 }
 
 @Composable
-private fun AllowedApplicationIcon(packageName: String, modifier: Modifier) {
+internal fun AllowedApplicationIcon(packageName: String, modifier: Modifier, actionLabel: String = "Open") {
     val context = LocalContext.current
     val iconSize = with(LocalDensity.current) { 44.dp.roundToPx() }
     val info = remember(packageName) { runCatching { context.packageManager.getApplicationInfo(packageName, 0) }.getOrNull() }
     val label = remember(info, packageName) { info?.let { context.packageManager.getApplicationLabel(it).toString() } ?: packageName.substringAfterLast('.') }
     val icon = remember(info, iconSize) { info?.let { context.packageManager.getApplicationIcon(it).toBitmap(iconSize, iconSize).asImageBitmap() } }
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = modifier.width(72.dp).semantics { contentDescription = "Open $label" }) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = modifier.width(72.dp).semantics { contentDescription = "$actionLabel $label" }) {
         if (icon != null) Image(icon, null, Modifier.size(44.dp)) else Icon(Icons.Outlined.Apps, null, Modifier.size(44.dp))
         Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall)
     }
 }
+
+internal fun allowedApplicationPickerIntent(): Intent = Intent(Intent.ACTION_PICK_ACTIVITY).putExtra(
+    Intent.EXTRA_INTENT,
+    Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER),
+)

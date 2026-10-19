@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -27,6 +28,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -74,35 +76,13 @@ internal fun VeyarcAppShell(
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        if (!showNavigation) {
-            DestinationContent()
-        } else if (usesNavigationRail(maxWidth.value, maxHeight.value)) {
-            Row(modifier = Modifier.fillMaxSize()) {
-                if (selectionBar != null) {
-                    ManagerSelectionRail(selectionBar)
-                } else {
-                    NavigationRail {
-                        Spacer(Modifier.weight(1f))
-                        VeyarcDestination.entries.forEach { destination ->
-                            NavigationRailItem(
-                                modifier = Modifier.width(80.dp),
-                                selected = selectedDestination == destination,
-                                onClick = { onDestinationSelected(destination) },
-                                icon = { DestinationIcon(destination) },
-                                label = { Text(destination.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            )
-                            Spacer(Modifier.weight(1f))
-                        }
-                    }
-                }
-                Box(modifier = Modifier.weight(1f)) {
-                    DestinationContent()
-                }
-            }
-        } else {
-            val showLabels = LocalDensity.current.fontScale < 1.5f
-            Scaffold(
-                bottomBar = {
+        val rail = usesNavigationRail(maxWidth.value, maxHeight.value)
+        val showLabels = LocalDensity.current.fontScale < 1.5f
+        Scaffold(
+            containerColor = androidx.compose.ui.graphics.Color.Transparent,
+            contentWindowInsets = if (showNavigation && !rail) ScaffoldDefaults.contentWindowInsets else WindowInsets(0),
+            bottomBar = {
+                if (showNavigation && !rail) {
                     if (selectionBar != null) {
                         ManagerSelectionBar(selectionBar)
                     } else {
@@ -121,16 +101,31 @@ internal fun VeyarcAppShell(
                             }
                         }
                     }
-                },
-            ) { padding ->
-                Box(
-                    modifier =
-                    Modifier
-                        .fillMaxSize()
-                        .padding(padding),
-                ) {
-                    DestinationContent()
                 }
+            },
+        ) { padding ->
+            Row(Modifier.fillMaxSize().padding(padding)) {
+                if (showNavigation && rail) {
+                    if (selectionBar != null) {
+                        ManagerSelectionRail(selectionBar)
+                    } else {
+                        NavigationRail {
+                            Spacer(Modifier.weight(1f))
+                            VeyarcDestination.entries.forEach { destination ->
+                                NavigationRailItem(
+                                    modifier = Modifier.width(80.dp),
+                                    selected = selectedDestination == destination,
+                                    onClick = { onDestinationSelected(destination) },
+                                    icon = { DestinationIcon(destination) },
+                                    label = { Text(destination.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                )
+                                Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+                // Keep page state at the same composition location across layouts and chat.
+                Box(Modifier.weight(1f)) { DestinationContent() }
             }
         }
     }

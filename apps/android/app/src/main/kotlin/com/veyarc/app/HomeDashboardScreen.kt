@@ -1,11 +1,14 @@
 package com.veyarc.app
 
+import android.content.Context
+import android.content.SharedPreferences
+import android.content.res.Configuration
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -22,40 +25,49 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.ChevronLeft
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.veyarc.automation.android.ReplayFloatingController
+import com.veyarc.automation.android.ReplayWorkflowCatalog
 import com.veyarc.data.storage.RunDashboardSummary
 import com.veyarc.data.storage.StoredRunRecord
 import com.veyarc.data.storage.StoredRunStatus
@@ -63,6 +75,7 @@ import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowSummary
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
@@ -75,30 +88,72 @@ fun HomeDashboardScreen(
     onRecord: () -> Unit,
     onPlayWorkflow: (WorkflowSummary) -> Unit,
     pageState: HomeDashboardState = remember { HomeDashboardState() },
+    usageRepository: com.veyarc.data.storage.AssistantUsageRepository? = null,
+    onOpenGuide: (() -> Unit)? = null,
+    onOpenLatchSettings: (() -> Unit)? = null,
 ) {
     var dashboard by pageState.dashboard
     var workflows by pageState.workflows
-    var latestRecording by pageState.latestRecording
+    var quickPlayWorkflow by pageState.quickPlayWorkflow
     var error by remember { mutableStateOf<String?>(null) }
 
     val pageActive = LocalMainPageActive.current
+    val context = LocalContext.current
+    var latchEnabled by remember(context) { mutableStateOf(ReplayFloatingController.isEnabled(context)) }
+    var needsLatch by rememberSaveable { mutableStateOf(false) }
+    var aiUsage by pageState.aiUsage
+    LaunchedEffect(usageRepository, pageActive) {
+        if (usageRepository == null || !pageActive) return@LaunchedEffect
+        try {
+            usageRepository.observe().collect { aiUsage = it }
+        } catch (failure: Exception) {
+            if (failure is CancellationException) throw failure
+            error = "AI usage could not be loaded."
+        }
+    }
+    DisposableEffect(context, workflows, pageActive) {
+        val stopLatchObservation = if (pageActive) {
+            ReplayFloatingController.observeEnabled(context) {
+                latchEnabled = it
+                if (it) needsLatch = false
+            }
+        } else {
+            ({})
+        }
+        val preferences = context.getSharedPreferences("replay_controller", Context.MODE_PRIVATE)
+        fun refreshPlayTarget() {
+            ReplayWorkflowCatalog.load(context)
+            val target = ReplayWorkflowCatalog.selected(ReplayFloatingController.playTarget(context))
+            quickPlayWorkflow = target?.let { selected ->
+                workflows.firstOrNull { it.workflowId == selected.workflowId }?.copy(latestRevision = selected.revision)
+            }
+        }
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == null || key in setOf("play_target", "workflow_catalog", "most_recently_played", "most_recently_favorited")) refreshPlayTarget()
+        }
+        if (pageActive) {
+            refreshPlayTarget()
+            preferences.registerOnSharedPreferenceChangeListener(listener)
+        }
+        onDispose {
+            stopLatchObservation()
+            preferences.unregisterOnSharedPreferenceChangeListener(listener)
+        }
+    }
     LaunchedEffect(repository, refreshGeneration, pageActive) {
         if (!pageActive) return@LaunchedEffect
         error = null
         runCatching {
             withContext(Dispatchers.IO) {
                 val storedWorkflows = repository.listWorkflowSummaries()
-                Triple(
-                    repository.loadRunDashboard(recentLimit = 100),
+                Pair(
+                    repository.loadRunDashboard(recentLimit = 20),
                     storedWorkflows,
-                    storedWorkflows.firstOrNull { it.producerVersion == RECORDER_PRODUCER_VERSION }
-                        ?: storedWorkflows.firstOrNull(),
                 )
             }
-        }.onSuccess { (loadedDashboard, loadedWorkflows, loadedRecording) ->
+        }.onSuccess { (loadedDashboard, loadedWorkflows) ->
             dashboard = loadedDashboard
             workflows = loadedWorkflows
-            latestRecording = loadedRecording
         }.onFailure {
             if (it is CancellationException) throw it
 
@@ -121,7 +176,18 @@ fun HomeDashboardScreen(
                 if (dashboard != null) Text("${workflows.size} ${if (workflows.size == 1) "workflow" else "workflows"}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        item(key = "quick-start") { HomeQuickStart(latestRecording, onRecord, onPlayWorkflow) }
+        item(key = "quick-start") {
+            HomeQuickStart(quickPlayWorkflow, {
+                if (ReplayFloatingController.isEnabled(context)) onRecord() else needsLatch = true
+            }, onPlayWorkflow)
+            androidx.compose.animation.AnimatedVisibility(needsLatch && !latchEnabled) {
+                Column(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Turn on the edge latch to pause or stop recording.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                    if (onOpenLatchSettings != null) TextButton(onClick = onOpenLatchSettings) { Text("Edge latch settings") }
+                }
+            }
+        }
+        if (aiUsage.isNotEmpty()) item(key = "ai-usage") { AssistantUsageCard(aiUsage) }
 
         error?.let { message ->
             item { Text(message, color = MaterialTheme.colorScheme.error) }
@@ -139,18 +205,33 @@ fun HomeDashboardScreen(
                 }
             }
         } else if (loaded != null) {
+            if (workflows.isEmpty() && loaded.totalRuns == 0L && aiUsage.isEmpty() && onOpenGuide != null) {
+                item(key = "guide") {
+                    TextButton(onClick = onOpenGuide, modifier = Modifier.fillMaxWidth()) {
+                        Text("Open guide")
+                    }
+                }
+            }
             item(key = "metrics") { DashboardMetrics(loaded) }
             val names = workflows.associate { it.workflowId to it.name }
+            val loadEarlier: suspend (Int) -> Int = { count ->
+                val expected = dashboard ?: throw CancellationException()
+                val oldest = expected.recentRuns.lastOrNull() ?: throw CancellationException()
+                val earlier = withContext(Dispatchers.IO) { repository.listEarlierRunSummaries(oldest, count) }
+                if (dashboard !== expected) throw CancellationException()
+                dashboard = expected.copy(recentRuns = expected.recentRuns + earlier)
+                earlier.size
+            }
             item(key = "activity") {
                 BoxWithConstraints {
                     if (maxWidth >= 720.dp) {
                         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            RunOutcomeChart(loaded.recentRuns, names, Modifier.weight(1.3f))
+                            RunOutcomeChart(loaded.recentRuns, names, Modifier.weight(1.3f), loaded.recentRuns.size < loaded.totalRuns, loadEarlier)
                             StatusDistribution(loaded, Modifier.weight(1f))
                         }
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                            RunOutcomeChart(loaded.recentRuns, names)
+                            RunOutcomeChart(loaded.recentRuns, names, hasEarlier = loaded.recentRuns.size < loaded.totalRuns, onLoadEarlier = loadEarlier)
                             StatusDistribution(loaded)
                         }
                     }
@@ -169,7 +250,7 @@ fun HomeDashboardScreen(
 }
 
 @Composable
-private fun HomeQuickStart(latest: WorkflowSummary?, onRecord: () -> Unit, onPlay: (WorkflowSummary) -> Unit) {
+private fun HomeQuickStart(target: WorkflowSummary?, onRecord: () -> Unit, onPlay: (WorkflowSummary) -> Unit) {
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.colorScheme.surfaceContainerLow))).padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -183,11 +264,11 @@ private fun HomeQuickStart(latest: WorkflowSummary?, onRecord: () -> Unit, onPla
                     Text("Capture a workflow", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            Surface(onClick = { latest?.let(onPlay) }, enabled = latest != null, modifier = Modifier.weight(1f).fillMaxHeight(), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f)) {
+            Surface(onClick = { target?.let(onPlay) }, enabled = target != null, modifier = Modifier.weight(1f).fillMaxHeight(), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(Icons.Filled.PlayArrow, null, Modifier.size(28.dp), tint = if (latest == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary)
-                    Text("Play", style = MaterialTheme.typography.titleLarge, color = if (latest == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
-                    Text(latest?.name ?: "No workflow yet", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Icon(Icons.Filled.PlayArrow, null, Modifier.size(28.dp), tint = if (target == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary)
+                    Text("Play", style = MaterialTheme.typography.titleLarge, color = if (target == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
+                    Text(target?.name ?: "No matching workflow", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -229,130 +310,164 @@ private fun MetricCard(
 }
 
 @Composable
-private fun RunOutcomeChart(
+internal fun RunOutcomeChart(
     runs: List<StoredRunRecord>,
     workflowNames: Map<String, String>,
     modifier: Modifier = Modifier,
+    hasEarlier: Boolean = false,
+    onLoadEarlier: suspend (Int) -> Int = { 0 },
 ) {
-    var selectedIndex by remember(runs) { mutableStateOf<Int?>(null) }
-    var tooltipVisible by remember(runs) { mutableStateOf(false) }
-    val tooltipAlpha by animateFloatAsState(
-        targetValue = if (tooltipVisible) 1f else 0f,
-        animationSpec = tween(90),
-        label = "Run details tooltip",
-    )
-    var chartWidthPx by remember { mutableIntStateOf(0) }
-    val chartScroll = rememberScrollState()
-    var revealed by remember(runs) { mutableStateOf(false) }
-    val reveal by animateFloatAsState(if (revealed) 1f else 0f, tween(220), label = "Run chart reveal")
-    LaunchedEffect(runs) { revealed = true }
+    val scope = rememberCoroutineScope()
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    var pageStart by remember(runs.firstOrNull()?.runId) { mutableIntStateOf(0) }
+    var loading by remember { mutableStateOf(false) }
+    var exhausted by remember(runs.firstOrNull()?.runId) { mutableStateOf(false) }
+    var pageError by remember { mutableStateOf(false) }
     Surface(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
-        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("Recent run duration", style = MaterialTheme.typography.titleMedium)
-            if (runs.isEmpty()) {
-                Text("Run a workflow to start the chart.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else {
-                val completedColor = MaterialTheme.colorScheme.primary
-                val failedColor = MaterialTheme.colorScheme.error
-                val otherColor = MaterialTheme.colorScheme.secondary
-                val plottedRuns = runs.reversed()
-                val maximum = remember(runs) { runs.maxOf { runDuration(it).coerceAtLeast(1L) }.toFloat() }
-                val description = plottedRuns.joinToString { "${it.status.name.lowercase()} ${runDuration(it)} ms" }
-                LaunchedEffect(chartScroll.maxValue, plottedRuns.size) {
-                    chartScroll.scrollTo(chartScroll.maxValue)
-                }
-                BoxWithConstraints(modifier = Modifier.fillMaxWidth().horizontalScroll(chartScroll)) {
-                    BoxWithConstraints(modifier = Modifier.width(42.dp * plottedRuns.size).height(150.dp)) {
-                        Canvas(
-                            modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .height(120.dp)
-                                .align(Alignment.BottomCenter)
-                                .onSizeChanged { chartWidthPx = it.width }
-                                .pointerInput(plottedRuns, chartWidthPx) {
-                                    detectTapGestures(
-                                        onTap = {
-                                            tooltipVisible = false
-                                            selectedIndex = null
-                                        },
-                                        onPress = {
-                                            tryAwaitRelease()
-                                            tooltipVisible = false
-                                            kotlinx.coroutines.delay(100)
-                                            selectedIndex = null
-                                        },
-                                        onLongPress = { point ->
-                                            if (chartWidthPx > 0) {
-                                                selectedIndex =
-                                                    ((point.x / chartWidthPx) * plottedRuns.size)
-                                                        .toInt()
-                                                        .coerceIn(plottedRuns.indices)
-                                                tooltipVisible = true
-                                            }
-                                        },
-                                    )
+        BoxWithConstraints(Modifier.padding(18.dp)) {
+            val pageSize = (maxWidth / 42.dp).toInt().coerceIn(1, 20)
+            val shownStart = (pageStart / pageSize).coerceAtMost((runs.size - 1).coerceAtLeast(0) / pageSize) * pageSize
+            val plottedRuns = remember(runs, shownStart, pageSize) { runs.subList(shownStart, minOf(shownStart + pageSize, runs.size)).reversed() }
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Recent run duration", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                    IconButton(enabled = !loading && runs.isNotEmpty() && (shownStart + pageSize < runs.size || (hasEarlier && !exhausted)), onClick = {
+                        val nextStart = shownStart + pageSize
+                        pageError = false
+                        if (nextStart + pageSize <= runs.size || !hasEarlier || exhausted) {
+                            pageStart = nextStart
+                        } else {
+                            loading = true
+                            scope.launch {
+                                try {
+                                    val count = onLoadEarlier(pageSize)
+                                    exhausted = count < pageSize
+                                    if (nextStart < runs.size + count) pageStart = nextStart
+                                } catch (error: Exception) {
+                                    if (error is CancellationException) throw error
+                                    pageError = true
+                                } finally {
+                                    loading = false
                                 }
-                                .semantics {
-                                    contentDescription = "Recent run duration chart: $description. Long press a bar for details."
-                                },
-                        ) {
-                            val slotWidth = size.width / plottedRuns.size
-                            val barWidth = (slotWidth * 0.58f).coerceAtMost(28.dp.toPx())
-                            plottedRuns.forEachIndexed { index, run ->
-                                val ratio = runDuration(run).coerceAtLeast(1L) / maximum
-                                val height = (size.height * ratio).coerceAtLeast(8.dp.toPx()) * reveal
-                                val color = when (run.status) {
-                                    StoredRunStatus.COMPLETED -> completedColor
-                                    StoredRunStatus.FAILED, StoredRunStatus.INTERRUPTED -> failedColor
-                                    else -> otherColor
-                                }
-                                drawRoundRect(
-                                    color = color,
-                                    topLeft = androidx.compose.ui.geometry.Offset(
-                                        x = index * slotWidth + (slotWidth - barWidth) / 2f,
-                                        y = size.height - height,
-                                    ),
-                                    size = androidx.compose.ui.geometry.Size(barWidth, height),
-                                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()),
-                                )
                             }
                         }
-                        selectedIndex?.let { index ->
-                            val run = plottedRuns[index]
-                            val slotWidth = maxWidth / plottedRuns.size
-                            androidx.compose.material3.Surface(
-                                modifier = Modifier
-                                    .graphicsLayer(alpha = tooltipAlpha)
-                                    .padding(
-                                        start = (slotWidth * index)
-                                            .coerceIn(0.dp, (maxWidth - 190.dp).coerceAtLeast(0.dp)),
-                                    )
-                                    .width(190.dp),
-                                shape = MaterialTheme.shapes.small,
-                                tonalElevation = 6.dp,
-                                shadowElevation = 4.dp,
+                    }, modifier = Modifier.semantics { contentDescription = "Show earlier runs" }) {
+                        if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Icon(Icons.Outlined.ChevronLeft, null)
+                    }
+                    IconButton(enabled = !loading && shownStart > 0, onClick = {
+                        pageError = false
+                        pageStart = (shownStart - pageSize).coerceAtLeast(0)
+                    }) {
+                        Icon(Icons.Outlined.ChevronRight, "Show newer runs")
+                    }
+                }
+                if (pageError) Text("Earlier runs could not be loaded. Try again.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                if (runs.isEmpty()) {
+                    Text("Run a workflow to start the chart.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    val completedColor = MaterialTheme.colorScheme.primary
+                    val failedColor = MaterialTheme.colorScheme.error
+                    val otherColor = MaterialTheme.colorScheme.secondary
+                    val maximum = remember(runs) { runs.maxOf { runDuration(it).coerceAtLeast(1L) }.toFloat() }
+                    Crossfade(plottedRuns, Modifier.fillMaxWidth().height(if (landscape) 120.dp else 150.dp).testTag("recent-run-bars"), animationSpec = tween(140), label = "Recent run batch") { visibleRuns ->
+                        var selectedIndex by remember { mutableStateOf<Int?>(null) }
+                        var tooltipVisible by remember { mutableStateOf(false) }
+                        val tooltipAlpha by animateFloatAsState(if (tooltipVisible) 1f else 0f, tween(90), label = "Run details tooltip")
+                        var chartWidthPx by remember { mutableIntStateOf(0) }
+                        val description = remember(visibleRuns) { visibleRuns.joinToString { "${it.status.name.lowercase()} ${runDuration(it)} ms" } }
+                        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                            Canvas(
+                                modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(if (landscape) 96.dp else 120.dp)
+                                    .align(Alignment.BottomCenter)
+                                    .onSizeChanged { chartWidthPx = it.width }
+                                    .pointerInput(visibleRuns, chartWidthPx) {
+                                        detectTapGestures(
+                                            onTap = {
+                                                tooltipVisible = false
+                                                selectedIndex = null
+                                            },
+                                            onPress = {
+                                                tryAwaitRelease()
+                                                tooltipVisible = false
+                                                kotlinx.coroutines.delay(100)
+                                                selectedIndex = null
+                                            },
+                                            onLongPress = { point ->
+                                                if (chartWidthPx > 0) {
+                                                    selectedIndex =
+                                                        ((point.x / chartWidthPx) * visibleRuns.size)
+                                                            .toInt()
+                                                            .coerceIn(visibleRuns.indices)
+                                                    tooltipVisible = true
+                                                }
+                                            },
+                                        )
+                                    }
+                                    .semantics {
+                                        contentDescription = "Recent run duration chart: $description. Long press a bar for details."
+                                    },
                             ) {
-                                Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                    Text(
-                                        workflowNames[run.workflowId] ?: "Deleted workflow",
-                                        style = MaterialTheme.typography.labelLarge,
+                                val slotWidth = size.width / visibleRuns.size
+                                val barWidth = (slotWidth * 0.58f).coerceAtMost(28.dp.toPx())
+                                for (index in visibleRuns.indices) {
+                                    val run = visibleRuns[index]
+                                    val ratio = runDuration(run).coerceAtLeast(1L) / maximum
+                                    val height = (size.height * ratio).coerceAtLeast(8.dp.toPx())
+                                    val color = when (run.status) {
+                                        StoredRunStatus.COMPLETED -> completedColor
+                                        StoredRunStatus.FAILED, StoredRunStatus.INTERRUPTED -> failedColor
+                                        else -> otherColor
+                                    }
+                                    drawRoundRect(
+                                        color = color,
+                                        topLeft = androidx.compose.ui.geometry.Offset(
+                                            x = index * slotWidth + (slotWidth - barWidth) / 2f,
+                                            y = size.height - height,
+                                        ),
+                                        size = androidx.compose.ui.geometry.Size(barWidth, height),
+                                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()),
                                     )
-                                    Text(
-                                        "${run.status.displayName()} · ${formatDuration(runDuration(run))}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
-                                    Text(
-                                        formatRunTime(run.startedAtMs),
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
+                                }
+                            }
+                            selectedIndex?.let { index ->
+                                val run = visibleRuns[index]
+                                val slotWidth = maxWidth / visibleRuns.size
+                                androidx.compose.material3.Surface(
+                                    modifier = Modifier
+                                        .graphicsLayer(alpha = tooltipAlpha)
+                                        .padding(
+                                            start = (slotWidth * index)
+                                                .coerceIn(0.dp, (maxWidth - 190.dp).coerceAtLeast(0.dp)),
+                                        )
+                                        .width(190.dp),
+                                    shape = MaterialTheme.shapes.small,
+                                    tonalElevation = 6.dp,
+                                    shadowElevation = 4.dp,
+                                ) {
+                                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text(
+                                            workflowNames[run.workflowId] ?: "Deleted workflow",
+                                            style = MaterialTheme.typography.labelLarge,
+                                        )
+                                        Text(
+                                            "${run.status.displayName()} · ${formatDuration(runDuration(run))}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                        Text(
+                                            formatRunTime(run.startedAtMs),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
+                    Text("Hold a bar for details", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Text("Hold a bar for details", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -360,29 +475,43 @@ private fun RunOutcomeChart(
 
 @Composable
 private fun StatusDistribution(dashboard: RunDashboardSummary, modifier: Modifier = Modifier) {
+    val counts = remember(dashboard.statusCounts) { dashboard.statusCounts.entries.filter { it.value > 0 }.sortedByDescending { it.value } }
+    val colors = MaterialTheme.colorScheme
+    val statusColors = mapOf(
+        StoredRunStatus.COMPLETED to colors.primary,
+        StoredRunStatus.FAILED to colors.error,
+        StoredRunStatus.RUNNING to colors.tertiary,
+        StoredRunStatus.STOPPED to colors.secondary,
+        StoredRunStatus.CANCELLED to colors.outline,
+        StoredRunStatus.INTERRUPTED to colors.error.copy(alpha = 0.65f),
+    )
     Surface(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
-        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Run status", style = MaterialTheme.typography.titleMedium)
+        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Run status", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                Text("${dashboard.totalRuns} ${if (dashboard.totalRuns == 1L) "run" else "runs"}", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+            }
             if (dashboard.totalRuns == 0L) {
                 Text("No run history yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
-                dashboard.statusCounts.entries
-                    .sortedByDescending { it.value }
-                    .forEach { (status, count) ->
-                        val progress by animateFloatAsState(count.toFloat() / dashboard.totalRuns, tween(220), label = "Run status count")
-                        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Row(modifier = Modifier.fillMaxWidth()) {
-                                Text(status.displayName(), modifier = Modifier.weight(1f))
-                                Text(count.toString(), fontWeight = FontWeight.SemiBold)
-                            }
-                            LinearProgressIndicator(
-                                progress = { progress },
-                                modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small),
-                                strokeCap = StrokeCap.Round,
-                                drawStopIndicator = {},
-                            )
+                Canvas(Modifier.fillMaxWidth().height(12.dp).clip(CircleShape)) {
+                    var start = 0f
+                    counts.forEach { (status, count) ->
+                        val width = size.width * count.toFloat() / dashboard.totalRuns
+                        drawRect(statusColors.getValue(status), androidx.compose.ui.geometry.Offset(start, 0f), androidx.compose.ui.geometry.Size(width, size.height))
+                        start += width
+                    }
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    counts.forEach { (status, count) ->
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Spacer(Modifier.size(8.dp).clip(CircleShape).background(statusColors.getValue(status)))
+                            Text(status.displayName(), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                            Text(count.toString(), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Text("${(count * 100.0 / dashboard.totalRuns).roundToInt()}%", Modifier.width(44.dp), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.End)
                         }
                     }
+                }
             }
         }
     }
@@ -431,5 +560,3 @@ internal fun formatDuration(durationMs: Long?): String {
     val seconds = durationMs / 1000
     return if (seconds < 60) "${seconds}s" else "${seconds / 60}m ${seconds % 60}s"
 }
-
-private const val RECORDER_PRODUCER_VERSION = "android-recorder"

@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -33,19 +32,13 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccountTree
-import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.DarkMode
-import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.LightMode
-import androidx.compose.material.icons.outlined.Policy
 import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.SettingsBrightness
@@ -60,7 +53,6 @@ import androidx.compose.material3.LocalRippleConfiguration
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -70,21 +62,20 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.veyarc.automation.android.AccessibilityGestureDispatcher
 import com.veyarc.automation.android.EdgeLatchPlayTarget
 import com.veyarc.automation.android.ReplayFloatingController
@@ -93,7 +84,6 @@ import com.veyarc.data.storage.StoredRunRecord
 import com.veyarc.data.storage.StoredRunStatus
 import com.veyarc.data.storage.WorkflowRepository
 import com.veyarc.data.storage.WorkflowSummary
-import com.veyarc.feature.assistant.AssistantMarkdown
 import com.veyarc.feature.assistant.AssistantPanel
 import com.veyarc.feature.assistant.SettingsChoiceTile
 import com.veyarc.model.bundle.BundleLimits
@@ -110,14 +100,17 @@ import java.util.Locale
 @Composable
 fun SettingsScreen(
     assistant: com.veyarc.feature.assistant.AssistantPreviewState? = null,
-    assistantConnectionRequestId: Int = 0,
-    onAssistantConnectionRequestConsumed: () -> Unit = {},
     repository: WorkflowRepository,
     refreshGeneration: Int,
     themePreference: ThemePreference,
     onThemePreferenceChange: (ThemePreference) -> Unit,
     modifier: Modifier = Modifier,
     storageState: SettingsStorageState = remember { SettingsStorageState() },
+    requestedSection: String? = null,
+    onSectionRequestConsumed: () -> Unit = {},
+    onOpenHome: () -> Unit = {},
+    particlesEnabled: Boolean = true,
+    onParticlesEnabledChange: (Boolean) -> Unit = {},
 ) {
     val context = LocalContext.current
     val assistantKeys = remember(context) { com.veyarc.data.storage.AssistantKeyStore(context.applicationContext) }
@@ -146,16 +139,30 @@ fun SettingsScreen(
     var exportRunOffset by remember { mutableIntStateOf(0) }
     var pendingExportRun by remember { mutableStateOf<StoredRunRecord?>(null) }
     var expandedSection by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(assistantConnectionRequestId) {
-        if (assistantConnectionRequestId > 0) {
-            expandedSection = "assistant"
-            onAssistantConnectionRequestConsumed()
+    val settingsListState = rememberLazyListState()
+    fun openSection(section: String) {
+        expandedSection = section
+        val index = when (section) {
+            "assistant" -> 1
+            "connections" -> 2
+            "appearance" -> 3
+            "latch" -> 4
+            "data" -> 5
+            "guide" -> 6
+            "about" -> 7
+            else -> return
+        }
+        scope.launch { settingsListState.animateScrollToItem(index) }
+    }
+    LaunchedEffect(requestedSection) {
+        if (requestedSection != null) {
+            openSection(requestedSection)
+            onSectionRequestConsumed()
         }
     }
     var confirmShizukuDownload by remember { mutableStateOf(false) }
     var chooseShizukuSource by remember { mutableStateOf(false) }
-    var openGuide by remember { mutableStateOf<Pair<String, String>?>(null) }
-    var noticesVisible by remember { mutableStateOf(false) }
+    var openGuide by rememberSaveable { mutableStateOf<GuideCategory?>(null) }
 
     fun loadExportRuns(reset: Boolean) {
         val request = ++exportRunRequest
@@ -302,6 +309,26 @@ fun SettingsScreen(
         }
     }
 
+    val exportStatistics = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            storageOperation = "Exporting statistics…"
+            try {
+                withContext(Dispatchers.IO) {
+                    val statistics = repository.loadAggregateStatistics()
+                    val prices = com.veyarc.data.storage.AssistantUsagePrices(context)
+                    requireNotNull(context.contentResolver.openOutputStream(uri)) { "Could not open the destination" }.bufferedWriter(Charsets.UTF_8).use { statistics.writeCsv(it, prices::price) }
+                }
+                message = "Statistics exported."
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                message = "Export failed: ${error.message ?: error.javaClass.simpleName}"
+            } finally {
+                storageOperation = null
+            }
+        }
+    }
+
     DisposableEffect(shizukuProbe) {
         shizukuProbe.setCallback { shizuku = it }
         val stopLatchObservation = ReplayFloatingController.observeEnabled(context) { latchEnabled = it }
@@ -320,6 +347,7 @@ fun SettingsScreen(
     CompositionLocalProvider(LocalRippleConfiguration provides null) {
         LazyColumn(
             modifier = modifier.fillMaxSize(),
+            state = settingsListState,
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(14.dp),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp, vertical = 20.dp),
@@ -333,14 +361,14 @@ fun SettingsScreen(
                 }
             }
             item {
-                SettingsCard(
-                    title = "AI connection",
-                    summary = if (assistant?.providerEnabled == true) "Enabled for this session" else "Disabled",
-                    summaryActive = assistant?.providerEnabled == true,
-                    expanded = expandedSection == "assistant",
-                    onToggle = { expandedSection = if (expandedSection == "assistant") null else "assistant" },
-                ) {
-                    AssistantConnectionSettings(assistantKeys, assistant, onHelp = { openGuide = "AI chat help" to "ai-chat-guide.md" })
+                AssistantConnectionSettings(assistantKeys, assistant) { toggle, connections ->
+                    SettingsCard(
+                        title = "AI connection",
+                        summary = null,
+                        expanded = expandedSection == "assistant",
+                        onToggle = { expandedSection = if (expandedSection == "assistant") null else "assistant" },
+                        trailing = toggle,
+                    ) { connections() }
                 }
             }
             item {
@@ -417,6 +445,10 @@ fun SettingsScreen(
                             )
                         }
                     }
+                    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Particles", Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                        SettingsEnableSwitch("Particles", checked = particlesEnabled, modifier = Modifier.testTag("particles-enable"), onCheckedChange = onParticlesEnabledChange)
+                    }
                 }
             }
             item {
@@ -430,10 +462,7 @@ fun SettingsScreen(
                         IconButton(onClick = { ReplayFloatingController.resetPosition(context) }) {
                             Icon(Icons.Outlined.RestartAlt, "Reset latch position")
                         }
-                        Switch(
-                            checked = latchEnabled,
-                            onCheckedChange = { enabled -> ReplayFloatingController.setEnabled(context, enabled) },
-                        )
+                        SettingsEnableSwitch("Enable edge latch", checked = latchEnabled, modifier = Modifier.testTag("latch-enable"), onCheckedChange = { enabled -> ReplayFloatingController.setEnabled(context, enabled) })
                     },
                 ) {
                     Text("Play button", style = MaterialTheme.typography.titleMedium)
@@ -469,7 +498,7 @@ fun SettingsScreen(
                     onToggle = { expandedSection = if (expandedSection == "data") null else "data" },
                 ) {
                     Text(
-                        "Keep a copy of workflows and finished runs, or bring one back.",
+                        "Transfer workflows and runs, or export usage and statistics.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -490,10 +519,21 @@ fun SettingsScreen(
                             loadExportRuns(reset = true)
                         },
                     )
+                    TextButton(modifier = Modifier.align(Alignment.CenterHorizontally), enabled = storageOperation == null, onClick = { exportStatistics.launch("Veyarc statistics.csv") }) { Text("Export statistics (CSV)") }
                     TextButton(modifier = Modifier.align(Alignment.CenterHorizontally), enabled = runCount > 0 && storageOperation == null, onClick = { confirmClearHistory = true }) {
                         Icon(Icons.Outlined.RestartAlt, null, Modifier.padding(end = 8.dp).size(18.dp), tint = MaterialTheme.colorScheme.error)
                         Text("Clear finished run history", color = MaterialTheme.colorScheme.error)
                     }
+                }
+            }
+            item {
+                SettingsCard(
+                    title = "Guide",
+                    summary = null,
+                    expanded = expandedSection == "guide",
+                    onToggle = { expandedSection = if (expandedSection == "guide") null else "guide" },
+                ) {
+                    SettingsGuideLinks(onOpen = { openGuide = it })
                 }
             }
             item {
@@ -504,38 +544,22 @@ fun SettingsScreen(
                     expanded = expandedSection == "about",
                     onToggle = { expandedSection = if (expandedSection == "about") null else "about" },
                 ) {
-                    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainerHighest) {
-                            Image(painterResource(R.drawable.veyarc_logo), null, Modifier.size(60.dp).padding(10.dp))
+                            Image(painterResource(R.drawable.veyarc_logo), null, Modifier.size(72.dp).padding(12.dp).testTag("about-logo"))
                         }
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text("Veyarc", style = MaterialTheme.typography.titleLarge)
-                            @Suppress("DEPRECATION")
-                            Text("${packageInfo.versionName} · Build ${packageInfo.versionCode}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
+                        Text("Veyarc", style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
+                        Text("Record, edit, and run workflows.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                        @Suppress("DEPRECATION")
+                        Text("${packageInfo.versionName} · Build ${packageInfo.versionCode}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
                     }
                     StatusRow("Android", "${Build.VERSION.RELEASE} • API ${Build.VERSION.SDK_INT}")
                     StatusRow("Device", "${Build.MANUFACTURER} ${Build.MODEL}")
-                    Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-                        Column {
-                            AboutLink("Android guide", Icons.Outlined.HelpOutline) { openGuide = "Android guide" to "android-beta-guide.md" }
-                            AboutLink("Device compatibility notes", Icons.Outlined.Info) { openGuide = "Device compatibility notes" to "android-device-compatibility.md" }
-                            AboutLink("Third-party notices", Icons.Outlined.Policy) { noticesVisible = true }
-                        }
-                    }
                 }
             }
             message?.let { status -> item { Text(status, color = MaterialTheme.colorScheme.primary) } }
         }
 
-        if (noticesVisible) {
-            AlertDialog(
-                onDismissRequest = { noticesVisible = false },
-                title = { Text("CommonMark · BSD 2-Clause") },
-                text = { Text(COMMONMARK_LICENSE, Modifier.verticalScroll(rememberScrollState()), style = MaterialTheme.typography.bodySmall) },
-                confirmButton = { TextButton(onClick = { noticesVisible = false }) { Text("Done") } },
-            )
-        }
         if (confirmClearHistory) {
             AlertDialog(
                 onDismissRequest = { confirmClearHistory = false },
@@ -558,69 +582,66 @@ fun SettingsScreen(
             )
         }
         if (chooseExportWorkflow) {
-            AlertDialog(
-                onDismissRequest = { chooseExportWorkflow = false },
-                title = { Text("Export workflow") },
-                text = {
-                    LazyColumn {
-                        items(workflows, key = WorkflowSummary::workflowId) { workflow ->
-                            TextButton(
-                                modifier = Modifier.fillMaxWidth(),
-                                onClick = {
-                                    chooseExportWorkflow = false
-                                    pendingExportWorkflow = workflow
-                                    exportBundle.launch("${workflow.name.safeFileName()}.veyarc")
-                                },
-                            ) { Text(workflow.name, modifier = Modifier.fillMaxWidth()) }
+            val exportList = rememberLazyListState()
+            AssistantPanel("Export workflow", onDismiss = { chooseExportWorkflow = false }, scrollBody = false, bodyState = exportList) {
+                LazyColumn(state = exportList, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(workflows, key = WorkflowSummary::workflowId) { workflow ->
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(18.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            onClick = {
+                                chooseExportWorkflow = false
+                                pendingExportWorkflow = workflow
+                                exportBundle.launch("${workflow.name.safeFileName()}.veyarc")
+                            },
+                        ) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(workflow.name, style = MaterialTheme.typography.titleSmall)
+                                Text("Revision ${workflow.latestRevision}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
-                },
-                confirmButton = {},
-                dismissButton = { TextButton(onClick = { chooseExportWorkflow = false }) { Text("Cancel") } },
-            )
+                }
+            }
         }
         if (chooseExportRun) {
-            AlertDialog(
-                onDismissRequest = { chooseExportRun = false },
-                title = { Text("Export run") },
-                text = {
-                    val finishedRuns = exportRuns.filter { it.status != StoredRunStatus.RUNNING }
-                    if (loadingExportRuns && exportRuns.isEmpty()) {
-                        androidx.compose.material3.CircularProgressIndicator()
-                    } else {
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (finishedRuns.isEmpty()) item { Text("No finished runs yet.") }
-                            items(finishedRuns, key = StoredRunRecord::runId) { run ->
-                                val name = run.name ?: workflows.firstOrNull { it.workflowId == run.workflowId }?.name ?: "Workflow run"
-                                Surface(onClick = {
-                                    chooseExportRun = false
-                                    pendingExportRun = run
-                                    val time = SimpleDateFormat("yyyy-MM-dd HH-mm", Locale.ROOT).format(Date(run.startedAtMs))
-                                    exportRun.launch("${name.safeFileName()} $time.veyarc-run")
-                                }, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-                                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        Text(name, style = MaterialTheme.typography.titleSmall)
-                                        Text(
-                                            "${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(run.startedAtMs))} · ${run.status.name.lowercase().replaceFirstChar(Char::uppercase)}",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                }
-                            }
-                            if (loadingExportRuns) {
-                                item { androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth()) }
-                            } else if (moreExportRuns) {
-                                item {
-                                    TextButton(onClick = { loadExportRuns(reset = false) }, modifier = Modifier.fillMaxWidth()) { Text("Load older runs") }
+            val exportList = rememberLazyListState()
+            AssistantPanel("Export run", onDismiss = { chooseExportRun = false }, scrollBody = false, bodyState = exportList) {
+                val finishedRuns = exportRuns.filter { it.status != StoredRunStatus.RUNNING }
+                if (loadingExportRuns && exportRuns.isEmpty()) {
+                    androidx.compose.material3.CircularProgressIndicator()
+                } else {
+                    LazyColumn(state = exportList, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (finishedRuns.isEmpty()) item { Text("No finished runs yet.") }
+                        items(finishedRuns, key = StoredRunRecord::runId) { run ->
+                            val name = run.name ?: workflows.firstOrNull { it.workflowId == run.workflowId }?.name ?: "Workflow run"
+                            Surface(onClick = {
+                                chooseExportRun = false
+                                pendingExportRun = run
+                                val time = SimpleDateFormat("yyyy-MM-dd HH-mm", Locale.ROOT).format(Date(run.startedAtMs))
+                                exportRun.launch("${name.safeFileName()} $time.veyarc-run")
+                            }, shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(name, style = MaterialTheme.typography.titleSmall)
+                                    Text(
+                                        "${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(run.startedAtMs))} · ${run.status.name.lowercase().replaceFirstChar(Char::uppercase)}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
                                 }
                             }
                         }
+                        if (loadingExportRuns) {
+                            item { androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth()) }
+                        } else if (moreExportRuns) {
+                            item {
+                                TextButton(onClick = { loadExportRuns(reset = false) }, modifier = Modifier.fillMaxWidth()) { Text("Load older runs") }
+                            }
+                        }
                     }
-                },
-                confirmButton = {},
-                dismissButton = { TextButton(onClick = { chooseExportRun = false }) { Text("Cancel") } },
-            )
+                }
+            }
         }
         if (confirmShizukuDownload) {
             AlertDialog(
@@ -657,53 +678,16 @@ fun SettingsScreen(
                 dismissButton = { TextButton(onClick = { chooseShizukuSource = false }) { Text("Cancel") } },
             )
         }
-        openGuide?.let { (title, assetName) ->
-            val guide by produceState<String?>(initialValue = if (assetName == "ai-chat-guide.md") AI_CHAT_HELP else null, key1 = assetName) {
-                if (value == null) {
-                    value = withContext(Dispatchers.IO) {
-                        runCatching { context.assets.open(assetName).bufferedReader().use { it.readText() } }
-                            .getOrElse { "This guide could not be loaded." }
-                    }
-                }
-            }
-            val guideLines = remember(guide) { guide?.lines()?.filter(String::isNotBlank).orEmpty() }
-            val guideList = rememberLazyListState()
-            val guideContent: @Composable () -> Unit = {
-                LazyColumn(state = guideList, overscrollEffect = null, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (guide == null) item { androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth()) }
-                    items(guideLines) { line ->
-                        when {
-                            line.startsWith("# ") -> Unit
-
-                            assetName == "android-beta-guide.md" -> AssistantMarkdown(line)
-
-                            line.startsWith("## ") -> Text(line.removePrefix("## "), style = MaterialTheme.typography.titleMedium)
-
-                            line.startsWith("- ") -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("•", style = MaterialTheme.typography.bodyMedium)
-                                Text(line.removePrefix("- "), style = MaterialTheme.typography.bodyMedium)
-                            }
-
-                            else -> Text(line, style = MaterialTheme.typography.bodyMedium)
-                        }
-                    }
-                }
-            }
-            if (assetName == "ai-chat-guide.md") {
-                AssistantPanel(title, onDismiss = { openGuide = null }, scrollBody = false, bodyState = guideList, content = guideContent)
-            } else {
-                Dialog(onDismissRequest = { openGuide = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-                    Card(Modifier.fillMaxWidth(0.94f).fillMaxHeight(0.9f)) {
-                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-                                TextButton(onClick = { openGuide = null }) { Text("Close") }
-                            }
-                            guideContent()
-                        }
-                    }
-                }
-            }
+        openGuide?.let { category ->
+            SettingsGuide(
+                category,
+                onDismiss = { openGuide = null },
+                onShizukuSetup = { openUrl(context, "https://shizuku.rikka.app/guide/setup/") },
+                onNavigate = { target ->
+                    openGuide = null
+                    if (target == "home") onOpenHome() else openSection(target)
+                },
+            )
         }
     }
 }
@@ -757,6 +741,7 @@ private fun SettingsCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 64.dp)
+                    .testTag("settings-header-$title")
                     .clickable(onClick = onToggle)
                     .padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -807,15 +792,6 @@ private fun StatusRow(
     }
 }
 
-@Composable
-private fun AboutLink(label: String, icon: ImageVector, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Icon(icon, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
-        Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-        Icon(Icons.Outlined.ChevronRight, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
 private data class StorageSnapshot(
     val workflows: List<WorkflowSummary>,
     val runCount: Long,
@@ -841,27 +817,6 @@ private fun openUrl(context: android.content.Context, url: String) {
 }
 
 private data class DownloadSource(val label: String, val url: String)
-
-private val AI_CHAT_HELP = """
-    ## Get started
-    - Add a DeepSeek key and enable AI in Settings.
-    - In the Editor, tap Ask AI or Create with AI.
-
-    ## Review changes
-    - Expand a changes card to compare Before and After.
-    - Apply updates your draft. Undo is in the editor.
-    - Save and Run are separate. Check AI changes first.
-
-    ## Reply controls
-    - Copy copies text. Branch starts a new chat.
-    - Resend is a paid retry. Stop cancels, but may still cost.
-
-    ## Need help?
-    - Draft changed? Send a new message.
-    - AI off after restart? Enable it in Settings.
-    - Key or balance error? Check your DeepSeek account.
-    - See Privacy and costs for shared data and charges.
-""".trimIndent()
 
 private val COMMONMARK_LICENSE = """
     Copyright (c) 2015, Atlassian Pty Ltd

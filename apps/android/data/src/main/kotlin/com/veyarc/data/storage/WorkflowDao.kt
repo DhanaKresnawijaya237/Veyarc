@@ -175,6 +175,15 @@ internal interface WorkflowDao {
     )
     fun listRunSummaries(limit: Int, offset: Int = 0): List<RunSummaryRow>
 
+    @Query(
+        "SELECT runId, workflowId, revision, status, startedAtMs, finishedAtMs, " +
+            "interruptionReason, completedSteps, totalSteps, folderId, name, " +
+            "eventHistoryJson IS NOT NULL AS hasStoredDetails FROM run_records " +
+            "WHERE startedAtMs < :beforeMs OR (startedAtMs = :beforeMs AND runId < :beforeId) " +
+            "ORDER BY startedAtMs DESC, runId DESC LIMIT :limit",
+    )
+    fun listEarlierRunSummaries(beforeMs: Long, beforeId: String, limit: Int): List<RunSummaryRow>
+
     @Query("SELECT status, COUNT(*) AS count FROM run_records GROUP BY status")
     fun countRunsByStatus(): List<RunStatusCountRow>
 
@@ -192,6 +201,32 @@ internal interface WorkflowDao {
             "FROM run_records GROUP BY workflowId",
     )
     fun listWorkflowRunActivity(): List<WorkflowRunActivityRow>
+
+    @Query(
+        "SELECT r.workflowId, COALESCE(w.name, MAX(r.name), 'Deleted workflow') AS workflowName, r.revision, r.status, " +
+            "COUNT(*) AS runs, SUM(CASE WHEN r.finishedAtMs >= r.startedAtMs THEN 1 ELSE 0 END) AS timedRuns, " +
+            "SUM(CASE WHEN r.finishedAtMs >= r.startedAtMs THEN r.finishedAtMs - r.startedAtMs ELSE 0 END) AS durationMs, " +
+            "MIN(CASE WHEN r.finishedAtMs >= r.startedAtMs THEN r.finishedAtMs - r.startedAtMs END) AS shortestMs, " +
+            "MAX(CASE WHEN r.finishedAtMs >= r.startedAtMs THEN r.finishedAtMs - r.startedAtMs END) AS longestMs, " +
+            "SUM(r.completedSteps) AS completedSteps, SUM(r.totalSteps) AS plannedSteps, COUNT(r.totalSteps) AS plannedRuns, " +
+            "MIN(r.startedAtMs) AS firstRunAtMs, MAX(r.startedAtMs) AS lastRunAtMs " +
+            "FROM run_records r LEFT JOIN workflows w ON w.workflowId = r.workflowId " +
+            "GROUP BY r.workflowId, r.revision, r.status ORDER BY workflowName, r.workflowId, r.revision, r.status",
+    )
+    fun runAggregates(): List<RunAggregateGroup>
+
+    @Query(
+        "SELECT (SELECT COUNT(*) FROM workflow_revisions) AS revisions, " +
+            "(SELECT COALESCE(SUM(encryptedByteLength),0) FROM workflow_revisions) AS revisionBytes, " +
+            "(SELECT COUNT(*) FROM asset_blobs) AS templates, " +
+            "(SELECT COALESCE(SUM(encryptedByteLength),0) FROM asset_blobs) AS templateBytes, " +
+            "(SELECT COUNT(*) FROM asset_previews) AS previews, " +
+            "(SELECT COALESCE(SUM(encryptedByteLength),0) FROM asset_previews) AS previewBytes, " +
+            "(SELECT COUNT(*) FROM chat_conversations) AS chats, " +
+            "(SELECT COALESCE(SUM(encryptedByteLength),0) FROM chat_conversations) AS chatBytes, " +
+            "(SELECT COUNT(*) FROM workflow_folders) AS workflowFolders, (SELECT COUNT(*) FROM run_folders) AS runFolders",
+    )
+    fun storageStatistics(): StorageStatistics
 
     @Query(
         "SELECT COUNT(*) FROM run_records " +
