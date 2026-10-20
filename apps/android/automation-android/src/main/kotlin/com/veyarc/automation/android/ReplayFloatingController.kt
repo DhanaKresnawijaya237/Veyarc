@@ -1010,7 +1010,7 @@ object ReplayFloatingController {
 
             recordingState == ControlCenterRecordingState.PAUSED -> {
                 recordingActions?.let { recording ->
-                    actions += ControlAction(android.R.drawable.ic_media_play, "Resume recording") {
+                    actions += ControlAction(android.R.drawable.ic_media_play, "Continue recording") {
                         expanded = false
                         recording.onResume()
                     }
@@ -1031,7 +1031,7 @@ object ReplayFloatingController {
 
             else -> {
                 recordingActions?.let { recording ->
-                    actions += ControlAction(android.R.drawable.ic_menu_add, "Start recording") {
+                    actions += ControlAction(R.drawable.ic_controller_record, "Start recording") {
                         expanded = false
                         recording.onStart()
                     }

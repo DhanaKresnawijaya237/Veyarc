@@ -101,10 +101,18 @@ fun CoordinateRecorderScreen(
         }
         Unit
     }
+    val addImageBlock = {
+        if (controller.requestImageBlock()) {
+            var host = context
+            while (host is android.content.ContextWrapper && host !is android.app.Activity) host = host.baseContext
+            (host as? android.app.Activity)?.moveTaskToBack(true)
+        }
+        Unit
+    }
     BackHandler(onBack = close)
     AnimatedContent(builder.isOpen, transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(100)) }, label = "recording steps") { open ->
         if (open) {
-            RecordingBuilderScreen(controller, builder, resume)
+            RecordingBuilderScreen(controller, builder, resume, addImageBlock)
         } else {
             RecordingPanel(
                 state = state,
@@ -116,12 +124,22 @@ fun CoordinateRecorderScreen(
                 onNotificationSettings = { RecordingForegroundService.openNotificationSettings(context) },
                 modifier = modifier,
                 latchEnabled = latchEnabled,
-                onAdd = { controller.openBuilder(add = true) },
-                onSteps = { controller.openBuilder(add = false) },
+                onAdd = addImageBlock,
+                onSteps = controller::openBuilder,
                 preparing = builder.preparing,
-                destination = builder.destination,
+                destination = controller.recordingDestination,
             )
         }
+    }
+    if (builder.error != null) {
+        AlertDialog(onDismissRequest = controller::dismissWarning, title = { Text("Recording paused") }, text = { Text(requireNotNull(builder.error)) }, confirmButton = {
+            TextButton(controller::dismissWarning) { Text("OK") }
+        })
+    }
+    if (builder.confirmRestart) {
+        AlertDialog(onDismissRequest = controller::dismissRestart, title = { Text("Start a new recording?") }, text = { Text("This replaces the previous recording. Its unfinished changes will be lost.") }, confirmButton = {
+            TextButton(controller::confirmRestart) { Text("New recording") }
+        }, dismissButton = { TextButton(controller::dismissRestart) { Text("Cancel") } })
     }
     if (confirmClose) {
         AlertDialog(
@@ -194,6 +212,7 @@ internal fun RecordingPanel(
             Column(Modifier.verticalScroll(rememberScrollState()).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
                     Column(Modifier.fillMaxWidth().padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        if (active) Text(destination, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
                         Icon(if (paused) Icons.Filled.Pause else Icons.Filled.FiberManualRecord, null, Modifier.size(40.dp), tint = if (active && !paused) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
                         Text(if (active) formatElapsed(elapsed) else "Record a workflow", style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center)
                         Text(
@@ -211,7 +230,6 @@ internal fun RecordingPanel(
                     }
                 }
                 if (active) {
-                    Text(destination, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
                     if (preparing) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         TextButton(onAdd, Modifier.weight(1f), enabled = !preparing) {
@@ -227,7 +245,7 @@ internal fun RecordingPanel(
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         OutlinedButton(if (paused) onResume else onPause, Modifier.weight(1f), enabled = !preparing && (!paused || latchEnabled)) {
                             Icon(if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, null, Modifier.padding(end = 8.dp))
-                            Text(if (paused) "Resume" else "Pause")
+                            Text(if (paused) "Continue recording" else "Pause")
                         }
                         Button(onStop, Modifier.weight(1f)) {
                             Icon(Icons.Filled.Stop, null, Modifier.padding(end = 8.dp))
@@ -246,7 +264,10 @@ internal fun RecordingPanel(
                         OutlinedButton(onNotificationSettings) { Text("Notification settings") }
                     }
                     if (!latchEnabled && reason == null) Text("Turn on the edge latch before recording.", color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
-                    Button(onStart, Modifier.fillMaxWidth(), enabled = latchEnabled) { Text(if (reason == null) "Start recording" else "Try again") }
+                    Button(onStart, Modifier.fillMaxWidth(), enabled = latchEnabled) {
+                        Icon(Icons.Filled.FiberManualRecord, null, Modifier.size(18.dp).padding(end = 4.dp))
+                        Text(if (reason == null) "Start recording" else "Try again")
+                    }
                 }
             }
         }

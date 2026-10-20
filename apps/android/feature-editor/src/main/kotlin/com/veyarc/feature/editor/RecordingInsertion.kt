@@ -14,6 +14,13 @@ data class RecordingInsertion(val path: StepListPath = StepListPath(), val index
 
     fun anchored(draft: WorkflowDraft): RecordingInsertion = copy(afterStepId = draft.stepsAt(path).getOrNull(index - 1)?.id)
 
+    fun outside(draft: WorkflowDraft): RecordingInsertion? {
+        val parent = path.segments.lastOrNull() ?: return null
+        val outerPath = StepListPath(path.segments.dropLast(1))
+        val index = draft.stepsAt(outerPath).indexOfFirst { it.id == parent.parentId }
+        return if (index < 0) null else RecordingInsertion(outerPath, index + 1).anchored(draft)
+    }
+
     fun resolve(draft: WorkflowDraft): RecordingInsertion? {
         var steps = draft.steps
         for (segment in path.segments) {

@@ -2025,26 +2025,26 @@ private fun StepListFooter(
     )
     Column(Modifier.fillMaxWidth()) {
         if (bottomGap > 0.dp) Spacer(Modifier.height(bottomGap))
-        LocalRecordingEditorControls.current?.let { recording ->
-            TextButton(onClick = { recording.onRecord(path, steps.size) }, enabled = !recording.preparing, modifier = Modifier.align(Alignment.CenterHorizontally).testTag("record-here-${path.segments.lastOrNull()?.branch ?: "workflow"}")) {
-                if (recording.preparing) {
-                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                } else {
-                    Icon(Icons.Outlined.Add, null, Modifier.size(18.dp))
+        val recording = LocalRecordingEditorControls.current
+        Row(Modifier.align(Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+            AddBlockMenu(
+                compact = true,
+                canAddJump = steps.isNotEmpty() || path.segments.isNotEmpty(),
+                modifier = Modifier,
+                onRecord = recording?.let { { it.onRecord(path, steps.size) } },
+                onAdd = { kind ->
+                    val added = draft.addStep(path, kind, draft.allowedPackagesText.firstPackageOrDefault())
+                    onDraftChange(if (liveRecording) added.updateStep(path, steps.size) { it.emptyRecordingBody() } else added)
+                },
+                onPaste = { clipboard?.onPaste?.invoke(path, steps.size) },
+            )
+            recording?.let {
+                TextButton(onClick = { it.onRecord(path, steps.size) }, enabled = !it.preparing, modifier = Modifier.testTag("record-here-${path.segments.lastOrNull()?.branch ?: "workflow"}")) {
+                    if (it.preparing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Text(if (it.preparing) "Preparing…" else "Record here")
                 }
-                Text(if (recording.preparing) "Preparing…" else "Record here", Modifier.padding(start = 6.dp))
             }
         }
-        AddBlockMenu(
-            compact = true,
-            canAddJump = steps.isNotEmpty() || path.segments.isNotEmpty(),
-            modifier = Modifier.align(Alignment.CenterHorizontally).offset(y = (-10).dp),
-            onAdd = { kind ->
-                val added = draft.addStep(path, kind, draft.allowedPackagesText.firstPackageOrDefault())
-                onDraftChange(if (liveRecording) added.updateStep(path, steps.size) { it.emptyRecordingBody() } else added)
-            },
-            onPaste = { clipboard?.onPaste?.invoke(path, steps.size) },
-        )
     }
 }
 
@@ -2203,9 +2203,6 @@ private fun StepCard(
                 AnimatedVisibility(expanded, enter = expandVertically(tween(140)) + fadeIn(tween(90)), exit = shrinkVertically(tween(120)) + fadeOut(tween(70))) {
                     Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         EditableStepSummary(draft, path, index, step, onDraftChange)
-                        LocalRecordingEditorControls.current?.let { recording ->
-                            TextButton(onClick = { recording.onRecord(path, index + 1) }, enabled = !recording.preparing) { Text(if (recording.preparing) "Preparing…" else "Record after this block") }
-                        }
                         issues.forEach { issue ->
                             Text(issue.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                         }
@@ -2252,6 +2249,7 @@ private fun StepCard(
                     modifier = Modifier.align(Alignment.BottomStart).offset(x = 2.dp, y = 24.dp).zIndex(3f),
                     onAdd = onInsertAfter,
                     onPaste = { clipboard?.onPaste?.invoke(path, index + 1) },
+                    onRecord = LocalRecordingEditorControls.current?.let { recording -> { recording.onRecord(path, index + 1) } },
                 )
             }
         }
@@ -2368,6 +2366,7 @@ private fun StageBoundaryRow(
                 modifier = Modifier.align(Alignment.BottomStart).offset(x = 2.dp, y = 24.dp).zIndex(3f),
                 onAdd = onInsertAfter,
                 onPaste = { clipboard?.onPaste?.invoke(path, index + 1) },
+                onRecord = LocalRecordingEditorControls.current?.let { recording -> { recording.onRecord(path, index + 1) } },
             )
         }
     }
@@ -2787,6 +2786,7 @@ private fun AddBlockMenu(
     subdued: Boolean = false,
     canAddJump: Boolean = true,
     modifier: Modifier = Modifier,
+    onRecord: (() -> Unit)? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
     val clipboard = LocalBlockClipboardActions.current
@@ -2811,13 +2811,18 @@ private fun AddBlockMenu(
             VeyarcChoicePicker(
                 title = "Add block",
                 options = buildList {
-                    if (clipboard?.clipboardAvailable == true) add(VeyarcChoice("paste", "Paste blocks"))
-                    WorkflowStepKind.entries.filter { it != WorkflowStepKind.JUMP || canAddJump }.forEach { add(VeyarcChoice(it.name, it.displayName())) }
+                    if (onRecord != null) add(VeyarcChoice("record", "Record here", highlighted = true))
+                    if (clipboard?.clipboardAvailable == true) add(VeyarcChoice("paste", "Paste blocks", highlighted = true))
+                    WorkflowStepKind.entries.filter { it != WorkflowStepKind.JUMP || canAddJump }.forEach { add(VeyarcChoice(it.name, it.displayName(), group = 1)) }
                 },
                 onDismiss = { expanded = false },
                 onSelect = { choice ->
                     expanded = false
-                    if (choice.id == "paste") onPaste() else onAdd(WorkflowStepKind.entries.first { it.name == choice.id })
+                    when (choice.id) {
+                        "record" -> onRecord?.invoke()
+                        "paste" -> onPaste()
+                        else -> onAdd(WorkflowStepKind.entries.first { it.name == choice.id })
+                    }
                 },
             )
         }

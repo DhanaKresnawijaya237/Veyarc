@@ -324,7 +324,7 @@ internal class ByteLimitInputStream(
     }
 }
 
-internal fun encryptTemplateBitmap(bitmap: Bitmap, assetId: AssetId = AssetId("template-${WorkflowIds.newUuid()}")): BundleAsset = try {
+fun encryptTemplateBitmap(bitmap: Bitmap, assetId: AssetId = AssetId("template-${WorkflowIds.newUuid()}")): BundleAsset = try {
     val pixelCount = bitmap.width.toLong() * bitmap.height
     if (pixelCount > DecodedTemplate.MAX_TEMPLATE_PIXELS) {
         throw TemplateAssetImportException("The selected image is too large to use as a template")

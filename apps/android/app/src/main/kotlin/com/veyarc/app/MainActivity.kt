@@ -513,7 +513,7 @@ class MainActivity : ComponentActivity() {
         }
         if (intent?.action == com.veyarc.feature.recorder.CoordinateRecordingController.ACTION_OPEN_RECORDING) {
             intent.action = null
-            if (recordingSession.controller.isSessionActive()) fullScreenDestination = FullScreenDestination.RECORDER
+            if (recordingSession.controller.isSessionActive() || recordingSession.controller.builder.value.confirmRestart) fullScreenDestination = FullScreenDestination.RECORDER
             return
         }
         if (intent?.action != ReplayFloatingController.ACTION_OPEN_WORKFLOW) return

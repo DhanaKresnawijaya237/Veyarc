@@ -73,6 +73,7 @@ data class VeyarcChoice(
     val detail: String? = null,
     val destructive: Boolean = false,
     val group: Int = 0,
+    val highlighted: Boolean = false,
 )
 
 /** A bounded, searchable picker that stays usable in portrait, landscape, and long lists. */
@@ -257,7 +258,11 @@ fun VeyarcChoicePicker(
                                                 Column(modifier = Modifier.weight(1f)) {
                                                     Text(
                                                         option.label,
-                                                        color = if (option.destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                                                        color = when {
+                                                            option.destructive -> MaterialTheme.colorScheme.error
+                                                            option.highlighted -> MaterialTheme.colorScheme.primary
+                                                            else -> MaterialTheme.colorScheme.onSurface
+                                                        },
                                                         maxLines = 2,
                                                         overflow = TextOverflow.Ellipsis,
                                                     )

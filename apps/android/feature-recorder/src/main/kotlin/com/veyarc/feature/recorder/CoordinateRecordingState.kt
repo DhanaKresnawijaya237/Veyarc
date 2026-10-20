@@ -65,4 +65,13 @@ data class RecordingBuilderState(
     val preparing: Boolean = false,
     val destination: String = "Workflow",
     val error: String? = null,
+    val image: com.veyarc.feature.editor.RecordingImageDraft? = null,
+    val imageKind: RecordingImageBlock? = null,
+    val confirmRestart: Boolean = false,
 )
+
+enum class RecordingImageBlock(val label: String) {
+    IF("If image appears"),
+    WHILE("While image appears"),
+    WAIT("Wait for image"),
+}
