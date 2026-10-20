@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -57,11 +56,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.SoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -89,6 +91,20 @@ fun VeyarcChoicePicker(
     val maxHeight = configuration.screenHeightDp.dp *
         if (configuration.orientation == Configuration.ORIENTATION_PORTRAIT) 0.7f else 0.9f
     val searchable = options.size > 7
+    val textMeasurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val titleStyle = MaterialTheme.typography.titleLarge
+    val optionStyle = MaterialTheme.typography.bodyLarge
+    val detailStyle = MaterialTheme.typography.bodySmall
+    val pickerWidth = remember(title, options, searchable, textMeasurer, density, titleStyle, optionStyle, detailStyle) {
+        with(density) {
+            val titleWidth = textMeasurer.measure(title, titleStyle).size.width.toDp() + if (searchable) 144.dp else 88.dp
+            val optionWidth = options.maxOfOrNull { option ->
+                maxOf(textMeasurer.measure(option.label, optionStyle).size.width, option.detail?.let { textMeasurer.measure(it, detailStyle).size.width } ?: 0).toDp() + 108.dp
+            } ?: 0.dp
+            maxOf(titleWidth, optionWidth).coerceIn(260.dp, 400.dp)
+        }
+    }
     var searchExpanded by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     val currentQuery by rememberUpdatedState(query)
@@ -156,8 +172,7 @@ fun VeyarcChoicePicker(
             Box(modifier = Modifier.align(Alignment.Center).fillMaxWidth().padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
                 Surface(
                     modifier = Modifier
-                        .widthIn(max = 480.dp)
-                        .fillMaxWidth()
+                        .width(pickerWidth)
                         .heightIn(max = maxHeight)
                         .animateContentSize(tween(160)),
                     shape = RoundedCornerShape(24.dp),
@@ -187,8 +202,8 @@ fun VeyarcChoicePicker(
                                         title,
                                         modifier = Modifier.weight(1f).graphicsLayer { alpha = titleAlpha },
                                         style = MaterialTheme.typography.titleLarge,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
+                                        maxLines = if (searchExpanded) 1 else Int.MAX_VALUE,
+                                        textAlign = TextAlign.Center,
                                     )
                                     if (searchable) {
                                         Surface(
@@ -251,26 +266,27 @@ fun VeyarcChoicePicker(
                                             shape = RoundedCornerShape(14.dp),
                                             color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
                                         ) {
-                                            Row(
+                                            Box(
                                                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 14.dp, vertical = 8.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
+                                                contentAlignment = Alignment.Center,
                                             ) {
-                                                Column(modifier = Modifier.weight(1f)) {
+                                                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                                                     Text(
                                                         option.label,
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        style = optionStyle,
+                                                        textAlign = TextAlign.Center,
                                                         color = when {
                                                             option.destructive -> MaterialTheme.colorScheme.error
                                                             option.highlighted -> MaterialTheme.colorScheme.primary
                                                             else -> MaterialTheme.colorScheme.onSurface
                                                         },
-                                                        maxLines = 2,
-                                                        overflow = TextOverflow.Ellipsis,
                                                     )
                                                     option.detail?.let { detail ->
-                                                        Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                        Text(detail, modifier = Modifier.fillMaxWidth(), style = detailStyle, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
                                                     }
                                                 }
-                                                if (selected) Icon(Icons.Outlined.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary)
+                                                if (selected) Icon(Icons.Outlined.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.align(Alignment.CenterEnd))
                                             }
                                         }
                                     }
