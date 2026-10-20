@@ -2026,7 +2026,7 @@ private fun StepListFooter(
     Column(Modifier.fillMaxWidth()) {
         if (bottomGap > 0.dp) Spacer(Modifier.height(bottomGap))
         val recording = LocalRecordingEditorControls.current
-        Row(Modifier.align(Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.align(Alignment.CenterHorizontally), horizontalArrangement = Arrangement.spacedBy(32.dp), verticalAlignment = Alignment.CenterVertically) {
             AddBlockMenu(
                 compact = true,
                 canAddJump = steps.isNotEmpty() || path.segments.isNotEmpty(),
