@@ -199,6 +199,8 @@ fun WorkflowEditorScreen(
     onWorkflowClosed: () -> Unit = {},
     modifier: Modifier = Modifier,
     onOpenGuide: (() -> Unit)? = null,
+    recordingControls: RecordingEditorControls? = null,
+    initialRecordingDraft: WorkflowDraft? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -264,7 +266,11 @@ fun WorkflowEditorScreen(
                 } else {
                     request.draft
                 }
-                session.openPrepared(opened, request.validation.takeIf { opened === request.draft })
+                if (request.draft === initialRecordingDraft) {
+                    session.openRecordingDraft(opened)
+                } else {
+                    session.openPrepared(opened, request.validation.takeIf { opened === request.draft })
+                }
                 session.cacheRevisionSummaries(opened.workflowId, request.revisions.takeIf { opened === request.draft }.orEmpty())
                 statusMessage = "Workflow opened."
                 if (request.consumeInitialBundle) onInitialBundleConsumed()
@@ -307,6 +313,12 @@ fun WorkflowEditorScreen(
         }
         val latest = maxOf(revision, revisions.maxOfOrNull(RevisionSummary::revision) ?: revision)
         return prepareRevision(revisions, consumeInitial) { WorkflowDraft.fromRevision(data, journalFileName, latest) }
+    }
+
+    LaunchedEffect(initialRecordingDraft) {
+        val recorded = initialRecordingDraft ?: return@LaunchedEffect
+        val request = prepareRevision(emptyList(), true) { recorded }
+        if (session.isDirty) pendingReplacement = request else applyReplacement(request)
     }
 
     LaunchedEffect(initialBundle, initialRecordingJournalFileName) {
@@ -478,6 +490,10 @@ fun WorkflowEditorScreen(
     }
 
     fun requestCloseDraft() {
+        recordingControls?.onClose?.let {
+            it()
+            return
+        }
         if (session.isDirty) pendingClose = true else discardDraft()
     }
 
@@ -618,34 +634,36 @@ fun WorkflowEditorScreen(
         )
     } else {
         BackHandler { requestCloseDraft() }
-        WorkflowDraftScreen(
-            draft = draft,
-            validation = requireNotNull(validation),
-            isBusy = isBusy,
-            statusMessage = statusMessage,
-            session = session,
-            onDraftChange = session::update,
-            onAskAi = onAskAi?.takeUnless { isBusy },
-            onSave = { saveWorkflow(draft) },
-            onRun = { saveAndRun(draft) },
-            onValidate = {
-                statusMessage = validation.issues.firstOrNull()?.displayMessage()
-                    ?: "Workflow is valid."
-            },
-            onEditGeometry = { path, index -> geometryTarget = GeometryTarget(path, index) },
-            onEditCondition = { path, index -> conditionTarget = ConditionTarget(path, index) },
-            onAddTemplate = { templatePicker.launch("image/*") },
-            loadPreview = ::loadDraftPreview,
-            revisions = session.revisionSummaries,
-            onOpenRevision = ::openRevision,
-            onPickApplication = {
-                appPicker.launch(allowedApplicationPickerIntent())
-            },
-            clipboardAvailable = clipboardAvailable,
-            onCopyBlocks = ::copyBlocks,
-            onPasteBlocks = ::requestBlockPaste,
-            modifier = modifier,
-        )
+        CompositionLocalProvider(LocalRecordingEditorControls provides recordingControls) {
+            WorkflowDraftScreen(
+                draft = draft,
+                validation = requireNotNull(validation),
+                isBusy = isBusy,
+                statusMessage = statusMessage,
+                session = session,
+                onDraftChange = session::update,
+                onAskAi = onAskAi?.takeUnless { isBusy },
+                onSave = { saveWorkflow(draft) },
+                onRun = { saveAndRun(draft) },
+                onValidate = {
+                    statusMessage = validation.issues.firstOrNull()?.displayMessage()
+                        ?: "Workflow is valid."
+                },
+                onEditGeometry = { path, index -> geometryTarget = GeometryTarget(path, index) },
+                onEditCondition = { path, index -> conditionTarget = ConditionTarget(path, index) },
+                onAddTemplate = { templatePicker.launch("image/*") },
+                loadPreview = ::loadDraftPreview,
+                revisions = session.revisionSummaries,
+                onOpenRevision = ::openRevision,
+                onPickApplication = {
+                    appPicker.launch(allowedApplicationPickerIntent())
+                },
+                clipboardAvailable = clipboardAvailable,
+                onCopyBlocks = ::copyBlocks,
+                onPasteBlocks = ::requestBlockPaste,
+                modifier = modifier,
+            )
+        }
         pendingBlockPaste?.let { pending ->
             val missing = pending.entry.images.filter { image ->
                 image.id.value in pending.entry.steps.clipboardImageIds() && draft.assetDescriptors.none { it.assetId == image.id }
@@ -1513,7 +1531,19 @@ private fun EditorToolbar(
     onOpenRevision: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val recording = LocalRecordingEditorControls.current
     val clipboard = LocalBlockClipboardActions.current
+    if (recording?.onClose != null) {
+        Surface(modifier, shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.94f)) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Recording paused", Modifier.weight(1f).padding(start = 8.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                IconButton(session::undo, enabled = session.canUndo && !isBusy) { Icon(Icons.AutoMirrored.Outlined.Undo, "Undo") }
+                IconButton(session::redo, enabled = session.canRedo && !isBusy) { Icon(Icons.AutoMirrored.Outlined.Redo, "Redo") }
+                IconButton(recording.onClose, enabled = !isBusy) { Icon(Icons.Outlined.CheckCircle, "Back to recording") }
+            }
+        }
+        return
+    }
     Surface(modifier = modifier.testTag("workflow-toolbar"), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.92f), tonalElevation = 0.dp) {
         Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(
@@ -1874,6 +1904,7 @@ private fun StepEditorItem(
     dragCoordinator: StepDragCoordinator,
 ) {
     val steps = draft.stepsAt(path)
+    val liveRecording = LocalRecordingEditorControls.current?.onClose != null
     val activeDrag = dragCoordinator.source
     val dropTarget = dragCoordinator.target
     val sourceIndex = if (activeDrag?.path == path) steps.indexOfFirst { it.id == activeDrag.stepId } else -1
@@ -1954,14 +1985,8 @@ private fun StepEditorItem(
                     dragCoordinator.end()
                 },
                 onInsertAfter = { kind ->
-                    onDraftChange(
-                        draft.insertStep(
-                            path,
-                            index + 1,
-                            kind,
-                            draft.allowedPackagesText.firstPackageOrDefault(),
-                        ),
-                    )
+                    val added = draft.insertStep(path, index + 1, kind, draft.allowedPackagesText.firstPackageOrDefault())
+                    onDraftChange(if (liveRecording) added.updateStep(path, index + 1) { it.emptyRecordingBody() } else added)
                 },
             )
         }
@@ -1976,6 +2001,7 @@ private fun StepListFooter(
     dragCoordinator: StepDragCoordinator,
 ) {
     val clipboard = LocalBlockClipboardActions.current
+    val liveRecording = LocalRecordingEditorControls.current?.onClose != null
     val density = androidx.compose.ui.platform.LocalDensity.current
     val steps = draft.stepsAt(path)
     val activeDrag = dragCoordinator.source
@@ -1999,11 +2025,24 @@ private fun StepListFooter(
     )
     Column(Modifier.fillMaxWidth()) {
         if (bottomGap > 0.dp) Spacer(Modifier.height(bottomGap))
+        LocalRecordingEditorControls.current?.let { recording ->
+            TextButton(onClick = { recording.onRecord(path, steps.size) }, enabled = !recording.preparing, modifier = Modifier.align(Alignment.CenterHorizontally).testTag("record-here-${path.segments.lastOrNull()?.branch ?: "workflow"}")) {
+                if (recording.preparing) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Outlined.Add, null, Modifier.size(18.dp))
+                }
+                Text(if (recording.preparing) "Preparing…" else "Record here", Modifier.padding(start = 6.dp))
+            }
+        }
         AddBlockMenu(
             compact = true,
             canAddJump = steps.isNotEmpty() || path.segments.isNotEmpty(),
             modifier = Modifier.align(Alignment.CenterHorizontally).offset(y = (-10).dp),
-            onAdd = { kind -> onDraftChange(draft.addStep(path, kind, draft.allowedPackagesText.firstPackageOrDefault())) },
+            onAdd = { kind ->
+                val added = draft.addStep(path, kind, draft.allowedPackagesText.firstPackageOrDefault())
+                onDraftChange(if (liveRecording) added.updateStep(path, steps.size) { it.emptyRecordingBody() } else added)
+            },
             onPaste = { clipboard?.onPaste?.invoke(path, steps.size) },
         )
     }
@@ -2164,6 +2203,9 @@ private fun StepCard(
                 AnimatedVisibility(expanded, enter = expandVertically(tween(140)) + fadeIn(tween(90)), exit = shrinkVertically(tween(120)) + fadeOut(tween(70))) {
                     Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         EditableStepSummary(draft, path, index, step, onDraftChange)
+                        LocalRecordingEditorControls.current?.let { recording ->
+                            TextButton(onClick = { recording.onRecord(path, index + 1) }, enabled = !recording.preparing) { Text(if (recording.preparing) "Preparing…" else "Record after this block") }
+                        }
                         issues.forEach { issue ->
                             Text(issue.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                         }

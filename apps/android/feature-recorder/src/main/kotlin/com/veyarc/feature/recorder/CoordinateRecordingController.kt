@@ -25,7 +25,13 @@ import com.veyarc.data.storage.AesGcmFileCodec
 import com.veyarc.data.storage.AndroidKeystoreKeySource
 import com.veyarc.data.storage.EncryptedRecordingJournalStore
 import com.veyarc.data.storage.WorkflowRepository
+import com.veyarc.feature.editor.RecordingInsertion
+import com.veyarc.feature.editor.StepListPath
+import com.veyarc.feature.editor.WorkflowDraft
+import com.veyarc.feature.editor.WorkflowEditorSession
+import com.veyarc.feature.editor.insertRecording
 import com.veyarc.model.PackageName
+import com.veyarc.model.bundle.WorkflowBundle
 import com.veyarc.recording.RawTouchCoordinateMapper
 import com.veyarc.recording.RecordingAnalyzer
 import com.veyarc.recording.RecordingClassificationConfig
@@ -37,6 +43,7 @@ import com.veyarc.recording.RecordingRawTrace
 import com.veyarc.recording.RecordingTouchAction
 import com.veyarc.recording.RecordingWorkflowConverter
 import com.veyarc.recording.TouchDisplayRotation
+import com.veyarc.recording.segmentAfter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -56,6 +63,25 @@ class CoordinateRecordingController(
     private val appContext = context.applicationContext
     private val source = ShizukuTouchRecording(appContext)
     private val workflowRepository = WorkflowRepository(appContext)
+    var sourceDraft: WorkflowDraft? = null
+        private set
+    val editorSession = WorkflowEditorSession()
+    val repository: WorkflowRepository get() = workflowRepository
+    private val _builder = MutableStateFlow(RecordingBuilderState())
+    val builder: StateFlow<RecordingBuilderState> = _builder.asStateFlow()
+
+    @Volatile private var preparingSegment = false
+
+    @Volatile private var finishAfterSegment = false
+    private var consumedEvents = 0
+    private var lastSegmentPackage: String? = null
+    private var insertion = RecordingInsertion()
+    private var openBuilderOnPause = false
+    private var pendingAdd = false
+    private var finalSegmentReady = false
+    private var pausedAtRealtime = 0L
+
+    @Volatile private var pausedDurationMillis = 0L
     private val sessionCleanup = RecordingSessionCleanup()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val eventExecutor: ExecutorService = ThreadPoolExecutor(
@@ -132,6 +158,8 @@ class CoordinateRecordingController(
         onResume = ::resume,
         onStop = ::stop,
         onServiceLost = { onRecordingServiceLost() },
+        onAdd = { openBuilder(add = true) },
+        onSteps = { openBuilder(add = false) },
     )
 
     private val stopLatchObservation = ReplayFloatingController.observeEnabled(appContext) { enabled ->
@@ -242,6 +270,24 @@ class CoordinateRecordingController(
 
     fun start() = start(destinationFolderId = null)
 
+    fun startInWorkflow(baseDraft: WorkflowDraft, destination: RecordingInsertion, assets: List<com.veyarc.model.bundle.BundleAsset>): Boolean {
+        if (active) return false
+        val prepared = baseDraft.copy(assets = assets)
+        require(destination.isValid(prepared)) { "Choose a valid recording section." }
+        val actual = currentRecordingViewportSnapshot(appContext)?.viewport
+        if (actual != prepared.viewport) {
+            showUnavailable("Record in this workflow's original orientation and screen size.")
+            return false
+        }
+        start()
+        if (!isSessionActive()) return false
+        editorSession.openRecordingDraft(prepared)
+        sourceDraft = baseDraft
+        insertion = destination.anchored(prepared)
+        _builder.value = _builder.value.copy(destination = destination.label(prepared))
+        return true
+    }
+
     fun start(destinationFolderId: String?) {
         if (active) return
         if (!ReplayFloatingController.isEnabled(appContext)) {
@@ -301,6 +347,18 @@ class CoordinateRecordingController(
             return
         }
 
+        sourceDraft = null
+        editorSession.createForAssistant(recordingViewport)
+        editorSession.update(requireNotNull(editorSession.draft).copy(name = "Recorded workflow"))
+        _builder.value = RecordingBuilderState()
+        insertion = RecordingInsertion()
+        consumedEvents = 0
+        lastSegmentPackage = null
+        preparingSegment = false
+        finishAfterSegment = false
+        finalSegmentReady = false
+        pausedDurationMillis = 0L
+        pausedAtRealtime = 0L
         sessionId = id
         journalFile = file
         journal = openedJournal
@@ -393,11 +451,160 @@ class CoordinateRecordingController(
         requestStop(RecordingStopCause.USER_STOP)
     }
 
+    fun openBuilder(add: Boolean) {
+        if (!isSessionActive()) return
+        openBuilderOnPause = true
+        pendingAdd = add
+        if (!paused) pause()
+        if (!pauseRequested && !preparingSegment) showBuilder()
+    }
+
+    fun closeBuilder() {
+        _builder.value = _builder.value.copy(isOpen = false, showAdd = false)
+    }
+
+    fun discard() {
+        if (active) requestStop(RecordingStopCause.USER_STOP, "Recording cancelled.")
+    }
+
+    fun dismissAdd() {
+        _builder.value = _builder.value.copy(showAdd = false)
+    }
+
+    fun showAdd() {
+        _builder.value = _builder.value.copy(showAdd = true, error = null)
+    }
+
+    fun setDestination(path: StepListPath, index: Int) {
+        if (!isSessionPaused() || pauseRequested || preparingSegment) return
+        val draft = editorSession.draft ?: return
+        val chosen = RecordingInsertion(path, index).anchored(draft)
+        if (!chosen.isValid(draft)) return
+        insertion = chosen
+        _builder.value = _builder.value.copy(destination = chosen.label(draft), error = null)
+    }
+
+    fun continueOutside() {
+        val draft = editorSession.draft ?: return
+        val parent = insertion.path.segments.lastOrNull() ?: return
+        val outside = StepListPath(insertion.path.segments.dropLast(1))
+        val index = draft.stepsAt(outside).indexOfFirst { it.id == parent.parentId }
+        if (index >= 0) {
+            insertion = RecordingInsertion(outside, index + 1).anchored(draft)
+            _builder.value = _builder.value.copy(destination = insertion.label(draft), error = null)
+        }
+    }
+
+    val isInsideSection: Boolean get() = insertion.path.segments.isNotEmpty()
+    val recordingDestination: String get() = editorSession.draft?.let(insertion::label) ?: "Workflow"
+
+    fun addBlock(step: com.veyarc.model.WorkflowStep, assets: List<com.veyarc.model.bundle.BundleAsset> = emptyList(), imageName: String = "", editCondition: Boolean = false) {
+        if (!isSessionPaused() || pauseRequested || preparingSegment) return
+        val current = editorSession.draft ?: return
+        if (!insertion.isValid(current)) {
+            _builder.value = _builder.value.copy(error = "Choose a recording section first.")
+            return
+        }
+        insertion = requireNotNull(insertion.resolve(current))
+        val addedAt = insertion
+        var draft = current
+        for ((index, asset) in assets.withIndex()) draft = draft.addAsset(asset, if (index == 0) "Crop" else "Background")
+        if (imageName.isNotBlank() && assets.isNotEmpty()) draft = draft.renameAsset(assets.first().assetId, imageName)
+        draft = draft.insertSteps(insertion.path, insertion.index, listOf(step))
+        val branch = when (step) {
+            is com.veyarc.model.IfElse -> com.veyarc.feature.editor.NestedBranch.IF_THEN
+            is com.veyarc.model.WhileStep -> com.veyarc.feature.editor.NestedBranch.WHILE_BODY
+            is com.veyarc.model.Repeat -> com.veyarc.feature.editor.NestedBranch.REPEAT_BODY
+            else -> null
+        }
+        insertion = if (branch != null) RecordingInsertion(insertion.path.child(step.id, branch), 0) else insertion.copy(index = insertion.index + 1).anchored(draft)
+        editorSession.update(draft.copy(collapsedStepIds = draft.collapsedStepIds - step.id))
+        if (editCondition) editorSession.editConditionAt(addedAt.path, addedAt.index)
+        _builder.value = _builder.value.copy(showAdd = false, destination = insertion.label(draft), error = null)
+    }
+
+    private fun showBuilder() {
+        if (!isSessionPaused() || preparingSegment || pauseRequested) return
+        _builder.value = _builder.value.copy(isOpen = true, showAdd = pendingAdd || _builder.value.showAdd, preparing = false)
+        openBuilderOnPause = false
+        pendingAdd = false
+        val intent = Intent(ACTION_OPEN_RECORDING).setClassName(appContext.packageName, "${appContext.packageName}.MainActivity")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        runCatching { appContext.startActivity(intent) }
+    }
+
+    /** The event worker freezes the journal first; only the main thread edits the live draft. */
+    private fun prepareSegment() {
+        if (!active || preparingSegment) return
+        preparingSegment = true
+        val id = sessionId
+        val snapshot = journal?.snapshot() ?: run {
+            failSession("The recording journal is unavailable.")
+            return
+        }
+        val segment = RecordingJournalSnapshot(snapshot.header, snapshot.events, snapshot.cursor, 0, 0, true).segmentAfter(consumedEvents)
+        val originalFirst = snapshot.events.getOrNull(consumedEvents)
+        val origin = when (originalFirst) {
+            is RecordingJournalLine.Touch -> originalFirst.elapsedMillis
+            is RecordingJournalLine.ForegroundPackage -> originalFirst.elapsedMillis
+            else -> 0L
+        }
+        val analysis = runCatching {
+            RecordingAnalyzer.analyze(
+                segment,
+                RecordingClassificationConfig(
+                    ViewConfiguration.get(appContext).scaledTouchSlop.toDouble(),
+                    ViewConfiguration.getTapTimeout().toLong(),
+                    ViewConfiguration.getLongPressTimeout().toLong(),
+                ),
+            )
+        }.getOrElse {
+            failSession("Could not prepare recorded actions: ${it.message}")
+            return
+        }
+        val converted = if (segment.events.any { it is RecordingJournalLine.Touch } || analysis.foregroundTransitions.any { it.currentPackage in observedThirdPartyPackages }) {
+            runCatching { RecordingWorkflowConverter.convert(analysis, observedThirdPartyPackages.toList(), excludedControlTransitions = excludedControlTransitions.mapTo(mutableSetOf()) { it - origin }) }
+                .getOrElse {
+                    failSession("Could not prepare recorded actions: ${it.message}")
+                    return
+                }
+        } else {
+            null
+        }
+        val lastPackage = lastThirdPartyForegroundPackage?.value
+        mainHandler.post {
+            if (!active || sessionId != id) return@post
+            try {
+                if (converted != null) {
+                    val merged = requireNotNull(editorSession.draft).insertRecording(converted.bundle, insertion, lastSegmentPackage)
+                    editorSession.update(merged.first)
+                    insertion = merged.second
+                    lastSegmentPackage = lastPackage
+                }
+                consumedEvents = snapshot.events.size
+                preparingSegment = false
+                _builder.value = _builder.value.copy(preparing = false, destination = editorSession.draft?.let(insertion::label) ?: "Workflow")
+                if (finishAfterSegment) {
+                    finalSegmentReady = true
+                    enqueue { finishSession() }
+                } else if (openBuilderOnPause) {
+                    showBuilder()
+                } else if (resumeRequested) {
+                    resume()
+                }
+            } catch (error: Exception) {
+                failSession("Could not place recorded actions: ${error.message}")
+            }
+        }
+    }
+
     /** Pauses raw observation without closing the encrypted journal. */
     fun pause() {
         if (!active || stopRequested || paused || pauseRequested) return
         pauseRequested = true
         paused = true
+        pausedAtRealtime = SystemClock.elapsedRealtime()
+        _builder.value = _builder.value.copy(preparing = true)
         mainHandler.removeCallbacks(startSourceWhenEmergencyReadyRunnable)
         mainHandler.removeCallbacks(timerRunnable)
         mainHandler.removeCallbacks(foregroundPollRunnable)
@@ -418,7 +625,7 @@ class CoordinateRecordingController(
             stop()
             return
         }
-        if (pauseRequested) {
+        if (pauseRequested || preparingSegment) {
             resumeRequested = true
             return
         }
@@ -440,6 +647,16 @@ class CoordinateRecordingController(
             )
             return
         }
+        val draft = editorSession.draft
+        if (draft == null || !insertion.isValid(draft)) {
+            _builder.value = _builder.value.copy(isOpen = true, error = "Choose Record here in a section before resuming.")
+            return
+        }
+        insertion = requireNotNull(insertion.resolve(draft))
+        pausedDurationMillis += (SystemClock.elapsedRealtime() - pausedAtRealtime).coerceAtLeast(0L)
+        pausedAtRealtime = 0L
+        _builder.value = _builder.value.copy(isOpen = false, error = null, destination = insertion.label(draft))
+        finalSegmentReady = false
         paused = false
         recordingStartReceivedTimestampMicros = null
         pendingTouchLines = null
@@ -470,6 +687,7 @@ class CoordinateRecordingController(
     ): Boolean {
         if (!sessionCleanup.requestStop(cause)) return false
         stopRequested = true
+        _builder.value = _builder.value.copy(isOpen = false, showAdd = false, preparing = true)
         stopFailureReason = failureReason
         mainHandler.removeCallbacks(startSourceWhenEmergencyReadyRunnable)
         mainHandler.removeCallbacks(timerRunnable)
@@ -549,9 +767,7 @@ class CoordinateRecordingController(
         ReplayFloatingController.setRecordingState(ControlCenterRecordingState.PAUSED)
         RecordingForegroundService.update(appContext, "Recording paused")
         pauseRequested = false
-        mainHandler.post {
-            if (resumeRequested) resume()
-        }
+        prepareSegment()
     }
 
     private fun processFrame(event: ShizukuTouchRecordingEvent.Frame) {
@@ -589,7 +805,7 @@ class CoordinateRecordingController(
         // The helper's kernel timestamp and the app process can use different clock domains on
         // OEM builds. The wrapper captures an app-process monotonic timestamp for every callback,
         // so journal timing remains ordered and reflects the real gesture duration.
-        val elapsed = (event.receivedTimestampMicros / 1_000L - sessionStartedElapsedRealtime).coerceAtLeast(0L)
+        val elapsed = (event.receivedTimestampMicros / 1_000L - sessionStartedElapsedRealtime - pausedDurationMillis).coerceAtLeast(0L)
         val monotonicElapsed = appendElapsed(elapsed)
         val xRange = maxX - minX
         val yRange = maxY - minY
@@ -740,7 +956,16 @@ class CoordinateRecordingController(
     }
 
     private fun finishSession() {
-        if (!active || !sessionCleanup.claimTerminal()) return
+        if (!active) return
+        if (!finalSegmentReady) {
+            finishAfterSegment = true
+            if (!preparingSegment) {
+                settlePendingTouchBeforeClose(preservePartialTouch = false)
+                prepareSegment()
+            }
+            return
+        }
+        if (!sessionCleanup.claimTerminal()) return
         val stopCause = sessionCleanup.currentStopCause()
         active = false
         mainHandler.removeCallbacks(startSourceWhenEmergencyReadyRunnable)
@@ -793,16 +1018,15 @@ class CoordinateRecordingController(
 
                 else -> null
             }
-            val workflowConversion = analysis?.let { recordingAnalysis ->
-                runCatching {
-                    RecordingWorkflowConverter.convert(
-                        analysis = recordingAnalysis,
-                        allowedPackages = observedThirdPartyPackages.toList(),
-                        excludedControlTransitions = excludedControlTransitions,
-                    )
-                }
+            val workflowConversion = runCatching {
+                val build = requireNotNull(editorSession.draft).buildBundle()
+                com.veyarc.recording.RecordingWorkflowDraft(
+                    requireNotNull(build.bundle) { build.issues.firstOrNull()?.message ?: "Recording is not ready to save." },
+                    analysis?.foregroundTransitions.orEmpty(),
+                    emptyList(),
+                )
             }
-            val convertedWorkflow = workflowConversion?.getOrNull()
+            val convertedWorkflow = workflowConversion.getOrNull()
             val workflowSave = convertedWorkflow?.let { draft ->
                 runCatching {
                     workflowRepository.saveRevision(draft.bundle, destinationWorkflowFolderId)
@@ -839,7 +1063,7 @@ class CoordinateRecordingController(
                     incompleteTouchIgnored = analysis?.incompleteTouchIgnored ?: false,
                     editableWorkflow = convertedWorkflow?.bundle,
                     draftWarnings = convertedWorkflow?.warnings.orEmpty(),
-                    draftUnavailableReason = workflowConversion?.exceptionOrNull()?.message
+                    draftUnavailableReason = workflowConversion.exceptionOrNull()?.message
                         ?: if (analysis == null) "The recording did not produce reviewable events." else null,
                     workflowSaved = workflowSave?.isSuccess == true,
                     workflowSaveError = workflowSave?.exceptionOrNull()?.message,
@@ -939,6 +1163,10 @@ class CoordinateRecordingController(
     }
 
     private fun clearSessionFields(keepJournalFile: Boolean = false) {
+        preparingSegment = false
+        finishAfterSegment = false
+        openBuilderOnPause = false
+        _builder.value = RecordingBuilderState()
         sessionId = null
         viewport = null
         lastForegroundPackage = null
@@ -999,7 +1227,7 @@ class CoordinateRecordingController(
         return next
     }
 
-    private fun elapsedMillis(): Long = (SystemClock.elapsedRealtime() - sessionStartedElapsedRealtime).coerceAtLeast(0L)
+    private fun elapsedMillis(): Long = ((if (paused && pausedAtRealtime > 0L) pausedAtRealtime else SystemClock.elapsedRealtime()) - sessionStartedElapsedRealtime - pausedDurationMillis).coerceAtLeast(0L)
 
     private fun isCurrentSessionRotation(): Boolean {
         val initial = sessionRotation ?: return false
@@ -1027,7 +1255,8 @@ class CoordinateRecordingController(
         "Global recording ${elapsedMillis / 1_000}s · $foregroundPackage"
     }
 
-    private companion object {
+    companion object {
+        const val ACTION_OPEN_RECORDING = "com.veyarc.action.OPEN_RECORDING"
         const val SYSTEM_UI_PACKAGE = "com.android.systemui"
         const val MAX_RECORDING_DURATION_MILLIS = 5L * 60L * 1_000L
         const val MIN_RESUME_DURATION_MILLIS = 1_000L

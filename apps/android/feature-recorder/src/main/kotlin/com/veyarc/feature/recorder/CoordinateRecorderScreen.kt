@@ -1,6 +1,11 @@
 package com.veyarc.feature.recorder
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,18 +21,23 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FiberManualRecord
+import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -52,10 +62,13 @@ fun CoordinateRecorderScreen(
     controller: CoordinateRecordingController,
     onBack: () -> Unit,
     onEditWorkflow: (WorkflowBundle, String) -> Unit,
+    onEditDraft: ((com.veyarc.feature.editor.WorkflowDraft) -> Unit)? = null,
     destinationFolderId: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val state by controller.state.collectAsState()
+    val builder by controller.builder.collectAsState()
+    var confirmClose by remember { mutableStateOf(false) }
     val context = LocalContext.current
     var latchEnabled by remember(context) { mutableStateOf(ReplayFloatingController.isEnabled(context)) }
     DisposableEffect(context) {
@@ -64,26 +77,74 @@ fun CoordinateRecorderScreen(
     }
     LaunchedEffect(state) {
         val review = (state as? CoordinateRecordingState.Review)?.review ?: return@LaunchedEffect
-        val bundle = review.editableWorkflow ?: return@LaunchedEffect
-        controller.dismissReview()
-        onEditWorkflow(bundle, review.journalFileName)
+        val bundle = review.editableWorkflow
+        if (bundle != null) {
+            controller.dismissReview()
+            onEditWorkflow(bundle, review.journalFileName)
+        } else {
+            val draft = controller.editorSession.draft?.takeIf { it.steps.isNotEmpty() } ?: return@LaunchedEffect
+            onEditDraft?.let { open ->
+                controller.dismissReview()
+                open(draft)
+            }
+        }
     }
     val close = {
-        controller.stop()
-        onBack()
+        if (controller.isSessionActive()) confirmClose = true else onBack()
+    }
+    val resume = {
+        controller.resume()
+        if (controller.isSessionActive() && !controller.isSessionPaused()) {
+            var host = context
+            while (host is android.content.ContextWrapper && host !is android.app.Activity) host = host.baseContext
+            (host as? android.app.Activity)?.moveTaskToBack(true)
+        }
+        Unit
     }
     BackHandler(onBack = close)
-    RecordingPanel(
-        state = state,
-        onStart = { controller.start(destinationFolderId) },
-        onPause = controller::pause,
-        onResume = controller::resume,
-        onStop = controller::stop,
-        onClose = close,
-        onNotificationSettings = { RecordingForegroundService.openNotificationSettings(context) },
-        modifier = modifier,
-        latchEnabled = latchEnabled,
-    )
+    AnimatedContent(builder.isOpen, transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(100)) }, label = "recording steps") { open ->
+        if (open) {
+            RecordingBuilderScreen(controller, builder, resume)
+        } else {
+            RecordingPanel(
+                state = state,
+                onStart = { controller.start(destinationFolderId) },
+                onPause = controller::pause,
+                onResume = resume,
+                onStop = controller::stop,
+                onClose = close,
+                onNotificationSettings = { RecordingForegroundService.openNotificationSettings(context) },
+                modifier = modifier,
+                latchEnabled = latchEnabled,
+                onAdd = { controller.openBuilder(add = true) },
+                onSteps = { controller.openBuilder(add = false) },
+                preparing = builder.preparing,
+                destination = builder.destination,
+            )
+        }
+    }
+    if (confirmClose) {
+        AlertDialog(
+            onDismissRequest = { confirmClose = false },
+            title = { Text("Leave recording?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmClose = false
+                    controller.stop()
+                }) { Text("Finish") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        confirmClose = false
+                        controller.discard()
+                        onBack()
+                    }) { Text("Discard") }
+                    TextButton(onClick = { confirmClose = false }) { Text("Keep recording") }
+                }
+            },
+        )
+    }
 }
 
 @Composable
@@ -97,6 +158,10 @@ internal fun RecordingPanel(
     onNotificationSettings: () -> Unit,
     modifier: Modifier = Modifier,
     latchEnabled: Boolean = true,
+    onAdd: () -> Unit = {},
+    onSteps: () -> Unit = {},
+    preparing: Boolean = false,
+    destination: String = "Workflow",
 ) {
     val context = LocalContext.current
     val active = state is CoordinateRecordingState.Arming || state is CoordinateRecordingState.Recording || state is CoordinateRecordingState.Paused
@@ -146,9 +211,21 @@ internal fun RecordingPanel(
                     }
                 }
                 if (active) {
+                    Text(destination, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
+                    if (preparing) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        TextButton(onAdd, Modifier.weight(1f), enabled = !preparing) {
+                            Icon(Icons.Filled.Add, null)
+                            Text("Add")
+                        }
+                        TextButton(onSteps, Modifier.weight(1f), enabled = !preparing) {
+                            Icon(Icons.Filled.FormatListBulleted, null)
+                            Text("Steps")
+                        }
+                    }
                     Text(if (latchEnabled) "Use apps normally. Pause or stop from the edge latch." else "Turn on the edge latch before recording.", style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        OutlinedButton(if (paused) onResume else onPause, Modifier.weight(1f), enabled = !paused || latchEnabled) {
+                        OutlinedButton(if (paused) onResume else onPause, Modifier.weight(1f), enabled = !preparing && (!paused || latchEnabled)) {
                             Icon(if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause, null, Modifier.padding(end = 8.dp))
                             Text(if (paused) "Resume" else "Pause")
                         }

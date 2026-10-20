@@ -139,6 +139,8 @@ data class RecordingControllerActions(
     val onResume: () -> Unit,
     val onStop: () -> Unit,
     val onServiceLost: () -> Unit,
+    val onAdd: () -> Unit = {},
+    val onSteps: () -> Unit = {},
 )
 
 /** The small surface state rendered by the control center. */
@@ -353,6 +355,7 @@ object ReplayFloatingController {
     private var recordingState = ControlCenterRecordingState.IDLE
     private var replayActions: ReplayControllerActions? = null
     private var recordingActions: RecordingControllerActions? = null
+    private var screenshotOwner: Any? = null
     private var edgeLoaded = false
     private var edge = DEFAULT_EDGE
     private var edgeOffset = 0.5f
@@ -478,6 +481,28 @@ object ReplayFloatingController {
         runOnMain { recordingActions = null }
     }
 
+    /** Hides only our small window for one paused-recording screenshot, without changing settings. */
+    fun hideForRecordingScreenshot(owner: Any): Boolean = runOnMainAndWait {
+        if (screenshotOwner != null || recordingState != ControlCenterRecordingState.PAUSED) return@runOnMainAndWait false
+        screenshotOwner = owner
+        if (removeOverlay()) {
+            true
+        } else {
+            screenshotOwner = null
+            removeOverlayOrMakePassThrough()
+            false
+        }
+    }
+
+    fun finishRecordingScreenshot(owner: Any, returnToSteps: Boolean) {
+        runOnMain {
+            if (screenshotOwner !== owner) return@runOnMain
+            screenshotOwner = null
+            showCurrentInternal()
+            if (returnToSteps && recordingState == ControlCenterRecordingState.PAUSED) recordingActions?.onSteps?.invoke()
+        }
+    }
+
     fun setRecordingState(state: ControlCenterRecordingState) {
         runOnMain {
             recordingState = state
@@ -551,6 +576,7 @@ object ReplayFloatingController {
 
     private fun showCurrentInternal(): Boolean {
         val activeService = service ?: return false
+        if (screenshotOwner != null) return false
         if (!isEnabledForCurrentService()) {
             removeOverlayOrMakePassThrough()
             return false
@@ -967,6 +993,14 @@ object ReplayFloatingController {
                         expanded = false
                         recording.onPause()
                     }
+                    actions += ControlAction(android.R.drawable.ic_menu_add, "Add recording block") {
+                        expanded = false
+                        recording.onAdd()
+                    }
+                    actions += ControlAction(android.R.drawable.ic_menu_agenda, "Recording steps") {
+                        expanded = false
+                        recording.onSteps()
+                    }
                     actions += ControlAction(android.R.drawable.ic_menu_save, "Stop and save recording") {
                         expanded = false
                         recording.onStop()
@@ -979,6 +1013,14 @@ object ReplayFloatingController {
                     actions += ControlAction(android.R.drawable.ic_media_play, "Resume recording") {
                         expanded = false
                         recording.onResume()
+                    }
+                    actions += ControlAction(android.R.drawable.ic_menu_add, "Add recording block") {
+                        expanded = false
+                        recording.onAdd()
+                    }
+                    actions += ControlAction(android.R.drawable.ic_menu_agenda, "Recording steps") {
+                        expanded = false
+                        recording.onSteps()
                     }
                     actions += ControlAction(android.R.drawable.ic_menu_save, "Stop and save recording") {
                         expanded = false

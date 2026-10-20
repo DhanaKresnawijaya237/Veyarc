@@ -66,6 +66,7 @@ class MainActivity : ComponentActivity() {
     private var newWorkflowFolderId by mutableStateOf<String?>(null)
     private var recordingFolderId by mutableStateOf<String?>(null)
     private var managerSelectionBar by mutableStateOf<ManagerSelectionBarState?>(null)
+    private var preparingRecording by mutableStateOf(false)
     private val runSession: MainRunSession by lazy {
         ViewModelProvider(this)[MainRunSession::class.java]
     }
@@ -161,10 +162,23 @@ class MainActivity : ComponentActivity() {
                                     fullScreenDestination = null
                                 },
                                 onEditWorkflow = { bundle, journalFileName ->
+                                    if (recordingSession.controller.sourceDraft === editorSession.state.draft) editorSession.state.open(bundle, journalFileName)
                                     editorReturnToManager = false
                                     workflowToEdit = bundle
                                     storedWorkflowToEdit = null
                                     recordedJournalFileName = journalFileName
+                                    recordingFolderId = null
+                                    selectedDestination = VeyarcDestination.EDITOR
+                                    fullScreenDestination = null
+                                },
+                                onEditDraft = { draft ->
+                                    if (recordingSession.controller.sourceDraft === editorSession.state.draft || !editorSession.state.isDirty) {
+                                        editorSession.state.openRecordingDraft(draft)
+                                    } else {
+                                        editorSession.pendingRecordingDraft = draft
+                                    }
+                                    workflowToEdit = null
+                                    storedWorkflowToEdit = null
                                     recordingFolderId = null
                                     selectedDestination = VeyarcDestination.EDITOR
                                     fullScreenDestination = null
@@ -237,6 +251,7 @@ class MainActivity : ComponentActivity() {
                                                 WorkflowEditorScreen(
                                                     repository = workflowRepository,
                                                     session = editorSession.state,
+                                                    recordingControls = com.veyarc.feature.editor.RecordingEditorControls(onRecord = ::recordIntoWorkflow, preparing = preparingRecording),
                                                     onAskAi = onAskAi?.let { { editorSession.assistant.open(editorSession.state.assistantContext()) } },
                                                     onRunWorkflow = ::openStoredRunScreen,
                                                     onOpenWorkflowManager = {
@@ -251,10 +266,12 @@ class MainActivity : ComponentActivity() {
                                                         editorReturnToManager = false
                                                     },
                                                     initialBundle = workflowToEdit,
+                                                    initialRecordingDraft = editorSession.pendingRecordingDraft,
                                                     initialStoredWorkflowId = storedWorkflowToEdit?.first,
                                                     initialStoredRevision = storedWorkflowToEdit?.second,
                                                     initialRecordingJournalFileName = recordedJournalFileName,
                                                     onInitialBundleConsumed = {
+                                                        editorSession.pendingRecordingDraft = null
                                                         workflowToEdit = null
                                                         storedWorkflowToEdit = null
                                                         recordedJournalFileName = null
@@ -494,6 +511,11 @@ class MainActivity : ComponentActivity() {
             }
             return
         }
+        if (intent?.action == com.veyarc.feature.recorder.CoordinateRecordingController.ACTION_OPEN_RECORDING) {
+            intent.action = null
+            if (recordingSession.controller.isSessionActive()) fullScreenDestination = FullScreenDestination.RECORDER
+            return
+        }
         if (intent?.action != ReplayFloatingController.ACTION_OPEN_WORKFLOW) return
         intent.action = null
         val workflowId = intent.getStringExtra(ReplayFloatingController.EXTRA_WORKFLOW_ID)
@@ -519,6 +541,35 @@ class MainActivity : ComponentActivity() {
                 }
             }.getOrNull() ?: return@launch
             openStoredRunScreen(revisionDocument, autoStart = autoStart)
+        }
+    }
+
+    private fun recordIntoWorkflow(path: com.veyarc.feature.editor.StepListPath, index: Int) {
+        if (preparingRecording) return
+        if (recordingSession.controller.isSessionActive()) {
+            android.widget.Toast.makeText(this, "Finish the current recording first.", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        val draft = editorSession.state.draft ?: return
+        preparingRecording = true
+        catalogScope.launch {
+            try {
+                val assets = withContext(Dispatchers.IO) {
+                    draft.assetDescriptors.map { descriptor ->
+                        draft.assets.firstOrNull { it.assetId == descriptor.assetId }
+                            ?: workflowRepository.loadRevisionAsset(draft.workflowId, requireNotNull(draft.lastSavedRevision), descriptor.assetId)
+                    }
+                }
+                if (editorSession.state.draft !== draft) return@launch
+                if (recordingSession.controller.startInWorkflow(draft, com.veyarc.feature.editor.RecordingInsertion(path, index), assets)) {
+                    fullScreenDestination = FullScreenDestination.RECORDER
+                }
+            } catch (failure: Exception) {
+                if (failure is kotlinx.coroutines.CancellationException) throw failure
+                android.widget.Toast.makeText(this@MainActivity, failure.message ?: "Could not start recording here.", android.widget.Toast.LENGTH_LONG).show()
+            } finally {
+                preparingRecording = false
+            }
         }
     }
 
@@ -619,6 +670,7 @@ class MainEditorSession(application: Application) : AndroidViewModel(application
     private val owner = (application as VeyarcApplication).editor
     val state = owner.state
     val assistant = owner.assistant
+    var pendingRecordingDraft by mutableStateOf<com.veyarc.feature.editor.WorkflowDraft?>(null)
 }
 
 /** Keeps the active chat and its draft binding alive independently of activity/navigation lifetime. */

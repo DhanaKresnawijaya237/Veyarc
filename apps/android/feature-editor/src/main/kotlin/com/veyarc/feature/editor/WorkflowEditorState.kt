@@ -209,6 +209,15 @@ class WorkflowEditorSession {
         openPrepared(opened)
     }
 
+    fun editConditionAt(path: StepListPath, index: Int) {
+        conditionTarget = ConditionTarget(path, index)
+    }
+
+    fun openRecordingDraft(draft: WorkflowDraft) {
+        openPrepared(draft)
+        savedDraft = null
+    }
+
     internal fun openPrepared(opened: WorkflowDraft, validation: DraftBuildResult? = null) {
         dismissEditors()
         draft = opened
