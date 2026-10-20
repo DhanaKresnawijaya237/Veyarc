@@ -7,22 +7,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.CallSplit
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Loop
-import androidx.compose.material.icons.outlined.Schedule
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -30,13 +14,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import com.veyarc.app.ui.theme.VeyarcTheme
 import com.veyarc.automation.android.MediaProjectionCaptureRuntime
 import com.veyarc.automation.android.MediaProjectionConsent
+import com.veyarc.feature.editor.VeyarcChoice
+import com.veyarc.feature.editor.VeyarcChoicePicker
 import com.veyarc.feature.recorder.CoordinateRecordingController
 import com.veyarc.feature.recorder.CoordinateRecordingRuntime
 import com.veyarc.feature.recorder.RecordingImageBlock
@@ -94,32 +76,14 @@ class RecordingImageCaptureActivity : ComponentActivity() {
                 particlesEnabled = false,
             ) {
                 if (selected == null) {
-                    Dialog(onDismissRequest = ::closePopup) {
-                        Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Add from screen", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-                                    IconButton(::closePopup) { Icon(Icons.Outlined.Close, "Close screenshot controls") }
-                                }
-                                RecordingImageBlock.entries.forEach { kind ->
-                                    Surface(onClick = { selected = kind.name }, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-                                        Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(
-                                                when (kind) {
-                                                    RecordingImageBlock.IF -> Icons.AutoMirrored.Outlined.CallSplit
-                                                    RecordingImageBlock.WHILE -> Icons.Outlined.Loop
-                                                    RecordingImageBlock.WAIT -> Icons.Outlined.Schedule
-                                                },
-                                                null,
-                                                tint = MaterialTheme.colorScheme.primary,
-                                            )
-                                            Text(kind.label, style = MaterialTheme.typography.titleSmall)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    VeyarcChoicePicker(
+                        title = "Add from screen",
+                        options = controller.imageBlockOptions.map { kind ->
+                            VeyarcChoice(kind.name, kind.label, group = if (kind.edit == null) 1 else 0)
+                        },
+                        onDismiss = ::closePopup,
+                        onSelect = { selected = it.id },
+                    )
                 }
             }
         }

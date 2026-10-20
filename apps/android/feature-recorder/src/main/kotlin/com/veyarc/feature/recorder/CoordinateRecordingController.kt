@@ -30,11 +30,14 @@ import com.veyarc.data.storage.AesGcmFileCodec
 import com.veyarc.data.storage.AndroidKeystoreKeySource
 import com.veyarc.data.storage.EncryptedRecordingJournalStore
 import com.veyarc.data.storage.WorkflowRepository
+import com.veyarc.feature.editor.RecordingConditionTarget
 import com.veyarc.feature.editor.RecordingImageDraft
 import com.veyarc.feature.editor.RecordingInsertion
 import com.veyarc.feature.editor.StepListPath
 import com.veyarc.feature.editor.WorkflowDraft
 import com.veyarc.feature.editor.WorkflowEditorSession
+import com.veyarc.feature.editor.appCandidates
+import com.veyarc.feature.editor.conditionTarget
 import com.veyarc.feature.editor.encryptTemplateBitmap
 import com.veyarc.feature.editor.insertRecording
 import com.veyarc.model.PackageName
@@ -93,7 +96,6 @@ class CoordinateRecordingController(
 
     @Volatile private var finishAfterSegment = false
     private var consumedEvents = 0
-    private var lastSegmentPackage: String? = null
     private var insertion by mutableStateOf(RecordingInsertion())
     private var openBuilderOnPause = false
     private var pendingAdd = false
@@ -103,6 +105,9 @@ class CoordinateRecordingController(
     private val captureScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var captureJob: Job? = null
     private var imageRequestId: String? = null
+    private var imageConditionTarget: RecordingConditionTarget? = null
+    private var resumeJob: Job? = null
+    private var resumeOwner: Any? = null
 
     @Volatile private var captureOwner: Any? = null
     private var finalSegmentReady = false
@@ -411,7 +416,6 @@ class CoordinateRecordingController(
         _builder.value = RecordingBuilderState()
         insertion = RecordingInsertion()
         consumedEvents = 0
-        lastSegmentPackage = null
         preparingSegment = false
         finishAfterSegment = false
         finalSegmentReady = false
@@ -511,6 +515,7 @@ class CoordinateRecordingController(
 
     fun openBuilder() {
         if (!isSessionActive()) return
+        cancelResume()
         if (captureJob?.isActive == true) cancelImageCapture()
         openBuilderOnPause = true
         dismissAdd()
@@ -535,6 +540,7 @@ class CoordinateRecordingController(
 
     fun requestImageBlock(): Boolean {
         if (!isSessionActive() || captureJob?.isActive == true || _builder.value.showAdd) return false
+        cancelResume()
         if (_builder.value.image != null) {
             showBuilder()
             return false
@@ -558,6 +564,7 @@ class CoordinateRecordingController(
         pendingAdd = false
         openBuilderOnPause = false
         val token = UUID.randomUUID().toString()
+        imageConditionTarget = editorSession.draft?.let(insertion::conditionTarget)
         imageRequestId = token
         _builder.value = _builder.value.copy(showAdd = true, error = null)
         val intent = Intent().setClassName(appContext.packageName, "${appContext.packageName}.RecordingImageCaptureActivity")
@@ -570,13 +577,17 @@ class CoordinateRecordingController(
 
     fun acceptsImageCapture(token: String?): Boolean = token != null && token == imageRequestId && isSessionPaused()
 
+    val imageBlockOptions: List<RecordingImageBlock>
+        get() = RecordingImageBlock.entries.filter { it.edit == null || imageConditionTarget != null }
+
     fun dismissImage() {
+        imageConditionTarget = null
         _builder.value = _builder.value.copy(image = null, imageKind = null)
     }
 
     /** Start while the consent activity is visible; it finishes before the frame is sampled. */
     fun captureImageBlock(token: String, kind: RecordingImageBlock, resultCode: Int, data: Intent) {
-        if (!acceptsImageCapture(token) || !_builder.value.showAdd || captureJob?.isActive == true) return
+        if (!acceptsImageCapture(token) || !_builder.value.showAdd || captureJob?.isActive == true || kind !in imageBlockOptions) return
         val expected = viewport ?: return
         val owner = Any()
         captureOwner = owner
@@ -643,6 +654,7 @@ class CoordinateRecordingController(
 
     fun setDestination(path: StepListPath, index: Int) {
         if (!isSessionPaused() || pauseRequested || preparingSegment) return
+        cancelResume()
         val draft = editorSession.draft ?: return
         val chosen = RecordingInsertion(path, index).anchored(draft)
         if (!chosen.isValid(draft)) return
@@ -651,6 +663,8 @@ class CoordinateRecordingController(
     }
 
     fun continueOutside() {
+        if (!isSessionPaused() || pauseRequested || preparingSegment) return
+        cancelResume()
         val draft = editorSession.draft ?: return
         val outside = insertion.outside(draft) ?: return
         val parent = insertion.path.segments.last().parentId
@@ -662,6 +676,30 @@ class CoordinateRecordingController(
     val selectedInsertion: RecordingInsertion get() = insertion
     val isInsideSection: Boolean get() = selectedInsertion.path.segments.isNotEmpty()
     val recordingDestination: String get() = editorSession.draft?.let(insertion::label) ?: "Workflow"
+
+    fun applyImage(condition: com.veyarc.model.ImagePresentCondition, assets: List<com.veyarc.model.bundle.BundleAsset>, name: String) {
+        if (!isSessionPaused() || pauseRequested || preparingSegment || _builder.value.image == null) return
+        val kind = _builder.value.imageKind ?: return
+        val edit = kind.edit
+        if (edit == null) {
+            val id = com.veyarc.model.WorkflowIds.newUuid()
+            val step = when (kind) {
+                RecordingImageBlock.IF -> com.veyarc.model.IfElse(id, condition, emptyList(), emptyList())
+                RecordingImageBlock.WHILE -> com.veyarc.model.WhileStep(id, condition, 5, emptyList())
+                else -> com.veyarc.model.WaitUntil(id, condition, com.veyarc.model.DurationMillis(5000), com.veyarc.model.DurationMillis(250))
+            }
+            addBlock(step, assets, imageName = name)
+        } else {
+            runCatching {
+                val target = requireNotNull(imageConditionTarget) { "Choose a section and Add from screen again." }
+                var draft = target.applyTo(requireNotNull(editorSession.draft), condition, edit)
+                for ((index, asset) in assets.withIndex()) draft = draft.addAsset(asset, if (index == 0) "Crop" else "Background")
+                if (name.isNotBlank()) draft = draft.renameAsset(assets.first().assetId, name)
+                editorSession.update(draft)
+                dismissImage()
+            }.onFailure { warnPaused(it.message ?: "Could not update this condition.") }
+        }
+    }
 
     fun addBlock(step: com.veyarc.model.WorkflowStep, assets: List<com.veyarc.model.bundle.BundleAsset> = emptyList(), imageName: String = "", editCondition: Boolean = false) {
         if (!isSessionPaused() || pauseRequested || preparingSegment) return
@@ -741,15 +779,17 @@ class CoordinateRecordingController(
         } else {
             null
         }
-        val lastPackage = lastThirdPartyForegroundPackage?.value
         mainHandler.post {
             if (!active || sessionId != id) return@post
             try {
                 if (converted != null) {
-                    val merged = requireNotNull(editorSession.draft).insertRecording(converted.bundle, insertion, lastSegmentPackage)
+                    val current = requireNotNull(editorSession.draft)
+                    val target = requireNotNull(insertion.resolve(current))
+                    val beforeFirstAction = target.path.segments.isEmpty() && current.steps.take(target.index).all { it is com.veyarc.model.StageBoundary }
+                    val previousApp = if (beforeFirstAction) null else target.appCandidates(current).singleOrNull()?.value
+                    val merged = current.insertRecording(converted.bundle, target, previousApp)
                     editorSession.update(merged.first)
                     insertion = merged.second
-                    lastSegmentPackage = lastPackage
                 }
                 consumedEvents = snapshot.events.size
                 preparingSegment = false
@@ -772,6 +812,7 @@ class CoordinateRecordingController(
 
     /** Pauses raw observation without closing the encrypted journal. */
     fun pause() {
+        cancelResume()
         if (!active || stopRequested || paused || pauseRequested) return
         pauseRequested = true
         paused = true
@@ -793,6 +834,7 @@ class CoordinateRecordingController(
     /** Resumes raw observation using the same encrypted journal and session clock. */
     fun resume() {
         if (!active || stopRequested || !paused) return
+        if (resumeJob?.isActive == true) return
         if (!ReplayFloatingController.isEnabled(appContext)) {
             stop()
             return
@@ -826,6 +868,97 @@ class CoordinateRecordingController(
             return
         }
         insertion = requireNotNull(insertion.resolve(draft))
+        val apps = insertion.appCandidates(draft)
+        if (apps.size > 1) {
+            _builder.value = _builder.value.copy(resumeApps = apps.map { it.value })
+            openRecorderActivity()
+            return
+        }
+        resumeInApp(apps.singleOrNull()?.value ?: lastThirdPartyForegroundPackage?.value)
+    }
+
+    fun dismissResumeApps() {
+        _builder.value = _builder.value.copy(resumeApps = emptyList())
+    }
+
+    fun chooseResumeApp(packageName: String) {
+        if (packageName !in _builder.value.resumeApps || !isSessionPaused()) return
+        dismissResumeApps()
+        // Re-resolve after the picker; editing a section must not launch an old destination.
+        val draft = editorSession.draft
+        if (draft == null || !insertion.isValid(draft) || PackageName(packageName) !in insertion.appCandidates(draft)) {
+            warnPaused("This section changed. Choose Record here again.")
+            return
+        }
+        resumeInApp(packageName)
+    }
+
+    private fun resumeInApp(packageName: String?) {
+        if (!isSessionPaused() || pauseRequested || preparingSegment || _builder.value.image != null || _builder.value.showAdd) return
+        if (isKeyguardLocked() || !isCurrentSessionRotation()) {
+            warnPaused("Rotate back to the recording orientation and keep the phone unlocked.")
+            return
+        }
+        val id = sessionId
+        val destination = insertion
+        val owner = Any()
+        resumeOwner = owner
+        _builder.value = _builder.value.copy(preparing = true)
+        resumeJob = captureScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                if (packageName != null) {
+                    check(packageName !in controlPackages) { "Choose a regular app for this recording section." }
+                    val allowed = requireNotNull(editorSession.draft).allowedPackagesText.split(',', ' ', '\n', '\t').filter(String::isNotBlank)
+                    check(packageName in allowed) { "Add this app to Allowed apps before continuing." }
+                    if (AndroidForegroundPackage.currentForRecording()?.value != packageName) {
+                        val intent = requireNotNull(appContext.packageManager.getLaunchIntentForPackage(packageName)) { "This app cannot be opened. Check that it is installed." }
+                        appContext.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }
+                    withTimeout(5000) {
+                        while (AndroidForegroundPackage.currentForRecording()?.value != packageName || AndroidDeviceSafety.current(appContext) != null) {
+                            check(!isKeyguardLocked() && isCurrentSessionRotation()) { "Rotate back to the recording orientation and keep the phone unlocked." }
+                            delay(50)
+                        }
+                    }
+                }
+                check(active && !stopRequested && paused && sessionId == id && insertion == destination) { "The recording section changed. Continue recording again." }
+                if (packageName != null) {
+                    val current = requireNotNull(editorSession.draft)
+                    val candidates = insertion.appCandidates(current)
+                    check(candidates.isEmpty() || PackageName(packageName) in candidates) { "The recording app changed. Continue recording again." }
+                }
+                check(!isKeyguardLocked() && isCurrentSessionRotation()) { "Rotate back to the recording orientation and keep the phone unlocked." }
+                check(AndroidDeviceSafety.current(appContext) == null || packageName == null) { "Keep the recording app visible before continuing." }
+                RecordingForegroundService.notificationUnavailableReason(appContext)?.let { error(it) }
+                beginResume()
+            } catch (failure: Exception) {
+                if (failure is CancellationException && failure !is TimeoutCancellationException) throw failure
+                if (active && !stopRequested && sessionId == id && resumeOwner === owner) {
+                    val message = if (failure is TimeoutCancellationException) "The app did not open. Open it, then Continue recording again." else failure.message ?: "Could not continue recording."
+                    if (paused) warnPaused(message) else failImmediately(message)
+                }
+            } finally {
+                if (resumeOwner === owner) {
+                    resumeOwner = null
+                    _builder.value = _builder.value.copy(preparing = false)
+                }
+            }
+        }
+    }
+
+    private fun cancelResume() {
+        resumeRequested = false
+        resumeOwner = null
+        resumeJob?.cancel()
+        resumeJob = null
+        dismissResumeApps()
+        if (!preparingSegment && !pauseRequested && captureJob?.isActive != true) _builder.value = _builder.value.copy(preparing = false)
+    }
+
+    private fun beginResume() {
+        val draft = requireNotNull(editorSession.draft)
+        insertion = requireNotNull(insertion.resolve(draft))
+        val elapsed = elapsedMillis()
         pausedDurationMillis += (SystemClock.elapsedRealtime() - pausedAtRealtime).coerceAtLeast(0L)
         pausedAtRealtime = 0L
         _builder.value = _builder.value.copy(isOpen = false, error = null, destination = insertion.label(draft))
@@ -860,6 +993,7 @@ class CoordinateRecordingController(
     ): Boolean {
         if (!sessionCleanup.requestStop(cause)) return false
         stopRequested = true
+        cancelResume()
         cancelImageCapture()
         _builder.value = _builder.value.copy(isOpen = false, showAdd = false, preparing = true)
         stopFailureReason = failureReason
@@ -1268,6 +1402,7 @@ class CoordinateRecordingController(
         interruptedDraft = true
         val stopCause = sessionCleanup.currentStopCause()
         active = false
+        cancelResume()
         cancelImageCapture()
         mainHandler.removeCallbacks(startSourceWhenEmergencyReadyRunnable)
         mainHandler.removeCallbacks(timerRunnable)
@@ -1287,6 +1422,7 @@ class CoordinateRecordingController(
     }
 
     private fun failImmediately(reason: String) {
+        cancelResume()
         interruptedDraft = true
         cancelImageCapture()
         sessionCleanup.claimTerminal()
@@ -1306,6 +1442,7 @@ class CoordinateRecordingController(
 
     /** Process-lifecycle cleanup; the activity ViewModel calls this only when the process exits. */
     fun close() {
+        cancelResume()
         cancelImageCapture()
         captureScope.cancel()
         stopLatchObservation()
@@ -1343,6 +1480,8 @@ class CoordinateRecordingController(
     }
 
     private fun clearSessionFields(keepJournalFile: Boolean = false) {
+        cancelResume()
+        imageConditionTarget = null
         imageRequestId = null
         preparingSegment = false
         finishAfterSegment = false

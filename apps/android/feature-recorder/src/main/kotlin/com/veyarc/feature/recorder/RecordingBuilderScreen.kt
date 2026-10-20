@@ -37,11 +37,6 @@ import androidx.compose.ui.unit.dp
 import com.veyarc.feature.editor.RecordingEditorControls
 import com.veyarc.feature.editor.RecordingImagePicker
 import com.veyarc.feature.editor.WorkflowEditorScreen
-import com.veyarc.model.DurationMillis
-import com.veyarc.model.IfElse
-import com.veyarc.model.WaitUntil
-import com.veyarc.model.WhileStep
-import com.veyarc.model.WorkflowIds
 
 @Composable
 internal fun RecordingBuilderScreen(controller: CoordinateRecordingController, state: RecordingBuilderState, onResume: () -> Unit, onAdd: () -> Unit) {
@@ -79,14 +74,7 @@ internal fun RecordingBuilderScreen(controller: CoordinateRecordingController, s
     }
     state.image?.let { image ->
         val draft = controller.editorSession.draft ?: return@let
-        RecordingImagePicker(image, draft.viewport, draft.activeAssetNames(), onDismiss = controller::dismissImage) { condition, assets, name ->
-            val step = when (state.imageKind) {
-                RecordingImageBlock.IF -> IfElse(WorkflowIds.newUuid(), condition, emptyList(), emptyList())
-                RecordingImageBlock.WHILE -> WhileStep(WorkflowIds.newUuid(), condition, 5, emptyList())
-                else -> WaitUntil(WorkflowIds.newUuid(), condition, DurationMillis(5000), DurationMillis(250))
-            }
-            controller.addBlock(step, assets, imageName = name)
-        }
+        RecordingImagePicker(image, draft.viewport, draft.activeAssetNames(), onDismiss = controller::dismissImage, onApply = controller::applyImage)
     }
 }
 

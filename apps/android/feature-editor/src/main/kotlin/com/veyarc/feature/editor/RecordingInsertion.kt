@@ -1,8 +1,13 @@
 package com.veyarc.feature.editor
 
 import androidx.compose.runtime.staticCompositionLocalOf
+import com.veyarc.model.AndCondition
+import com.veyarc.model.Condition
 import com.veyarc.model.IfElse
+import com.veyarc.model.Jump
 import com.veyarc.model.LaunchApp
+import com.veyarc.model.OrCondition
+import com.veyarc.model.PackageName
 import com.veyarc.model.Repeat
 import com.veyarc.model.StageBoundary
 import com.veyarc.model.WhileStep
@@ -75,6 +80,75 @@ data class RecordingEditorControls(
 )
 
 internal val LocalRecordingEditorControls = staticCompositionLocalOf<RecordingEditorControls?> { null }
+
+/** Infer the foreground app at this position without running any workflow actions. */
+fun RecordingInsertion.appCandidates(draft: WorkflowDraft): Set<PackageName> {
+    val target = requireNotNull(resolve(draft)) { "Choose a recording section first." }
+    fun launches(steps: List<WorkflowStep>): Set<PackageName> = steps.flatMapTo(linkedSetOf()) { step ->
+        when (step) {
+            is LaunchApp -> setOf(step.packageName)
+            is IfElse -> launches(step.thenSteps) + launches(step.elseSteps)
+            is Repeat -> launches(step.bodySteps)
+            is WhileStep -> launches(step.bodySteps)
+            else -> emptySet()
+        }
+    }
+    val all = launches(draft.steps)
+    if (all.size <= 1) return all
+    fun after(steps: List<WorkflowStep>, initial: Set<PackageName?>): Set<PackageName?> = steps.fold(initial) { apps, step ->
+        when (step) {
+            is LaunchApp -> setOf(step.packageName)
+            is IfElse -> after(step.thenSteps, apps) + after(step.elseSteps, apps)
+            is Repeat -> if (step.count == 0) apps else after(step.bodySteps, apps)
+            is WhileStep -> apps + after(step.bodySteps, apps)
+            is Jump -> all + null
+            else -> apps
+        }
+    }
+    var apps: Set<PackageName?> = setOf(null)
+    var steps = draft.steps
+    for ((depth, segment) in target.path.segments.withIndex()) {
+        val position = steps.indexOfFirst { it.id == segment.parentId }
+        apps = after(steps.take(position), apps)
+        steps = draft.stepsAt(StepListPath(target.path.segments.take(depth + 1)))
+    }
+    apps = after(steps.take(target.index), apps)
+    if (apps == setOf<PackageName?>(null) && target.path.segments.isEmpty() && steps.take(target.index).all { it is StageBoundary }) {
+        (steps.drop(target.index).firstOrNull { it !is StageBoundary } as? LaunchApp)?.let { return setOf(it.packageName) }
+    }
+    return if (null in apps) all else apps.filterNotNull().toSet()
+}
+
+enum class RecordingConditionEdit { REPLACE, ALL, ANY }
+
+data class RecordingConditionTarget(val path: StepListPath, val stepId: String, val condition: Condition) {
+    fun applyTo(draft: WorkflowDraft, image: Condition, edit: RecordingConditionEdit): WorkflowDraft {
+        val index = draft.stepsAt(path).indexOfFirst { it.id == stepId }
+        require(index >= 0) { "This section was removed. Add from screen again." }
+        require(draft.stepsAt(path)[index] is IfElse || draft.stepsAt(path)[index] is WhileStep) { "This section changed. Add from screen again." }
+        return draft.updateCondition(path, index) { current ->
+            require(current == condition) { "This condition changed. Add from screen again." }
+            when (edit) {
+                RecordingConditionEdit.REPLACE -> image
+                RecordingConditionEdit.ALL -> AndCondition(((current as? AndCondition)?.conditions ?: listOf(current)) + image)
+                RecordingConditionEdit.ANY -> OrCondition(((current as? OrCondition)?.conditions ?: listOf(current)) + image)
+            }
+        }
+    }
+}
+
+fun RecordingInsertion.conditionTarget(draft: WorkflowDraft): RecordingConditionTarget? {
+    if (!isValid(draft)) return null
+    val parent = path.segments.lastOrNull() ?: return null
+    val outer = StepListPath(path.segments.dropLast(1))
+    val step = draft.stepsAt(outer).firstOrNull { it.id == parent.parentId }
+    val condition = when (step) {
+        is IfElse -> step.condition
+        is WhileStep -> step.condition
+        else -> return null
+    }
+    return RecordingConditionTarget(outer, step.id, condition)
+}
 
 /** Merge one paused segment without changing existing block IDs, assets, or branch contents. */
 fun WorkflowDraft.insertRecording(segment: WorkflowBundle, destination: RecordingInsertion, previousPackage: String?): Pair<WorkflowDraft, RecordingInsertion> {

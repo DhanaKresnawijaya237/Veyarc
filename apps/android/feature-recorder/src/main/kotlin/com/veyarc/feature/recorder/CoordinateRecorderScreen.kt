@@ -53,6 +53,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.veyarc.automation.android.ReplayFloatingController
+import com.veyarc.feature.editor.VeyarcChoice
+import com.veyarc.feature.editor.VeyarcChoicePicker
 import com.veyarc.model.bundle.WorkflowBundle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -135,6 +137,15 @@ fun CoordinateRecorderScreen(
         AlertDialog(onDismissRequest = controller::dismissWarning, title = { Text("Recording paused") }, text = { Text(requireNotNull(builder.error)) }, confirmButton = {
             TextButton(controller::dismissWarning) { Text("OK") }
         })
+    }
+    if (builder.resumeApps.isNotEmpty()) {
+        val apps = remember(builder.resumeApps) {
+            builder.resumeApps.map { packageName ->
+                val label = runCatching { context.packageManager.getApplicationLabel(context.packageManager.getApplicationInfo(packageName, 0)).toString() }.getOrDefault(packageName)
+                VeyarcChoice(packageName, label)
+            }
+        }
+        VeyarcChoicePicker("Continue in", apps, onDismiss = controller::dismissResumeApps, onSelect = { controller.chooseResumeApp(it.id) })
     }
     if (builder.confirmRestart) {
         AlertDialog(onDismissRequest = controller::dismissRestart, title = { Text("Start a new recording?") }, text = { Text("This replaces the previous recording. Its unfinished changes will be lost.") }, confirmButton = {
