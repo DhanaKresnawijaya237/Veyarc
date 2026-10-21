@@ -29,6 +29,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -39,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.LocalPinnableContainer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -64,6 +66,13 @@ internal fun ImageCheckTestPanel(condition: Condition, assets: List<WorkflowAsse
     var expanded by rememberSaveable { mutableStateOf(true) }
     var sourceId by rememberSaveable { mutableStateOf<String?>(null) }
     var testedIds by rememberSaveable(condition, assets, width, height) { mutableStateOf<List<String>>(emptyList()) }
+    val container = LocalPinnableContainer.current
+    val hasChecks = testedIds.isNotEmpty()
+    DisposableEffect(container, hasChecks) {
+        // Keep results and in-flight checks alive when their lazy-list item scrolls off screen.
+        val handle = if (hasChecks) container?.pin() else null
+        onDispose { handle?.release() }
+    }
     var request by remember { mutableIntStateOf(0) }
     var busy by remember { mutableStateOf(false) }
     // Edits discard old checks instead of rerunning them.

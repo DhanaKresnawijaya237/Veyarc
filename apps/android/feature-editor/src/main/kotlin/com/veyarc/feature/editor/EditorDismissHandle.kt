@@ -71,6 +71,7 @@ internal fun EditorSheetDialog(
     compactFixedHeightFraction: Float? = null,
     largeHeightFraction: Float = 0.8f,
     contentScrollable: Boolean = true,
+    externalScrollState: ScrollableState? = null,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val contentScrollState = rememberScrollState()
@@ -98,7 +99,7 @@ internal fun EditorSheetDialog(
             intermediateHeightFraction = largeHeightFraction,
         )
         val wrappedContent = contentScrollable && largeMode == LargeEditorSheetMode.WRAPPED
-        val sheetGesturesEnabled = rememberEditorSheetGesturesEnabled(contentScrollState)
+        val sheetGesturesEnabled = rememberEditorSheetGesturesEnabled(externalScrollState ?: contentScrollState)
         ModalBottomSheet(
             modifier = Modifier.wrapContentSheetDragToDismiss(wrappedContent, onDismiss),
             onDismissRequest = onDismiss,
@@ -274,7 +275,7 @@ private fun Modifier.wrapContentSheetDragToDismiss(
         )
 }
 
-private object PreventUpwardSheetOverscrollConnection : NestedScrollConnection {
+internal object PreventUpwardSheetOverscrollConnection : NestedScrollConnection {
     override fun onPostScroll(
         consumed: Offset,
         available: Offset,
