@@ -750,7 +750,7 @@ private fun ComposedConditionFields(
                 previewWidthPx = previewWidthPx,
                 previewHeightPx = previewHeightPx,
                 onChange = { updated -> onChange(conditions.toMutableList().apply { this[index] = updated }) },
-                onRemove = if (index < 2) {
+                onRemove = if (conditions.size <= 2) {
                     null
                 } else {
                     {

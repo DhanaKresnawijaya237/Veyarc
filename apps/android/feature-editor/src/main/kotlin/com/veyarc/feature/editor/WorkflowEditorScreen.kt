@@ -139,7 +139,9 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
@@ -967,41 +969,27 @@ private fun WorkflowDraftScreen(
     onPasteBlocks: (StepListPath, Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var selection by session::blockSelection
-    var selectionMode by session::blockSelectionMode
-    var selectedPath by session::selectedBlockPath
-    var selectedIds by session::selectedBlockIds
+    val selection = session.blockSelection
+    val selectionMode = session.blockSelectionMode
+    val selectedPath = session.selectedBlockPath
+    val selectedIds = session.selectedBlockIds
+    BackHandler(enabled = selectionMode) { session.clearBlockSelection() }
     val clipboardActions = BlockClipboardActions(
         clipboardAvailable = clipboardAvailable && !EditorBlockClipboard.isCopying,
         selectionMode = selectionMode,
         selectedIds = selectedIds,
         canCopy = !EditorBlockClipboard.isCopying && (if (selectionMode) selectedIds.isNotEmpty() else selection != null),
-        onToggleSelectionMode = {
-            selectionMode = !selectionMode
-            selectedIds = emptySet()
-            selectedPath = null
-        },
+        rangeSelection = session.blockRangeSelection,
+        onToggleSelectionMode = session::cycleBlockSelectionMode,
         onCopy = {
             val path = if (selectionMode) selectedPath else selection?.path
             val ids = if (selectionMode) selectedIds.toList() else listOfNotNull(selection?.stepId)
             if (path != null && ids.isNotEmpty()) {
                 onCopyBlocks(path, ids)
-                selectionMode = false
-                selectedIds = emptySet()
+                session.clearBlockSelection()
             }
         },
-        onSelect = { chosen ->
-            if (selectionMode) {
-                if (selectedPath != chosen.path) {
-                    selectedPath = chosen.path
-                    selectedIds = setOf(chosen.stepId)
-                } else {
-                    selectedIds = if (chosen.stepId in selectedIds) selectedIds - chosen.stepId else selectedIds + chosen.stepId
-                }
-            } else {
-                selection = chosen
-            }
-        },
+        onSelect = session::selectBlock,
         onPaste = onPasteBlocks,
     )
     val scrollHeader = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -1152,6 +1140,7 @@ private data class PendingBlockPaste(val path: StepListPath, val index: Int, val
 private data class BlockClipboardActions(
     val clipboardAvailable: Boolean,
     val selectionMode: Boolean,
+    val rangeSelection: Boolean,
     val selectedIds: Set<String>,
     val canCopy: Boolean,
     val onToggleSelectionMode: () -> Unit,
@@ -1335,7 +1324,8 @@ private fun WorkflowDraftCanvas(
     val itemSpacing = 12.dp
     val density = LocalDensity.current
     var toolbarHeight by remember(density) { mutableIntStateOf(with(density) { 140.dp.roundToPx() }) }
-    Box(modifier = modifier) {
+    var canvasHeight by remember { mutableIntStateOf(0) }
+    Box(modifier = modifier.onSizeChanged { canvasHeight = it.height }) {
         LazyColumn(
             state = scrollState,
             modifier = Modifier.fillMaxSize().onGloballyPositioned {
@@ -1402,6 +1392,17 @@ private fun WorkflowDraftCanvas(
                             onDraftChange(draft.removeAsset(assetId))
                         },
                     )
+                    if (session.blockSelectionMode) {
+                        Text(
+                            if (session.blockRangeSelection) {
+                                if (session.blockRangeAnchor == null) "Select the first and last block" else "Select the last block"
+                            } else {
+                                "Select blocks · Tap select again for a range"
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (session.blockRangeSelection) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
+                        )
+                    }
                     Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("Execution", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
                         Text("${draft.steps.size} blocks", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1455,7 +1456,12 @@ private fun WorkflowDraftCanvas(
             val topInset by animateDpAsState(if (canScrollUp) 0.dp else 48.dp, tween(160), label = "scroll-control-top")
             val bottomInset by animateDpAsState(if (canScrollDown) 0.dp else 48.dp, tween(160), label = "scroll-control-bottom")
             // Fixed slots keep the chat button centered while either arrow appears or disappears.
-            Box(Modifier.align(Alignment.CenterEnd).padding(end = horizontalPadding).size(52.dp, 148.dp).testTag("workflow-scroll-controls")) {
+            val travel = (canvasHeight - with(density) { 148.dp.toPx() }).coerceAtLeast(0f)
+            Box(
+                Modifier.align(Alignment.CenterEnd).padding(end = horizontalPadding).size(52.dp, 148.dp)
+                    .offset { androidx.compose.ui.unit.IntOffset(0, ((session.chatVerticalPosition - 0.5f) * travel).roundToInt()) }
+                    .testTag("workflow-scroll-controls"),
+            ) {
                 Surface(Modifier.fillMaxSize().padding(top = topInset, bottom = bottomInset), shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, shadowElevation = 4.dp) { }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(Modifier.size(52.dp, 48.dp), contentAlignment = Alignment.BottomCenter) {
@@ -1465,7 +1471,28 @@ private fun WorkflowDraftCanvas(
                             }
                         }
                     }
-                    IconButton(onClick = onAskAi, modifier = Modifier.size(52.dp).testTag("workflow-ai-chat-button")) {
+                    IconButton(
+                        onClick = onAskAi,
+                        modifier = Modifier.size(52.dp).testTag("workflow-ai-chat-button")
+                            .semantics {
+                                customActions = listOf(
+                                    CustomAccessibilityAction("Move chat up") {
+                                        session.chatVerticalPosition = (session.chatVerticalPosition - 0.15f).coerceAtLeast(0f)
+                                        true
+                                    },
+                                    CustomAccessibilityAction("Move chat down") {
+                                        session.chatVerticalPosition = (session.chatVerticalPosition + 0.15f).coerceAtMost(1f)
+                                        true
+                                    },
+                                )
+                            }
+                            .pointerInput(travel) {
+                                detectDragGesturesAfterLongPress { change, drag ->
+                                    change.consume()
+                                    if (travel > 0f) session.chatVerticalPosition = (session.chatVerticalPosition + drag.y / travel).coerceIn(0f, 1f)
+                                }
+                            },
+                    ) {
                         Icon(Icons.Outlined.ChatBubbleOutline, "Ask AI", tint = MaterialTheme.colorScheme.primary)
                     }
                     Box(Modifier.size(52.dp, 48.dp), contentAlignment = Alignment.TopCenter) {
@@ -1611,11 +1638,23 @@ private fun EditorToolbar(
                     IconButton(onClick = session::redo, enabled = session.canRedo && !isBusy) {
                         Icon(Icons.AutoMirrored.Outlined.Redo, contentDescription = "Redo")
                     }
-                    IconButton(onClick = { clipboard?.onToggleSelectionMode?.invoke() }, enabled = !isBusy) {
+                    IconButton(
+                        onClick = { clipboard?.onToggleSelectionMode?.invoke() },
+                        enabled = !isBusy,
+                        modifier = Modifier.background(if (clipboard?.rangeSelection == true) MaterialTheme.colorScheme.tertiary.copy(alpha = 0.2f) else Color.Transparent, CircleShape),
+                    ) {
                         Icon(
                             Icons.Outlined.SelectAll,
-                            contentDescription = if (clipboard?.selectionMode == true) "Leave block selection" else "Select blocks to copy",
-                            tint = if (clipboard?.selectionMode == true) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            contentDescription = when {
+                                clipboard?.rangeSelection == true -> "Finish range selection"
+                                clipboard?.selectionMode == true -> "Select a range of blocks"
+                                else -> "Select blocks to copy"
+                            },
+                            tint = when {
+                                clipboard?.rangeSelection == true -> MaterialTheme.colorScheme.tertiary
+                                clipboard?.selectionMode == true -> MaterialTheme.colorScheme.primary
+                                else -> MaterialTheme.colorScheme.onSurface
+                            },
                         )
                     }
                     IconButton(

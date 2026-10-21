@@ -149,8 +149,11 @@ class WorkflowEditorSession {
     internal var renameTemplateName by mutableStateOf("")
     internal var blockSelection by mutableStateOf<BlockSelection?>(null)
     internal var blockSelectionMode by mutableStateOf(false)
+    internal var blockRangeSelection by mutableStateOf(false)
+    internal var blockRangeAnchor by mutableStateOf<String?>(null)
     internal var selectedBlockPath by mutableStateOf<StepListPath?>(null)
     internal var selectedBlockIds by mutableStateOf<Set<String>>(emptySet())
+    internal var chatVerticalPosition by mutableStateOf(0.5f)
     internal var canvasScrollState by mutableStateOf(LazyListState())
     internal var templateScrollState by mutableStateOf(LazyListState())
     private var savedDraft by mutableStateOf<WorkflowDraft?>(null)
@@ -314,6 +317,55 @@ class WorkflowEditorSession {
         revisionSummaries = summaries
     }
 
+    internal fun cycleBlockSelectionMode() {
+        if (!blockSelectionMode) {
+            blockSelectionMode = true
+        } else if (!blockRangeSelection) {
+            blockRangeSelection = true
+        } else {
+            clearBlockSelection()
+        }
+        selectedBlockIds = emptySet()
+        selectedBlockPath = null
+        blockRangeAnchor = null
+    }
+
+    internal fun clearBlockSelection() {
+        blockSelectionMode = false
+        blockRangeSelection = false
+        blockRangeAnchor = null
+        selectedBlockPath = null
+        selectedBlockIds = emptySet()
+    }
+
+    internal fun selectBlock(chosen: BlockSelection) {
+        if (!blockSelectionMode) {
+            blockSelection = chosen
+            return
+        }
+        val steps = draft?.stepsAt(chosen.path).orEmpty()
+        val end = steps.indexOfFirst { it.id == chosen.stepId }
+        if (end < 0) return
+        if (selectedBlockPath != chosen.path) {
+            selectedBlockPath = chosen.path
+            selectedBlockIds = emptySet()
+            blockRangeAnchor = null
+        }
+        selectedBlockIds = selectedBlockIds.intersect(steps.mapTo(mutableSetOf()) { it.id })
+        if (blockRangeSelection) {
+            val start = steps.indexOfFirst { it.id == blockRangeAnchor }
+            if (start < 0) {
+                blockRangeAnchor = chosen.stepId
+                selectedBlockIds = selectedBlockIds + chosen.stepId
+            } else {
+                selectedBlockIds = selectedBlockIds + steps.subList(minOf(start, end), maxOf(start, end) + 1).map { it.id }
+                blockRangeAnchor = null
+            }
+        } else {
+            selectedBlockIds = if (chosen.stepId in selectedBlockIds) selectedBlockIds - chosen.stepId else selectedBlockIds + chosen.stepId
+        }
+    }
+
     private fun dismissEditors() {
         colorPickerImages.clear()
         geometryTarget = null
@@ -327,9 +379,7 @@ class WorkflowEditorSession {
         renameTemplateTarget = null
         renameTemplateName = ""
         blockSelection = null
-        blockSelectionMode = false
-        selectedBlockPath = null
-        selectedBlockIds = emptySet()
+        clearBlockSelection()
         canvasScrollState = LazyListState()
         templateScrollState = LazyListState()
     }
