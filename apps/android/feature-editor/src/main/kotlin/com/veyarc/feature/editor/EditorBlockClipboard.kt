@@ -116,19 +116,21 @@ internal class EditorBlockClipboard(context: Context) {
     companion object {
         private val AAD = "editor-block-clipboard:v1".encodeToByteArray()
         private val lock = Any()
-        private val copyScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        private val operationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         var isCopying by mutableStateOf(false)
             private set
+        private var isPasting by mutableStateOf(false)
+        val isBusy: Boolean get() = isCopying || isPasting
         var copyMessage by mutableStateOf<String?>(null)
             private set
 
         fun copy(context: Context, source: WorkflowDraft, steps: List<WorkflowStep>) {
-            if (isCopying || steps.isEmpty()) return
+            if (isBusy || steps.isEmpty()) return
             val app = context.applicationContext
             isCopying = true
             copyMessage = "Copying blocks…"
             // Navigation and rotation must not cancel the copy or change its source revision.
-            copyScope.launch {
+            operationScope.launch {
                 try {
                     withContext(Dispatchers.IO) {
                         val repository = WorkflowRepository(app)
@@ -152,7 +154,52 @@ internal class EditorBlockClipboard(context: Context) {
                 }
             }
         }
+
+        fun paste(context: Context, session: WorkflowEditorSession, expected: WorkflowDraft, path: StepListPath, index: Int, entry: BlockClipboardEntry, includeImages: Boolean) {
+            if (isBusy || !session.beginPaste(expected)) return
+            val app = context.applicationContext
+            isPasting = true
+            copyMessage = "Pasting blocks…"
+            operationScope.launch {
+                try {
+                    val (updated, omitted) = withContext(Dispatchers.IO) {
+                        val repository = WorkflowRepository(app)
+                        try {
+                            val required = entry.steps.clipboardImageIds()
+                            val images = if (includeImages) entry.images.filter { it.id.value in required } else emptyList()
+                            val loaded = EditorBlockClipboard(app).importImages(images, expected.assetDescriptors) { id ->
+                                expected.assets.firstOrNull { it.assetId == id }
+                                    ?: repository.loadRevisionAsset(expected.workflowId, requireNotNull(expected.lastSavedRevision), id)
+                            }
+                            var result = expected.insertSteps(path, index, remapClipboardSteps(entry.steps, loaded.assetIds))
+                            loaded.assets.forEach { (image, asset) ->
+                                result = result.addAsset(asset).renameAsset(asset.assetId, uniqueClipboardImageName(result, image.name))
+                            }
+                            result to (required - expected.assetDescriptors.map { it.assetId.value }.toSet() - loaded.assetIds.keys)
+                        } finally {
+                            repository.close()
+                        }
+                    }
+                    check(session.completePaste(expected, updated)) { "The destination workflow was closed or replaced." }
+                    copyMessage = if (omitted.isEmpty()) "Pasted ${entry.steps.size} blocks." else "Pasted blocks. Add the missing images before saving."
+                } catch (_: Exception) {
+                    copyMessage = "Could not paste blocks. The workflow was not changed."
+                } finally {
+                    session.finishPaste()
+                    isPasting = false
+                }
+            }
+        }
     }
+}
+
+private fun uniqueClipboardImageName(draft: WorkflowDraft, requested: String): String {
+    val base = requested.trim().take(48).ifEmpty { "Image" }
+    val used = draft.activeAssetNames().mapTo(mutableSetOf()) { it.lowercase() }
+    if (base.lowercase() !in used) return base
+    var suffix = 2
+    while ("$base $suffix".lowercase() in used) suffix++
+    return "$base $suffix"
 }
 
 internal data class ClipboardImageImport(

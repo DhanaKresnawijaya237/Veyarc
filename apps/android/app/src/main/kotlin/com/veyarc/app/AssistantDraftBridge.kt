@@ -42,7 +42,7 @@ internal class AssistantDraftBridge(
     private var binding: String? = null
 
     fun capture(): AssistantContextCapture {
-        if (editor.isSaving) return AssistantContextCapture(error = "Wait for the editor to finish saving before requesting or applying changes.")
+        if (editor.isBusy) return AssistantContextCapture(error = "Wait for the editor to finish saving or pasting before requesting or applying changes.")
         val current = editor.draft
         if (current !== observed) {
             val onlyFolding = current != observed && current?.copy(collapsedStepIds = observed?.collapsedStepIds.orEmpty()) == observed

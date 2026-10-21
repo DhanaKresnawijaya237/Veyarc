@@ -111,9 +111,29 @@ data class TemplateUsageNumbers(val crop: List<String>, val background: List<Str
 class WorkflowEditorSession {
     var isSaving by mutableStateOf(false)
         private set
+    var isPasting by mutableStateOf(false)
+        private set
+    val isBusy: Boolean get() = isSaving || isPasting
+
+    internal fun beginPaste(expected: WorkflowDraft): Boolean {
+        if (isBusy || draft !== expected) return false
+        isPasting = true
+        return true
+    }
+
+    internal fun completePaste(expected: WorkflowDraft, updated: WorkflowDraft): Boolean {
+        if (!isPasting || draft !== expected) return false
+        isPasting = false
+        update(updated)
+        return true
+    }
+
+    internal fun finishPaste() {
+        isPasting = false
+    }
 
     fun beginSave(): Boolean {
-        if (isSaving) return false
+        if (isBusy) return false
         isSaving = true
         return true
     }
@@ -233,7 +253,7 @@ class WorkflowEditorSession {
     }
 
     fun update(updated: WorkflowDraft) {
-        if (isSaving) return
+        if (isBusy) return
         val current = draft ?: return
         if (current.persistedContent() != updated.persistedContent()) {
             undoStack = (undoStack + current).takeLast(MAX_HISTORY_ENTRIES)
@@ -243,7 +263,7 @@ class WorkflowEditorSession {
     }
 
     fun undo() {
-        if (isSaving) return
+        if (isBusy) return
         val current = draft ?: return
         val previous = undoStack.lastOrNull() ?: return
         undoStack = undoStack.dropLast(1)
@@ -252,7 +272,7 @@ class WorkflowEditorSession {
     }
 
     fun redo() {
-        if (isSaving) return
+        if (isBusy) return
         val current = draft ?: return
         val next = redoStack.lastOrNull() ?: return
         redoStack = redoStack.dropLast(1)

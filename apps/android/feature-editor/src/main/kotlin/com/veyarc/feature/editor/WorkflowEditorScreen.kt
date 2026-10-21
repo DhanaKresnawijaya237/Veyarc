@@ -209,7 +209,7 @@ fun WorkflowEditorScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var isWorking by remember { mutableStateOf(false) }
-    val isBusy = isWorking || session.isSaving
+    val isBusy = isWorking || session.isBusy
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var isOpening by remember { mutableStateOf(false) }
     var initialLoadFinished by remember(initialBundle, initialStoredWorkflowId, initialStoredRevision) { mutableStateOf(false) }
@@ -224,8 +224,8 @@ fun WorkflowEditorScreen(
     var clipboardAvailable by remember { mutableStateOf(false) }
     var pendingBlockPaste by remember { mutableStateOf<PendingBlockPaste?>(null) }
 
-    LaunchedEffect(EditorBlockClipboard.isCopying) {
-        if (EditorBlockClipboard.isCopying) return@LaunchedEffect
+    LaunchedEffect(EditorBlockClipboard.isBusy) {
+        if (EditorBlockClipboard.isBusy) return@LaunchedEffect
         clipboardAvailable = withContext(Dispatchers.IO) { runCatching { blockClipboard.read() != null }.getOrDefault(false) }
     }
     LaunchedEffect(EditorBlockClipboard.copyMessage) {
@@ -320,13 +320,15 @@ fun WorkflowEditorScreen(
         return prepareRevision(revisions, consumeInitial) { WorkflowDraft.fromRevision(data, journalFileName, latest) }
     }
 
-    LaunchedEffect(initialRecordingDraft) {
+    LaunchedEffect(initialRecordingDraft, session.isPasting) {
+        if (session.isPasting) return@LaunchedEffect
         val recorded = initialRecordingDraft ?: return@LaunchedEffect
         val request = prepareRevision(emptyList(), true) { recorded }
         if (session.isDirty) pendingReplacement = request else applyReplacement(request)
     }
 
-    LaunchedEffect(initialBundle, initialRecordingJournalFileName) {
+    LaunchedEffect(initialBundle, initialRecordingJournalFileName, session.isPasting) {
+        if (session.isPasting) return@LaunchedEffect
         val bundle = initialBundle ?: return@LaunchedEffect
         val current = session.draft
         if (current?.workflowId == bundle.document.id && current.lastSavedRevision == bundle.document.revision) {
@@ -353,7 +355,8 @@ fun WorkflowEditorScreen(
         }
     }
 
-    LaunchedEffect(initialStoredWorkflowId, initialStoredRevision) {
+    LaunchedEffect(initialStoredWorkflowId, initialStoredRevision, session.isPasting) {
+        if (session.isPasting) return@LaunchedEffect
         val workflowId = initialStoredWorkflowId ?: return@LaunchedEffect
         val revision = initialStoredRevision?.takeIf { it > 0 } ?: return@LaunchedEffect
         val current = session.draft
@@ -379,7 +382,8 @@ fun WorkflowEditorScreen(
         }
     }
 
-    LaunchedEffect(newWorkflowRequestId) {
+    LaunchedEffect(newWorkflowRequestId, session.isPasting) {
+        if (session.isPasting) return@LaunchedEffect
         if (newWorkflowRequestId == 0) return@LaunchedEffect
         val request = DraftReplacement.New(viewportFor(context), newWorkflowFolderId)
         if (session.isDirty) pendingReplacement = request else applyReplacement(request)
@@ -495,6 +499,10 @@ fun WorkflowEditorScreen(
     }
 
     fun requestCloseDraft() {
+        if (session.isPasting) {
+            statusMessage = "Finishing paste. You can switch pages while it completes."
+            return
+        }
         recordingControls?.onClose?.let {
             it()
             return
@@ -538,49 +546,31 @@ fun WorkflowEditorScreen(
     }
 
     fun requestBlockPaste(path: StepListPath, index: Int) {
-        if (EditorBlockClipboard.isCopying) return
+        if (EditorBlockClipboard.isBusy || isBusy) return
+        val current = session.draft ?: return
         scope.launch {
             runCatching { withContext(Dispatchers.IO) { blockClipboard.read() } }
                 .onSuccess { entry ->
+                    if (session.draft !== current) return@onSuccess
                     if (entry == null) {
                         clipboardAvailable = false
                         statusMessage = "The block clipboard is empty."
                     } else {
-                        pendingBlockPaste = PendingBlockPaste(path, index, entry)
+                        pendingBlockPaste = PendingBlockPaste(path, index, entry, current)
                     }
                 }.onFailure { error -> statusMessage = "Could not open block clipboard: ${error.userMessage()}" }
         }
     }
 
     fun confirmBlockPaste(importImages: Boolean) {
-        if (EditorBlockClipboard.isCopying) return
+        if (EditorBlockClipboard.isBusy || isBusy) return
         val pending = pendingBlockPaste ?: return
         pendingBlockPaste = null
-        scope.launch {
-            isWorking = true
-            statusMessage = null
-            runCatching {
-                val current = session.draft ?: error("No workflow is open")
-                val existingIds = current.assetDescriptors.mapTo(mutableSetOf()) { it.assetId.value }
-                val required = pending.entry.steps.clipboardImageIds()
-                val imagesToImport = if (importImages) pending.entry.images.filter { it.id.value in required } else emptyList()
-                val loaded = withContext(Dispatchers.IO) {
-                    blockClipboard.importImages(imagesToImport, current.assetDescriptors) { id ->
-                        current.assets.firstOrNull { it.assetId == id }
-                            ?: repository.loadRevisionAsset(current.workflowId, requireNotNull(current.lastSavedRevision), id)
-                    }
-                }
-                var updated = current.insertSteps(pending.path, pending.index, remapClipboardSteps(pending.entry.steps, loaded.assetIds))
-                loaded.assets.forEach { (image, asset) ->
-                    updated = updated.addAsset(asset).renameAsset(asset.assetId, uniqueClipboardImageName(updated, image.name))
-                }
-                check(session.draft === current) { "The workflow changed while pasting. Try again." }
-                session.update(updated)
-                val omitted = required - existingIds - loaded.assetIds.keys
-                statusMessage = if (omitted.isEmpty()) "Pasted ${pending.entry.steps.size} blocks." else "Pasted blocks. Add the missing images before saving."
-            }.onFailure { error -> statusMessage = "Could not paste blocks: ${error.userMessage()}" }
-            isWorking = false
+        if (session.draft !== pending.draft) {
+            statusMessage = "The workflow changed. Choose where to paste again."
+            return
         }
+        EditorBlockClipboard.paste(context, session, pending.draft, pending.path, pending.index, pending.entry, importImages)
     }
 
     suspend fun loadDraftPreview(assetId: com.veyarc.model.AssetId, maxDimension: Int): TemplatePreviewData? = previewLoadMutex.withLock {
@@ -981,10 +971,10 @@ private fun WorkflowDraftScreen(
     val selectedIds = session.selectedBlockIds
     BackHandler(enabled = selectionMode) { session.clearBlockSelection() }
     val clipboardActions = BlockClipboardActions(
-        clipboardAvailable = clipboardAvailable && !EditorBlockClipboard.isCopying,
+        clipboardAvailable = clipboardAvailable && !EditorBlockClipboard.isBusy,
         selectionMode = selectionMode,
         selectedIds = selectedIds,
-        canCopy = !EditorBlockClipboard.isCopying && (if (selectionMode) selectedIds.isNotEmpty() else selection != null),
+        canCopy = !EditorBlockClipboard.isBusy && (if (selectionMode) selectedIds.isNotEmpty() else selection != null),
         rangeSelection = session.blockRangeSelection,
         onToggleSelectionMode = session::cycleBlockSelectionMode,
         onCopy = {
@@ -1141,7 +1131,7 @@ private fun WorkflowTitleEditor(
 
 internal data class BlockSelection(val path: StepListPath, val stepId: String)
 
-private data class PendingBlockPaste(val path: StepListPath, val index: Int, val entry: BlockClipboardEntry)
+private data class PendingBlockPaste(val path: StepListPath, val index: Int, val entry: BlockClipboardEntry, val draft: WorkflowDraft)
 
 private data class BlockClipboardActions(
     val clipboardAvailable: Boolean,
@@ -1156,15 +1146,6 @@ private data class BlockClipboardActions(
 )
 
 private val LocalBlockClipboardActions = compositionLocalOf<BlockClipboardActions?> { null }
-
-private fun uniqueClipboardImageName(draft: WorkflowDraft, requested: String): String {
-    val base = requested.trim().take(48).ifEmpty { "Image" }
-    val used = draft.activeAssetNames().mapTo(mutableSetOf()) { it.lowercase() }
-    if (base.lowercase() !in used) return base
-    var suffix = 2
-    while ("$base $suffix".lowercase() in used) suffix++
-    return "$base $suffix"
-}
 
 internal data class StepBounds(val topInWindow: Float, val height: Int) {
     val centerInWindow: Float
@@ -1647,7 +1628,6 @@ private fun EditorToolbar(
                     IconButton(
                         onClick = { clipboard?.onToggleSelectionMode?.invoke() },
                         enabled = !isBusy,
-                        modifier = Modifier.background(if (clipboard?.rangeSelection == true) MaterialTheme.colorScheme.tertiary.copy(alpha = 0.2f) else Color.Transparent, CircleShape),
                     ) {
                         Icon(
                             Icons.Outlined.SelectAll,
