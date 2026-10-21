@@ -3,6 +3,8 @@ package com.veyarc.feature.editor
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,14 +31,20 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.veyarc.data.storage.StoredRunEvent
@@ -63,7 +71,9 @@ fun StoredRunDetailScreen(
     // ponytail: Reveals saved events only; older discarded events need a separate retention change.
     var visibleEvents by remember(record.runId) { mutableIntStateOf(12) }
     val firstEvent = (record.eventHistory.size - visibleEvents).coerceAtLeast(0)
-    val activityGroups = remember(record.eventHistory, firstEvent) { runActivityGroups(record.eventHistory, firstEvent) }
+    val sections = remember(record.eventHistory, firstEvent) { runActivitySections(record.eventHistory, firstEvent) }
+    var collapsedSections by remember(record.runId) { mutableStateOf(emptySet<Int>()) }
+    val timelineColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
     val timestamp = remember(record.startedAtMs) { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(record.startedAtMs)) }
     val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     val statusColor = when (record.status) {
@@ -123,21 +133,47 @@ fun StoredRunDetailScreen(
                 }
             }
         }
-        items(activityGroups, key = { group -> "events-${group.first().index}" }) { group ->
-            val first = group.first().value
-            Surface(modifier = Modifier.animateItem(fadeInSpec = tween(160), placementSpec = tween(180)).fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    first.blockLabel?.let { label ->
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(label, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                            first.contextLabel?.takeUnless { it == "Workflow" }?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                        }
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+        sections.forEach { section ->
+            val sectionId = section.groups.first().first().index
+            val collapsed = sectionId in collapsedSections
+            item(key = "section-$sectionId") {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp).testTag("run-section-$sectionId").semantics { stateDescription = if (collapsed) "Collapsed" else "Expanded" }
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, role = Role.Button, onClickLabel = if (collapsed) "Expand activity section" else "Collapse activity section") {
+                            collapsedSections = if (collapsed) collapsedSections - sectionId else collapsedSections + sectionId
+                        },
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                ) {
+                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(section.context, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                        Text("${section.groups.sumOf { it.size }} events", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    group.forEach { (index, event) ->
-                        Row(Modifier.fillMaxWidth().testTag("run-event-$index"), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.Top) {
-                            Text(readableRunMessage(event.message).replace(": true", ": met").replace(": false", ": not met"), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                            if (index > 0) Text("+${formatEventGap(event.atMs - record.eventHistory[index - 1].atMs)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            if (!collapsed) {
+                items(section.groups, key = { group -> "events-${group.first().index}" }) { group ->
+                    val first = group.first().value
+                    Column(
+                        Modifier.animateItem(fadeInSpec = tween(160), placementSpec = tween(180)).fillMaxWidth()
+                            .drawBehind {
+                                val x = 7.dp.toPx()
+                                drawLine(timelineColor, Offset(x, 0f), Offset(x, size.height), 1.dp.toPx())
+                                drawCircle(timelineColor, 4.dp.toPx(), Offset(x, 18.dp.toPx()))
+                            }.padding(start = 24.dp, top = 6.dp, bottom = 10.dp, end = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        first.blockLabel?.let { label ->
+                            Text(label, style = MaterialTheme.typography.titleSmall)
+                            first.contextLabel?.removePrefix(section.context)?.removePrefix(" › ")?.takeIf { it.isNotBlank() }?.let {
+                                Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        group.forEach { (index, event) ->
+                            Row(Modifier.fillMaxWidth().testTag("run-event-$index"), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.Top) {
+                                Text(readableRunMessage(event.message).replace(": true", ": met").replace(": false", ": not met"), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                                if (index > 0) Text("+${formatEventGap(event.atMs - record.eventHistory[index - 1].atMs)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
                 }
@@ -184,11 +220,29 @@ internal fun runActivityGroups(events: List<StoredRunEvent>, firstEvent: Int): L
     val groups = mutableListOf<MutableList<IndexedValue<StoredRunEvent>>>()
     events.withIndex().drop(firstEvent).forEach { indexed ->
         val previous = groups.lastOrNull()?.lastOrNull()?.value
-        if (indexed.value.blockLabel != null && previous?.blockLabel == indexed.value.blockLabel && previous?.contextLabel == indexed.value.contextLabel) {
+        if (indexed.value.blockLabel != null && previous?.blockLabel == indexed.value.blockLabel && previous?.contextLabel == indexed.value.contextLabel && !indexed.value.message.endsWith(" started")) {
             groups.last().add(indexed)
         } else {
             groups.add(mutableListOf(indexed))
         }
     }
     return groups
+}
+
+internal data class RunActivitySection(val context: String, val groups: MutableList<List<IndexedValue<StoredRunEvent>>>)
+
+/** Keep branch visits separate in time, including returns from nested loops. */
+internal fun runActivitySections(events: List<StoredRunEvent>, firstEvent: Int): List<RunActivitySection> {
+    val sections = mutableListOf<RunActivitySection>()
+    runActivityGroups(events, firstEvent).forEach { group ->
+        val event = group.first().value
+        val context = event.contextLabel?.split(" › ")?.takeWhile { !it.startsWith("Condition ") && it != "Not" }
+            ?.joinToString(" › ")?.ifBlank { null } ?: if (event.blockLabel == null) "Run activity" else "Workflow"
+        if (sections.lastOrNull()?.context == context) {
+            sections.last().groups.add(group)
+        } else {
+            sections.add(RunActivitySection(context, mutableListOf(group)))
+        }
+    }
+    return sections
 }
