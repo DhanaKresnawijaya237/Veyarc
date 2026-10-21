@@ -245,7 +245,7 @@
             "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor-only background. Cleared when its image is cropped or resized on replacement; saving a copy keeps the original. Does not change replay or image matching. Omit to remove." },
             "assetId": { "$ref": "#/$defs/assetId" },
             "region": { "$ref": "#/$defs/rect" },
-            "matchThreshold": { "type": "number", "minimum": 0, "maximum": 1 },
+            "matchThreshold": { "type": "number", "minimum": 0, "maximum": 1, "description": "RGB difference similarity: 1 minus RGB root-mean-square error divided by 255. 1 requires identical RGB pixels. Higher values are stricter. Uses original pixels without resizing; alpha is ignored. Test the actual template against a saved background to choose a threshold." },
             "matchMode": {
               "enum": ["appearsWithinRegion", "screenState"],
               "default": "appearsWithinRegion"
@@ -261,7 +261,7 @@
             "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor-only background. Cleared when its image is cropped or resized on replacement; saving a copy keeps the original. Does not change replay or image matching. Omit to remove." },
             "assetId": { "$ref": "#/$defs/assetId" },
             "region": { "$ref": "#/$defs/rect" },
-            "matchThreshold": { "type": "number", "minimum": 0, "maximum": 1 }
+            "matchThreshold": { "type": "number", "minimum": 0, "maximum": 1, "description": "RGB difference similarity: 1 minus RGB root-mean-square error divided by 255. 1 requires identical RGB pixels. Higher values are stricter. Uses original pixels without resizing; alpha is ignored. Test the actual template against a saved background to choose a threshold." }
           }
         },
         {
