@@ -178,6 +178,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 import kotlin.math.roundToInt
@@ -218,6 +220,7 @@ fun WorkflowEditorScreen(
     var pendingReplacement by remember { mutableStateOf<DraftReplacement?>(null) }
     var pendingOrientationSave by remember { mutableStateOf<PendingOrientationSave?>(null) }
     val blockClipboard = remember(context) { EditorBlockClipboard(context) }
+    val previewLoadMutex = remember { Mutex() }
     var clipboardAvailable by remember { mutableStateOf(false) }
     var pendingBlockPaste by remember { mutableStateOf<PendingBlockPaste?>(null) }
 
@@ -580,20 +583,23 @@ fun WorkflowEditorScreen(
         }
     }
 
-    suspend fun loadDraftPreview(assetId: com.veyarc.model.AssetId, maxDimension: Int): TemplatePreviewData? {
-        cachedTemplatePreview(assetId, maxDimension)?.let { return it }
-        val current = session.draft ?: return null
+    suspend fun loadDraftPreview(assetId: com.veyarc.model.AssetId, maxDimension: Int): TemplatePreviewData? = previewLoadMutex.withLock {
+        cachedTemplatePreview(assetId, maxDimension)?.let { return@withLock it }
+        val current = session.draft ?: return@withLock null
         current.assets.firstOrNull { it.assetId == assetId }?.let { asset ->
-            return withContext(Dispatchers.Default) { decodeTemplatePreview(asset, maxDimension) }
+            return@withLock withContext(Dispatchers.Default) { decodeTemplatePreview(asset, maxDimension) }
         }
-        val sourceRevision = current.lastSavedRevision ?: return null
+        val sourceRevision = current.lastSavedRevision ?: return@withLock null
         val decoded = runCatching {
             withContext(Dispatchers.IO) {
                 repository.loadRevisionAssetPreviewDecoded(current.workflowId, sourceRevision, assetId)
             }
-        }.getOrNull() ?: return null
-        return try {
-            withContext(Dispatchers.Default) { decodeTemplatePreview(assetId, decoded, maxDimension) }
+        }.getOrNull() ?: return@withLock null
+        try {
+            val descriptor = current.assetDescriptors.firstOrNull { it.assetId == assetId }
+            withContext(Dispatchers.Default) {
+                decodeTemplatePreview(assetId, decoded, maxDimension, descriptor?.widthPx ?: decoded.widthPx, descriptor?.heightPx ?: decoded.heightPx)
+            }
         } finally {
             decoded.clear()
         }

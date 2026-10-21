@@ -59,7 +59,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -488,11 +487,8 @@ private fun PixelConditionFields(
         }
     } else {
         Text("Matches when any pixel in this area has the selected color.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        val backgroundAsset by produceState<BundleAsset?>(null, condition.backgroundAssetId) {
-            value = condition.backgroundAssetId?.let { loadAsset(it) }
-        }
         var showBackgrounds by rememberSaveable { mutableStateOf(false) }
-        ImageConditionPreview(region = searchRegion, displayWidthPx = previewWidthPx, displayHeightPx = previewHeightPx, asset = null, backgroundAsset = backgroundAsset, colorSearch = true, onRegionChange = { onChange(condition.copy(region = it)) })
+        ImageConditionPreview(region = searchRegion, displayWidthPx = previewWidthPx, displayHeightPx = previewHeightPx, assetId = null, backgroundAssetId = condition.backgroundAssetId, loadPreview = loadPreview, colorSearch = true, onRegionChange = { onChange(condition.copy(region = it)) })
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { showBackgrounds = true }) {
                 Icon(Icons.Outlined.Image, contentDescription = "Change background")
@@ -580,15 +576,9 @@ private fun ImageConditionFields(
         is ImageAbsentCondition -> condition.assetId
         else -> error("Image editor received a non-image condition")
     }
-    val selectedAsset by produceState<BundleAsset?>(null, assetId) {
-        value = loadAsset(assetId)
-    }
     val isScreenState = condition is ImagePresentCondition && condition.matchMode == ImageMatchMode.SCREEN_STATE
     var pickerMode by rememberSaveable { mutableStateOf<ImagePickerMode?>(null) }
     val backgroundAssetId = condition.backgroundAssetId()?.value
-    val backgroundAsset by produceState<BundleAsset?>(null, backgroundAssetId) {
-        value = backgroundAssetId?.let(::AssetId)?.let { loadAsset(it) }
-    }
     val update: (AssetId, NormalizedRect, Double) -> Unit = { selectedAsset, region, threshold ->
         onChange(
             when (condition) {
@@ -601,8 +591,9 @@ private fun ImageConditionFields(
         region = if (isScreenState) FULL_SCREEN_REGION else condition.region(),
         displayWidthPx = previewWidthPx,
         displayHeightPx = previewHeightPx,
-        asset = selectedAsset,
-        backgroundAsset = if (isScreenState) null else backgroundAsset,
+        assetId = assetId,
+        backgroundAssetId = if (isScreenState) null else backgroundAssetId?.let(::AssetId),
+        loadPreview = loadPreview,
         screenStateMode = isScreenState,
         onRegionChange = if (isScreenState) {
             null
@@ -631,9 +622,9 @@ private fun ImageConditionFields(
         }
     }
     Text(
-        selectedAsset?.let { assetNames[it.assetId.value] ?: "Target image" } ?: "No image selected",
+        assetNames[assetId.value] ?: "Target image",
         style = MaterialTheme.typography.bodySmall,
-        color = if (selectedAsset == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     if (showAdjustments) ImageConditionAdjustments(condition, assets, assetNames, loadAsset, loadPreview, previewWidthPx, previewHeightPx, onChange)
     pickerMode?.let { mode ->

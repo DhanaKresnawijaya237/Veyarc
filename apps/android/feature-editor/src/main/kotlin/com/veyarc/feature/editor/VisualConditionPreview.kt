@@ -50,8 +50,6 @@ import com.veyarc.model.AssetId
 import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.NormalizedRect
 import com.veyarc.model.bundle.BundleAsset
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
@@ -60,7 +58,7 @@ import kotlin.math.roundToInt
 import android.graphics.Color as AndroidColor
 
 private const val TEMPLATE_KEY_ALIAS = "veyarc.template-assets.v1"
-private const val PREVIEW_MAX_DIMENSION = 1_200
+internal const val PREVIEW_MAX_DIMENSION = 1_200
 private const val DEVICE_PREVIEW_HEIGHT_DP = 360
 
 @Composable
@@ -68,8 +66,9 @@ internal fun ImageConditionPreview(
     region: NormalizedRect,
     displayWidthPx: Int,
     displayHeightPx: Int,
-    asset: BundleAsset?,
-    backgroundAsset: BundleAsset? = null,
+    assetId: AssetId?,
+    backgroundAssetId: AssetId? = null,
+    loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
     screenStateMode: Boolean = false,
     colorSearch: Boolean = false,
     onRegionChange: ((NormalizedRect) -> Unit)?,
@@ -77,18 +76,22 @@ internal fun ImageConditionPreview(
     val safeDisplayWidth = displayWidthPx.coerceAtLeast(1)
     val safeDisplayHeight = displayHeightPx.coerceAtLeast(1)
     val preview by produceState<TemplatePreviewState>(
-        initialValue = if (asset == null) TemplatePreviewState.Unavailable else TemplatePreviewState.Loading,
-        key1 = asset?.assetId,
+        initialValue = assetId?.let { cachedTemplatePreview(it, PREVIEW_MAX_DIMENSION) }?.let(TemplatePreviewState::Ready)
+            ?: if (assetId == null) TemplatePreviewState.Unavailable else TemplatePreviewState.Loading,
+        key1 = assetId,
     ) {
-        value = asset?.let { selected ->
-            withContext(Dispatchers.Default) { decodeTemplatePreview(selected) }
+        value = assetId?.let { cachedTemplatePreview(it, PREVIEW_MAX_DIMENSION) }?.let(TemplatePreviewState::Ready)
+            ?: if (assetId == null) TemplatePreviewState.Unavailable else TemplatePreviewState.Loading
+        value = assetId?.let { selected ->
+            (cachedTemplatePreview(selected, PREVIEW_MAX_DIMENSION) ?: loadPreview(selected, PREVIEW_MAX_DIMENSION))
                 ?.let(TemplatePreviewState::Ready)
                 ?: TemplatePreviewState.Unavailable
         } ?: TemplatePreviewState.Unavailable
     }
-    val backgroundPreview by produceState<TemplatePreviewData?>(null, backgroundAsset?.assetId) {
-        value = backgroundAsset?.let { selected ->
-            withContext(Dispatchers.Default) { decodeTemplatePreview(selected) }
+    val backgroundPreview by produceState(backgroundAssetId?.let { cachedTemplatePreview(it, PREVIEW_MAX_DIMENSION) }, backgroundAssetId) {
+        value = backgroundAssetId?.let { cachedTemplatePreview(it, PREVIEW_MAX_DIMENSION) }
+        value = backgroundAssetId?.let { selected ->
+            cachedTemplatePreview(selected, PREVIEW_MAX_DIMENSION) ?: loadPreview(selected, PREVIEW_MAX_DIMENSION)
         }
     }
     val configuration = LocalConfiguration.current
@@ -446,6 +449,8 @@ internal fun decodeTemplatePreview(
     assetId: AssetId,
     decoded: DecodedTemplate,
     maxDimension: Int,
+    sourceWidthPx: Int = decoded.widthPx,
+    sourceHeightPx: Int = decoded.heightPx,
 ): TemplatePreviewData? = try {
     require(maxDimension > 0)
     val cacheKey = "${assetId.value}:$maxDimension"
@@ -480,8 +485,8 @@ internal fun decodeTemplatePreview(
         }
         TemplatePreviewData(
             image = createdBitmap.asImageBitmap(),
-            widthPx = decoded.widthPx,
-            heightPx = decoded.heightPx,
+            widthPx = sourceWidthPx,
+            heightPx = sourceHeightPx,
         ).also { templatePreviewCache.put(cacheKey, it) }
     } finally {
         rgbaBytes.fill(0)

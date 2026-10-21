@@ -30,11 +30,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -56,6 +55,8 @@ import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.backgroundAssetId
 import com.veyarc.model.bundle.BundleAsset
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 private data class SavedConditionCheck(val sourceId: String, val observation: ConditionObservation? = null, val error: String? = null)
@@ -65,7 +66,12 @@ internal fun ImageCheckTestPanel(condition: Condition, assets: List<WorkflowAsse
     var showImages by rememberSaveable { mutableStateOf(false) }
     var expanded by rememberSaveable { mutableStateOf(true) }
     var sourceId by rememberSaveable { mutableStateOf<String?>(null) }
-    var testedIds by rememberSaveable(condition, assets, width, height) { mutableStateOf<List<String>>(emptyList()) }
+    var testedIds by remember(condition, assets, width, height) { mutableStateOf<List<String>>(emptyList()) }
+    val scope = rememberCoroutineScope()
+    var checkJob by remember { mutableStateOf<Job?>(null) }
+    DisposableEffect(condition, assets, width, height) {
+        onDispose { checkJob?.cancel() }
+    }
     val container = LocalPinnableContainer.current
     val hasChecks = testedIds.isNotEmpty()
     DisposableEffect(container, hasChecks) {
@@ -73,25 +79,21 @@ internal fun ImageCheckTestPanel(condition: Condition, assets: List<WorkflowAsse
         val handle = if (hasChecks) container?.pin() else null
         onDispose { handle?.release() }
     }
-    var request by remember { mutableIntStateOf(0) }
-    var busy by remember { mutableStateOf(false) }
+    var busy by remember(condition, assets, width, height) { mutableStateOf(false) }
     // Edits discard old checks instead of rerunning them.
     var checks by remember(condition, assets, width, height) { mutableStateOf<List<SavedConditionCheck>>(emptyList()) }
     val colorSearch = condition is PixelColorCondition
     val imageId = sourceId ?: condition.backgroundAssetId()?.value
     fun runCheck(id: String) {
+        if (busy) return
         sourceId = id
         checks = checks.filterNot { it.sourceId == id }
         testedIds = listOf(id) + testedIds.filterNot { it == id }
         expanded = true
-        request++
-    }
-    LaunchedEffect(condition, assets, width, height, testedIds, request) {
-        if (testedIds.isEmpty()) return@LaunchedEffect
         busy = true
-        try {
-            for (id in testedIds) {
-                if (checks.any { it.sourceId == id }) continue
+        // Tests start only from a user action, never from restored UI state.
+        checkJob = scope.launch {
+            try {
                 val check = try {
                     val image = requireNotNull(loadAsset(AssetId(id))) { "The test image is unavailable." }
                     val observation = if (condition is PixelColorCondition) {
@@ -112,9 +114,9 @@ internal fun ImageCheckTestPanel(condition: Condition, assets: List<WorkflowAsse
                     SavedConditionCheck(id, error = failure.message ?: "Could not check this image.")
                 }
                 checks = checks + check
+            } finally {
+                busy = false
             }
-        } finally {
-            busy = false
         }
     }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
