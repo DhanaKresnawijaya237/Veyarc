@@ -57,3 +57,25 @@ data class CoordinateRecordingReview(
     val rawReplayTargetPackage: PackageName? = null,
     val rawReplayUnavailableReason: String? = null,
 )
+
+/** Retained with the recording controller across activity recreation. */
+data class RecordingBuilderState(
+    val isOpen: Boolean = false,
+    val showAdd: Boolean = false,
+    val preparing: Boolean = false,
+    val destination: String = "Workflow",
+    val error: String? = null,
+    val image: com.veyarc.feature.editor.RecordingImageDraft? = null,
+    val imageKind: RecordingImageBlock? = null,
+    val confirmRestart: Boolean = false,
+    val resumeApps: List<String> = emptyList(),
+)
+
+enum class RecordingImageBlock(val label: String, val edit: com.veyarc.feature.editor.RecordingConditionEdit? = null) {
+    REPLACE("Replace current condition", com.veyarc.feature.editor.RecordingConditionEdit.REPLACE),
+    ALL("Add to All conditions", com.veyarc.feature.editor.RecordingConditionEdit.ALL),
+    ANY("Add to Any condition", com.veyarc.feature.editor.RecordingConditionEdit.ANY),
+    IF("If image appears"),
+    WHILE("While image appears"),
+    WAIT("Wait for image"),
+}

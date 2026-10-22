@@ -16,7 +16,7 @@ object SavedImageCheck {
                 "Use an original screenshot at $viewportWidth × $viewportHeight. This image is $width × $height; it won't be resized."
             }
             EphemeralScreenFrame(width, height, 0L, rgba).use { frame ->
-                return VisualConditionEvaluator({ frame }, { null }).observe(condition)
+                return VisualConditionEvaluator({ frame }, { null }).use { it.observe(condition) }
             }
         } finally {
             rgba.fill(0)
@@ -46,7 +46,7 @@ object SavedImageCheck {
                 require(target.widthPx <= bounds.width && target.heightPx <= bounds.height) { "The target image is larger than this block's search area." }
             }
             EphemeralScreenFrame(width, height, 0L, backgroundRgba).use { frame ->
-                return VisualConditionEvaluator({ frame }, { if (it == assetId) target else null }).observe(condition)
+                return VisualConditionEvaluator({ frame }, { if (it == assetId) target else null }).use { it.observe(condition) }
             }
         } finally {
             backgroundRgba.fill(0)

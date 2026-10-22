@@ -92,15 +92,17 @@ class AndroidWorkflowExecutor private constructor(
         } else {
             null
         }
-        val run = dependencies.runner.run(
-            plan = plan,
-            driver = dependencies.driverProvider.invoke(visualConditionObserver),
-            clock = dependencies.clock,
-            cancellation = cancellation,
-            pause = pause,
-            eventSink = eventSink,
-            startupPackage = dependencies.startupPackage,
-        )
+        val run = visualConditionObserver.use {
+            dependencies.runner.run(
+                plan = plan,
+                driver = dependencies.driverProvider.invoke(visualConditionObserver),
+                clock = dependencies.clock,
+                cancellation = cancellation,
+                pause = pause,
+                eventSink = eventSink,
+                startupPackage = dependencies.startupPackage,
+            )
+        }
         return AndroidWorkflowExecution(capabilities, compilation, run)
     }
 

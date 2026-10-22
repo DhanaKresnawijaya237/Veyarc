@@ -139,7 +139,9 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
@@ -176,6 +178,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 import kotlin.math.roundToInt
@@ -199,11 +203,13 @@ fun WorkflowEditorScreen(
     onWorkflowClosed: () -> Unit = {},
     modifier: Modifier = Modifier,
     onOpenGuide: (() -> Unit)? = null,
+    recordingControls: RecordingEditorControls? = null,
+    initialRecordingDraft: WorkflowDraft? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var isWorking by remember { mutableStateOf(false) }
-    val isBusy = isWorking || session.isSaving
+    val isBusy = isWorking || session.isBusy
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var isOpening by remember { mutableStateOf(false) }
     var initialLoadFinished by remember(initialBundle, initialStoredWorkflowId, initialStoredRevision) { mutableStateOf(false) }
@@ -214,11 +220,12 @@ fun WorkflowEditorScreen(
     var pendingReplacement by remember { mutableStateOf<DraftReplacement?>(null) }
     var pendingOrientationSave by remember { mutableStateOf<PendingOrientationSave?>(null) }
     val blockClipboard = remember(context) { EditorBlockClipboard(context) }
+    val previewLoadMutex = remember { Mutex() }
     var clipboardAvailable by remember { mutableStateOf(false) }
     var pendingBlockPaste by remember { mutableStateOf<PendingBlockPaste?>(null) }
 
-    LaunchedEffect(EditorBlockClipboard.isCopying) {
-        if (EditorBlockClipboard.isCopying) return@LaunchedEffect
+    LaunchedEffect(EditorBlockClipboard.isBusy) {
+        if (EditorBlockClipboard.isBusy) return@LaunchedEffect
         clipboardAvailable = withContext(Dispatchers.IO) { runCatching { blockClipboard.read() != null }.getOrDefault(false) }
     }
     LaunchedEffect(EditorBlockClipboard.copyMessage) {
@@ -264,7 +271,11 @@ fun WorkflowEditorScreen(
                 } else {
                     request.draft
                 }
-                session.openPrepared(opened, request.validation.takeIf { opened === request.draft })
+                if (request.draft === initialRecordingDraft) {
+                    session.openRecordingDraft(opened)
+                } else {
+                    session.openPrepared(opened, request.validation.takeIf { opened === request.draft })
+                }
                 session.cacheRevisionSummaries(opened.workflowId, request.revisions.takeIf { opened === request.draft }.orEmpty())
                 statusMessage = "Workflow opened."
                 if (request.consumeInitialBundle) onInitialBundleConsumed()
@@ -309,7 +320,15 @@ fun WorkflowEditorScreen(
         return prepareRevision(revisions, consumeInitial) { WorkflowDraft.fromRevision(data, journalFileName, latest) }
     }
 
-    LaunchedEffect(initialBundle, initialRecordingJournalFileName) {
+    LaunchedEffect(initialRecordingDraft, session.isPasting) {
+        if (session.isPasting) return@LaunchedEffect
+        val recorded = initialRecordingDraft ?: return@LaunchedEffect
+        val request = prepareRevision(emptyList(), true) { recorded }
+        if (session.isDirty) pendingReplacement = request else applyReplacement(request)
+    }
+
+    LaunchedEffect(initialBundle, initialRecordingJournalFileName, session.isPasting) {
+        if (session.isPasting) return@LaunchedEffect
         val bundle = initialBundle ?: return@LaunchedEffect
         val current = session.draft
         if (current?.workflowId == bundle.document.id && current.lastSavedRevision == bundle.document.revision) {
@@ -336,7 +355,8 @@ fun WorkflowEditorScreen(
         }
     }
 
-    LaunchedEffect(initialStoredWorkflowId, initialStoredRevision) {
+    LaunchedEffect(initialStoredWorkflowId, initialStoredRevision, session.isPasting) {
+        if (session.isPasting) return@LaunchedEffect
         val workflowId = initialStoredWorkflowId ?: return@LaunchedEffect
         val revision = initialStoredRevision?.takeIf { it > 0 } ?: return@LaunchedEffect
         val current = session.draft
@@ -362,7 +382,8 @@ fun WorkflowEditorScreen(
         }
     }
 
-    LaunchedEffect(newWorkflowRequestId) {
+    LaunchedEffect(newWorkflowRequestId, session.isPasting) {
+        if (session.isPasting) return@LaunchedEffect
         if (newWorkflowRequestId == 0) return@LaunchedEffect
         val request = DraftReplacement.New(viewportFor(context), newWorkflowFolderId)
         if (session.isDirty) pendingReplacement = request else applyReplacement(request)
@@ -478,6 +499,14 @@ fun WorkflowEditorScreen(
     }
 
     fun requestCloseDraft() {
+        if (session.isPasting) {
+            statusMessage = "Finishing paste. You can switch pages while it completes."
+            return
+        }
+        recordingControls?.onClose?.let {
+            it()
+            return
+        }
         if (session.isDirty) pendingClose = true else discardDraft()
     }
 
@@ -492,20 +521,48 @@ fun WorkflowEditorScreen(
         }.getOrNull()
     }
 
+    suspend fun loadDraftPreview(assetId: com.veyarc.model.AssetId, maxDimension: Int): TemplatePreviewData? = previewLoadMutex.withLock {
+        cachedTemplatePreview(assetId, maxDimension)?.let { return@withLock it }
+        val current = session.draft ?: return@withLock null
+        current.assets.firstOrNull { it.assetId == assetId }?.let { asset ->
+            return@withLock withContext(Dispatchers.Default) { decodeDisplayTemplatePreview(asset, maxDimension) }
+        }
+        val sourceRevision = current.lastSavedRevision ?: return@withLock null
+        val decoded = runCatching {
+            withContext(Dispatchers.IO) {
+                repository.loadRevisionAssetPreviewDecoded(current.workflowId, sourceRevision, assetId)
+            }
+        }.getOrNull() ?: return@withLock null
+        try {
+            val descriptor = current.assetDescriptors.firstOrNull { it.assetId == assetId }
+            withContext(Dispatchers.Default) {
+                decodeTemplatePreview(assetId, decoded, maxDimension, descriptor?.widthPx ?: decoded.widthPx, descriptor?.heightPx ?: decoded.heightPx)
+            }
+        } finally {
+            decoded.clear()
+        }
+    }
+
     val editTemplateTarget = session.editTemplateTarget
     LaunchedEffect(editTemplateTarget) {
         val target = editTemplateTarget ?: return@LaunchedEffect
         val workflowId = session.draft?.workflowId
+        var placeholder: TemplateCropDraft? = null
         isWorking = true
         try {
+            loadDraftPreview(target, PREVIEW_MAX_DIMENSION)?.let { preview ->
+                placeholder = TemplateCropDraft(TemplateCropSource(android.net.Uri.EMPTY, preview.widthPx, preview.heightPx, preview.image), session.draft?.assetNames?.get(target.value).orEmpty(), com.veyarc.ui.ImageEdits(FULL_TEMPLATE_CROP, "view"))
+                pendingTemplateCrop = placeholder
+            }
             val asset = requireNotNull(loadDraftAsset(target)) { "Image is unavailable" }
             val source = withContext(Dispatchers.Default) { loadTemplateCropSource(asset) }
-            if (session.draft?.workflowId == workflowId) pendingTemplateCrop = TemplateCropDraft(source, session.draft?.assetNames?.get(target.value).orEmpty(), com.veyarc.ui.ImageEdits(FULL_TEMPLATE_CROP, "view"))
+            if (session.draft?.workflowId == workflowId && (placeholder == null || pendingTemplateCrop === placeholder)) pendingTemplateCrop = TemplateCropDraft(source, session.draft?.assetNames?.get(target.value).orEmpty(), com.veyarc.ui.ImageEdits(FULL_TEMPLATE_CROP, "view"))
         } catch (error: Exception) {
             if (error is kotlinx.coroutines.CancellationException) throw error
             statusMessage = "Could not open image: ${error.userMessage()}"
         } finally {
-            session.editTemplateTarget = null
+            if (pendingTemplateCrop === placeholder) pendingTemplateCrop = null
+            if (session.editTemplateTarget == target) session.editTemplateTarget = null
             isWorking = false
         }
     }
@@ -517,68 +574,31 @@ fun WorkflowEditorScreen(
     }
 
     fun requestBlockPaste(path: StepListPath, index: Int) {
-        if (EditorBlockClipboard.isCopying) return
+        if (EditorBlockClipboard.isBusy || isBusy) return
+        val current = session.draft ?: return
         scope.launch {
             runCatching { withContext(Dispatchers.IO) { blockClipboard.read() } }
                 .onSuccess { entry ->
+                    if (session.draft !== current) return@onSuccess
                     if (entry == null) {
                         clipboardAvailable = false
                         statusMessage = "The block clipboard is empty."
                     } else {
-                        pendingBlockPaste = PendingBlockPaste(path, index, entry)
+                        pendingBlockPaste = PendingBlockPaste(path, index, entry, current)
                     }
                 }.onFailure { error -> statusMessage = "Could not open block clipboard: ${error.userMessage()}" }
         }
     }
 
     fun confirmBlockPaste(importImages: Boolean) {
-        if (EditorBlockClipboard.isCopying) return
+        if (EditorBlockClipboard.isBusy || isBusy) return
         val pending = pendingBlockPaste ?: return
         pendingBlockPaste = null
-        scope.launch {
-            isWorking = true
-            statusMessage = null
-            runCatching {
-                val current = session.draft ?: error("No workflow is open")
-                val existingIds = current.assetDescriptors.mapTo(mutableSetOf()) { it.assetId.value }
-                val required = pending.entry.steps.clipboardImageIds()
-                val imagesToImport = if (importImages) pending.entry.images.filter { it.id.value in required } else emptyList()
-                val loaded = withContext(Dispatchers.IO) {
-                    blockClipboard.importImages(imagesToImport, current.assetDescriptors) { id ->
-                        current.assets.firstOrNull { it.assetId == id }
-                            ?: repository.loadRevisionAsset(current.workflowId, requireNotNull(current.lastSavedRevision), id)
-                    }
-                }
-                var updated = current.insertSteps(pending.path, pending.index, remapClipboardSteps(pending.entry.steps, loaded.assetIds))
-                loaded.assets.forEach { (image, asset) ->
-                    updated = updated.addAsset(asset).renameAsset(asset.assetId, uniqueClipboardImageName(updated, image.name))
-                }
-                check(session.draft === current) { "The workflow changed while pasting. Try again." }
-                session.update(updated)
-                val omitted = required - existingIds - loaded.assetIds.keys
-                statusMessage = if (omitted.isEmpty()) "Pasted ${pending.entry.steps.size} blocks." else "Pasted blocks. Add the missing images before saving."
-            }.onFailure { error -> statusMessage = "Could not paste blocks: ${error.userMessage()}" }
-            isWorking = false
+        if (session.draft !== pending.draft) {
+            statusMessage = "The workflow changed. Choose where to paste again."
+            return
         }
-    }
-
-    suspend fun loadDraftPreview(assetId: com.veyarc.model.AssetId, maxDimension: Int): TemplatePreviewData? {
-        cachedTemplatePreview(assetId, maxDimension)?.let { return it }
-        val current = session.draft ?: return null
-        current.assets.firstOrNull { it.assetId == assetId }?.let { asset ->
-            return withContext(Dispatchers.Default) { decodeTemplatePreview(asset, maxDimension) }
-        }
-        val sourceRevision = current.lastSavedRevision ?: return null
-        val decoded = runCatching {
-            withContext(Dispatchers.IO) {
-                repository.loadRevisionAssetPreviewDecoded(current.workflowId, sourceRevision, assetId)
-            }
-        }.getOrNull() ?: return null
-        return try {
-            withContext(Dispatchers.Default) { decodeTemplatePreview(assetId, decoded, maxDimension) }
-        } finally {
-            decoded.clear()
-        }
+        EditorBlockClipboard.paste(context, session, pending.draft, pending.path, pending.index, pending.entry, importImages)
     }
 
     val draft = session.draft
@@ -618,34 +638,36 @@ fun WorkflowEditorScreen(
         )
     } else {
         BackHandler { requestCloseDraft() }
-        WorkflowDraftScreen(
-            draft = draft,
-            validation = requireNotNull(validation),
-            isBusy = isBusy,
-            statusMessage = statusMessage,
-            session = session,
-            onDraftChange = session::update,
-            onAskAi = onAskAi?.takeUnless { isBusy },
-            onSave = { saveWorkflow(draft) },
-            onRun = { saveAndRun(draft) },
-            onValidate = {
-                statusMessage = validation.issues.firstOrNull()?.displayMessage()
-                    ?: "Workflow is valid."
-            },
-            onEditGeometry = { path, index -> geometryTarget = GeometryTarget(path, index) },
-            onEditCondition = { path, index -> conditionTarget = ConditionTarget(path, index) },
-            onAddTemplate = { templatePicker.launch("image/*") },
-            loadPreview = ::loadDraftPreview,
-            revisions = session.revisionSummaries,
-            onOpenRevision = ::openRevision,
-            onPickApplication = {
-                appPicker.launch(allowedApplicationPickerIntent())
-            },
-            clipboardAvailable = clipboardAvailable,
-            onCopyBlocks = ::copyBlocks,
-            onPasteBlocks = ::requestBlockPaste,
-            modifier = modifier,
-        )
+        CompositionLocalProvider(LocalRecordingEditorControls provides recordingControls) {
+            WorkflowDraftScreen(
+                draft = draft,
+                validation = requireNotNull(validation),
+                isBusy = isBusy,
+                statusMessage = statusMessage,
+                session = session,
+                onDraftChange = session::update,
+                onAskAi = onAskAi?.takeUnless { isBusy },
+                onSave = { saveWorkflow(draft) },
+                onRun = { saveAndRun(draft) },
+                onValidate = {
+                    statusMessage = validation.issues.firstOrNull()?.displayMessage()
+                        ?: "Workflow is valid."
+                },
+                onEditGeometry = { path, index -> geometryTarget = GeometryTarget(path, index) },
+                onEditCondition = { path, index -> conditionTarget = ConditionTarget(path, index) },
+                onAddTemplate = { templatePicker.launch("image/*") },
+                loadPreview = ::loadDraftPreview,
+                revisions = session.revisionSummaries,
+                onOpenRevision = ::openRevision,
+                onPickApplication = {
+                    appPicker.launch(allowedApplicationPickerIntent())
+                },
+                clipboardAvailable = clipboardAvailable,
+                onCopyBlocks = ::copyBlocks,
+                onPasteBlocks = ::requestBlockPaste,
+                modifier = modifier,
+            )
+        }
         pendingBlockPaste?.let { pending ->
             val missing = pending.entry.images.filter { image ->
                 image.id.value in pending.entry.steps.clipboardImageIds() && draft.assetDescriptors.none { it.assetId == image.id }
@@ -679,7 +701,6 @@ fun WorkflowEditorScreen(
                     maxPathPoints = draft.runLimits.maxPathPoints,
                     assets = draft.assetDescriptors,
                     assetNames = draft.assetNames,
-                    loadAsset = ::loadDraftAsset,
                     loadPreview = ::loadDraftPreview,
                     onDismiss = { geometryTarget = null },
                     onApply = { updatedStep ->
@@ -750,7 +771,7 @@ fun WorkflowEditorScreen(
                         }
                         check(session.draft === originalDraft) { "Workflow changed while the image was being saved. Try again." }
                         val prefix = if (crop == FULL_TEMPLATE_CROP) "Full screen" else "Crop"
-                        clearTemplatePreviewCache()
+                        invalidateTemplatePreview(asset.assetId)
                         val original = cropDraft.source.existingAsset
                         val current = session.draft
                         val withImage = if (replace && original != null) current?.replaceAsset(asset, removeBackgrounds = asset.widthPx != cropDraft.source.widthPx || asset.heightPx != cropDraft.source.heightPx) else current?.addAsset(asset, if (original == null) prefix else "${cropDraft.name} copy")
@@ -949,41 +970,27 @@ private fun WorkflowDraftScreen(
     onPasteBlocks: (StepListPath, Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var selection by session::blockSelection
-    var selectionMode by session::blockSelectionMode
-    var selectedPath by session::selectedBlockPath
-    var selectedIds by session::selectedBlockIds
+    val selection = session.blockSelection
+    val selectionMode = session.blockSelectionMode
+    val selectedPath = session.selectedBlockPath
+    val selectedIds = session.selectedBlockIds
+    BackHandler(enabled = selectionMode) { session.clearBlockSelection() }
     val clipboardActions = BlockClipboardActions(
-        clipboardAvailable = clipboardAvailable && !EditorBlockClipboard.isCopying,
+        clipboardAvailable = clipboardAvailable && !EditorBlockClipboard.isBusy,
         selectionMode = selectionMode,
         selectedIds = selectedIds,
-        canCopy = !EditorBlockClipboard.isCopying && (if (selectionMode) selectedIds.isNotEmpty() else selection != null),
-        onToggleSelectionMode = {
-            selectionMode = !selectionMode
-            selectedIds = emptySet()
-            selectedPath = null
-        },
+        canCopy = !EditorBlockClipboard.isBusy && (if (selectionMode) selectedIds.isNotEmpty() else selection != null),
+        rangeSelection = session.blockRangeSelection,
+        onToggleSelectionMode = session::cycleBlockSelectionMode,
         onCopy = {
             val path = if (selectionMode) selectedPath else selection?.path
             val ids = if (selectionMode) selectedIds.toList() else listOfNotNull(selection?.stepId)
             if (path != null && ids.isNotEmpty()) {
                 onCopyBlocks(path, ids)
-                selectionMode = false
-                selectedIds = emptySet()
+                session.clearBlockSelection()
             }
         },
-        onSelect = { chosen ->
-            if (selectionMode) {
-                if (selectedPath != chosen.path) {
-                    selectedPath = chosen.path
-                    selectedIds = setOf(chosen.stepId)
-                } else {
-                    selectedIds = if (chosen.stepId in selectedIds) selectedIds - chosen.stepId else selectedIds + chosen.stepId
-                }
-            } else {
-                selection = chosen
-            }
-        },
+        onSelect = session::selectBlock,
         onPaste = onPasteBlocks,
     )
     val scrollHeader = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -1129,11 +1136,12 @@ private fun WorkflowTitleEditor(
 
 internal data class BlockSelection(val path: StepListPath, val stepId: String)
 
-private data class PendingBlockPaste(val path: StepListPath, val index: Int, val entry: BlockClipboardEntry)
+private data class PendingBlockPaste(val path: StepListPath, val index: Int, val entry: BlockClipboardEntry, val draft: WorkflowDraft)
 
 private data class BlockClipboardActions(
     val clipboardAvailable: Boolean,
     val selectionMode: Boolean,
+    val rangeSelection: Boolean,
     val selectedIds: Set<String>,
     val canCopy: Boolean,
     val onToggleSelectionMode: () -> Unit,
@@ -1143,15 +1151,6 @@ private data class BlockClipboardActions(
 )
 
 private val LocalBlockClipboardActions = compositionLocalOf<BlockClipboardActions?> { null }
-
-private fun uniqueClipboardImageName(draft: WorkflowDraft, requested: String): String {
-    val base = requested.trim().take(48).ifEmpty { "Image" }
-    val used = draft.activeAssetNames().mapTo(mutableSetOf()) { it.lowercase() }
-    if (base.lowercase() !in used) return base
-    var suffix = 2
-    while ("$base $suffix".lowercase() in used) suffix++
-    return "$base $suffix"
-}
 
 internal data class StepBounds(val topInWindow: Float, val height: Int) {
     val centerInWindow: Float
@@ -1317,7 +1316,8 @@ private fun WorkflowDraftCanvas(
     val itemSpacing = 12.dp
     val density = LocalDensity.current
     var toolbarHeight by remember(density) { mutableIntStateOf(with(density) { 140.dp.roundToPx() }) }
-    Box(modifier = modifier) {
+    var canvasHeight by remember { mutableIntStateOf(0) }
+    Box(modifier = modifier.onSizeChanged { canvasHeight = it.height }) {
         LazyColumn(
             state = scrollState,
             modifier = Modifier.fillMaxSize().onGloballyPositioned {
@@ -1380,10 +1380,21 @@ private fun WorkflowDraftCanvas(
                         onAddTemplate = onAddTemplate,
                         loadPreview = loadPreview,
                         onRemoveTemplate = { assetId ->
-                            clearTemplatePreviewCache()
+                            invalidateTemplatePreview(assetId)
                             onDraftChange(draft.removeAsset(assetId))
                         },
                     )
+                    if (session.blockSelectionMode) {
+                        Text(
+                            if (session.blockRangeSelection) {
+                                if (session.blockRangeAnchor == null) "Select the first and last block" else "Select the last block"
+                            } else {
+                                "Select blocks · Tap select again for a range"
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (session.blockRangeSelection) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
+                        )
+                    }
                     Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("Execution", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
                         Text("${draft.steps.size} blocks", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1437,7 +1448,12 @@ private fun WorkflowDraftCanvas(
             val topInset by animateDpAsState(if (canScrollUp) 0.dp else 48.dp, tween(160), label = "scroll-control-top")
             val bottomInset by animateDpAsState(if (canScrollDown) 0.dp else 48.dp, tween(160), label = "scroll-control-bottom")
             // Fixed slots keep the chat button centered while either arrow appears or disappears.
-            Box(Modifier.align(Alignment.CenterEnd).padding(end = horizontalPadding).size(52.dp, 148.dp).testTag("workflow-scroll-controls")) {
+            val travel = (canvasHeight - with(density) { 148.dp.toPx() }).coerceAtLeast(0f)
+            Box(
+                Modifier.align(Alignment.CenterEnd).padding(end = horizontalPadding).size(52.dp, 148.dp)
+                    .offset { androidx.compose.ui.unit.IntOffset(0, ((session.chatVerticalPosition - 0.5f) * travel).roundToInt()) }
+                    .testTag("workflow-scroll-controls"),
+            ) {
                 Surface(Modifier.fillMaxSize().padding(top = topInset, bottom = bottomInset), shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, shadowElevation = 4.dp) { }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(Modifier.size(52.dp, 48.dp), contentAlignment = Alignment.BottomCenter) {
@@ -1447,7 +1463,28 @@ private fun WorkflowDraftCanvas(
                             }
                         }
                     }
-                    IconButton(onClick = onAskAi, modifier = Modifier.size(52.dp).testTag("workflow-ai-chat-button")) {
+                    IconButton(
+                        onClick = onAskAi,
+                        modifier = Modifier.size(52.dp).testTag("workflow-ai-chat-button")
+                            .semantics {
+                                customActions = listOf(
+                                    CustomAccessibilityAction("Move chat up") {
+                                        session.chatVerticalPosition = (session.chatVerticalPosition - 0.15f).coerceAtLeast(0f)
+                                        true
+                                    },
+                                    CustomAccessibilityAction("Move chat down") {
+                                        session.chatVerticalPosition = (session.chatVerticalPosition + 0.15f).coerceAtMost(1f)
+                                        true
+                                    },
+                                )
+                            }
+                            .pointerInput(travel) {
+                                detectDragGesturesAfterLongPress { change, drag ->
+                                    change.consume()
+                                    if (travel > 0f) session.chatVerticalPosition = (session.chatVerticalPosition + drag.y / travel).coerceIn(0f, 1f)
+                                }
+                            },
+                    ) {
                         Icon(Icons.Outlined.ChatBubbleOutline, "Ask AI", tint = MaterialTheme.colorScheme.primary)
                     }
                     Box(Modifier.size(52.dp, 48.dp), contentAlignment = Alignment.TopCenter) {
@@ -1513,7 +1550,19 @@ private fun EditorToolbar(
     onOpenRevision: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val recording = LocalRecordingEditorControls.current
     val clipboard = LocalBlockClipboardActions.current
+    if (recording?.onClose != null) {
+        Surface(modifier, shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.94f)) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Recording paused", Modifier.weight(1f).padding(start = 8.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                IconButton(session::undo, enabled = session.canUndo && !isBusy) { Icon(Icons.AutoMirrored.Outlined.Undo, "Undo") }
+                IconButton(session::redo, enabled = session.canRedo && !isBusy) { Icon(Icons.AutoMirrored.Outlined.Redo, "Redo") }
+                IconButton(recording.onClose, enabled = !isBusy) { Icon(Icons.Outlined.CheckCircle, "Back to recording") }
+            }
+        }
+        return
+    }
     Surface(modifier = modifier.testTag("workflow-toolbar"), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.92f), tonalElevation = 0.dp) {
         Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(
@@ -1581,11 +1630,22 @@ private fun EditorToolbar(
                     IconButton(onClick = session::redo, enabled = session.canRedo && !isBusy) {
                         Icon(Icons.AutoMirrored.Outlined.Redo, contentDescription = "Redo")
                     }
-                    IconButton(onClick = { clipboard?.onToggleSelectionMode?.invoke() }, enabled = !isBusy) {
+                    IconButton(
+                        onClick = { clipboard?.onToggleSelectionMode?.invoke() },
+                        enabled = !isBusy,
+                    ) {
                         Icon(
                             Icons.Outlined.SelectAll,
-                            contentDescription = if (clipboard?.selectionMode == true) "Leave block selection" else "Select blocks to copy",
-                            tint = if (clipboard?.selectionMode == true) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            contentDescription = when {
+                                clipboard?.rangeSelection == true -> "Finish range selection"
+                                clipboard?.selectionMode == true -> "Select a range of blocks"
+                                else -> "Select blocks to copy"
+                            },
+                            tint = when {
+                                clipboard?.rangeSelection == true -> MaterialTheme.colorScheme.tertiary
+                                clipboard?.selectionMode == true -> MaterialTheme.colorScheme.primary
+                                else -> MaterialTheme.colorScheme.onSurface
+                            },
                         )
                     }
                     IconButton(
@@ -1874,6 +1934,7 @@ private fun StepEditorItem(
     dragCoordinator: StepDragCoordinator,
 ) {
     val steps = draft.stepsAt(path)
+    val liveRecording = LocalRecordingEditorControls.current?.onClose != null
     val activeDrag = dragCoordinator.source
     val dropTarget = dragCoordinator.target
     val sourceIndex = if (activeDrag?.path == path) steps.indexOfFirst { it.id == activeDrag.stepId } else -1
@@ -1954,14 +2015,8 @@ private fun StepEditorItem(
                     dragCoordinator.end()
                 },
                 onInsertAfter = { kind ->
-                    onDraftChange(
-                        draft.insertStep(
-                            path,
-                            index + 1,
-                            kind,
-                            draft.allowedPackagesText.firstPackageOrDefault(),
-                        ),
-                    )
+                    val added = draft.insertStep(path, index + 1, kind, draft.allowedPackagesText.firstPackageOrDefault())
+                    onDraftChange(if (liveRecording) added.updateStep(path, index + 1) { it.emptyRecordingBody() } else added)
                 },
             )
         }
@@ -1976,6 +2031,7 @@ private fun StepListFooter(
     dragCoordinator: StepDragCoordinator,
 ) {
     val clipboard = LocalBlockClipboardActions.current
+    val liveRecording = LocalRecordingEditorControls.current?.onClose != null
     val density = androidx.compose.ui.platform.LocalDensity.current
     val steps = draft.stepsAt(path)
     val activeDrag = dragCoordinator.source
@@ -1999,13 +2055,26 @@ private fun StepListFooter(
     )
     Column(Modifier.fillMaxWidth()) {
         if (bottomGap > 0.dp) Spacer(Modifier.height(bottomGap))
-        AddBlockMenu(
-            compact = true,
-            canAddJump = steps.isNotEmpty() || path.segments.isNotEmpty(),
-            modifier = Modifier.align(Alignment.CenterHorizontally).offset(y = (-10).dp),
-            onAdd = { kind -> onDraftChange(draft.addStep(path, kind, draft.allowedPackagesText.firstPackageOrDefault())) },
-            onPaste = { clipboard?.onPaste?.invoke(path, steps.size) },
-        )
+        val recording = LocalRecordingEditorControls.current
+        Row(Modifier.align(Alignment.CenterHorizontally), horizontalArrangement = Arrangement.spacedBy(32.dp), verticalAlignment = Alignment.CenterVertically) {
+            AddBlockMenu(
+                compact = true,
+                canAddJump = steps.isNotEmpty() || path.segments.isNotEmpty(),
+                modifier = Modifier,
+                onRecord = recording?.let { { it.onRecord(path, steps.size) } },
+                onAdd = { kind ->
+                    val added = draft.addStep(path, kind, draft.allowedPackagesText.firstPackageOrDefault())
+                    onDraftChange(if (liveRecording) added.updateStep(path, steps.size) { it.emptyRecordingBody() } else added)
+                },
+                onPaste = { clipboard?.onPaste?.invoke(path, steps.size) },
+            )
+            recording?.let {
+                TextButton(onClick = { it.onRecord(path, steps.size) }, enabled = !it.preparing, modifier = Modifier.testTag("record-here-${path.segments.lastOrNull()?.branch ?: "workflow"}")) {
+                    if (it.preparing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Text(if (it.preparing) "Preparing…" else "Record here")
+                }
+            }
+        }
     }
 }
 
@@ -2210,6 +2279,7 @@ private fun StepCard(
                     modifier = Modifier.align(Alignment.BottomStart).offset(x = 2.dp, y = 24.dp).zIndex(3f),
                     onAdd = onInsertAfter,
                     onPaste = { clipboard?.onPaste?.invoke(path, index + 1) },
+                    onRecord = LocalRecordingEditorControls.current?.let { recording -> { recording.onRecord(path, index + 1) } },
                 )
             }
         }
@@ -2326,6 +2396,7 @@ private fun StageBoundaryRow(
                 modifier = Modifier.align(Alignment.BottomStart).offset(x = 2.dp, y = 24.dp).zIndex(3f),
                 onAdd = onInsertAfter,
                 onPaste = { clipboard?.onPaste?.invoke(path, index + 1) },
+                onRecord = LocalRecordingEditorControls.current?.let { recording -> { recording.onRecord(path, index + 1) } },
             )
         }
     }
@@ -2745,6 +2816,7 @@ private fun AddBlockMenu(
     subdued: Boolean = false,
     canAddJump: Boolean = true,
     modifier: Modifier = Modifier,
+    onRecord: (() -> Unit)? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
     val clipboard = LocalBlockClipboardActions.current
@@ -2769,13 +2841,18 @@ private fun AddBlockMenu(
             VeyarcChoicePicker(
                 title = "Add block",
                 options = buildList {
-                    if (clipboard?.clipboardAvailable == true) add(VeyarcChoice("paste", "Paste blocks"))
-                    WorkflowStepKind.entries.filter { it != WorkflowStepKind.JUMP || canAddJump }.forEach { add(VeyarcChoice(it.name, it.displayName())) }
+                    if (onRecord != null) add(VeyarcChoice("record", "Record here", highlighted = true))
+                    if (clipboard?.clipboardAvailable == true) add(VeyarcChoice("paste", "Paste blocks", highlighted = true))
+                    WorkflowStepKind.entries.filter { it != WorkflowStepKind.JUMP || canAddJump }.forEach { add(VeyarcChoice(it.name, it.displayName(), group = 1)) }
                 },
                 onDismiss = { expanded = false },
                 onSelect = { choice ->
                     expanded = false
-                    if (choice.id == "paste") onPaste() else onAdd(WorkflowStepKind.entries.first { it.name == choice.id })
+                    when (choice.id) {
+                        "record" -> onRecord?.invoke()
+                        "paste" -> onPaste()
+                        else -> onAdd(WorkflowStepKind.entries.first { it.name == choice.id })
+                    }
                 },
             )
         }
@@ -2831,8 +2908,8 @@ private fun TemplateRenameDialog(
     var renameTarget by session::renameTemplateTarget
     renameTarget?.let { assetId ->
         var name by session::renameTemplateName
-        val preview by produceState(cachedTemplatePreview(assetId, 640), assetId) {
-            value = loadPreview(assetId, 640)
+        val preview by produceState(cachedTemplatePreview(assetId, PREVIEW_MAX_DIMENSION), assetId) {
+            value = cachedTemplatePreview(assetId, PREVIEW_MAX_DIMENSION) ?: loadPreview(assetId, PREVIEW_MAX_DIMENSION)
         }
         val valid = name.trim().let { candidate ->
             candidate.isNotEmpty() && candidate.length <= 64 &&

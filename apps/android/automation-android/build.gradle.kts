@@ -24,4 +24,5 @@ dependencies {
     implementation(project(":core-engine"))
     implementation(project(":core-model"))
     implementation(libs.shizuku.api)
+    implementation(libs.opencv)
 }

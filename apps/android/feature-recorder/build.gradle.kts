@@ -25,10 +25,13 @@ dependencies {
     implementation(project(":automation-android"))
     implementation(project(":core-model"))
     implementation(project(":core-recording"))
+    implementation(project(":core-ui"))
+    implementation(project(":feature-editor"))
     implementation(project(":data"))
     val composeBom = platform(libs.androidx.compose.bom)
 
     implementation(composeBom)
+    implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.compose.material3)

@@ -3,8 +3,10 @@ package com.veyarc.feature.assistant
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.BitmapRegionDecoder
 import android.graphics.Color
 import android.graphics.Matrix
+import android.graphics.Rect
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
@@ -60,6 +62,9 @@ class AttachmentContent(val attachment: AssistantAttachment, val text: String? =
 /** Android pickers grant access only to explicitly selected files. Imports copy and encrypt immediately. */
 class AssistantAttachmentImporter(private val context: Context, val store: ChatAttachmentStore = ChatAttachmentStore(context)) {
     private val previews = object : LruCache<String, Bitmap>(4 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
+    }
+    private val editingPreviews = object : LruCache<String, Bitmap>(16 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
     }
     fun import(uri: Uri): AssistantAttachment {
@@ -126,38 +131,81 @@ class AssistantAttachmentImporter(private val context: Context, val store: ChatA
         val output = ByteArrayOutputStream()
         check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output))
         val bytes = output.toByteArray()
-        return AssistantAttachment(store.save(bytes), name, AttachmentKind.IMAGE, "image/png", bytes.size, bitmap.width, bitmap.height)
+        val attachment = AssistantAttachment(store.save(bytes), name, AttachmentKind.IMAGE, "image/png", bytes.size, bitmap.width, bitmap.height)
+        val scale = minOf(1f, 320f / maxOf(bitmap.width, bitmap.height))
+        val thumbnail = Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).roundToInt().coerceAtLeast(1), (bitmap.height * scale).roundToInt().coerceAtLeast(1), true)
+        val owned = if (thumbnail === bitmap) thumbnail.copy(Bitmap.Config.ARGB_8888, false) else thumbnail
+        owned.prepareToDraw()
+        previews.put(attachment.id, owned)
+        return attachment
     }
 
     fun bitmap(attachment: AssistantAttachment): Bitmap = BitmapFactory.decodeByteArray(store.read(attachment.id), 0, attachment.byteCount) ?: error("This image could not be read.")
 
+    fun cachedPreview(attachment: AssistantAttachment): Bitmap? = previews.get(attachment.id)
+
+    @Synchronized
     fun preview(attachment: AssistantAttachment): Bitmap {
         previews.get(attachment.id)?.let { return it }
         var sample = 1
         while (maxOf(attachment.width, attachment.height) / sample > 320) sample *= 2
         val bytes = store.read(attachment.id)
         val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample }) ?: error("This image could not be read.")
+        bitmap.prepareToDraw()
         previews.put(attachment.id, bitmap)
         return bitmap
     }
 
+    fun cachedEditingPreview(attachment: AssistantAttachment): Bitmap? = editingPreviews.get(attachment.id)
+
+    /** Shared display copies; callers must not recycle them. Saving still uses original pixels. */
+    @Synchronized
+    fun editingPreview(attachment: AssistantAttachment): Bitmap {
+        cachedEditingPreview(attachment)?.let { return it }
+        var sample = 1
+        while (maxOf(attachment.width, attachment.height) / sample > 1600) sample *= 2
+        val bytes = store.read(attachment.id)
+        val bitmap = try {
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample }) ?: error("This image could not be read.")
+        } finally {
+            bytes.fill(0)
+        }
+        bitmap.prepareToDraw()
+        editingPreviews.put(attachment.id, bitmap)
+        return bitmap
+    }
+
+    fun cachedCropPreview(attachment: AssistantAttachment, crop: com.veyarc.model.NormalizedRect, maxSide: Int = 1600): Bitmap? = editingPreviews.get("${attachment.id}:$crop:$maxSide")
+
+    @Synchronized
     fun cropPreview(attachment: AssistantAttachment, crop: com.veyarc.model.NormalizedRect, maxSide: Int = 1600): Bitmap {
-        val original = bitmap(attachment)
+        require(maxSide > 0)
+        cachedCropPreview(attachment, crop, maxSide)?.let { return it }
+        val bytes = store.read(attachment.id)
+        var decoderToClose: BitmapRegionDecoder? = null
         try {
-            val left = kotlin.math.floor(crop.x * original.width).toInt().coerceIn(0, original.width - 1)
-            val top = kotlin.math.floor(crop.y * original.height).toInt().coerceIn(0, original.height - 1)
-            val right = kotlin.math.ceil((crop.x + crop.width) * original.width).toInt().coerceIn(left + 1, original.width)
-            val bottom = kotlin.math.ceil((crop.y + crop.height) * original.height).toInt().coerceIn(top + 1, original.height)
-            val cropped = Bitmap.createBitmap(original, left, top, right - left, bottom - top)
+            val decoder = BitmapRegionDecoder.newInstance(bytes, 0, bytes.size, false) ?: error("This image could not be read.")
+            decoderToClose = decoder
+            val left = kotlin.math.floor(crop.x * decoder.width).toInt().coerceIn(0, decoder.width - 1)
+            val top = kotlin.math.floor(crop.y * decoder.height).toInt().coerceIn(0, decoder.height - 1)
+            val right = kotlin.math.ceil((crop.x + crop.width) * decoder.width).toInt().coerceIn(left + 1, decoder.width)
+            val bottom = kotlin.math.ceil((crop.y + crop.height) * decoder.height).toInt().coerceIn(top + 1, decoder.height)
+            var sample = 1
+            while (maxOf(right - left, bottom - top) / sample > maxSide * 2L) sample *= 2
+            val cropped = decoder.decodeRegion(Rect(left, top, right, bottom), BitmapFactory.Options().apply { inSampleSize = sample }) ?: error("This image could not be read.")
             try {
                 val scale = minOf(1f, maxSide.toFloat() / maxOf(cropped.width, cropped.height))
                 val result = Bitmap.createScaledBitmap(cropped, (cropped.width * scale).roundToInt().coerceAtLeast(1), (cropped.height * scale).roundToInt().coerceAtLeast(1), true)
-                return if (result === cropped) result.copy(Bitmap.Config.ARGB_8888, false) else result
+                return (if (result === cropped) result.copy(Bitmap.Config.ARGB_8888, false) else result).also {
+                    it.prepareToDraw()
+                    editingPreviews.put("${attachment.id}:$crop:$maxSide", it)
+                }
             } finally {
-                if (cropped !== original) cropped.recycle()
+                cropped.recycle()
             }
         } finally {
-            original.recycle()
+            decoderToClose?.recycle()
+            bytes.fill(0)
         }
     }
 
@@ -191,7 +239,13 @@ class AssistantAttachmentImporter(private val context: Context, val store: ChatA
         }
     }
 
-    fun pdfPage(attachment: AssistantAttachment, index: Int): Bitmap = withPdf(store.read(attachment.id)) { renderPage(it, index) }
+    fun cachedPdfPage(attachment: AssistantAttachment, index: Int): Bitmap? = editingPreviews.get("pdf:${attachment.id}:$index")
+
+    @Synchronized
+    fun pdfPage(attachment: AssistantAttachment, index: Int): Bitmap = cachedPdfPage(attachment, index) ?: withPdf(store.read(attachment.id)) { renderPage(it, index) }.also {
+        it.prepareToDraw()
+        editingPreviews.put("pdf:${attachment.id}:$index", it)
+    }
 
     private fun renderPage(renderer: PdfRenderer, index: Int): Bitmap = renderer.openPage(index).use { page ->
         val scale = minOf(1600f / maxOf(page.width, page.height), 1_700_000f.div(page.width.toFloat() * page.height).let { kotlin.math.sqrt(it) })

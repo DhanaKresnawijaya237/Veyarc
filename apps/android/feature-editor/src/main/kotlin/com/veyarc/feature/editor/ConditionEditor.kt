@@ -5,6 +5,7 @@ package com.veyarc.feature.editor
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -17,6 +18,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -24,8 +26,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -56,7 +60,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -65,10 +68,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -131,43 +139,109 @@ internal fun ConditionEditorDialog(
 ) {
     var condition by rememberSaveable(initialCondition, stateSaver = ConditionEditorSaver) { mutableStateOf(initialCondition) }
     val compact = condition.usesCompactEditorSheet()
+    val listState = rememberLazyListState()
+    val children = when (condition) {
+        is AndCondition -> (condition as AndCondition).conditions
+        is OrCondition -> (condition as OrCondition).conditions
+        else -> emptyList()
+    }
+    var childKeys by rememberSaveable(condition::class) { mutableStateOf(children.map { WorkflowIds.newUuid() }) }
+    // Lazy key providers keep the old item count until recomposition; capture matching keys.
+    val currentChildKeys = childKeys
+    fun changeChildren(updated: List<Condition>) {
+        condition = when (val current = condition) {
+            is AndCondition -> current.copy(conditions = updated)
+            is OrCondition -> current.copy(conditions = updated)
+            else -> current
+        }
+    }
+    val header: @Composable () -> Unit = {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Edit condition", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                Button(onClick = { onApply(condition) }) { Text("Apply") }
+            }
+            Text(
+                "Conditions are checked only at their step's polling interval. Screen checks use temporary frames; no video is saved.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
     EditorSheetDialog(
         compact = compact,
         onDismiss = onDismiss,
         compactMaxHeightFraction = 0.72f,
+        contentScrollable = compact,
+        externalScrollState = if (compact) null else listState,
+        largeHeightFraction = 1f,
     ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(start = 16.dp, top = if (compact) 20.dp else 0.dp, end = 16.dp, bottom = 16.dp),
+        if (compact) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                header()
+                ConditionNodeEditor(condition, assets, assetNames, defaultPackage, allowedPackages, onAddAllowedPackage, onAddTemplate, loadAsset, loadPreview, previewWidthPx, previewHeightPx, { condition = it })
+            }
+        } else {
+            LazyColumn(
+                Modifier.fillMaxWidth().nestedScroll(PreventUpwardSheetOverscrollConnection),
+                state = listState,
+                overscrollEffect = null,
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "Edit condition",
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.titleLarge,
-                    )
-                    Button(onClick = { onApply(condition) }) { Text("Apply") }
+                item(key = "header") { header() }
+                item(key = "type") { ConditionKindPicker(condition, defaultPackage, { condition = it }, Modifier.fillMaxWidth(), showDividers = true) }
+                if (condition is ImagePresentCondition || condition is ImageAbsentCondition) {
+                    item(key = "image-preview") {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ImageConditionFields(condition, assets, assetNames, onAddTemplate, loadAsset, loadPreview, previewWidthPx, previewHeightPx, { condition = it }, showAdjustments = false)
+                        }
+                    }
+                    ImageConditionSection.entries.forEach { section ->
+                        item(key = "image-${section.name}") {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                ImageConditionAdjustments(condition, assets, assetNames, loadAsset, loadPreview, previewWidthPx, previewHeightPx, { condition = it }, section)
+                            }
+                        }
+                    }
+                } else if (condition is AndCondition || condition is OrCondition) {
+                    item(key = "group-label") { Text(if (condition is AndCondition) "Every condition must be true" else "At least one condition must be true", style = MaterialTheme.typography.bodySmall) }
+                    items(children.size, key = { currentChildKeys[it] }) { index ->
+                        NestedConditionEditor(
+                            number = index + 1, condition = children[index], assets = assets, assetNames = assetNames,
+                            defaultPackage = defaultPackage, allowedPackages = allowedPackages, onAddAllowedPackage = onAddAllowedPackage,
+                            onAddTemplate = onAddTemplate, loadAsset = loadAsset, loadPreview = loadPreview,
+                            previewWidthPx = previewWidthPx, previewHeightPx = previewHeightPx,
+                            onChange = { updated -> changeChildren(children.toMutableList().apply { this[index] = updated }) },
+                            onRemove = if (children.size <= 2) {
+                                null
+                            } else {
+                                {
+                                    childKeys = childKeys.toMutableList().apply { removeAt(index) }
+                                    changeChildren(children.toMutableList().apply { removeAt(index) })
+                                }
+                            },
+                        )
+                    }
+                    item(key = "add-condition") {
+                        TextButton(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            enabled = children.size < MAX_COMPOSED_CONDITIONS,
+                            onClick = {
+                                childKeys = childKeys + WorkflowIds.newUuid()
+                                changeChildren(children + defaultCondition(defaultPackage))
+                            },
+                        ) {
+                            Icon(Icons.Outlined.Add, null, Modifier.size(18.dp))
+                            Text("Add nested condition", Modifier.padding(start = 8.dp))
+                        }
+                    }
+                } else {
+                    item(key = "fields") {
+                        ConditionNodeEditor(condition, assets, assetNames, defaultPackage, allowedPackages, onAddAllowedPackage, onAddTemplate, loadAsset, loadPreview, previewWidthPx, previewHeightPx, { condition = it }, showTypePicker = false)
+                    }
                 }
-                Text(
-                    "Conditions are checked only at their step's polling interval. Screen checks use temporary frames; no video is saved.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                ConditionNodeEditor(
-                    condition = condition,
-                    assets = assets,
-                    assetNames = assetNames,
-                    defaultPackage = defaultPackage,
-                    allowedPackages = allowedPackages,
-                    onAddAllowedPackage = onAddAllowedPackage,
-                    onAddTemplate = onAddTemplate,
-                    loadAsset = loadAsset,
-                    loadPreview = loadPreview,
-                    previewWidthPx = previewWidthPx,
-                    previewHeightPx = previewHeightPx,
-                    onChange = { condition = it },
-                )
             }
         }
     }
@@ -418,11 +492,8 @@ private fun PixelConditionFields(
         }
     } else {
         Text("Matches when any pixel in this area has the selected color.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        val backgroundAsset by produceState<BundleAsset?>(null, condition.backgroundAssetId) {
-            value = condition.backgroundAssetId?.let { loadAsset(it) }
-        }
         var showBackgrounds by rememberSaveable { mutableStateOf(false) }
-        ImageConditionPreview(region = searchRegion, displayWidthPx = previewWidthPx, displayHeightPx = previewHeightPx, asset = null, backgroundAsset = backgroundAsset, colorSearch = true, onRegionChange = { onChange(condition.copy(region = it)) })
+        ImageConditionPreview(region = searchRegion, displayWidthPx = previewWidthPx, displayHeightPx = previewHeightPx, assetId = null, backgroundAssetId = condition.backgroundAssetId, loadPreview = loadPreview, colorSearch = true, onRegionChange = { onChange(condition.copy(region = it)) })
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { showBackgrounds = true }) {
                 Icon(Icons.Outlined.Image, contentDescription = "Change background")
@@ -503,21 +574,16 @@ private fun ImageConditionFields(
     previewWidthPx: Int,
     previewHeightPx: Int,
     onChange: (Condition) -> Unit,
+    showAdjustments: Boolean = true,
 ) {
     val assetId = when (condition) {
         is ImagePresentCondition -> condition.assetId
         is ImageAbsentCondition -> condition.assetId
         else -> error("Image editor received a non-image condition")
     }
-    val selectedAsset by produceState<BundleAsset?>(null, assetId) {
-        value = loadAsset(assetId)
-    }
     val isScreenState = condition is ImagePresentCondition && condition.matchMode == ImageMatchMode.SCREEN_STATE
     var pickerMode by rememberSaveable { mutableStateOf<ImagePickerMode?>(null) }
     val backgroundAssetId = condition.backgroundAssetId()?.value
-    val backgroundAsset by produceState<BundleAsset?>(null, backgroundAssetId) {
-        value = backgroundAssetId?.let(::AssetId)?.let { loadAsset(it) }
-    }
     val update: (AssetId, NormalizedRect, Double) -> Unit = { selectedAsset, region, threshold ->
         onChange(
             when (condition) {
@@ -530,8 +596,9 @@ private fun ImageConditionFields(
         region = if (isScreenState) FULL_SCREEN_REGION else condition.region(),
         displayWidthPx = previewWidthPx,
         displayHeightPx = previewHeightPx,
-        asset = selectedAsset,
-        backgroundAsset = if (isScreenState) null else backgroundAsset,
+        assetId = assetId,
+        backgroundAssetId = if (isScreenState) null else backgroundAssetId?.let(::AssetId),
+        loadPreview = loadPreview,
         screenStateMode = isScreenState,
         onRegionChange = if (isScreenState) {
             null
@@ -560,22 +627,11 @@ private fun ImageConditionFields(
         }
     }
     Text(
-        selectedAsset?.let { assetNames[it.assetId.value] ?: "Target image" } ?: "No image selected",
+        assetNames[assetId.value] ?: "Target image",
         style = MaterialTheme.typography.bodySmall,
-        color = if (selectedAsset == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    if (!isScreenState) {
-        RegionConditionFields(
-            region = condition.region(),
-            onRegionChange = { update(assetId, it, condition.threshold()) },
-        )
-    }
-    var thresholdText by rememberNumericEditorText(condition.threshold().toEditorText())
-    ConditionNumberField("Match threshold (0 to 1)", thresholdText, { next ->
-        thresholdText = next
-        next.toDoubleOrNull()?.takeIf { it in 0.0..1.0 }?.let { update(assetId, condition.region(), it) }
-    })
-    ImageCheckTestPanel(condition, assets, assetNames, loadAsset, loadPreview, previewWidthPx, previewHeightPx)
+    if (showAdjustments) ImageConditionAdjustments(condition, assets, assetNames, loadAsset, loadPreview, previewWidthPx, previewHeightPx, onChange)
     pickerMode?.let { mode ->
         TemplatePickerSheet(
             visible = true,
@@ -614,6 +670,42 @@ private fun ImageConditionFields(
         )
     }
 }
+
+@Composable
+private fun ImageConditionAdjustments(
+    condition: Condition,
+    assets: List<WorkflowAssetDescriptor>,
+    assetNames: Map<String, String>,
+    loadAsset: suspend (AssetId) -> BundleAsset?,
+    loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
+    previewWidthPx: Int,
+    previewHeightPx: Int,
+    onChange: (Condition) -> Unit,
+    section: ImageConditionSection? = null,
+) {
+    fun update(region: NormalizedRect = condition.region(), threshold: Double = condition.threshold()) {
+        onChange(
+            when (condition) {
+                is ImagePresentCondition -> condition.copy(region = region, matchThreshold = threshold)
+                is ImageAbsentCondition -> condition.copy(region = region, matchThreshold = threshold)
+                else -> condition
+            },
+        )
+    }
+    if ((section == null || section == ImageConditionSection.REGION) && (condition !is ImagePresentCondition || condition.matchMode != ImageMatchMode.SCREEN_STATE)) {
+        RegionConditionFields(region = condition.region(), onRegionChange = { update(region = it) })
+    }
+    if (section == null || section == ImageConditionSection.THRESHOLD) {
+        var thresholdText by rememberNumericEditorText(condition.threshold().toEditorText())
+        ConditionNumberField("Match threshold (0 to 1)", thresholdText, { next ->
+            thresholdText = next
+            next.toDoubleOrNull()?.takeIf { it in 0.0..1.0 }?.let { update(threshold = it) }
+        })
+    }
+    if (section == null || section == ImageConditionSection.TESTS) ImageCheckTestPanel(condition, assets, assetNames, loadAsset, loadPreview, previewWidthPx, previewHeightPx)
+}
+
+private enum class ImageConditionSection { REGION, THRESHOLD, TESTS }
 
 private enum class ImagePickerMode { BACKGROUND, SCREEN, TARGET }
 
@@ -750,7 +842,7 @@ private fun ComposedConditionFields(
                 previewWidthPx = previewWidthPx,
                 previewHeightPx = previewHeightPx,
                 onChange = { updated -> onChange(conditions.toMutableList().apply { this[index] = updated }) },
-                onRemove = if (index < 2) {
+                onRemove = if (conditions.size <= 2) {
                     null
                 } else {
                     {
@@ -818,7 +910,14 @@ private fun NestedConditionEditor(
                 IconButton(onClick = onRemove) { Icon(Icons.Outlined.Delete, contentDescription = "Remove nested condition") }
             }
         }
-        AnimatedVisibility(expanded, enter = expandVertically(tween(160)) + fadeIn(tween(100)), exit = shrinkVertically(tween(140)) + fadeOut(tween(90))) {
+        // Keep controls and previews mounted so toggling a condition never rebuilds its editor.
+        val expansion by animateFloatAsState(if (expanded) 1f else 0f, tween(140), label = "condition-expansion")
+        Box(
+            Modifier.clipToBounds().then(if (expanded) Modifier else Modifier.clearAndSetSemantics {}).graphicsLayer { alpha = expansion }.layout { measurable, constraints ->
+                val child = measurable.measure(constraints)
+                layout(child.width, (child.height * expansion).roundToInt()) { child.placeRelative(0, 0) }
+            },
+        ) {
             fields.SaveableStateProvider("fields") {
                 Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
                     ConditionNodeEditor(condition, assets, assetNames, defaultPackage, allowedPackages, onAddAllowedPackage, onAddTemplate, loadAsset, loadPreview, previewWidthPx, previewHeightPx, onChange, showTypePicker = false)

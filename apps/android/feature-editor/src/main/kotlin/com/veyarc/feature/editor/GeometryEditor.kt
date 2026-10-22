@@ -51,7 +51,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -92,11 +91,8 @@ import com.veyarc.model.TapRegion
 import com.veyarc.model.ViewportSpec
 import com.veyarc.model.WorkflowStep
 import com.veyarc.model.backgroundAssetId
-import com.veyarc.model.bundle.BundleAsset
 import com.veyarc.model.withBackgroundAsset
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlin.math.hypot
 
 @Composable
@@ -106,7 +102,6 @@ internal fun GeometryEditorDialog(
     maxPathPoints: Int,
     assets: List<WorkflowAssetDescriptor>,
     assetNames: Map<String, String>,
-    loadAsset: suspend (AssetId) -> BundleAsset?,
     loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
     onDismiss: () -> Unit,
     onApply: (WorkflowStep) -> Unit,
@@ -114,21 +109,13 @@ internal fun GeometryEditorDialog(
     var pickerOpen by rememberSaveable { mutableStateOf(false) }
     var selectedAssetId by rememberSaveable(step.id) { mutableStateOf(step.backgroundAssetId()?.value) }
     fun apply(value: WorkflowStep) = onApply(value.withBackgroundAsset(selectedAssetId?.let(::AssetId)))
-    var referenceImage by remember { mutableStateOf<ImageBitmap?>(null) }
+    val referenceImage by produceState(selectedAssetId?.let { cachedTemplatePreview(AssetId(it), PREVIEW_MAX_DIMENSION)?.image }, selectedAssetId) {
+        value = selectedAssetId?.let { cachedTemplatePreview(AssetId(it), PREVIEW_MAX_DIMENSION)?.image }
+        value = selectedAssetId?.let { (cachedTemplatePreview(AssetId(it), PREVIEW_MAX_DIMENSION) ?: loadPreview(AssetId(it), PREVIEW_MAX_DIMENSION))?.image }
+    }
     val configuration = LocalConfiguration.current
     val compactLandscape = configuration.screenWidthDp < configuration.screenHeightDp &&
         viewport.recordedOrientation == DisplayOrientation.LANDSCAPE
-    LaunchedEffect(selectedAssetId) {
-        referenceImage = selectedAssetId
-            ?.let(::AssetId)
-            ?.let { assetId ->
-                withContext(Dispatchers.Default) {
-                    loadAsset(assetId)?.let { asset ->
-                        decodeTemplatePreview(asset, maxOf(viewport.recordedWidthPx, viewport.recordedHeightPx))?.image
-                    }
-                }
-            }
-    }
     EditorSheetDialog(
         compact = compactLandscape,
         onDismiss = onDismiss,
@@ -324,13 +311,14 @@ private fun TemplatePickerItem(
     loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
     allowAnySize: Boolean = false,
 ) {
-    val previewState by produceState<TemplatePickerPreviewState>(TemplatePickerPreviewState.Loading, asset.assetId) {
-        value = withContext(Dispatchers.Default) {
-            loadPreview(asset.assetId, 720)?.let(TemplatePickerPreviewState::Ready)
-                ?: TemplatePickerPreviewState.Unavailable
-        }
+    val previewState by produceState<TemplatePickerPreviewState>(cachedTemplatePreview(asset.assetId, PREVIEW_MAX_DIMENSION)?.let(TemplatePickerPreviewState::Ready) ?: TemplatePickerPreviewState.Loading, asset.assetId) {
+        value = (cachedTemplatePreview(asset.assetId, PREVIEW_MAX_DIMENSION) ?: loadPreview(asset.assetId, PREVIEW_MAX_DIMENSION))
+            ?.let(TemplatePickerPreviewState::Ready)
+            ?: TemplatePickerPreviewState.Unavailable
     }
     val preview = (previewState as? TemplatePickerPreviewState.Ready)?.preview
+    val imageWidth = asset.widthPx ?: preview?.widthPx
+    val imageHeight = asset.heightPx ?: preview?.heightPx
     val correctSize = templateFitsPicker(
         descriptorWidthPx = asset.widthPx,
         descriptorHeightPx = asset.heightPx,
@@ -357,7 +345,7 @@ private fun TemplatePickerItem(
                         } else if (fullScreenOnly) {
                             displayWidthPx.toFloat() / displayHeightPx
                         } else {
-                            preview?.let { it.widthPx.toFloat() / it.heightPx } ?: 1f
+                            if (imageWidth != null && imageHeight != null) imageWidth.toFloat() / imageHeight else 1f
                         },
                     ),
                 contentAlignment = Alignment.Center,

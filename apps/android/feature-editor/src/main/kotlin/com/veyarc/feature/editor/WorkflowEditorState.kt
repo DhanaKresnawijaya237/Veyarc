@@ -111,9 +111,29 @@ data class TemplateUsageNumbers(val crop: List<String>, val background: List<Str
 class WorkflowEditorSession {
     var isSaving by mutableStateOf(false)
         private set
+    var isPasting by mutableStateOf(false)
+        private set
+    val isBusy: Boolean get() = isSaving || isPasting
+
+    internal fun beginPaste(expected: WorkflowDraft): Boolean {
+        if (isBusy || draft !== expected) return false
+        isPasting = true
+        return true
+    }
+
+    internal fun completePaste(expected: WorkflowDraft, updated: WorkflowDraft): Boolean {
+        if (!isPasting || draft !== expected) return false
+        isPasting = false
+        update(updated)
+        return true
+    }
+
+    internal fun finishPaste() {
+        isPasting = false
+    }
 
     fun beginSave(): Boolean {
-        if (isSaving) return false
+        if (isBusy) return false
         isSaving = true
         return true
     }
@@ -149,8 +169,11 @@ class WorkflowEditorSession {
     internal var renameTemplateName by mutableStateOf("")
     internal var blockSelection by mutableStateOf<BlockSelection?>(null)
     internal var blockSelectionMode by mutableStateOf(false)
+    internal var blockRangeSelection by mutableStateOf(false)
+    internal var blockRangeAnchor by mutableStateOf<String?>(null)
     internal var selectedBlockPath by mutableStateOf<StepListPath?>(null)
     internal var selectedBlockIds by mutableStateOf<Set<String>>(emptySet())
+    internal var chatVerticalPosition by mutableStateOf(0.5f)
     internal var canvasScrollState by mutableStateOf(LazyListState())
     internal var templateScrollState by mutableStateOf(LazyListState())
     private var savedDraft by mutableStateOf<WorkflowDraft?>(null)
@@ -209,6 +232,15 @@ class WorkflowEditorSession {
         openPrepared(opened)
     }
 
+    fun editConditionAt(path: StepListPath, index: Int) {
+        conditionTarget = ConditionTarget(path, index)
+    }
+
+    fun openRecordingDraft(draft: WorkflowDraft) {
+        openPrepared(draft)
+        savedDraft = null
+    }
+
     internal fun openPrepared(opened: WorkflowDraft, validation: DraftBuildResult? = null) {
         dismissEditors()
         draft = opened
@@ -221,7 +253,7 @@ class WorkflowEditorSession {
     }
 
     fun update(updated: WorkflowDraft) {
-        if (isSaving) return
+        if (isBusy) return
         val current = draft ?: return
         if (current.persistedContent() != updated.persistedContent()) {
             undoStack = (undoStack + current).takeLast(MAX_HISTORY_ENTRIES)
@@ -231,7 +263,7 @@ class WorkflowEditorSession {
     }
 
     fun undo() {
-        if (isSaving) return
+        if (isBusy) return
         val current = draft ?: return
         val previous = undoStack.lastOrNull() ?: return
         undoStack = undoStack.dropLast(1)
@@ -240,7 +272,7 @@ class WorkflowEditorSession {
     }
 
     fun redo() {
-        if (isSaving) return
+        if (isBusy) return
         val current = draft ?: return
         val next = redoStack.lastOrNull() ?: return
         redoStack = redoStack.dropLast(1)
@@ -305,6 +337,55 @@ class WorkflowEditorSession {
         revisionSummaries = summaries
     }
 
+    internal fun cycleBlockSelectionMode() {
+        if (!blockSelectionMode) {
+            blockSelectionMode = true
+        } else if (!blockRangeSelection) {
+            blockRangeSelection = true
+        } else {
+            clearBlockSelection()
+        }
+        selectedBlockIds = emptySet()
+        selectedBlockPath = null
+        blockRangeAnchor = null
+    }
+
+    internal fun clearBlockSelection() {
+        blockSelectionMode = false
+        blockRangeSelection = false
+        blockRangeAnchor = null
+        selectedBlockPath = null
+        selectedBlockIds = emptySet()
+    }
+
+    internal fun selectBlock(chosen: BlockSelection) {
+        if (!blockSelectionMode) {
+            blockSelection = chosen
+            return
+        }
+        val steps = draft?.stepsAt(chosen.path).orEmpty()
+        val end = steps.indexOfFirst { it.id == chosen.stepId }
+        if (end < 0) return
+        if (selectedBlockPath != chosen.path) {
+            selectedBlockPath = chosen.path
+            selectedBlockIds = emptySet()
+            blockRangeAnchor = null
+        }
+        selectedBlockIds = selectedBlockIds.intersect(steps.mapTo(mutableSetOf()) { it.id })
+        if (blockRangeSelection) {
+            val start = steps.indexOfFirst { it.id == blockRangeAnchor }
+            if (start < 0) {
+                blockRangeAnchor = chosen.stepId
+                selectedBlockIds = selectedBlockIds + chosen.stepId
+            } else {
+                selectedBlockIds = selectedBlockIds + steps.subList(minOf(start, end), maxOf(start, end) + 1).map { it.id }
+                blockRangeAnchor = null
+            }
+        } else {
+            selectedBlockIds = if (chosen.stepId in selectedBlockIds) selectedBlockIds - chosen.stepId else selectedBlockIds + chosen.stepId
+        }
+    }
+
     private fun dismissEditors() {
         colorPickerImages.clear()
         geometryTarget = null
@@ -318,9 +399,7 @@ class WorkflowEditorSession {
         renameTemplateTarget = null
         renameTemplateName = ""
         blockSelection = null
-        blockSelectionMode = false
-        selectedBlockPath = null
-        selectedBlockIds = emptySet()
+        clearBlockSelection()
         canvasScrollState = LazyListState()
         templateScrollState = LazyListState()
     }

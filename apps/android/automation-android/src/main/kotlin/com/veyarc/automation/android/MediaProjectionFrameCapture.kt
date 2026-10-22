@@ -115,6 +115,7 @@ class EphemeralScreenFrame internal constructor(
     val timestampNanos: Long,
     private var rgbaBytes: ByteArray,
     internal val capturedBounds: FramePixelBounds = FramePixelBounds(0, 0, widthPx, heightPx),
+    private val buffers: ScreenFrameBuffers? = null,
 ) : Closeable {
     private var closed = false
 
@@ -127,6 +128,7 @@ class EphemeralScreenFrame internal constructor(
     val isClosed: Boolean
         get() = closed
 
+    @Synchronized
     fun pixelAt(x: Int, y: Int): RgbaColor {
         check(!closed) { "The ephemeral frame has already been released" }
         require(x in 0 until widthPx) { "Pixel x is outside the frame" }
@@ -201,16 +203,19 @@ class EphemeralScreenFrame internal constructor(
     }
 
     /** Runs a bounded in-memory inspection without exposing the frame buffer to callers. */
+    @Synchronized
     internal fun <T> withRgbaBytes(block: (ByteArray) -> T): T {
         check(!closed) { "The ephemeral frame has already been released" }
         return block(rgbaBytes)
     }
 
+    @Synchronized
     override fun close() {
         if (closed) return
-        rgbaBytes.fill(0)
+        val released = rgbaBytes
         rgbaBytes = ByteArray(0)
         closed = true
+        if (buffers == null) released.fill(0) else buffers.release(released)
     }
 
     private companion object {
@@ -384,6 +389,7 @@ class MediaProjectionFrameCapture(
 
 /** Retains one native image only until replacement or capture teardown, without a full-screen heap copy. */
 internal class ProjectionFrames(private val reader: ImageReader) : Closeable {
+    private val buffers = ScreenFrameBuffers()
     private var latest: Image? = null
     private var closed = false
 
@@ -415,7 +421,7 @@ internal class ProjectionFrames(private val reader: ImageReader) : Closeable {
             require(image.format == PixelFormat.RGBA_8888) { "MediaProjection returned an unsupported pixel format" }
             val plane = image.planes.singleOrNull()
                 ?: throw MediaProjectionCaptureException("MediaProjection returned an unexpected image layout")
-            copyRgbaFrame(image.width, image.height, image.timestamp, plane.buffer, plane.pixelStride, plane.rowStride, area)
+            copyRgbaFrame(image.width, image.height, image.timestamp, plane.buffer, plane.pixelStride, plane.rowStride, area, buffers)
         } catch (error: Throwable) {
             latest = null
             image.close()
@@ -432,6 +438,7 @@ internal class ProjectionFrames(private val reader: ImageReader) : Closeable {
         try {
             image?.close()
         } finally {
+            buffers.close()
             reader.close()
         }
     }
@@ -444,7 +451,7 @@ internal class ProjectionFrames(private val reader: ImageReader) : Closeable {
 }
 
 /** Copies only needed pixels, using bulk row reads for the usual tightly packed RGBA layout. */
-internal fun copyRgbaFrame(width: Int, height: Int, timestampNanos: Long, source: ByteBuffer, pixelStride: Int, rowStride: Int, area: ScreenCaptureArea = ScreenCaptureArea.FullScreen): EphemeralScreenFrame {
+internal fun copyRgbaFrame(width: Int, height: Int, timestampNanos: Long, source: ByteBuffer, pixelStride: Int, rowStride: Int, area: ScreenCaptureArea = ScreenCaptureArea.FullScreen, buffers: ScreenFrameBuffers? = null): EphemeralScreenFrame {
     require(width in 1..MAX_CAPTURE_DIMENSION_PX && height in 1..MAX_CAPTURE_DIMENSION_PX && width.toLong() * height <= MAX_CAPTURE_PIXEL_COUNT) { "Projection frame is too large or invalid" }
     require(pixelStride >= 4 && rowStride.toLong() >= (width - 1L) * pixelStride + 4) { "MediaProjection returned invalid pixel strides" }
     val bounds = when (area) {
@@ -454,7 +461,8 @@ internal fun copyRgbaFrame(width: Int, height: Int, timestampNanos: Long, source
     }
     val lastPixelEnd = (height - 1L) * rowStride + (width - 1L) * pixelStride + 4
     require(lastPixelEnd <= source.limit()) { "MediaProjection returned a truncated image buffer" }
-    val output = ByteArray(bounds.width * bounds.height * 4)
+    val size = bounds.width * bounds.height * 4
+    val output = buffers?.take(size) ?: ByteArray(size)
     try {
         val buffer = source.duplicate()
         for (row in 0 until bounds.height) {
@@ -469,9 +477,9 @@ internal fun copyRgbaFrame(width: Int, height: Int, timestampNanos: Long, source
                 }
             }
         }
-        return EphemeralScreenFrame(width, height, timestampNanos, output, bounds)
+        return EphemeralScreenFrame(width, height, timestampNanos, output, bounds, buffers)
     } catch (error: Throwable) {
-        output.fill(0)
+        if (buffers == null) output.fill(0) else buffers.release(output)
         throw error
     }
 }
