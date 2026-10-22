@@ -140,7 +140,7 @@ internal fun AttachmentStrip(attachments: List<AssistantAttachment>, importer: A
                 Box {
                     Surface(onClick = { onOpen(attachment) }, shape = RoundedCornerShape(14.dp), color = if (attachment.kind == AttachmentKind.IMAGE) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainerHighest, modifier = Modifier.testTag("attachment-${attachment.id}")) {
                         if (attachment.kind == AttachmentKind.IMAGE) {
-                            val image by produceState<Bitmap?>(null, attachment.id) {
+                            val image by produceState(importer?.cachedPreview(attachment), attachment.id) {
                                 value = withContext(Dispatchers.IO) { runCatching { importer?.preview(attachment) }.getOrNull() }
                             }
                             Box(Modifier.size(if (compact) 72.dp else 80.dp), contentAlignment = Alignment.Center) {
@@ -237,7 +237,7 @@ private fun PdfAttachmentPreview(attachment: AssistantAttachment, importer: Assi
         Row(Modifier.weight(1f).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             if (landscape) previous()
             HorizontalPager(pager, Modifier.weight(1f).fillMaxHeight().testTag("pdf-pages")) { index ->
-                val image by produceState<Result<Bitmap>?>(null, attachment.id, index) {
+                val image by produceState(importer.cachedPdfPage(attachment, index)?.let { Result.success(it) }, attachment.id, index) {
                     value = withContext(Dispatchers.IO) { runCatching { importer.pdfPage(attachment, index) } }
                 }
                 Box(Modifier.fillMaxSize().testTag("pdf-page-$index"), contentAlignment = Alignment.Center) {
@@ -264,14 +264,14 @@ private fun PdfAttachmentPreview(attachment: AssistantAttachment, importer: Assi
 private fun ImageAttachmentPreview(attachment: AssistantAttachment, importer: AssistantAttachmentImporter, editable: Boolean, edits: ImageEdits, onDismiss: () -> Unit, onSaved: suspend (() -> AssistantAttachment) -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
-    val source by produceState<Bitmap?>(null, attachment.id) {
-        val result = withContext(Dispatchers.IO) { runCatching { importer.bitmap(attachment) } }
+    val source by produceState(importer.cachedEditingPreview(attachment), attachment.id) {
+        val result = withContext(Dispatchers.IO) { runCatching { importer.editingPreview(attachment) } }
         if (result.isFailure) error = "This image could not be opened."
         value = result.getOrNull()
     }
     val scope = rememberCoroutineScope()
-    ImageEditor(source, edits, editable, saving, error, onDismiss = onDismiss, onApply = {
-        val image = source ?: return@ImageEditor
+    ImageEditor(source, edits, editable, saving, error, previewSource = importer.cachedPreview(attachment), onDismiss = onDismiss, onApply = {
+        if (source == null) return@ImageEditor
         val crop = edits.crop
         val turns = edits.turns
         val strokes = edits.strokes
@@ -280,7 +280,13 @@ private fun ImageAttachmentPreview(attachment: AssistantAttachment, importer: As
         scope.launch {
             try {
                 onSaved {
-                    val rotated = image.rotatedForEditing(turns)
+                    val original = importer.bitmap(attachment)
+                    val rotated = try {
+                        original.rotatedForEditing(turns)
+                    } catch (error: Exception) {
+                        original.recycle()
+                        throw error
+                    }
                     try {
                         val edited = renderEditedImage(rotated, crop, strokes)
                         try {
@@ -289,7 +295,8 @@ private fun ImageAttachmentPreview(attachment: AssistantAttachment, importer: As
                             edited.recycle()
                         }
                     } finally {
-                        if (rotated !== image) rotated.recycle()
+                        if (rotated !== original) rotated.recycle()
+                        original.recycle()
                     }
                 }
             } catch (cancelled: CancellationException) {
@@ -314,7 +321,7 @@ internal fun ProposalImageStrip(state: AssistantPreviewState, turn: PreviewTurn)
     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.testTag("proposal-images")) {
         items(additions, key = { it.assetId }) { addition ->
             val source = sources.firstOrNull { it.id == addition.sourceAttachmentId }
-            val image by produceState<Bitmap?>(null, addition, source) {
+            val image by produceState(source?.let { importer.cachedCropPreview(it, addition.crop, 240) }, addition, source) {
                 value = withContext(Dispatchers.IO) { runCatching { source?.let { importer.cropPreview(it, addition.crop, 240) } }.getOrNull() }
             }
             Surface(onClick = { selected = addition }, shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.testTag("proposal-image-${addition.assetId}")) {
@@ -340,7 +347,7 @@ internal fun ProposalImageStrip(state: AssistantPreviewState, turn: PreviewTurn)
                         IconButton(onClick = { selected = null }) { Icon(Icons.Outlined.Close, "Close image review", tint = Color.White) }
                         Text(addition.name, color = Color.White, style = MaterialTheme.typography.titleMedium)
                     }
-                    val result by produceState<Result<Bitmap>?>(null, addition, source) {
+                    val result by produceState(source?.let { importer.cachedCropPreview(it, addition.crop) }?.let { Result.success(it) }, addition, source) {
                         value = withContext(Dispatchers.IO) { runCatching { importer.cropPreview(requireNotNull(source), addition.crop) } }
                     }
                     Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
