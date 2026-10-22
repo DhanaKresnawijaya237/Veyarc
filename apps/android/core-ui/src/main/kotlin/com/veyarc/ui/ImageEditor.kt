@@ -166,26 +166,33 @@ val ImageEditsSaver = listSaver<ImageEdits, Any>(
 
 /** One editor for chat images and original-resolution workflow template crops. */
 @Composable
-fun ImageEditor(source: Bitmap?, edits: ImageEdits, editable: Boolean, saving: Boolean, error: String?, applyEnabled: Boolean = true, onDismiss: () -> Unit, onApply: () -> Unit, details: (@Composable () -> Unit)? = null, tools: (@Composable () -> Unit)? = null, overlay: (@Composable () -> Unit)? = null) {
+fun ImageEditor(source: Bitmap?, edits: ImageEdits, editable: Boolean, saving: Boolean, error: String?, applyEnabled: Boolean = true, onDismiss: () -> Unit, onApply: () -> Unit, details: (@Composable () -> Unit)? = null, tools: (@Composable () -> Unit)? = null, overlay: (@Composable () -> Unit)? = null, previewSource: Bitmap? = null) {
     val turns = edits.turns
-    val previewBitmap by produceState<Pair<Bitmap, Boolean>?>(null, source, turns) {
+    val displaySource = source ?: previewSource
+    val previewBitmap by produceState<Pair<Bitmap, Boolean>?>(null, displaySource, turns) {
+        if (turns.mod(4) == 0) {
+            value = null
+            return@produceState
+        }
         value = null
         var created: Bitmap? = null
         try {
-            withContext(Dispatchers.Default) { created = source?.rotatedForEditing(turns) }
-            value = created?.let { it to (it !== source) }
+            withContext(Dispatchers.Default) {
+                created = displaySource?.rotatedForEditing(turns)?.also { it.prepareToDraw() }
+            }
+            value = created?.let { it to (it !== displaySource) }
         } catch (cancelled: CancellationException) {
-            if (created !== source) created?.recycle()
+            if (created !== displaySource) created?.recycle()
             throw cancelled
         }
     }
-    val rotated = previewBitmap?.first
+    val rotated = if (turns.mod(4) == 0) displaySource else previewBitmap?.first
     DisposableEffect(previewBitmap) {
         val displayed = previewBitmap
         onDispose { if (displayed?.second == true) displayed.first.recycle() }
     }
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val active = editable && !saving && rotated != null
+    val active = editable && !saving && source != null && rotated != null
     val preview: @Composable () -> Unit = {
         Box(Modifier.fillMaxSize().testTag("attachment-image-viewport"), contentAlignment = Alignment.Center) {
             when {

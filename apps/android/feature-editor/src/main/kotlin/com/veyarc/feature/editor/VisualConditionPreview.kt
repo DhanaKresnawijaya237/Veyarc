@@ -58,7 +58,7 @@ import kotlin.math.roundToInt
 import android.graphics.Color as AndroidColor
 
 private const val TEMPLATE_KEY_ALIAS = "veyarc.template-assets.v1"
-internal const val PREVIEW_MAX_DIMENSION = 1_200
+internal const val PREVIEW_MAX_DIMENSION = 720
 private const val DEVICE_PREVIEW_HEIGHT_DP = 360
 
 @Composable
@@ -425,15 +425,16 @@ private data class PreviewPixelBounds(
 
 internal fun decodeTemplatePreview(
     asset: BundleAsset,
-    maxDimension: Int = PREVIEW_MAX_DIMENSION,
+    maxDimension: Int = 1_200,
 ): TemplatePreviewData? = try {
     require(maxDimension > 0)
-    cachedTemplatePreview(asset.assetId, maxDimension)?.let { return it }
+    val key = "${asset.assetId.value}:$maxDimension"
+    sourcePreviewCache.get(key)?.let { return it }
     val decoded = EncryptedTemplateAssetCodec(
         AndroidKeystoreKeySource(TEMPLATE_KEY_ALIAS),
     ).decrypt(asset.assetId, asset.bytes)
     try {
-        decodeTemplatePreview(asset.assetId, decoded, maxDimension)
+        buildTemplatePreview(decoded, maxDimension, decoded.widthPx, decoded.heightPx).also { sourcePreviewCache.put(key, it) }
     } finally {
         decoded.clear()
     }
@@ -443,7 +444,19 @@ internal fun decodeTemplatePreview(
 
 internal fun cachedTemplatePreview(assetId: AssetId, maxDimension: Int): TemplatePreviewData? = templatePreviewCache.get("${assetId.value}:$maxDimension")
 
-internal fun clearTemplatePreviewCache() = templatePreviewCache.evictAll()
+internal fun decodeDisplayTemplatePreview(asset: BundleAsset, maxDimension: Int): TemplatePreviewData? = cachedTemplatePreview(asset.assetId, maxDimension)
+    ?: decodeTemplatePreview(asset, maxDimension)?.also { templatePreviewCache.put("${asset.assetId.value}:$maxDimension", it) }
+
+internal fun clearTemplatePreviewCache() {
+    templatePreviewCache.evictAll()
+    sourcePreviewCache.evictAll()
+}
+
+internal fun invalidateTemplatePreview(assetId: AssetId) {
+    listOf(templatePreviewCache, sourcePreviewCache).forEach { cache ->
+        cache.snapshot().keys.filter { it.startsWith("${assetId.value}:") }.forEach(cache::remove)
+    }
+}
 
 internal fun decodeTemplatePreview(
     assetId: AssetId,
@@ -455,6 +468,12 @@ internal fun decodeTemplatePreview(
     require(maxDimension > 0)
     val cacheKey = "${assetId.value}:$maxDimension"
     templatePreviewCache.get(cacheKey)?.let { return it }
+    buildTemplatePreview(decoded, maxDimension, sourceWidthPx, sourceHeightPx).also { templatePreviewCache.put(cacheKey, it) }
+} catch (_: Exception) {
+    null
+}
+
+private fun buildTemplatePreview(decoded: DecodedTemplate, maxDimension: Int, sourceWidthPx: Int, sourceHeightPx: Int): TemplatePreviewData {
     val rgbaBytes = decoded.copyRgbaBytes()
     try {
         val scale = min(
@@ -483,18 +502,22 @@ internal fun decodeTemplatePreview(
         } finally {
             pixels.fill(0)
         }
-        TemplatePreviewData(
+        createdBitmap.prepareToDraw()
+        return TemplatePreviewData(
             image = createdBitmap.asImageBitmap(),
             widthPx = sourceWidthPx,
             heightPx = sourceHeightPx,
-        ).also { templatePreviewCache.put(cacheKey, it) }
+        )
     } finally {
         rgbaBytes.fill(0)
     }
-} catch (_: Exception) {
-    null
 }
 
 private val templatePreviewCache = object : LruCache<String, TemplatePreviewData>(16 * 1024 * 1024) {
+    override fun sizeOf(key: String, value: TemplatePreviewData): Int = value.image.width * value.image.height * 4
+}
+
+// Full-resolution edits must neither reuse thumbnails nor evict frequently displayed previews.
+private val sourcePreviewCache = object : LruCache<String, TemplatePreviewData>(16 * 1024 * 1024) {
     override fun sizeOf(key: String, value: TemplatePreviewData): Int = value.image.width * value.image.height * 4
 }

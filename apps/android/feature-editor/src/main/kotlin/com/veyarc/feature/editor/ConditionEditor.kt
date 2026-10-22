@@ -5,6 +5,7 @@ package com.veyarc.feature.editor
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -67,11 +68,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -905,7 +910,14 @@ private fun NestedConditionEditor(
                 IconButton(onClick = onRemove) { Icon(Icons.Outlined.Delete, contentDescription = "Remove nested condition") }
             }
         }
-        AnimatedVisibility(expanded, enter = expandVertically(tween(160)) + fadeIn(tween(100)), exit = shrinkVertically(tween(140)) + fadeOut(tween(90))) {
+        // Keep controls and previews mounted so toggling a condition never rebuilds its editor.
+        val expansion by animateFloatAsState(if (expanded) 1f else 0f, tween(140), label = "condition-expansion")
+        Box(
+            Modifier.clipToBounds().then(if (expanded) Modifier else Modifier.clearAndSetSemantics {}).graphicsLayer { alpha = expansion }.layout { measurable, constraints ->
+                val child = measurable.measure(constraints)
+                layout(child.width, (child.height * expansion).roundToInt()) { child.placeRelative(0, 0) }
+            },
+        ) {
             fields.SaveableStateProvider("fields") {
                 Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
                     ConditionNodeEditor(condition, assets, assetNames, defaultPackage, allowedPackages, onAddAllowedPackage, onAddTemplate, loadAsset, loadPreview, previewWidthPx, previewHeightPx, onChange, showTypePicker = false)

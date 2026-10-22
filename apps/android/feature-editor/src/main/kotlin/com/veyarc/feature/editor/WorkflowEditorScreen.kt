@@ -521,20 +521,48 @@ fun WorkflowEditorScreen(
         }.getOrNull()
     }
 
+    suspend fun loadDraftPreview(assetId: com.veyarc.model.AssetId, maxDimension: Int): TemplatePreviewData? = previewLoadMutex.withLock {
+        cachedTemplatePreview(assetId, maxDimension)?.let { return@withLock it }
+        val current = session.draft ?: return@withLock null
+        current.assets.firstOrNull { it.assetId == assetId }?.let { asset ->
+            return@withLock withContext(Dispatchers.Default) { decodeDisplayTemplatePreview(asset, maxDimension) }
+        }
+        val sourceRevision = current.lastSavedRevision ?: return@withLock null
+        val decoded = runCatching {
+            withContext(Dispatchers.IO) {
+                repository.loadRevisionAssetPreviewDecoded(current.workflowId, sourceRevision, assetId)
+            }
+        }.getOrNull() ?: return@withLock null
+        try {
+            val descriptor = current.assetDescriptors.firstOrNull { it.assetId == assetId }
+            withContext(Dispatchers.Default) {
+                decodeTemplatePreview(assetId, decoded, maxDimension, descriptor?.widthPx ?: decoded.widthPx, descriptor?.heightPx ?: decoded.heightPx)
+            }
+        } finally {
+            decoded.clear()
+        }
+    }
+
     val editTemplateTarget = session.editTemplateTarget
     LaunchedEffect(editTemplateTarget) {
         val target = editTemplateTarget ?: return@LaunchedEffect
         val workflowId = session.draft?.workflowId
+        var placeholder: TemplateCropDraft? = null
         isWorking = true
         try {
+            loadDraftPreview(target, PREVIEW_MAX_DIMENSION)?.let { preview ->
+                placeholder = TemplateCropDraft(TemplateCropSource(android.net.Uri.EMPTY, preview.widthPx, preview.heightPx, preview.image), session.draft?.assetNames?.get(target.value).orEmpty(), com.veyarc.ui.ImageEdits(FULL_TEMPLATE_CROP, "view"))
+                pendingTemplateCrop = placeholder
+            }
             val asset = requireNotNull(loadDraftAsset(target)) { "Image is unavailable" }
             val source = withContext(Dispatchers.Default) { loadTemplateCropSource(asset) }
-            if (session.draft?.workflowId == workflowId) pendingTemplateCrop = TemplateCropDraft(source, session.draft?.assetNames?.get(target.value).orEmpty(), com.veyarc.ui.ImageEdits(FULL_TEMPLATE_CROP, "view"))
+            if (session.draft?.workflowId == workflowId && (placeholder == null || pendingTemplateCrop === placeholder)) pendingTemplateCrop = TemplateCropDraft(source, session.draft?.assetNames?.get(target.value).orEmpty(), com.veyarc.ui.ImageEdits(FULL_TEMPLATE_CROP, "view"))
         } catch (error: Exception) {
             if (error is kotlinx.coroutines.CancellationException) throw error
             statusMessage = "Could not open image: ${error.userMessage()}"
         } finally {
-            session.editTemplateTarget = null
+            if (pendingTemplateCrop === placeholder) pendingTemplateCrop = null
+            if (session.editTemplateTarget == target) session.editTemplateTarget = null
             isWorking = false
         }
     }
@@ -571,28 +599,6 @@ fun WorkflowEditorScreen(
             return
         }
         EditorBlockClipboard.paste(context, session, pending.draft, pending.path, pending.index, pending.entry, importImages)
-    }
-
-    suspend fun loadDraftPreview(assetId: com.veyarc.model.AssetId, maxDimension: Int): TemplatePreviewData? = previewLoadMutex.withLock {
-        cachedTemplatePreview(assetId, maxDimension)?.let { return@withLock it }
-        val current = session.draft ?: return@withLock null
-        current.assets.firstOrNull { it.assetId == assetId }?.let { asset ->
-            return@withLock withContext(Dispatchers.Default) { decodeTemplatePreview(asset, maxDimension) }
-        }
-        val sourceRevision = current.lastSavedRevision ?: return@withLock null
-        val decoded = runCatching {
-            withContext(Dispatchers.IO) {
-                repository.loadRevisionAssetPreviewDecoded(current.workflowId, sourceRevision, assetId)
-            }
-        }.getOrNull() ?: return@withLock null
-        try {
-            val descriptor = current.assetDescriptors.firstOrNull { it.assetId == assetId }
-            withContext(Dispatchers.Default) {
-                decodeTemplatePreview(assetId, decoded, maxDimension, descriptor?.widthPx ?: decoded.widthPx, descriptor?.heightPx ?: decoded.heightPx)
-            }
-        } finally {
-            decoded.clear()
-        }
     }
 
     val draft = session.draft
@@ -695,7 +701,6 @@ fun WorkflowEditorScreen(
                     maxPathPoints = draft.runLimits.maxPathPoints,
                     assets = draft.assetDescriptors,
                     assetNames = draft.assetNames,
-                    loadAsset = ::loadDraftAsset,
                     loadPreview = ::loadDraftPreview,
                     onDismiss = { geometryTarget = null },
                     onApply = { updatedStep ->
@@ -766,7 +771,7 @@ fun WorkflowEditorScreen(
                         }
                         check(session.draft === originalDraft) { "Workflow changed while the image was being saved. Try again." }
                         val prefix = if (crop == FULL_TEMPLATE_CROP) "Full screen" else "Crop"
-                        clearTemplatePreviewCache()
+                        invalidateTemplatePreview(asset.assetId)
                         val original = cropDraft.source.existingAsset
                         val current = session.draft
                         val withImage = if (replace && original != null) current?.replaceAsset(asset, removeBackgrounds = asset.widthPx != cropDraft.source.widthPx || asset.heightPx != cropDraft.source.heightPx) else current?.addAsset(asset, if (original == null) prefix else "${cropDraft.name} copy")
@@ -1375,7 +1380,7 @@ private fun WorkflowDraftCanvas(
                         onAddTemplate = onAddTemplate,
                         loadPreview = loadPreview,
                         onRemoveTemplate = { assetId ->
-                            clearTemplatePreviewCache()
+                            invalidateTemplatePreview(assetId)
                             onDraftChange(draft.removeAsset(assetId))
                         },
                     )
@@ -2903,8 +2908,8 @@ private fun TemplateRenameDialog(
     var renameTarget by session::renameTemplateTarget
     renameTarget?.let { assetId ->
         var name by session::renameTemplateName
-        val preview by produceState(cachedTemplatePreview(assetId, 640), assetId) {
-            value = loadPreview(assetId, 640)
+        val preview by produceState(cachedTemplatePreview(assetId, PREVIEW_MAX_DIMENSION), assetId) {
+            value = cachedTemplatePreview(assetId, PREVIEW_MAX_DIMENSION) ?: loadPreview(assetId, PREVIEW_MAX_DIMENSION)
         }
         val valid = name.trim().let { candidate ->
             candidate.isNotEmpty() && candidate.length <= 64 &&
