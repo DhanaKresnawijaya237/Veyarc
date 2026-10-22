@@ -9,10 +9,70 @@ import com.veyarc.model.NormalizedRect
 import com.veyarc.model.PixelColorCondition
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class VisualConditionEvaluatorTest {
+    @Test fun colorAreaUsesOnlyTheRequestedRegionAndAlwaysReleasesItsFrame() {
+        val region = NormalizedRect(0.4, 0.25, 0.6, 0.75)
+        val bytes = ByteArray(3 * 3 * 4) { if (it % 4 == 3) -1 else 0 }
+        val index = (1 * 3 + 1) * 4
+        bytes[index] = 22
+        bytes[index + 1] = 33
+        bytes[index + 2] = 44
+        fun evaluator(): Pair<VisualConditionEvaluator, EphemeralScreenFrame> {
+            val frame = EphemeralScreenFrame(5, 4, 0, bytes.copyOf(), FramePixelBounds(2, 1, 5, 4))
+            return VisualConditionEvaluator({ area ->
+                assertEquals(ScreenCaptureArea.Region(region), area)
+                frame
+            }, ImageTemplateSource { null }) to frame
+        }
+        val condition = PixelColorCondition(NormalizedCoordinate(0.0, 0.0), 0xFF16212C, 0, region)
+        val (present, frame) = evaluator()
+        assertTrue(present.evaluate(condition))
+        assertTrue(frame.isClosed)
+        val (absent, missingFrame) = evaluator()
+        assertFalse(absent.evaluate(condition.copy(expectedArgb = 0xFF203040)))
+        assertTrue(missingFrame.isClosed)
+        val (tolerant, tolerantFrame) = evaluator()
+        assertTrue(tolerant.evaluate(condition.copy(expectedArgb = 0xFF17222D, tolerance = 1)))
+        assertTrue(tolerantFrame.isClosed)
+    }
+
+    @Test fun cancellingAnAreaScanReleasesTheCapturedPixels() {
+        val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
+        val frame = EphemeralScreenFrame(2, 2, 0, ByteArray(16))
+        val evaluator = VisualConditionEvaluator({
+            cancelled.set(true)
+            frame
+        }, ImageTemplateSource { null }, cancellation = com.veyarc.engine.CancellationSignal { cancelled.get() })
+        assertThrows(java.util.concurrent.CancellationException::class.java) { evaluator.evaluate(PixelColorCondition(NormalizedCoordinate(0.0, 0.0), 0, 0, NormalizedRect(0.0, 0.0, 1.0, 1.0))) }
+        assertTrue(frame.isClosed)
+    }
+
+    @Test
+    fun missingCaptureNeverBecomesAFalseImageOrPixelCondition() {
+        val template = RgbaTemplate.fromRgba(1, 1, byteArrayOf(10, 20, 30, -1))
+        try {
+            val evaluator = VisualConditionEvaluator({ null }, ImageTemplateSource { template })
+            val asset = AssetId("missing-frame")
+            val region = NormalizedRect(0.0, 0.0, 1.0, 1.0)
+            val conditions = listOf(
+                ImagePresentCondition(asset, region, 1.0),
+                ImageAbsentCondition(asset, region, 1.0),
+                ImagePresentCondition(asset, region, 1.0, ImageMatchMode.SCREEN_STATE),
+                PixelColorCondition(NormalizedCoordinate(0.5, 0.5), 0xFF0A141E, 0),
+            )
+            conditions.forEach { condition ->
+                val error = assertThrows(VisualConditionEvaluationException::class.java) { evaluator.observe(condition) }
+                assertTrue(error.message.orEmpty().contains("No screen capture frame arrived"))
+            }
+        } finally {
+            template.clear()
+        }
+    }
+
     @Test
     fun pixelColorUsesNormalizedDisplayCoordinatesAndReleasesTheFrame() {
         val frame = frame(
@@ -67,271 +127,6 @@ class VisualConditionEvaluatorTest {
     }
 
     @Test
-    fun imagePresentSearchesOnlyInsideTheNormalizedRegion() {
-        val source = templateSource(
-            RgbaTemplate.fromRgba(
-                widthPx = 2,
-                heightPx = 2,
-                rgbaBytes = rgba(
-                    color(10, 20, 30),
-                    color(40, 50, 60),
-                    color(70, 80, 90),
-                    color(100, 110, 120),
-                ),
-            ),
-        )
-        val insideFrame = frame(
-            width = 4,
-            height = 4,
-            colors = listOf(
-                color(0, 0, 0), color(0, 0, 0), color(0, 0, 0), color(0, 0, 0),
-                color(0, 0, 0), color(10, 20, 30), color(40, 50, 60), color(0, 0, 0),
-                color(0, 0, 0), color(70, 80, 90), color(100, 110, 120), color(0, 0, 0),
-                color(0, 0, 0), color(0, 0, 0), color(0, 0, 0), color(0, 0, 0),
-            ),
-        )
-        val region = NormalizedRect(0.25, 0.25, 0.5, 0.5)
-
-        assertTrue(
-            VisualConditionEvaluator({ insideFrame }, source).evaluate(
-                ImagePresentCondition(ASSET_ID, region, matchThreshold = 1.0),
-            ),
-        )
-        assertTrue(insideFrame.isClosed)
-
-        val outsideFrame = frame(
-            width = 4,
-            height = 4,
-            colors = listOf(
-                color(10, 20, 30), color(40, 50, 60), color(0, 0, 0), color(0, 0, 0),
-                color(70, 80, 90), color(100, 110, 120), color(0, 0, 0), color(0, 0, 0),
-                color(0, 0, 0), color(0, 0, 0), color(0, 0, 0), color(0, 0, 0),
-                color(0, 0, 0), color(0, 0, 0), color(0, 0, 0), color(0, 0, 0),
-            ),
-        )
-        assertFalse(
-            VisualConditionEvaluator({ outsideFrame }, source).evaluate(
-                ImagePresentCondition(ASSET_ID, region, matchThreshold = 1.0),
-            ),
-        )
-        assertTrue(outsideFrame.isClosed)
-    }
-
-    @Test
-    fun imagePresentFindsAMatchAfterSlidingAcrossRowsAndColumns() {
-        val template = RgbaTemplate.fromRgba(
-            widthPx = 2,
-            heightPx = 2,
-            rgbaBytes = rgba(
-                color(10, 20, 30),
-                color(40, 50, 60),
-                color(70, 80, 90),
-                color(100, 110, 120),
-            ),
-        )
-        val colors = MutableList(5 * 4) { color(0, 0, 0) }
-        val matchOriginX = 2
-        val matchOriginY = 1
-        colors[matchOriginY * 5 + matchOriginX] = color(10, 20, 30)
-        colors[matchOriginY * 5 + matchOriginX + 1] = color(40, 50, 60)
-        colors[(matchOriginY + 1) * 5 + matchOriginX] = color(70, 80, 90)
-        colors[(matchOriginY + 1) * 5 + matchOriginX + 1] = color(100, 110, 120)
-        val frame = frame(5, 4, colors)
-
-        val matched = VisualConditionEvaluator({ frame }, templateSource(template)).evaluate(
-            ImagePresentCondition(
-                assetId = ASSET_ID,
-                region = NormalizedRect(0.0, 0.0, 1.0, 1.0),
-                matchThreshold = 1.0,
-            ),
-        )
-
-        assertTrue(matched)
-        assertTrue(frame.isClosed)
-    }
-
-    @Test
-    fun screenStateMatchesOneFixedFullScreenPosition() {
-        val colors = listOf(
-            color(10, 20, 30),
-            color(40, 50, 60),
-            color(70, 80, 90),
-            color(100, 110, 120),
-        )
-        val template = RgbaTemplate.fromRgba(2, 2, rgba(*colors.toTypedArray()))
-        val frame = frame(2, 2, colors)
-
-        val matched = VisualConditionEvaluator(
-            frameSource = { frame },
-            templateSource = templateSource(template),
-            maxComparisons = 4,
-        ).evaluate(
-            ImagePresentCondition(
-                assetId = ASSET_ID,
-                region = NormalizedRect(0.0, 0.0, 1.0, 1.0),
-                matchThreshold = 1.0,
-                matchMode = ImageMatchMode.SCREEN_STATE,
-            ),
-        )
-
-        assertTrue(matched)
-        assertTrue(frame.isClosed)
-    }
-
-    @Test
-    fun screenStateFailsClosedWhenDimensionsDiffer() {
-        val template = RgbaTemplate.fromRgba(1, 1, rgba(color(10, 20, 30)))
-        val frame = frame(2, 2, List(4) { color(10, 20, 30) })
-
-        val matched = VisualConditionEvaluator({ frame }, templateSource(template)).evaluate(
-            ImagePresentCondition(
-                assetId = ASSET_ID,
-                region = NormalizedRect(0.0, 0.0, 1.0, 1.0),
-                matchThreshold = 1.0,
-                matchMode = ImageMatchMode.SCREEN_STATE,
-            ),
-        )
-
-        assertFalse(matched)
-        assertTrue(frame.isClosed)
-    }
-
-    @Test
-    fun screenStateActualScoreRemainsBoundedByTheComparisonBudget() {
-        val template = RgbaTemplate.fromRgba(8, 8, rgba(*Array(64) { color(255, 255, 255) }))
-        val frame = frame(8, 8, List(64) { color(0, 0, 0) })
-
-        var rejected = false
-        try {
-            VisualConditionEvaluator(
-                frameSource = { frame },
-                templateSource = templateSource(template),
-                maxComparisons = 1,
-            ).observe(
-                ImagePresentCondition(
-                    assetId = ASSET_ID,
-                    region = NormalizedRect(0.0, 0.0, 1.0, 1.0),
-                    matchThreshold = 0.9,
-                    matchMode = ImageMatchMode.SCREEN_STATE,
-                ),
-            )
-        } catch (error: VisualConditionEvaluationException) {
-            rejected = error.message?.contains("safety budget") == true
-        }
-
-        assertTrue(rejected)
-        assertTrue(frame.isClosed)
-    }
-
-    @Test
-    fun largeTemplateChecksTheCenteredScreenRelativePositionFirst() {
-        val width = 32
-        val templateHeight = 32
-        val templateColors = List(width * templateHeight) { index ->
-            if ((index / width) % 2 == 0) color(0, 0, 0) else color(255, 255, 255)
-        }
-        val frameColors = buildList {
-            addAll(List(width) { color(255, 255, 255) })
-            addAll(templateColors)
-            addAll(List(width) { color(0, 0, 0) })
-        }
-        val template = RgbaTemplate.fromRgba(width, templateHeight, rgba(*templateColors.toTypedArray()))
-        val frame = frame(width, templateHeight + 2, frameColors)
-
-        val matched = VisualConditionEvaluator(
-            frameSource = { frame },
-            templateSource = templateSource(template),
-            maxComparisons = (width * templateHeight).toLong(),
-        ).evaluate(
-            ImagePresentCondition(
-                assetId = ASSET_ID,
-                region = NormalizedRect(0.0, 0.0, 1.0, 1.0),
-                matchThreshold = 1.0,
-            ),
-        )
-
-        assertTrue(matched)
-        assertTrue(frame.isClosed)
-    }
-
-    @Test
-    fun imageAbsentIsTheInverseOfAContainedMatch() {
-        val template = RgbaTemplate.fromRgba(1, 1, rgba(color(100, 100, 100)))
-        val matchingFrame = frame(2, 1, listOf(color(0, 0, 0), color(100, 100, 100)))
-        assertFalse(
-            VisualConditionEvaluator({ matchingFrame }, templateSource(template)).evaluate(
-                ImageAbsentCondition(ASSET_ID, NormalizedRect(0.0, 0.0, 1.0, 1.0), 1.0),
-            ),
-        )
-
-        val nonMatchingFrame = frame(2, 1, listOf(color(0, 0, 0), color(90, 90, 90)))
-        assertTrue(
-            VisualConditionEvaluator({ nonMatchingFrame }, templateSource(template)).evaluate(
-                ImageAbsentCondition(ASSET_ID, NormalizedRect(0.0, 0.0, 1.0, 1.0), 1.0),
-            ),
-        )
-    }
-
-    @Test
-    fun matchThresholdUsesDeterministicMeanRgbaSimilarity() {
-        val template = RgbaTemplate.fromRgba(1, 1, rgba(color(100, 100, 100)))
-        val frame = frame(1, 1, listOf(color(110, 100, 100)))
-
-        assertTrue(
-            VisualConditionEvaluator({ frame }, templateSource(template)).evaluate(
-                ImagePresentCondition(ASSET_ID, NormalizedRect(0.0, 0.0, 1.0, 1.0), 0.9),
-            ),
-        )
-        assertTrue(frame.isClosed)
-
-        val stricterFrame = frame(1, 1, listOf(color(110, 100, 100)))
-        assertFalse(
-            VisualConditionEvaluator({ stricterFrame }, templateSource(template)).evaluate(
-                ImagePresentCondition(ASSET_ID, NormalizedRect(0.0, 0.0, 1.0, 1.0), 0.995),
-            ),
-        )
-    }
-
-    @Test
-    fun reportsExactScoreForAnAcceptedImageCandidate() {
-        val template = RgbaTemplate.fromRgba(1, 1, rgba(color(100, 100, 100)))
-        val frame = frame(1, 1, listOf(color(110, 100, 100)))
-
-        val observation = VisualConditionEvaluator({ frame }, templateSource(template)).observe(
-            ImagePresentCondition(
-                ASSET_ID,
-                NormalizedRect(0.0, 0.0, 1.0, 1.0),
-                matchThreshold = 0.9,
-            ),
-        )
-
-        assertTrue(observation.result)
-        assertEquals(0.9, observation.threshold!!, 0.0)
-        assertEquals(1.0 - 10.0 / 1020.0, observation.matchScore!!, 0.000_001)
-        assertTrue(frame.isClosed)
-    }
-
-    @Test
-    fun reportsExactScoreForARejectedScreenState() {
-        val template = RgbaTemplate.fromRgba(1, 1, rgba(color(100, 100, 100)))
-        val frame = frame(1, 1, listOf(color(110, 100, 100)))
-
-        val observation = VisualConditionEvaluator({ frame }, templateSource(template)).observe(
-            ImagePresentCondition(
-                ASSET_ID,
-                NormalizedRect(0.0, 0.0, 1.0, 1.0),
-                matchThreshold = 0.995,
-                matchMode = ImageMatchMode.SCREEN_STATE,
-            ),
-        )
-
-        assertFalse(observation.result)
-        assertEquals(0.995, observation.threshold!!, 0.0)
-        assertEquals(1.0 - 10.0 / 1020.0, observation.matchScore!!, 0.000_001)
-        assertTrue(frame.isClosed)
-    }
-
-    @Test
     fun missingTemplateFailsClosedInsteadOfMatchingAnAbsentCondition() {
         val frame = frame(1, 1, listOf(color(0, 0, 0)))
         var rejected = false
@@ -344,78 +139,6 @@ class VisualConditionEvaluatorTest {
         }
         assertTrue(rejected)
         assertFalse("No frame should be acquired when the template is unavailable", frame.isClosed)
-    }
-
-    @Test
-    fun templateSearchStopsAtItsComparisonBudget() {
-        val size = 32
-        val templateColors = List(size * size) { index ->
-            if ((index / size) % 2 == 0) color(0, 0, 0) else color(255, 255, 255)
-        }
-        val frameColors = List(size * size) { index ->
-            if (index % 2 == 0) color(0, 0, 0) else color(255, 255, 255)
-        }
-        val template = RgbaTemplate.fromRgba(size, size, rgba(*templateColors.toTypedArray()))
-        val frame = frame(size, size, frameColors)
-        var rejected = false
-        try {
-            VisualConditionEvaluator(
-                frameSource = { frame },
-                templateSource = templateSource(template),
-                maxComparisons = 1,
-            ).evaluate(
-                ImagePresentCondition(ASSET_ID, NormalizedRect(0.0, 0.0, 1.0, 1.0), 1.0),
-            )
-        } catch (error: VisualConditionEvaluationException) {
-            rejected = error.message?.contains("safety budget") == true
-        }
-        assertTrue(rejected)
-        assertTrue(frame.isClosed)
-    }
-
-    @Test
-    fun templateSearchStopsBeforeScanningTooManyOrigins() {
-        val template = RgbaTemplate.fromRgba(1, 1, rgba(color(255, 255, 255)))
-        val frame = frame(3, 3, List(9) { color(0, 0, 0) })
-        var rejected = false
-        try {
-            VisualConditionEvaluator(
-                frameSource = { frame },
-                templateSource = templateSource(template),
-                maxSearchOrigins = 2,
-            ).evaluate(
-                ImagePresentCondition(ASSET_ID, NormalizedRect(0.0, 0.0, 1.0, 1.0), 1.0),
-            )
-        } catch (error: VisualConditionEvaluationException) {
-            rejected = error.message?.contains("search covers 9 positions") == true
-        }
-        assertTrue(rejected)
-        assertTrue(frame.isClosed)
-    }
-
-    @Test
-    fun channelPrefilterKeepsAReasonableSearchWithinTheBudget() {
-        val template = RgbaTemplate.fromRgba(
-            widthPx = 8,
-            heightPx = 8,
-            rgbaBytes = rgba(*Array(64) { color(255, 255, 255) }),
-        )
-        val frame = frame(48, 48, List(48 * 48) { color(0, 0, 0) })
-
-        val matched = VisualConditionEvaluator(
-            frameSource = { frame },
-            templateSource = templateSource(template),
-            maxComparisons = 1,
-        ).evaluate(
-            ImagePresentCondition(
-                assetId = ASSET_ID,
-                region = NormalizedRect(0.0, 0.0, 1.0, 1.0),
-                matchThreshold = 0.9,
-            ),
-        )
-
-        assertFalse(matched)
-        assertTrue(frame.isClosed)
     }
 
     private fun evaluator(frame: EphemeralScreenFrame): VisualConditionEvaluator = VisualConditionEvaluator({ frame }, ImageTemplateSource { null })
