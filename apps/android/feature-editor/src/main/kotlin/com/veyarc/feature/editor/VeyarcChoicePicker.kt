@@ -30,7 +30,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.HorizontalDivider
@@ -61,6 +60,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.SoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
@@ -94,15 +94,15 @@ fun VeyarcChoicePicker(
     val textMeasurer = rememberTextMeasurer()
     val density = LocalDensity.current
     val titleStyle = MaterialTheme.typography.titleLarge
-    val optionStyle = MaterialTheme.typography.bodyLarge
+    val optionStyle = MaterialTheme.typography.titleSmall
     val detailStyle = MaterialTheme.typography.bodySmall
     val pickerWidth = remember(title, options, searchable, textMeasurer, density, titleStyle, optionStyle, detailStyle) {
         with(density) {
-            val titleWidth = textMeasurer.measure(title, titleStyle).size.width.toDp() + if (searchable) 144.dp else 88.dp
+            val titleWidth = textMeasurer.measure(title, titleStyle).size.width.toDp() + if (searchable) 160.dp else 96.dp
             val optionWidth = options.maxOfOrNull { option ->
-                maxOf(textMeasurer.measure(option.label, optionStyle).size.width, option.detail?.let { textMeasurer.measure(it, detailStyle).size.width } ?: 0).toDp() + 108.dp
+                maxOf(textMeasurer.measure(option.label, optionStyle).size.width, option.detail?.let { textMeasurer.measure(it, detailStyle).size.width } ?: 0).toDp() + 64.dp
             } ?: 0.dp
-            maxOf(titleWidth, optionWidth).coerceIn(260.dp, 400.dp)
+            maxOf(titleWidth, optionWidth).coerceIn(220.dp, 400.dp)
         }
     }
     var searchExpanded by remember { mutableStateOf(false) }
@@ -183,7 +183,7 @@ fun VeyarcChoicePicker(
                     Box(Modifier.fillMaxWidth()) {
                         Column(
                             modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             BoxWithConstraints {
                                 val availableWidth = maxWidth
@@ -252,25 +252,25 @@ fun VeyarcChoicePicker(
                             LazyColumn(
                                 modifier = Modifier.weight(1f, fill = false),
                                 state = listState,
-                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
                                 itemsIndexed(filtered, key = { _, option -> option.id }) { index, option ->
                                     Column {
                                         if (index > 0 && option.group != filtered[index - 1].group) {
                                             HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.outlineVariant)
                                         }
-                                        val selected = option.id == selectedId
+                                        val isSelected = option.id == selectedId
                                         Surface(
                                             onClick = { onSelect(option) },
-                                            modifier = Modifier.fillMaxWidth(),
-                                            shape = RoundedCornerShape(14.dp),
-                                            color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                                            modifier = Modifier.fillMaxWidth().semantics { selected = isSelected },
+                                            shape = RoundedCornerShape(16.dp),
+                                            color = if (isSelected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
                                         ) {
                                             Box(
-                                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 14.dp, vertical = 8.dp),
+                                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(16.dp),
                                                 contentAlignment = Alignment.Center,
                                             ) {
-                                                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                                                     Text(
                                                         option.label,
                                                         modifier = Modifier.fillMaxWidth(),
@@ -286,7 +286,6 @@ fun VeyarcChoicePicker(
                                                         Text(detail, modifier = Modifier.fillMaxWidth(), style = detailStyle, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
                                                     }
                                                 }
-                                                if (selected) Icon(Icons.Outlined.Check, contentDescription = "Selected", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.align(Alignment.CenterEnd))
                                             }
                                         }
                                     }
