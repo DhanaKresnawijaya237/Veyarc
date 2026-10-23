@@ -232,6 +232,7 @@ data class PixelColorCondition(
     val tolerance: Int,
     val region: NormalizedRect? = null,
     val backgroundAssetId: AssetId? = null,
+    val capturedBackground: VariableName? = null,
 ) : Condition {
     init {
         require(expectedArgb in 0L..0xFFFF_FFFFL) { "ARGB color must fit an unsigned 32-bit value" }
@@ -242,11 +243,13 @@ data class PixelColorCondition(
 @Serializable
 @SerialName("imagePresent")
 data class ImagePresentCondition(
-    val assetId: AssetId,
+    val assetId: AssetId? = null,
     val region: NormalizedRect,
     val matchThreshold: Double,
     val matchMode: ImageMatchMode = ImageMatchMode.APPEARS_WITHIN_REGION,
     val backgroundAssetId: AssetId? = null,
+    val capturedImage: VariableName? = null,
+    val capturedBackground: VariableName? = null,
 ) : Condition {
     init {
         ContractChecks.requireFinite(matchThreshold, "matchThreshold")
@@ -266,10 +269,12 @@ enum class ImageMatchMode {
 @Serializable
 @SerialName("imageAbsent")
 data class ImageAbsentCondition(
-    val assetId: AssetId,
+    val assetId: AssetId? = null,
     val region: NormalizedRect,
     val matchThreshold: Double,
     val backgroundAssetId: AssetId? = null,
+    val capturedImage: VariableName? = null,
+    val capturedBackground: VariableName? = null,
 ) : Condition {
     init {
         ContractChecks.requireFinite(matchThreshold, "matchThreshold")

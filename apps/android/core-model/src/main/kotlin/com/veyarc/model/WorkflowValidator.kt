@@ -341,32 +341,13 @@ object WorkflowValidator {
     ) {
         condition.backgroundAssetId()?.let { validateImageAsset(it, "$path/backgroundAssetId", AssetKind.IMAGE_TEMPLATE, declaredAssets, referencedAssets, errors) }
         when (condition) {
-            is CapturedImageCondition -> {
-                val captures = runtimeCaptures[condition.name.value]
-                if (captures.isNullOrEmpty()) {
-                    errors += error(ValidationErrorCode.MISSING_VARIABLE, "$path/name", "Add a Capture image block for ${condition.name.value}")
-                } else {
-                    captures.forEach { capture ->
-                        fun span(start: Double, size: Double, pixels: Int) = kotlin.math.ceil((start + size) * pixels).toInt().coerceAtMost(pixels) - kotlin.math.floor(start * pixels).toInt()
-                        val width = span(capture.region.x, capture.region.width, document.viewport.recordedWidthPx)
-                        val height = span(capture.region.y, capture.region.height, document.viewport.recordedHeightPx)
-                        val asset = AssetReference(AssetId("runtime-image"), AssetKind.IMAGE_TEMPLATE, condition.name.value, width, height)
-                        validateImageBounds(asset.assetId, condition.region, false, path, document, mapOf(asset.assetId.value to asset), errors)
-                    }
-                }
-            }
+            is CapturedImageCondition -> validateCondition(condition.integratedImageCondition(), path, document, runtimeCaptures, allStepIds, seenStepIds, declaredAssets, referencedAssets, errors)
 
-            is PixelColorCondition -> Unit
+            is PixelColorCondition -> condition.capturedBackground?.let { captureDimensions(it, path, document, runtimeCaptures, errors) }
 
-            is ImagePresentCondition -> {
-                validateImageAsset(condition.assetId, path, AssetKind.IMAGE_TEMPLATE, declaredAssets, referencedAssets, errors)
-                validateImageBounds(condition.assetId, condition.region, condition.matchMode == ImageMatchMode.SCREEN_STATE, path, document, declaredAssets, errors)
-            }
+            is ImagePresentCondition -> validateVisualImage(condition.assetId, condition.capturedImage, condition.capturedBackground, condition.region, condition.matchMode == ImageMatchMode.SCREEN_STATE, path, document, runtimeCaptures, declaredAssets, referencedAssets, errors)
 
-            is ImageAbsentCondition -> {
-                validateImageAsset(condition.assetId, path, AssetKind.IMAGE_TEMPLATE, declaredAssets, referencedAssets, errors)
-                validateImageBounds(condition.assetId, condition.region, false, path, document, declaredAssets, errors)
-            }
+            is ImageAbsentCondition -> validateVisualImage(condition.assetId, condition.capturedImage, condition.capturedBackground, condition.region, false, path, document, runtimeCaptures, declaredAssets, referencedAssets, errors)
 
             is ForegroundPackageCondition -> validatePackage(condition.packageName, "$path/packageName", document, errors)
 
@@ -452,15 +433,31 @@ object WorkflowValidator {
         }
     }
 
-    private fun validateImageBounds(assetId: AssetId, region: NormalizedRect, screenState: Boolean, path: String, document: WorkflowDocument, assets: Map<String, AssetReference>, errors: MutableList<ValidationError>) {
-        val asset = assets[assetId.value] ?: return
-        val width = asset.widthPx ?: return
-        val height = asset.heightPx ?: return
-        val viewport = document.viewport
-        val regionWidth = kotlin.math.ceil((region.x + region.width) * viewport.recordedWidthPx).toInt().coerceAtMost(viewport.recordedWidthPx) - kotlin.math.floor(region.x * viewport.recordedWidthPx).toInt()
-        val regionHeight = kotlin.math.ceil((region.y + region.height) * viewport.recordedHeightPx).toInt().coerceAtMost(viewport.recordedHeightPx) - kotlin.math.floor(region.y * viewport.recordedHeightPx).toInt()
-        val invalid = if (screenState) width != viewport.recordedWidthPx || height != viewport.recordedHeightPx else width > regionWidth || height > regionHeight
-        if (invalid) errors += error(ValidationErrorCode.LIMIT_EXCEEDED, "$path/region", if (screenState) "${asset.displayName ?: "Image"} must match the full screen size ${viewport.recordedWidthPx} × ${viewport.recordedHeightPx} px." else "${asset.displayName ?: "Crop"} is $width × $height px and cannot fit the $regionWidth × $regionHeight px search area. Enlarge the area or use a smaller crop.")
+    private fun captureDimensions(name: VariableName, path: String, document: WorkflowDocument, captures: Map<String, List<CaptureImage>>, errors: MutableList<ValidationError>): List<Pair<Int, Int>> {
+        val definitions = captures[name.value]
+        if (definitions.isNullOrEmpty()) errors += error(ValidationErrorCode.MISSING_VARIABLE, path, "Add a Capture image block for ${name.value}")
+        fun span(start: Double, size: Double, pixels: Int) = kotlin.math.ceil((start + size) * pixels).toInt().coerceAtMost(pixels) - kotlin.math.floor(start * pixels).toInt()
+        return definitions.orEmpty().map { span(it.region.x, it.region.width, document.viewport.recordedWidthPx) to span(it.region.y, it.region.height, document.viewport.recordedHeightPx) }.distinct()
+    }
+
+    private fun validateVisualImage(assetId: AssetId?, captured: VariableName?, background: VariableName?, region: NormalizedRect, screenState: Boolean, path: String, document: WorkflowDocument, captures: Map<String, List<CaptureImage>>, assets: Map<String, AssetReference>, references: MutableSet<String>, errors: MutableList<ValidationError>) {
+        if ((assetId == null) == (captured == null)) errors += error(ValidationErrorCode.MISSING_ASSET, path, "Choose one saved or captured target image.")
+        val sizes = if (captured != null) {
+            captureDimensions(captured, "$path/capturedImage", document, captures, errors)
+        } else {
+            assetId?.let { validateImageAsset(it, path, AssetKind.IMAGE_TEMPLATE, assets, references, errors) }
+            assetId?.let { assets[it.value] }?.let { image -> image.widthPx?.let { w -> image.heightPx?.let { h -> listOf(w to h) } } }.orEmpty()
+        }
+        val backgrounds = background?.let { captureDimensions(it, "$path/capturedBackground", document, captures, errors) }
+            ?: listOf(document.viewport.recordedWidthPx to document.viewport.recordedHeightPx)
+        sizes.forEach { (w, h) ->
+            backgrounds.forEach { (bw, bh) ->
+                val rw = kotlin.math.ceil((region.x + region.width) * bw).toInt().coerceAtMost(bw) - kotlin.math.floor(region.x * bw).toInt()
+                val rh = kotlin.math.ceil((region.y + region.height) * bh).toInt().coerceAtMost(bh) - kotlin.math.floor(region.y * bh).toInt()
+                val invalid = if (screenState) w != bw || h != bh else w > rw || h > rh
+                if (invalid) errors += error(ValidationErrorCode.LIMIT_EXCEEDED, "$path/region", if (screenState) "The target image must match the $bw × $bh px background size." else "The $w × $h px image cannot fit the $rw × $rh px search area. Enlarge the area or use a smaller crop.")
+            }
+        }
     }
 
     private fun validateImageAsset(

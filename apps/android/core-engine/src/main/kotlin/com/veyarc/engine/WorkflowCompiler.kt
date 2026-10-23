@@ -29,6 +29,8 @@ import com.veyarc.model.WhileStep
 import com.veyarc.model.WorkflowDocument
 import com.veyarc.model.WorkflowStep
 import com.veyarc.model.WorkflowValidator
+import com.veyarc.model.capturedBackgroundName
+import com.veyarc.model.capturedImageName
 import com.veyarc.model.resolvePoint
 
 /** Compiles editable workflow documents into bounded, immutable execution plans. */
@@ -186,6 +188,7 @@ object WorkflowCompiler {
         errors: MutableList<CompilationError>,
     ) {
         requireCapability(conditionCapability(condition), path, capabilities, errors)
+        if (condition !is CapturedImageCondition && (condition.capturedImageName() != null || condition.capturedBackgroundName() != null)) requireCapability(EngineCapability.CAPTURE_IMAGE, path, capabilities, errors)
         when (condition) {
             is com.veyarc.model.AndCondition -> condition.conditions.forEachIndexed { index, child ->
                 validateConditionCapabilities(child, "$path/conditions/$index", capabilities, errors)

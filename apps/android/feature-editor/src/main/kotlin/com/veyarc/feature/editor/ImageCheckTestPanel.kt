@@ -54,6 +54,8 @@ import com.veyarc.model.ImagePresentCondition
 import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.backgroundAssetId
 import com.veyarc.model.bundle.BundleAsset
+import com.veyarc.model.capturedBackgroundName
+import com.veyarc.model.capturedImageName
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -63,6 +65,10 @@ private data class SavedConditionCheck(val sourceId: String, val observation: Co
 
 @Composable
 internal fun ImageCheckTestPanel(condition: Condition, assets: List<WorkflowAssetDescriptor>, names: Map<String, String>, loadAsset: suspend (AssetId) -> BundleAsset?, loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?, width: Int, height: Int) {
+    if (condition.capturedImageName() != null || condition.capturedBackgroundName() != null) {
+        Text("Captured images are checked during the run.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        return
+    }
     var showImages by rememberSaveable { mutableStateOf(false) }
     var expanded by rememberSaveable { mutableStateOf(true) }
     var sourceId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -104,7 +110,7 @@ internal fun ImageCheckTestPanel(condition: Condition, assets: List<WorkflowAsse
                             is ImageAbsentCondition -> condition.assetId
                             else -> error("Select an image or colour condition.")
                         }
-                        val target = requireNotNull(loadAsset(targetId)) { "The target image is unavailable." }
+                        val target = requireNotNull(loadAsset(requireNotNull(targetId))) { "The target image is unavailable." }
                         testImageCondition(condition, target, image, width, height)
                     }
                     SavedConditionCheck(id, observation)

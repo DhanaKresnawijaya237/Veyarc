@@ -238,7 +238,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["type", "name", "region", "matchThreshold"],
-          "description": "Compare the latest named runtime capture with this screen area using the same coloured OpenCV matching and score as saved templates. Add a captureImage block with this name first. Missing or not-yet-captured images stop the run even for absent checks. Every capture crop for this name must fit the search area. Captured pixels stay in device memory for this run and are never sent to the AI or exported.",
+          "description": "Legacy runtime image condition, kept for existing revisions. For new workflows use imagePresent or imageAbsent with capturedImage instead.",
           "properties": {
             "type": { "const": "capturedImage" },
             "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
@@ -253,6 +253,7 @@
           "additionalProperties": false,
           "required": ["type", "point", "expectedArgb", "tolerance"],
           "properties": {
+            "capturedBackground": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$", "description": "Optional named image captured earlier in this run to search instead of the live screen. Region and point coordinates are relative to its full captured size. Missing captures fail the check. Saved backgroundAssetId remains editor-only. Captured pixels are never sent to AI or exported."},
             "type": { "const": "pixelColor" },
             "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor-only background. Cleared when its image is cropped or resized on replacement; saving a copy keeps the original. Does not change replay or color matching. Omit to remove." },
             "point": { "$ref": "#/$defs/coordinate" },
@@ -264,8 +265,11 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["type", "assetId", "region", "matchThreshold"],
+          "required": ["type", "region", "matchThreshold"],
+          "oneOf": [{"required": ["assetId"], "not": {"required": ["capturedImage"]}}, {"required": ["capturedImage"], "not": {"required": ["assetId"]}}],
           "properties": {
+            "capturedImage": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$", "description": "Named crop or full-screen image from an earlier captureImage block. Choose exactly one target source: assetId or capturedImage. Missing captures stop the run, including absent checks. No resizing. All possible capture sizes must fit the search region; screenState requires the same dimensions as the screen or captured background."},
+            "capturedBackground": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$", "description": "Optional named image captured earlier in this run to search instead of the live screen. Region and point coordinates are relative to its full captured size. Missing captures fail the check. Saved backgroundAssetId remains editor-only. Captured pixels are never sent to AI or exported."},
             "type": { "const": "imagePresent" },
             "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor-only background. Cleared when its image is cropped or resized on replacement; saving a copy keeps the original. Does not change replay or image matching. Omit to remove." },
             "assetId": { "$ref": "#/$defs/assetId" },
@@ -280,8 +284,11 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["type", "assetId", "region", "matchThreshold"],
+          "required": ["type", "region", "matchThreshold"],
+          "oneOf": [{"required": ["assetId"], "not": {"required": ["capturedImage"]}}, {"required": ["capturedImage"], "not": {"required": ["assetId"]}}],
           "properties": {
+            "capturedImage": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$", "description": "Named crop or full-screen image from an earlier captureImage block. Choose exactly one target source: assetId or capturedImage. Missing captures stop the run, including absent checks. No resizing. All possible capture sizes must fit the search region; screenState requires the same dimensions as the screen or captured background."},
+            "capturedBackground": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$", "description": "Optional named image captured earlier in this run to search instead of the live screen. Region and point coordinates are relative to its full captured size. Missing captures fail the check. Saved backgroundAssetId remains editor-only. Captured pixels are never sent to AI or exported."},
             "type": { "const": "imageAbsent" },
             "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor-only background. Cleared when its image is cropped or resized on replacement; saving a copy keeps the original. Does not change replay or image matching. Omit to remove." },
             "assetId": { "$ref": "#/$defs/assetId" },

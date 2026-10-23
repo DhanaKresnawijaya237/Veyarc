@@ -270,8 +270,8 @@ internal fun List<WorkflowStep>.clipboardImageIds(): Set<String> = buildSet {
     fun condition(value: Condition) {
         value.backgroundAssetId()?.let { add(it.value) }
         when (value) {
-            is ImagePresentCondition -> add(value.assetId.value)
-            is ImageAbsentCondition -> add(value.assetId.value)
+            is ImagePresentCondition -> value.assetId?.let { add(it.value) }
+            is ImageAbsentCondition -> value.assetId?.let { add(it.value) }
             is AndCondition -> value.conditions.forEach(::condition)
             is OrCondition -> value.conditions.forEach(::condition)
             is NotCondition -> condition(value.condition)
@@ -323,8 +323,8 @@ internal fun remapClipboardSteps(steps: List<WorkflowStep>, assetIds: Map<String
     fun condition(value: Condition): Condition = when (value) {
         is com.veyarc.model.CapturedImageCondition -> value.copy(backgroundAssetId = value.backgroundAssetId?.let { assetIds[it.value] ?: it })
         is com.veyarc.model.PixelColorCondition -> value.copy(backgroundAssetId = value.backgroundAssetId?.let { assetIds[it.value] ?: it })
-        is ImagePresentCondition -> value.copy(assetId = assetIds[value.assetId.value] ?: value.assetId, backgroundAssetId = value.backgroundAssetId?.let { assetIds[it.value] ?: it })
-        is ImageAbsentCondition -> value.copy(assetId = assetIds[value.assetId.value] ?: value.assetId, backgroundAssetId = value.backgroundAssetId?.let { assetIds[it.value] ?: it })
+        is ImagePresentCondition -> value.copy(assetId = value.assetId?.let { assetIds[it.value] ?: it }, backgroundAssetId = value.backgroundAssetId?.let { assetIds[it.value] ?: it })
+        is ImageAbsentCondition -> value.copy(assetId = value.assetId?.let { assetIds[it.value] ?: it }, backgroundAssetId = value.backgroundAssetId?.let { assetIds[it.value] ?: it })
         is StepResultCondition -> value.copy(stepId = stepIds[value.stepId] ?: value.stepId)
         is AndCondition -> value.copy(conditions = value.conditions.map(::condition))
         is OrCondition -> value.copy(conditions = value.conditions.map(::condition))

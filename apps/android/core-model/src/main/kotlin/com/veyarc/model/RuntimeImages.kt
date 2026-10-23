@@ -51,3 +51,26 @@ fun List<WorkflowStep>.capturedImages(): Map<String, List<CaptureImage>> = build
     }
     visit(this@capturedImages)
 }
+
+fun Condition.capturedImageName(): VariableName? = when (this) {
+    is ImagePresentCondition -> capturedImage
+    is ImageAbsentCondition -> capturedImage
+    is CapturedImageCondition -> name
+    else -> null
+}
+
+fun Condition.capturedBackgroundName(): VariableName? = when (this) {
+    is ImagePresentCondition -> capturedBackground
+    is ImageAbsentCondition -> capturedBackground
+    is PixelColorCondition -> capturedBackground
+    else -> null
+}
+
+/** Keep older revisions readable while editing all image sources in the same controls. */
+fun Condition.integratedImageCondition(): Condition = when (this) {
+    is CapturedImageCondition -> if (present) ImagePresentCondition(region = region, matchThreshold = matchThreshold, capturedImage = name, backgroundAssetId = backgroundAssetId) else ImageAbsentCondition(region = region, matchThreshold = matchThreshold, capturedImage = name, backgroundAssetId = backgroundAssetId)
+    is AndCondition -> copy(conditions = conditions.map(Condition::integratedImageCondition))
+    is OrCondition -> copy(conditions = conditions.map(Condition::integratedImageCondition))
+    is NotCondition -> copy(condition = condition.integratedImageCondition())
+    else -> this
+}

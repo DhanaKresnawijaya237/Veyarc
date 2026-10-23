@@ -170,11 +170,11 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
         is PixelColorCondition -> if (condition.region == null) "Pixel color at ${formatPoint(condition.point)}" else "Color appears in the search area"
 
         is ImagePresentCondition -> when (condition.matchMode) {
-            ImageMatchMode.SCREEN_STATE -> assetNames[condition.assetId.value]?.let { "Screen matches $it" } ?: "Screen state"
-            ImageMatchMode.APPEARS_WITHIN_REGION -> "${assetNames[condition.assetId.value] ?: "Selected image"} appears"
+            ImageMatchMode.SCREEN_STATE -> assetNames[condition.assetId?.value]?.let { "Screen matches $it" } ?: "Screen state"
+            ImageMatchMode.APPEARS_WITHIN_REGION -> "${condition.capturedImage?.value ?: assetNames[condition.assetId?.value] ?: "Selected image"} appears"
         }
 
-        is ImageAbsentCondition -> "${assetNames[condition.assetId.value] ?: "Selected image"} is absent"
+        is ImageAbsentCondition -> "${condition.capturedImage?.value ?: assetNames[condition.assetId?.value] ?: "Selected image"} is absent"
 
         is ForegroundPackageCondition -> "Foreground package ${condition.packageName.value}"
 

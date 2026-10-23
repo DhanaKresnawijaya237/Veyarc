@@ -109,13 +109,16 @@ import com.veyarc.model.WorkflowIds
 import com.veyarc.model.WorkflowJson
 import com.veyarc.model.backgroundAssetId
 import com.veyarc.model.bundle.BundleAsset
+import com.veyarc.model.capturedBackgroundName
+import com.veyarc.model.capturedImageName
+import com.veyarc.model.integratedImageCondition
 import kotlin.math.roundToInt
 
 private const val MAX_COMPOSED_CONDITIONS = 8
 private const val MISSING_TEMPLATE_ASSET_ID = "template-missing"
 private val ConditionEditorSaver = Saver<Condition, String>(
     save = { WorkflowJson.encodeCanonical(Condition.serializer(), it) },
-    restore = { WorkflowJson.decodeStrict(Condition.serializer(), it) },
+    restore = { WorkflowJson.decodeStrict(Condition.serializer(), it).integratedImageCondition() },
 )
 
 internal fun Condition.usesCompactEditorSheet(): Boolean = this is ForegroundPackageCondition ||
@@ -145,7 +148,7 @@ internal fun ConditionEditorDialog(
     onDismiss: () -> Unit,
     onApply: (Condition) -> Unit,
 ) {
-    var condition by rememberSaveable(initialCondition, stateSaver = ConditionEditorSaver) { mutableStateOf(initialCondition) }
+    var condition by rememberSaveable(initialCondition, stateSaver = ConditionEditorSaver) { mutableStateOf(initialCondition.integratedImageCondition()) }
     val compact = condition.usesCompactEditorSheet()
     val listState = rememberLazyListState()
     val children = when (condition) {
@@ -278,7 +281,7 @@ private fun ConditionNodeEditor(
             ConditionKindPicker(condition, defaultPackage, onChange, Modifier.fillMaxWidth(), showDividers = true)
         }
         when (condition) {
-            is CapturedImageCondition -> CapturedImageFields(condition, assets, assetNames, loadPreview, previewWidthPx, previewHeightPx, onChange)
+            is CapturedImageCondition -> error("Legacy images must be integrated before editing")
 
             is PixelColorCondition -> PixelConditionFields(condition, assets, assetNames, onAddTemplate, loadAsset, loadPreview, previewWidthPx, previewHeightPx, onChange)
 
@@ -381,7 +384,6 @@ private fun ConditionKindPicker(
 ) {
     var expanded by remember(condition::class) { mutableStateOf(false) }
     val variables = LocalConditionVariables.current
-    val captures = LocalCapturedImages.current
     if (showDividers) {
         Row(
             modifier.heightIn(min = 48.dp).clickable(
@@ -411,14 +413,12 @@ private fun ConditionKindPicker(
     if (expanded) {
         VeyarcChoicePicker(
             title = "Condition type",
-            options = EditableConditionKind.entries.filter { (it != EditableConditionKind.VARIABLE || variables.isNotEmpty()) && (it != EditableConditionKind.CAPTURED || captures.isNotEmpty()) }.map { VeyarcChoice(it.name, it.label) },
+            options = EditableConditionKind.entries.filter { (it != EditableConditionKind.VARIABLE || variables.isNotEmpty()) }.map { VeyarcChoice(it.name, it.label) },
             selectedId = condition.kind().name,
             onDismiss = { expanded = false },
             onSelect = { choice ->
                 expanded = false
-                if (choice.id == EditableConditionKind.CAPTURED.name) {
-                    onChange(CapturedImageCondition(VariableName(captures.first()), FULL_SCREEN_REGION, 0.9))
-                } else if (choice.id == EditableConditionKind.VARIABLE.name) {
+                if (choice.id == EditableConditionKind.VARIABLE.name) {
                     val (name, declaration) = variables.entries.first()
                     onChange(VariableComparisonCondition(com.veyarc.model.VariableOperand(com.veyarc.model.VariableName(name)), com.veyarc.model.ComparisonOperator.EQUALS, com.veyarc.model.LiteralOperand(declaration.initialValue)))
                 } else {
@@ -427,31 +427,6 @@ private fun ConditionKindPicker(
             },
         )
     }
-}
-
-@Composable
-private fun CapturedImageFields(condition: CapturedImageCondition, assets: List<WorkflowAssetDescriptor>, names: Map<String, String>, loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?, width: Int, height: Int, onChange: (Condition) -> Unit) {
-    var backgrounds by rememberSaveable { mutableStateOf(false) }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        VariableChoice("Captured image", condition.name.value, LocalCapturedImages.current.map { VeyarcChoice(it, it) }, condition.name.value) { onChange(condition.copy(name = VariableName(it))) }
-        VariableChoice("Check", if (condition.present) "Image appears" else "Image is absent", listOf(VeyarcChoice("present", "Image appears"), VeyarcChoice("absent", "Image is absent")), if (condition.present) "present" else "absent") { onChange(condition.copy(present = it == "present")) }
-        Text("Uses the latest capture from this run.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        TextButton(onClick = { backgrounds = true }) {
-            Icon(Icons.Outlined.Image, "Background")
-            Text("Background", Modifier.padding(start = 8.dp))
-        }
-        ImageConditionPreview(condition.region, width, height, assetId = null, backgroundAssetId = condition.backgroundAssetId, loadPreview = loadPreview, runtimeImage = true, onRegionChange = { onChange(condition.copy(region = it)) })
-        RegionConditionFields(condition.region) { onChange(condition.copy(region = it)) }
-        var threshold by rememberNumericEditorText(condition.matchThreshold.toEditorText())
-        ConditionNumberField("Match threshold (0 to 1)", threshold, { text ->
-            threshold = text
-            text.toDoubleOrNull()?.takeIf { it.isFinite() && it in 0.0..1.0 }?.let { onChange(condition.copy(matchThreshold = it)) }
-        }, Modifier.fillMaxWidth())
-    }
-    TemplatePickerSheet(visible = backgrounds, title = "Background", assets = assets, assetNames = names, displayWidthPx = width, displayHeightPx = height, fullScreenOnly = true, selectedAssetId = condition.backgroundAssetId?.value, allowNone = true, onDismiss = { backgrounds = false }, onSelect = {
-        backgrounds = false
-        onChange(condition.copy(backgroundAssetId = it))
-    }, loadPreview = loadPreview)
 }
 
 @Composable
@@ -554,6 +529,12 @@ private fun PixelConditionFields(
         TemplatePickerSheet(
             visible = showBackgrounds,
             title = "Background",
+            capturedImages = LocalCapturedImages.current,
+            selectedCapture = condition.capturedBackground?.value,
+            onSelectCapture = { name ->
+                showBackgrounds = false
+                onChange(condition.copy(capturedBackground = VariableName(name)))
+            },
             assets = assets,
             assetNames = assetNames,
             displayWidthPx = previewWidthPx,
@@ -563,7 +544,7 @@ private fun PixelConditionFields(
             allowNone = true,
             onDismiss = { showBackgrounds = false },
             onSelect = { selected ->
-                onChange(condition.copy(backgroundAssetId = selected))
+                onChange(condition.copy(backgroundAssetId = selected, capturedBackground = null))
                 showBackgrounds = false
             },
             loadPreview = loadPreview,
@@ -574,6 +555,7 @@ private fun PixelConditionFields(
         toleranceText = next
         next.toIntOrNull()?.takeIf { it in 0..255 }?.let { onChange(condition.copy(tolerance = it)) }
     })
+    condition.capturedBackground?.let { Text("Search in ${it.value} · Captured this run", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
     ImageCheckTestPanel(condition, assets, assetNames, loadAsset, loadPreview, previewWidthPx, previewHeightPx)
 }
 
@@ -632,7 +614,7 @@ private fun ImageConditionFields(
     val isScreenState = condition is ImagePresentCondition && condition.matchMode == ImageMatchMode.SCREEN_STATE
     var pickerMode by rememberSaveable { mutableStateOf<ImagePickerMode?>(null) }
     val backgroundAssetId = condition.backgroundAssetId()?.value
-    val update: (AssetId, NormalizedRect, Double) -> Unit = { selectedAsset, region, threshold ->
+    val update: (AssetId?, NormalizedRect, Double) -> Unit = { selectedAsset, region, threshold ->
         onChange(
             when (condition) {
                 is ImagePresentCondition -> condition.copy(assetId = selectedAsset, region = region, matchThreshold = threshold)
@@ -645,6 +627,7 @@ private fun ImageConditionFields(
         displayWidthPx = previewWidthPx,
         displayHeightPx = previewHeightPx,
         assetId = assetId,
+        runtimeImage = condition.capturedImageName() != null,
         backgroundAssetId = if (isScreenState) null else backgroundAssetId?.let(::AssetId),
         loadPreview = loadPreview,
         screenStateMode = isScreenState,
@@ -675,10 +658,11 @@ private fun ImageConditionFields(
         }
     }
     Text(
-        assetNames[assetId.value] ?: "Target image",
+        condition.capturedImageName()?.value?.let { "$it · Captured this run" } ?: assetNames[assetId?.value] ?: "Choose target image",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    condition.capturedBackgroundName()?.let { Text("Search in ${it.value} · Captured this run", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
     if (showAdjustments) ImageConditionAdjustments(condition, assets, assetNames, loadAsset, loadPreview, previewWidthPx, previewHeightPx, onChange)
     pickerMode?.let { mode ->
         TemplatePickerSheet(
@@ -689,12 +673,24 @@ private fun ImageConditionFields(
             displayWidthPx = previewWidthPx,
             displayHeightPx = previewHeightPx,
             fullScreenOnly = mode != ImagePickerMode.TARGET,
+            capturedImages = LocalCapturedImages.current,
+            selectedCapture = if (mode == ImagePickerMode.BACKGROUND) condition.capturedBackgroundName()?.value else condition.capturedImageName()?.value,
+            onSelectCapture = { name ->
+                onChange(
+                    when (condition) {
+                        is ImagePresentCondition -> if (mode == ImagePickerMode.BACKGROUND) condition.copy(capturedBackground = VariableName(name)) else condition.copy(assetId = null, capturedImage = VariableName(name))
+                        is ImageAbsentCondition -> if (mode == ImagePickerMode.BACKGROUND) condition.copy(capturedBackground = VariableName(name)) else condition.copy(assetId = null, capturedImage = VariableName(name))
+                        else -> condition
+                    },
+                )
+                pickerMode = null
+            },
             selectedAssetId = when (mode) {
                 ImagePickerMode.BACKGROUND -> backgroundAssetId
 
                 ImagePickerMode.SCREEN,
                 ImagePickerMode.TARGET,
-                -> assetId.value.takeUnless { it == MISSING_TEMPLATE_ASSET_ID }
+                -> assetId?.value?.takeUnless { it == MISSING_TEMPLATE_ASSET_ID }
             },
             allowNone = true,
             onDismiss = { pickerMode = null },
@@ -702,15 +698,21 @@ private fun ImageConditionFields(
                 when (mode) {
                     ImagePickerMode.BACKGROUND -> onChange(
                         when (condition) {
-                            is ImagePresentCondition -> condition.copy(backgroundAssetId = selected)
-                            is ImageAbsentCondition -> condition.copy(backgroundAssetId = selected)
+                            is ImagePresentCondition -> condition.copy(backgroundAssetId = selected, capturedBackground = null)
+                            is ImageAbsentCondition -> condition.copy(backgroundAssetId = selected, capturedBackground = null)
                             else -> condition
                         },
                     )
 
                     ImagePickerMode.SCREEN,
                     ImagePickerMode.TARGET,
-                    -> update(selected ?: AssetId(MISSING_TEMPLATE_ASSET_ID), condition.region(), condition.threshold())
+                    -> onChange(
+                        when (condition) {
+                            is ImagePresentCondition -> condition.copy(assetId = selected ?: AssetId(MISSING_TEMPLATE_ASSET_ID), capturedImage = null)
+                            is ImageAbsentCondition -> condition.copy(assetId = selected ?: AssetId(MISSING_TEMPLATE_ASSET_ID), capturedImage = null)
+                            else -> condition
+                        },
+                    )
                 }
                 pickerMode = null
             },
@@ -997,7 +999,6 @@ internal enum class EditableConditionKind(val label: String) {
     SCREEN_STATE("Screen state matches"),
     IMAGE_PRESENT("Image appears somewhere"),
     IMAGE_ABSENT("Image absent"),
-    CAPTURED("Captured image"),
     FOREGROUND("Foreground package"),
     VARIABLE("Variable comparison"),
     ORIENTATION("Orientation"),
@@ -1007,8 +1008,6 @@ internal enum class EditableConditionKind(val label: String) {
     ;
 
     fun defaultCondition(defaultPackage: String): Condition = when (this) {
-        CAPTURED -> CapturedImageCondition(VariableName("image"), FULL_SCREEN_REGION, 0.9)
-
         VARIABLE -> VariableComparisonCondition(com.veyarc.model.LiteralOperand(com.veyarc.model.NumberValue(0.0)), com.veyarc.model.ComparisonOperator.EQUALS, com.veyarc.model.LiteralOperand(com.veyarc.model.NumberValue(0.0)))
 
         PIXEL -> PixelColorCondition(NormalizedCoordinate(0.5, 0.5), 0xFFFFFFFFL, 16)
@@ -1055,7 +1054,7 @@ internal enum class EditableConditionKind(val label: String) {
 }
 
 private fun Condition.kind(): EditableConditionKind = when (this) {
-    is CapturedImageCondition -> EditableConditionKind.CAPTURED
+    is CapturedImageCondition -> if (present) EditableConditionKind.IMAGE_PRESENT else EditableConditionKind.IMAGE_ABSENT
 
     is VariableComparisonCondition -> EditableConditionKind.VARIABLE
 

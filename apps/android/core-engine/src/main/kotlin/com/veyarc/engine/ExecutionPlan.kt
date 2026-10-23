@@ -113,9 +113,9 @@ fun ExecutionPlan.referencedImageAssets(): Map<AssetId, Set<ImageAssetUse>> {
 
     fun collect(condition: Condition) {
         when (condition) {
-            is ImagePresentCondition ->
+            is ImagePresentCondition -> condition.assetId?.let { assetId ->
                 referenced
-                    .getOrPut(condition.assetId) { linkedSetOf() }
+                    .getOrPut(assetId) { linkedSetOf() }
                     .add(
                         if (condition.matchMode == ImageMatchMode.SCREEN_STATE) {
                             ImageAssetUse.FULL_SCREEN
@@ -123,11 +123,11 @@ fun ExecutionPlan.referencedImageAssets(): Map<AssetId, Set<ImageAssetUse>> {
                             ImageAssetUse.CROPPED_TARGET
                         },
                     )
+            }
 
-            is ImageAbsentCondition ->
-                referenced
-                    .getOrPut(condition.assetId) { linkedSetOf() }
-                    .add(ImageAssetUse.CROPPED_TARGET)
+            is ImageAbsentCondition -> condition.assetId?.let { assetId ->
+                referenced.getOrPut(assetId) { linkedSetOf() }.add(ImageAssetUse.CROPPED_TARGET)
+            }
 
             is AndCondition -> condition.conditions.forEach(::collect)
 

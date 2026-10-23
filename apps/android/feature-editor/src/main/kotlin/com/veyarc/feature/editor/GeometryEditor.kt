@@ -213,6 +213,9 @@ internal fun TemplatePickerSheet(
     loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
     allowAnySize: Boolean = false,
     onAddImage: (() -> Unit)? = null,
+    capturedImages: Set<String> = emptySet(),
+    selectedCapture: String? = null,
+    onSelectCapture: ((String) -> Unit)? = null,
 ) {
     if (!visible) return
     val options = assets.filter { asset ->
@@ -251,11 +254,24 @@ internal fun TemplatePickerSheet(
                     IconButton(onClick = add) { Icon(Icons.Outlined.AddPhotoAlternate, contentDescription = "Add image") }
                 }
             }
+            if (capturedImages.isNotEmpty() && onSelectCapture != null) {
+                androidx.compose.foundation.lazy.LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(capturedImages.size) { index ->
+                        val name = capturedImages.elementAt(index)
+                        Surface(onClick = { onSelectCapture(name) }, shape = RoundedCornerShape(12.dp), color = if (name == selectedCapture) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh) {
+                            Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                                Text(name, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
+                                Text("Captured this run", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
             if (allowNone) {
                 Surface(
                     onClick = { onSelect(null) },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
-                    color = if (selectedAssetId == null) {
+                    color = if (selectedAssetId == null && selectedCapture == null) {
                         MaterialTheme.colorScheme.secondaryContainer
                     } else {
                         Color.Transparent

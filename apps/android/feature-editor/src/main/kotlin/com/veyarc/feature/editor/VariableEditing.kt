@@ -176,6 +176,9 @@ private fun List<WorkflowStep>.mapVariableNames(transform: (VariableName) -> Var
 internal fun WorkflowDraft.renameCapturedImage(previous: VariableName, name: VariableName): WorkflowDraft {
     fun condition(value: Condition): Condition = when (value) {
         is CapturedImageCondition -> if (value.name == previous) value.copy(name = name) else value
+        is com.veyarc.model.ImagePresentCondition -> value.copy(capturedImage = if (value.capturedImage == previous) name else value.capturedImage, capturedBackground = if (value.capturedBackground == previous) name else value.capturedBackground)
+        is com.veyarc.model.ImageAbsentCondition -> value.copy(capturedImage = if (value.capturedImage == previous) name else value.capturedImage, capturedBackground = if (value.capturedBackground == previous) name else value.capturedBackground)
+        is com.veyarc.model.PixelColorCondition -> value.copy(capturedBackground = if (value.capturedBackground == previous) name else value.capturedBackground)
         is AndCondition -> value.copy(conditions = value.conditions.map(::condition))
         is OrCondition -> value.copy(conditions = value.conditions.map(::condition))
         is NotCondition -> value.copy(condition = condition(value.condition))

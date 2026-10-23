@@ -627,8 +627,8 @@ data class WorkflowDraft(
         fun conditionUses(condition: Condition, label: String) {
             condition.backgroundAssetId()?.let { backgrounds.getOrPut(it.value) { linkedSetOf() }.add(label) }
             when (condition) {
-                is ImagePresentCondition -> crops.getOrPut(condition.assetId.value) { linkedSetOf() }.add(label)
-                is ImageAbsentCondition -> crops.getOrPut(condition.assetId.value) { linkedSetOf() }.add(label)
+                is ImagePresentCondition -> condition.assetId?.let { crops.getOrPut(it.value) { linkedSetOf() }.add(label) }
+                is ImageAbsentCondition -> condition.assetId?.let { crops.getOrPut(it.value) { linkedSetOf() }.add(label) }
                 is AndCondition -> condition.conditions.forEach { conditionUses(it, label) }
                 is OrCondition -> condition.conditions.forEach { conditionUses(it, label) }
                 is NotCondition -> conditionUses(condition.condition, label)
@@ -999,8 +999,8 @@ private fun MutableSet<String>.addStepAssetReferences(step: WorkflowStep) {
 private fun MutableSet<String>.addConditionAssetReferences(condition: Condition) {
     condition.backgroundAssetId()?.let { add(it.value) }
     when (condition) {
-        is ImagePresentCondition -> add(condition.assetId.value)
-        is ImageAbsentCondition -> add(condition.assetId.value)
+        is ImagePresentCondition -> condition.assetId?.let { add(it.value) }
+        is ImageAbsentCondition -> condition.assetId?.let { add(it.value) }
         is AndCondition -> condition.conditions.forEach(::addConditionAssetReferences)
         is OrCondition -> condition.conditions.forEach(::addConditionAssetReferences)
         is NotCondition -> addConditionAssetReferences(condition.condition)
@@ -1070,11 +1070,11 @@ fun Condition.summary(assetNames: Map<String, String> = emptyMap()): String = wh
     is PixelColorCondition -> if (region == null) "the pixel at ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}% has the selected color" else "the selected color appears in the search area"
 
     is ImagePresentCondition -> when (matchMode) {
-        ImageMatchMode.APPEARS_WITHIN_REGION -> "${assetNames[assetId.value] ?: "the selected image"} appears"
-        ImageMatchMode.SCREEN_STATE -> "the screen matches ${assetNames[assetId.value] ?: "the selected image"}"
+        ImageMatchMode.APPEARS_WITHIN_REGION -> "${capturedImage?.value ?: assetNames[assetId?.value] ?: "the selected image"} appears"
+        ImageMatchMode.SCREEN_STATE -> "the screen matches ${capturedImage?.value ?: assetNames[assetId?.value] ?: "the selected image"}"
     }
 
-    is ImageAbsentCondition -> "${assetNames[assetId.value] ?: "the selected image"} is absent"
+    is ImageAbsentCondition -> "${capturedImage?.value ?: assetNames[assetId?.value] ?: "the selected image"} is absent"
 
     is ForegroundPackageCondition -> "${packageName.value} is open"
 
