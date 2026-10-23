@@ -5,6 +5,29 @@ object WorkflowValidator {
     fun validate(document: WorkflowDocument): List<ValidationError> {
         val errors = mutableListOf<ValidationError>()
         val runtimeCaptures = document.steps.capturedImages()
+        val imageSearchScopes = document.steps.imageSearchesByStep()
+        val imageSearchNames = document.steps.imageSearches().keys
+        fun validateImageResultOrder(items: List<WorkflowStep>, path: String) {
+            items.forEachIndexed { index, step ->
+                val stepPath = "$path/$index"
+                step.imageResultNames().filter { it.value !in imageSearchScopes[step.id].orEmpty() }.forEach { name ->
+                    errors += error(if (name.value in imageSearchNames) ValidationErrorCode.FORWARD_STEP_REFERENCE else ValidationErrorCode.MISSING_VARIABLE, stepPath, "Find image for ${name.value} must appear before this block on the same execution path.")
+                }
+                when (step) {
+                    is IfElse -> {
+                        validateImageResultOrder(step.thenSteps, "$stepPath/thenSteps")
+                        validateImageResultOrder(step.elseSteps, "$stepPath/elseSteps")
+                    }
+
+                    is Repeat -> validateImageResultOrder(step.bodySteps, "$stepPath/bodySteps")
+
+                    is WhileStep -> validateImageResultOrder(step.bodySteps, "$stepPath/bodySteps")
+
+                    else -> Unit
+                }
+            }
+        }
+        validateImageResultOrder(document.steps, "/steps")
         if (document.schemaVersion != WorkflowDocument.CURRENT_SCHEMA_VERSION) {
             errors += error(
                 ValidationErrorCode.UNSUPPORTED_SCHEMA_VERSION,
@@ -263,11 +286,7 @@ object WorkflowValidator {
 
                 is Wait -> step.durationVariable?.let { validateNumberVariable(it, "$stepPath/durationVariable", document, errors) }
 
-                is TapPoint -> step.imagePosition?.let { validateImagePosition(it, stepPath, document, errors) }
-
-                is LongPress -> step.imagePosition?.let { validateImagePosition(it, stepPath, document, errors) }
-
-                is CaptureImage, is StageBoundary, is Stop, is TapRegion -> Unit
+                is CaptureImage, is LongPress, is StageBoundary, is Stop, is TapPoint, is TapRegion -> Unit
             }
 
             seenStepIds += step.id
@@ -345,15 +364,17 @@ object WorkflowValidator {
         referencedAssets: MutableSet<String>,
         errors: MutableList<ValidationError>,
     ) {
+        condition.capturedBackgroundName()?.let { errors += error(ValidationErrorCode.WRONG_ASSET_KIND, "$path/capturedBackground", "Captured images cannot be visual backgrounds. Choose a saved preview; checks use the current screen.") }
+        condition.takeIf { it.capturedImageName() != null }?.capturedTargetIssue(runtimeCaptures, document.viewport.recordedWidthPx, document.viewport.recordedHeightPx)?.let { errors += error(ValidationErrorCode.LIMIT_EXCEEDED, "$path/region", it) }
         condition.backgroundAssetId()?.let { validateImageAsset(it, "$path/backgroundAssetId", AssetKind.IMAGE_TEMPLATE, declaredAssets, referencedAssets, errors) }
         when (condition) {
             is CapturedImageCondition -> validateCondition(condition.integratedImageCondition(), path, document, runtimeCaptures, allStepIds, seenStepIds, declaredAssets, referencedAssets, errors)
 
-            is PixelColorCondition -> condition.capturedBackground?.let { captureDimensions(it, path, document, runtimeCaptures, errors) }
+            is PixelColorCondition -> Unit
 
-            is ImagePresentCondition -> validateVisualImage(condition.assetId, condition.capturedImage, condition.capturedBackground, condition.region, condition.matchMode == ImageMatchMode.SCREEN_STATE, path, document, runtimeCaptures, declaredAssets, referencedAssets, errors)
+            is ImagePresentCondition -> validateVisualImage(condition.assetId, condition.capturedImage, condition.region, condition.matchMode == ImageMatchMode.SCREEN_STATE, path, document, runtimeCaptures, declaredAssets, referencedAssets, errors)
 
-            is ImageAbsentCondition -> validateVisualImage(condition.assetId, condition.capturedImage, condition.capturedBackground, condition.region, false, path, document, runtimeCaptures, declaredAssets, referencedAssets, errors)
+            is ImageAbsentCondition -> validateVisualImage(condition.assetId, condition.capturedImage, condition.region, false, path, document, runtimeCaptures, declaredAssets, referencedAssets, errors)
 
             is ForegroundPackageCondition -> validatePackage(condition.packageName, "$path/packageName", document, errors)
 
@@ -439,12 +460,6 @@ object WorkflowValidator {
         }
     }
 
-    private fun validateImagePosition(binding: ImagePositionBinding, path: String, document: WorkflowDocument, errors: MutableList<ValidationError>) {
-        val searches = document.steps.imageSearches()[binding.name.value]
-        if (searches.isNullOrEmpty()) errors += error(ValidationErrorCode.MISSING_VARIABLE, "$path/imagePosition", "Add a Find image block for ${binding.name.value}")
-        if (searches.orEmpty().any { it.image.capturedBackground != null }) errors += error(ValidationErrorCode.VARIABLE_TYPE_MISMATCH, "$path/imagePosition", "For tapping, ${binding.name.value} must search the current screen, not a captured background.")
-    }
-
     private fun captureDimensions(name: VariableName, path: String, document: WorkflowDocument, captures: Map<String, List<CaptureImage>>, errors: MutableList<ValidationError>): List<Pair<Int, Int>> {
         val definitions = captures[name.value]
         if (definitions.isNullOrEmpty()) errors += error(ValidationErrorCode.MISSING_VARIABLE, path, "Add a Capture image block for ${name.value}")
@@ -452,7 +467,7 @@ object WorkflowValidator {
         return definitions.orEmpty().map { span(it.region.x, it.region.width, document.viewport.recordedWidthPx) to span(it.region.y, it.region.height, document.viewport.recordedHeightPx) }.distinct()
     }
 
-    private fun validateVisualImage(assetId: AssetId?, captured: VariableName?, background: VariableName?, region: NormalizedRect, screenState: Boolean, path: String, document: WorkflowDocument, captures: Map<String, List<CaptureImage>>, assets: Map<String, AssetReference>, references: MutableSet<String>, errors: MutableList<ValidationError>) {
+    private fun validateVisualImage(assetId: AssetId?, captured: VariableName?, region: NormalizedRect, screenState: Boolean, path: String, document: WorkflowDocument, captures: Map<String, List<CaptureImage>>, assets: Map<String, AssetReference>, references: MutableSet<String>, errors: MutableList<ValidationError>) {
         if ((assetId == null) == (captured == null)) errors += error(ValidationErrorCode.MISSING_ASSET, path, "Choose one saved or captured target image.")
         val sizes = if (captured != null) {
             captureDimensions(captured, "$path/capturedImage", document, captures, errors)
@@ -460,8 +475,7 @@ object WorkflowValidator {
             assetId?.let { validateImageAsset(it, path, AssetKind.IMAGE_TEMPLATE, assets, references, errors) }
             assetId?.let { assets[it.value] }?.let { image -> image.widthPx?.let { w -> image.heightPx?.let { h -> listOf(w to h) } } }.orEmpty()
         }
-        val backgrounds = background?.let { captureDimensions(it, "$path/capturedBackground", document, captures, errors) }
-            ?: listOf(document.viewport.recordedWidthPx to document.viewport.recordedHeightPx)
+        val backgrounds = listOf(document.viewport.recordedWidthPx to document.viewport.recordedHeightPx)
         sizes.forEach { (w, h) ->
             backgrounds.forEach { (bw, bh) ->
                 val rw = kotlin.math.ceil((region.x + region.width) * bw).toInt().coerceAtMost(bw) - kotlin.math.floor(region.x * bw).toInt()
