@@ -26,11 +26,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.veyarc.model.ArithmeticOperator
 import com.veyarc.model.ComparisonOperator
 import com.veyarc.model.LiteralOperand
+import com.veyarc.model.NumberValue
 import com.veyarc.model.Operand
 import com.veyarc.model.ScalarValue
 import com.veyarc.model.SetVariable
+import com.veyarc.model.VariableCalculation
 import com.veyarc.model.VariableComparisonCondition
 import com.veyarc.model.VariableDeclaration
 import com.veyarc.model.VariableName
@@ -163,10 +166,31 @@ private fun ScalarValueButton(value: ScalarValue, onChange: (ScalarValue) -> Uni
 internal fun SetVariableFields(step: SetVariable, variables: Map<String, VariableDeclaration>, onChange: (SetVariable) -> Unit) {
     Column {
         VariableChoice("Variable", step.name.value, variables.map { VeyarcChoice(it.key, it.key) }, step.name.value) { name ->
-            onChange(step.copy(name = VariableName(name), value = variables.getValue(name).initialValue))
+            onChange(step.copy(name = VariableName(name), value = variables.getValue(name).initialValue, source = null, calculation = null))
         }
-        ScalarValueButton(step.value) { onChange(step.copy(value = it)) }
+        val type = variables[step.name.value]?.type ?: step.value.variableType()
+        OperandField("Value", step.source ?: LiteralOperand(step.value), variables, type) { source ->
+            onChange(if (source is LiteralOperand) step.copy(value = source.value, source = null) else step.copy(source = source))
+        }
+        if (type == VariableType.NUMBER) {
+            VariableChoice("Calculation", step.calculation?.operator?.displayName() ?: "Set value", listOf(VeyarcChoice("none", "Set value")) + ArithmeticOperator.entries.map { VeyarcChoice(it.name, it.displayName()) }, step.calculation?.operator?.name ?: "none") { selected ->
+                onChange(step.copy(calculation = if (selected == "none") null else VariableCalculation(ArithmeticOperator.valueOf(selected), step.calculation?.operand ?: LiteralOperand(NumberValue(1.0)))))
+            }
+            step.calculation?.let { calculation ->
+                OperandField("With", calculation.operand, variables, VariableType.NUMBER) { onChange(step.copy(calculation = calculation.copy(operand = it))) }
+            }
+        }
         if (step.name.value !in variables) Text("Add this variable in Variables, or choose another.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+internal fun NumberVariableBinding(title: String, selected: VariableName?, variables: Map<String, VariableDeclaration>, onChange: (VariableName?) -> Unit) {
+    val numbers = variables.filterValues { it.type == VariableType.NUMBER }
+    if (numbers.isNotEmpty() || selected != null) {
+        VariableChoice(title, selected?.value ?: "Use variable", listOf(VeyarcChoice("fixed", "Fixed number")) + numbers.map { VeyarcChoice("variable:${it.key}", it.key) }, selected?.let { "variable:${it.value}" } ?: "fixed") {
+            onChange(if (it == "fixed") null else VariableName(it.removePrefix("variable:")))
+        }
     }
 }
 

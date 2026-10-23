@@ -210,7 +210,8 @@ object WorkflowValidator {
                 }
 
                 is Repeat -> {
-                    if (step.count > document.runLimits.maxLoopIterations) {
+                    step.countVariable?.let { validateNumberVariable(it, "$stepPath/countVariable", document, errors) }
+                    if (step.countVariable == null && step.count > document.runLimits.maxLoopIterations) {
                         errors += error(
                             ValidationErrorCode.LIMIT_EXCEEDED,
                             "$stepPath/count",
@@ -252,7 +253,9 @@ object WorkflowValidator {
 
                 is SetVariable -> validateSetVariable(step, stepPath, document, errors)
 
-                is LongPress, is Wait, is StageBoundary, is Stop, is TapPoint, is TapRegion -> Unit
+                is Wait -> step.durationVariable?.let { validateNumberVariable(it, "$stepPath/durationVariable", document, errors) }
+
+                is LongPress, is StageBoundary, is Stop, is TapPoint, is TapRegion -> Unit
             }
 
             seenStepIds += step.id
@@ -471,6 +474,22 @@ object WorkflowValidator {
                 "$path/value",
                 "Assigned value does not match the declared variable type",
             )
+        }
+        val sourceType = step.source?.let { operandType(it, "$path/source", document, errors) } ?: step.value.variableType()
+        if (declaration != null && sourceType != declaration.type) {
+            errors += error(ValidationErrorCode.VARIABLE_TYPE_MISMATCH, "$path/source", "Source must match the assigned variable's type")
+        }
+        step.calculation?.let { calculation ->
+            val rightType = operandType(calculation.operand, "$path/calculation/operand", document, errors)
+            if (declaration?.type != VariableType.NUMBER || sourceType != VariableType.NUMBER || rightType != VariableType.NUMBER) {
+                errors += error(ValidationErrorCode.VARIABLE_TYPE_MISMATCH, "$path/calculation", "Calculations require number values and a number variable")
+            }
+        }
+    }
+
+    private fun validateNumberVariable(name: VariableName, path: String, document: WorkflowDocument, errors: MutableList<ValidationError>) {
+        if (operandType(VariableOperand(name), path, document, errors)?.let { it != VariableType.NUMBER } == true) {
+            errors += error(ValidationErrorCode.VARIABLE_TYPE_MISMATCH, path, "Choose a number variable")
         }
     }
 

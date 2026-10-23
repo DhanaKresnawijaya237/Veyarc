@@ -117,7 +117,7 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
             "Swipe from ${formatPoint(step.points.first().point)} to ${formatPoint(step.points.last().point)} " +
                 "with ${step.points.size} points over ${step.durationMs.value} ms"
 
-        is Wait -> "Wait ${step.durationMs.value} ms"
+        is Wait -> "Wait ${step.durationVariable?.value ?: step.durationMs.value} ms"
 
         is StageBoundary -> "Stage boundary"
 
@@ -127,7 +127,7 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
 
         is IfElse -> "If ${conditionName(step.condition)}"
 
-        is Repeat -> "Repeat ${step.count} times"
+        is Repeat -> "Repeat ${step.countVariable?.value ?: step.count} times"
 
         is WhileStep -> "While ${conditionName(step.condition)}"
 

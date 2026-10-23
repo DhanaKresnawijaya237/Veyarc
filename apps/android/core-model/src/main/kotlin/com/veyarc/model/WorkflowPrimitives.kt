@@ -277,6 +277,27 @@ data class LiteralOperand(val value: ScalarValue) : Operand
 data class VariableOperand(val name: VariableName) : Operand
 
 @Serializable
+enum class ArithmeticOperator {
+    @SerialName("add")
+    ADD,
+
+    @SerialName("subtract")
+    SUBTRACT,
+
+    @SerialName("multiply")
+    MULTIPLY,
+
+    @SerialName("divide")
+    DIVIDE,
+
+    @SerialName("remainder")
+    REMAINDER,
+}
+
+@Serializable
+data class VariableCalculation(val operator: ArithmeticOperator, val operand: Operand)
+
+@Serializable
 enum class ComparisonOperator {
     @SerialName("equals")
     EQUALS,

@@ -2624,8 +2624,13 @@ private fun EditableStepSummary(
         when (step) {
             is Wait -> {
                 Text("Wait", style = MaterialTheme.typography.bodyMedium)
-                InlineLongField(step.durationMs.value, 0, resetKey = draft.lastSavedRevision) { value ->
-                    onDraftChange(draft.updateStep(path, index) { step.copy(durationMs = com.veyarc.model.DurationMillis(value)) })
+                if (step.durationVariable == null) {
+                    InlineLongField(step.durationMs.value, 0, resetKey = draft.lastSavedRevision) { value ->
+                        onDraftChange(draft.updateStep(path, index) { step.copy(durationMs = com.veyarc.model.DurationMillis(value)) })
+                    }
+                }
+                NumberVariableBinding("Wait time", step.durationVariable, draft.variables) { variable ->
+                    onDraftChange(draft.updateStep(path, index) { step.copy(durationVariable = variable) })
                 }
                 Text("ms", style = MaterialTheme.typography.bodyMedium)
             }
@@ -2643,8 +2648,13 @@ private fun EditableStepSummary(
             }
 
             is Repeat -> {
-                InlineLongField(step.count.toLong(), 0, Int.MAX_VALUE.toLong(), draft.lastSavedRevision) { value ->
-                    onDraftChange(draft.updateStep(path, index) { step.copy(count = value.toInt()) })
+                if (step.countVariable == null) {
+                    InlineLongField(step.count.toLong(), 0, Int.MAX_VALUE.toLong(), draft.lastSavedRevision) { value ->
+                        onDraftChange(draft.updateStep(path, index) { step.copy(count = value.toInt()) })
+                    }
+                }
+                NumberVariableBinding("Repeat count", step.countVariable, draft.variables) { variable ->
+                    onDraftChange(draft.updateStep(path, index) { step.copy(countVariable = variable) })
                 }
                 Text("iterations, ${step.bodySteps.size} nested blocks", style = MaterialTheme.typography.bodyMedium)
             }

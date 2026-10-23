@@ -405,7 +405,7 @@ class WorkflowRunController(
             }
             _state.update { it.copy(runId = runId, phase = WorkflowRunPhase.RUNNING, message = "Running") }
             AccessibilityEmergencyOverlay.show(::stop)
-            notifications.showRunning(document.name, 0, _state.value.review.plan?.analysis?.worstCaseStepCount)
+            notifications.showRunning(document.name, 0, _state.value.review.plan?.analysis?.estimatedStepCount)
 
             val execution = withContext(Dispatchers.Default) {
                 executor.execute(
@@ -448,6 +448,8 @@ class WorkflowRunController(
                         terminalStatus = StoredRunStatus.FAILED
                         val failureCode = failure?.code?.name ?: "EXECUTION_FAILED"
                         val displayMessage = when (failure?.code) {
+                            RunFailureCode.INVALID_VARIABLE_VALUE -> failure.message
+
                             RunFailureCode.UNEXPECTED_FOREGROUND_PACKAGE ->
                                 "${failure.message}. Add that app's package to Allowed Android packages, or make Launch app the first block."
 
@@ -494,7 +496,7 @@ class WorkflowRunController(
                             status = status,
                             interruptionReason = reason,
                             completedSteps = terminalState.completedSteps,
-                            totalSteps = terminalState.review.plan?.analysis?.worstCaseStepCount,
+                            totalSteps = terminalState.review.plan?.analysis?.estimatedStepCount,
                             eventHistory = savedHistory,
                         )
                     }
@@ -577,7 +579,7 @@ class WorkflowRunController(
                 notifications.showRunning(
                     document.name,
                     current.completedSteps,
-                    current.review.plan?.analysis?.worstCaseStepCount,
+                    current.review.plan?.analysis?.estimatedStepCount,
                     paused = true,
                 )
             }
@@ -588,7 +590,7 @@ class WorkflowRunController(
                     notifications.showRunning(
                         document.name,
                         current.completedSteps,
-                        current.review.plan?.analysis?.worstCaseStepCount,
+                        current.review.plan?.analysis?.estimatedStepCount,
                         paused = false,
                     )
                 } else {
@@ -600,7 +602,7 @@ class WorkflowRunController(
         }
         if (event is RunEvent.StepFinished) {
             val current = _state.value
-            notifications.showRunning(document.name, current.completedSteps, current.review.plan?.analysis?.worstCaseStepCount)
+            notifications.showRunning(document.name, current.completedSteps, current.review.plan?.analysis?.estimatedStepCount)
         }
     }
 

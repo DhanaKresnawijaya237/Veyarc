@@ -1035,15 +1035,15 @@ fun WorkflowStep.summary(assetNames: Map<String, String> = emptyMap()): String =
     is TapRegion -> "Tap inside a ${(region.width * 100).toInt()}% × ${(region.height * 100).toInt()}% area"
     is LongPress -> "Hold for ${durationMs.value} ms at ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}%"
     is SwipePath -> "Swipe through ${points.size} points in ${durationMs.value} ms"
-    is Wait -> "Wait ${durationMs.value} ms"
+    is Wait -> "Wait ${durationVariable?.value ?: durationMs.value} ms"
     is StageBoundary -> "Separate this stage from the next"
     is Jump -> "Continue from the selected point until this section has run $maxVisits times"
     is WaitUntil -> "Wait until ${condition.summary(assetNames)} · timeout ${timeoutMs.value} ms, check every ${pollIntervalMs.value} ms"
     is IfElse -> "If ${condition.summary(assetNames)} · ${thenSteps.size} then / ${elseSteps.size} else blocks"
-    is Repeat -> "Run ${bodySteps.size} nested blocks $count times"
+    is Repeat -> "Run ${bodySteps.size} nested blocks ${countVariable?.value ?: count} times"
     is WhileStep -> "While ${condition.summary(assetNames)} · up to $maxIterations times"
     is LaunchApp -> "Open ${packageName.value} and wait up to ${foregroundTimeoutMs.value} ms"
-    is com.veyarc.model.SetVariable -> "${name.value} = ${value.editorText()}"
+    is com.veyarc.model.SetVariable -> assignmentSummary()
     is Stop -> message ?: reason.name.lowercase().replace('_', ' ')
     else -> "Configured workflow step"
 }

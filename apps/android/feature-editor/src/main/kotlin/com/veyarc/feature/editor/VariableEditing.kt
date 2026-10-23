@@ -1,6 +1,7 @@
 package com.veyarc.feature.editor
 
 import com.veyarc.model.AndCondition
+import com.veyarc.model.ArithmeticOperator
 import com.veyarc.model.BooleanValue
 import com.veyarc.model.ComparisonOperator
 import com.veyarc.model.Condition
@@ -19,6 +20,7 @@ import com.veyarc.model.VariableDeclaration
 import com.veyarc.model.VariableName
 import com.veyarc.model.VariableOperand
 import com.veyarc.model.VariableType
+import com.veyarc.model.Wait
 import com.veyarc.model.WaitUntil
 import com.veyarc.model.WhileStep
 import com.veyarc.model.WorkflowStep
@@ -61,7 +63,23 @@ internal fun Operand.displayName(): String = when (this) {
     is LiteralOperand -> if (value is StringValue) "\"${value.editorText()}\"" else value.editorText()
 }
 
+internal fun ArithmeticOperator.displayName(): String = when (this) {
+    ArithmeticOperator.ADD -> "+"
+    ArithmeticOperator.SUBTRACT -> "−"
+    ArithmeticOperator.MULTIPLY -> "×"
+    ArithmeticOperator.DIVIDE -> "÷"
+    ArithmeticOperator.REMAINDER -> "%"
+}
+
+internal fun SetVariable.assignmentSummary(): String = buildString {
+    append("${name.value} = ${source?.displayName() ?: LiteralOperand(value).displayName()}")
+    calculation?.let { append(" ${it.operator.displayName()} ${it.operand.displayName()}") }
+}
+
 internal fun WorkflowDraft.usedVariableNames(): Set<String> = buildSet {
+    fun operand(value: Operand?) {
+        if (value is VariableOperand) add(value.name.value)
+    }
     fun condition(value: Condition) {
         when (value) {
             is VariableComparisonCondition -> listOf(value.left, value.right).filterIsInstance<VariableOperand>().forEach { add(it.name.value) }
@@ -74,7 +92,13 @@ internal fun WorkflowDraft.usedVariableNames(): Set<String> = buildSet {
     fun visit(items: List<WorkflowStep>) {
         items.forEach { step ->
             when (step) {
-                is SetVariable -> add(step.name.value)
+                is SetVariable -> {
+                    add(step.name.value)
+                    operand(step.source)
+                    operand(step.calculation?.operand)
+                }
+
+                is Wait -> step.durationVariable?.let { add(it.value) }
 
                 is WaitUntil -> condition(step.condition)
 
@@ -84,7 +108,10 @@ internal fun WorkflowDraft.usedVariableNames(): Set<String> = buildSet {
                     visit(step.elseSteps)
                 }
 
-                is Repeat -> visit(step.bodySteps)
+                is Repeat -> {
+                    step.countVariable?.let { add(it.value) }
+                    visit(step.bodySteps)
+                }
 
                 is WhileStep -> {
                     condition(step.condition)
@@ -133,10 +160,11 @@ private fun List<WorkflowStep>.mapVariableNames(transform: (VariableName) -> Var
     }
     return map { step ->
         when (step) {
-            is SetVariable -> step.copy(name = transform(step.name))
+            is SetVariable -> step.copy(name = transform(step.name), source = step.source?.let(::operand), calculation = step.calculation?.let { it.copy(operand = operand(it.operand)) })
+            is Wait -> step.copy(durationVariable = step.durationVariable?.let(transform))
             is WaitUntil -> step.copy(condition = condition(step.condition))
             is IfElse -> step.copy(condition = condition(step.condition), thenSteps = step.thenSteps.mapVariableNames(transform), elseSteps = step.elseSteps.mapVariableNames(transform))
-            is Repeat -> step.copy(bodySteps = step.bodySteps.mapVariableNames(transform))
+            is Repeat -> step.copy(bodySteps = step.bodySteps.mapVariableNames(transform), countVariable = step.countVariable?.let(transform))
             is WhileStep -> step.copy(condition = condition(step.condition), bodySteps = step.bodySteps.mapVariableNames(transform))
             else -> step
         }

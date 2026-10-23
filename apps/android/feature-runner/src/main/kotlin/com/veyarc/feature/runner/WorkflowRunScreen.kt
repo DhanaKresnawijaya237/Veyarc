@@ -167,7 +167,7 @@ fun WorkflowRunScreen(
             finishedAtMs = state.finishedAtMs,
             interruptionReason = state.failureMessage ?: state.message?.takeUnless { it == state.eventHistory.lastOrNull()?.message || it == "Running" || it == "Workflow completed" },
             completedSteps = state.completedSteps,
-            totalSteps = state.review.plan?.analysis?.worstCaseStepCount,
+            totalSteps = state.review.plan?.analysis?.estimatedStepCount,
             eventHistory = state.eventHistory.map { StoredRunEvent(it.atMs, it.message, it.blockLabel, it.contextLabel) },
             hasStoredDetails = true,
             folderId = null,
@@ -285,7 +285,7 @@ private fun WorkflowReviewSummary(bundle: WorkflowBundle, state: WorkflowRunUiSt
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
             Text("Allowed apps", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
             Text(appNames.joinToString(" · "), style = MaterialTheme.typography.bodyMedium)
-            state.review.plan?.analysis?.worstCaseStepCount?.let { count ->
+            state.review.plan?.analysis?.estimatedStepCount?.let { count ->
                 Text("Up to $count ${if (count == 1L) "step" else "steps"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (requiresMediaProjectionConsent) {

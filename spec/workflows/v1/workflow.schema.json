@@ -213,6 +213,16 @@
         }
       ]
     },
+    "variableCalculation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operator", "operand"],
+      "description": "One numeric operation on the assignment's source or value, using a number literal or number variable as the second operand. Division/remainder by zero and non-finite results stop the run. No text formulas or nested expressions.",
+      "properties": {
+        "operator": { "enum": ["add", "subtract", "multiply", "divide", "remainder"] },
+        "operand": { "$ref": "#/$defs/operand" }
+      }
+    },
     "timedPoint": {
       "type": "object",
       "additionalProperties": false,
@@ -358,7 +368,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["type", "id", "durationMs"],
-          "properties": { "type": { "const": "wait" }, "id": { "$ref": "#/$defs/uuid" }, "durationMs": { "$ref": "#/$defs/durationMs" } }
+          "properties": { "type": { "const": "wait" }, "id": { "$ref": "#/$defs/uuid" }, "durationMs": { "$ref": "#/$defs/durationMs" }, "durationVariable": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$", "description": "Optional declared number variable, read when this block starts, replacing durationMs. Must contain a nonnegative whole number of milliseconds below 2^63; invalid values stop the run. Keep durationMs as the fixed value used when this binding is removed." } }
         },
         {
           "type": "object",
@@ -389,7 +399,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["type", "id", "count", "bodySteps"],
-          "properties": { "type": { "const": "repeat" }, "id": { "$ref": "#/$defs/uuid" }, "count": { "type": "integer", "minimum": 0 }, "bodySteps": { "type": "array", "items": { "$ref": "#/$defs/step" } } }
+          "properties": { "type": { "const": "repeat" }, "id": { "$ref": "#/$defs/uuid" }, "count": { "type": "integer", "minimum": 0 }, "bodySteps": { "type": "array", "items": { "$ref": "#/$defs/step" } }, "countVariable": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$", "description": "Optional declared number variable, read once on entering this repeat, replacing count. Must contain a nonnegative whole number within runLimits.maxLoopIterations; invalid values stop the run. Changing it inside the body affects the next entry, not this repeat. Keep count as the fixed value used when this binding is removed." } }
         },
         {
           "type": "object",
@@ -413,7 +423,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["type", "id", "name", "value"],
-          "properties": { "type": { "const": "setVariable", "description": "Assign a literal scalar to an existing declared variable for the current run. The value must match its declared type. Expressions, calculations and image values are not supported." }, "id": { "$ref": "#/$defs/uuid" }, "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" }, "value": { "$ref": "#/$defs/scalarValue" } }
+          "properties": { "type": { "const": "setVariable", "description": "Assign to a declared variable for this run. Use source to copy a same-type variable or literal instead of value. An optional calculation applies one numeric operation before assignment, for example source=count, calculation=add 1 increments count. Both value and source must match the target's declared type; calculations require numbers. Images are not scalar values." }, "id": { "$ref": "#/$defs/uuid" }, "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" }, "value": { "$ref": "#/$defs/scalarValue" }, "source": { "$ref": "#/$defs/operand" }, "calculation": { "$ref": "#/$defs/variableCalculation" } }
         }
       ]
     }

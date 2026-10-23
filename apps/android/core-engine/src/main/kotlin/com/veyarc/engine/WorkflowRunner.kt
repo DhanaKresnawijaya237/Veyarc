@@ -1,6 +1,7 @@
 package com.veyarc.engine
 
 import com.veyarc.model.AndCondition
+import com.veyarc.model.ArithmeticOperator
 import com.veyarc.model.ComparisonOperator
 import com.veyarc.model.Condition
 import com.veyarc.model.ForegroundPackageCondition
@@ -206,7 +207,12 @@ class WorkflowRunner {
         }
 
         is ExecutionStep.Wait -> {
-            state.clock.sleep(step.durationMs.value)
+            val variable = step.durationVariable
+            if (variable == null) {
+                state.clock.sleep(step.durationMs.value)
+            } else {
+                sleepWithControls(wholeNumberVariable(variable, Long.MAX_VALUE, "Wait time", state), state)
+            }
             StepExecution(StepOutcome.COMPLETED)
         }
 
@@ -233,7 +239,8 @@ class WorkflowRunner {
         }
 
         is ExecutionStep.Repeat -> {
-            repeat(step.count) {
+            val count = step.countVariable?.let { wholeNumberVariable(it, state.plan.runLimits.maxLoopIterations.toLong(), "Repeat count", state).toInt() } ?: step.count
+            repeat(count) {
                 ensureBoundary(state)
                 val execution = executeSteps(step.bodySteps, state)
                 if (execution.halt != null || execution.jumpTargetId != null) return execution
@@ -271,7 +278,24 @@ class WorkflowRunner {
         )
 
         is ExecutionStep.SetVariable -> {
-            state.variables[step.name.value] = step.value
+            val source = step.source?.let { resolveOperand(it, state) } ?: step.value
+            val value = step.calculation?.let { calculation ->
+                val left = (source as? NumberValue)?.value ?: invalidVariableValue("Calculations require number values", state)
+                val right = (resolveOperand(calculation.operand, state) as? NumberValue)?.value ?: invalidVariableValue("Calculations require number values", state)
+                if (right == 0.0 && calculation.operator in setOf(ArithmeticOperator.DIVIDE, ArithmeticOperator.REMAINDER)) {
+                    invalidVariableValue("Cannot divide ${step.name.value} by zero", state)
+                }
+                val result = when (calculation.operator) {
+                    ArithmeticOperator.ADD -> left + right
+                    ArithmeticOperator.SUBTRACT -> left - right
+                    ArithmeticOperator.MULTIPLY -> left * right
+                    ArithmeticOperator.DIVIDE -> left / right
+                    ArithmeticOperator.REMAINDER -> left % right
+                }
+                if (!result.isFinite()) invalidVariableValue("Calculation for ${step.name.value} produced a number too large to use", state)
+                NumberValue(result)
+            } ?: source
+            state.variables[step.name.value] = value
             StepExecution(StepOutcome.COMPLETED)
         }
     }
@@ -417,6 +441,24 @@ class WorkflowRunner {
         is NumberValue -> value.value
         else -> throw IllegalStateException("Ordered comparison requires number values")
     }
+
+    private fun wholeNumberVariable(name: com.veyarc.model.VariableName, maximum: Long, label: String, state: RunState): Long {
+        val value = (resolveOperand(VariableOperand(name), state) as? NumberValue)?.value
+            ?: invalidVariableValue("$label requires a number variable", state)
+        // Long.MAX_VALUE rounds up as a Double; reject that boundary before conversion.
+        val withinMaximum = if (maximum == Long.MAX_VALUE) value < maximum.toDouble() else value <= maximum.toDouble()
+        if (value < 0.0 || value % 1.0 != 0.0 || !withinMaximum) {
+            invalidVariableValue("$label uses ${name.value}, which must be a whole number from 0 to $maximum", state)
+        }
+        return value.toLong()
+    }
+
+    private fun invalidVariableValue(message: String, state: RunState): Nothing = throw RunAbort(
+        RunOutcome.FAILED,
+        StepOutcome.FAILED,
+        RunFailure(RunFailureCode.INVALID_VARIABLE_VALUE, state.currentStepId, state.currentPath, message),
+        null,
+    )
 
     private fun ensureBoundary(state: RunState) {
         ensureNotCancelled(state)

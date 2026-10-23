@@ -94,6 +94,7 @@ data class SwipePath(
 data class Wait(
     override val id: String,
     val durationMs: DurationMillis,
+    val durationVariable: VariableName? = null,
 ) : WorkflowStep {
     init {
         ContractChecks.requireStableId(id, "Step id")
@@ -157,6 +158,7 @@ data class Repeat(
     override val id: String,
     val count: Int,
     val bodySteps: List<WorkflowStep>,
+    val countVariable: VariableName? = null,
 ) : WorkflowStep {
     init {
         ContractChecks.requireStableId(id, "Step id")
@@ -210,6 +212,8 @@ data class SetVariable(
     override val id: String,
     val name: VariableName,
     val value: ScalarValue,
+    val source: Operand? = null,
+    val calculation: VariableCalculation? = null,
 ) : WorkflowStep {
     init {
         ContractChecks.requireStableId(id, "Step id")

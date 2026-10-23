@@ -75,7 +75,9 @@ data class ControlFlowAnalysis(
     val maxNestingDepth: Int,
     val maxLoopBound: Int,
     val arithmeticOverflow: Boolean,
+    val hasDynamicStepCount: Boolean = false,
 ) {
+    val estimatedStepCount: Long? get() = worstCaseStepCount.takeUnless { hasDynamicStepCount || arithmeticOverflow }
     init {
         require(worstCaseStepCount >= 0) { "worstCaseStepCount must be nonnegative" }
         require(worstCaseRuntimeMs >= 0) { "worstCaseRuntimeMs must be nonnegative" }
@@ -194,6 +196,7 @@ sealed interface ExecutionStep {
     data class Wait(
         override val id: String,
         val durationMs: DurationMillis,
+        val durationVariable: com.veyarc.model.VariableName? = null,
     ) : ExecutionStep
 
     data class StageBoundary(
@@ -224,6 +227,7 @@ sealed interface ExecutionStep {
         override val id: String,
         val count: Int,
         val bodySteps: List<ExecutionStep>,
+        val countVariable: com.veyarc.model.VariableName? = null,
     ) : ExecutionStep
 
     data class While(
@@ -249,6 +253,8 @@ sealed interface ExecutionStep {
         override val id: String,
         val name: com.veyarc.model.VariableName,
         val value: ScalarValue,
+        val source: com.veyarc.model.Operand? = null,
+        val calculation: com.veyarc.model.VariableCalculation? = null,
     ) : ExecutionStep
 }
 

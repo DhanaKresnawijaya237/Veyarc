@@ -87,7 +87,7 @@ object WorkflowCompiler {
                     immutableList(step.points),
                 )
 
-                is Wait -> ExecutionStep.Wait(step.id, step.durationMs)
+                is Wait -> ExecutionStep.Wait(step.id, step.durationMs, step.durationVariable)
 
                 is StageBoundary -> ExecutionStep.StageBoundary(step.id)
 
@@ -107,7 +107,7 @@ object WorkflowCompiler {
                     compileSteps(step.elseSteps),
                 )
 
-                is Repeat -> ExecutionStep.Repeat(step.id, step.count, compileSteps(step.bodySteps))
+                is Repeat -> ExecutionStep.Repeat(step.id, step.count, compileSteps(step.bodySteps), step.countVariable)
 
                 is WhileStep -> ExecutionStep.While(
                     step.id,
@@ -124,7 +124,7 @@ object WorkflowCompiler {
 
                 is Stop -> ExecutionStep.Stop(step.id, step.reason, step.message)
 
-                is SetVariable -> ExecutionStep.SetVariable(step.id, step.name, step.value)
+                is SetVariable -> ExecutionStep.SetVariable(step.id, step.name, step.value, step.source, step.calculation)
             }
         },
     )
@@ -241,7 +241,8 @@ object WorkflowCompiler {
     }
 
     private fun analyzeWorkflow(steps: List<WorkflowStep>): ControlFlowAnalysis {
-        if (jumpCount(steps, nestedOnly = true).value == 0L) return analyzeSteps(steps, depth = 1)
+        val dynamicCount = hasDynamicStepCount(steps)
+        if (jumpCount(steps, nestedOnly = true).value == 0L) return analyzeSteps(steps, depth = 1).copy(hasDynamicStepCount = dynamicCount)
         val analysis = analyzeSteps(steps, depth = 1, followJumps = false)
         val passes = add(Cost(1L, false), jumpCount(steps, nestedOnly = false))
         // Nested jump counters outlive each invocation of the nest, so later entries can
@@ -254,7 +255,17 @@ object WorkflowCompiler {
             worstCaseStepCount = stepCost.value,
             worstCaseRuntimeMs = runtimeCost.value,
             arithmeticOverflow = stepCost.overflowed || runtimeCost.overflowed,
+            hasDynamicStepCount = dynamicCount,
         )
+    }
+
+    private fun hasDynamicStepCount(steps: List<WorkflowStep>): Boolean = steps.any { step ->
+        when (step) {
+            is Repeat -> step.countVariable != null || hasDynamicStepCount(step.bodySteps)
+            is IfElse -> hasDynamicStepCount(step.thenSteps) || hasDynamicStepCount(step.elseSteps)
+            is WhileStep -> hasDynamicStepCount(step.bodySteps)
+            else -> false
+        }
     }
 
     private fun jumpCount(steps: List<WorkflowStep>, nestedOnly: Boolean, depth: Int = 1): Cost {
@@ -321,7 +332,7 @@ object WorkflowCompiler {
         val ownRuntime = when (step) {
             is LongPress -> step.durationMs.value
             is com.veyarc.model.SwipePath -> step.durationMs.value
-            is Wait -> step.durationMs.value
+            is Wait -> if (step.durationVariable == null) step.durationMs.value else Long.MAX_VALUE
             is WaitUntil -> step.timeoutMs.value
             is LaunchApp -> step.foregroundTimeoutMs.value
             else -> 0L
@@ -331,7 +342,7 @@ object WorkflowCompiler {
             runtime = Cost(ownRuntime, false),
             maxDepth = depth,
             maxLoopBound = when (step) {
-                is Repeat -> step.count
+                is Repeat -> if (step.countVariable == null) step.count else 0
                 is WhileStep -> step.maxIterations
                 is Jump -> step.maxVisits
                 else -> 0
@@ -353,9 +364,10 @@ object WorkflowCompiler {
 
             is Repeat -> {
                 val bodyCost = analyzeSteps(step.bodySteps, depth + 1, followJumps)
+                val count = if (step.countVariable == null) step.count.toLong() else Int.MAX_VALUE.toLong()
                 own.copy(
-                    steps = add(own.steps, multiply(bodyCost.worstCaseStepCount, step.count.toLong(), bodyCost.arithmeticOverflow)),
-                    runtime = add(own.runtime, multiply(bodyCost.worstCaseRuntimeMs, step.count.toLong(), bodyCost.arithmeticOverflow)),
+                    steps = add(own.steps, multiply(bodyCost.worstCaseStepCount, count, bodyCost.arithmeticOverflow)),
+                    runtime = add(own.runtime, multiply(bodyCost.worstCaseRuntimeMs, count, bodyCost.arithmeticOverflow)),
                     maxDepth = maxOf(own.maxDepth, bodyCost.maxNestingDepth),
                     maxLoopBound = maxOf(own.maxLoopBound, bodyCost.maxLoopBound),
                     overflowed = bodyCost.arithmeticOverflow,
