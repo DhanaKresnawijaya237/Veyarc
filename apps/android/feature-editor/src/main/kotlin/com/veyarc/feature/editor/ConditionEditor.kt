@@ -418,7 +418,7 @@ private fun ConditionKindPicker(
     if (expanded) {
         VeyarcChoicePicker(
             title = "Condition type",
-            options = EditableConditionKind.entries.filter { (it != EditableConditionKind.VARIABLE || variables.isNotEmpty() || imageResults.isNotEmpty()) }.map { VeyarcChoice(it.name, it.label) },
+            options = EditableConditionKind.entries.filter { (it != EditableConditionKind.VARIABLE || variables.isNotEmpty() || imageResults.isNotEmpty()) }.sortedBy { it.optionGroup() }.map { VeyarcChoice(it.name, it.label, group = it.optionGroup()) },
             selectedId = condition.kind().name,
             onDismiss = { expanded = false },
             onSelect = { choice ->
@@ -630,6 +630,8 @@ private fun ImageConditionFields(
         displayHeightPx = previewHeightPx,
         assetId = assetId,
         runtimeImage = condition.capturedImageName() != null,
+        capturedTargetName = condition.capturedImageName()?.value,
+        capturedTargetRegion = LocalCapturedImages.current[condition.capturedImageName()?.value]?.firstOrNull()?.region,
         backgroundAssetId = if (isScreenState) null else backgroundAssetId?.let(::AssetId),
         loadPreview = loadPreview,
         screenStateMode = isScreenState,
@@ -1001,7 +1003,7 @@ internal enum class EditableConditionKind(val label: String) {
     SCREEN_STATE("Screen state matches"),
     IMAGE_PRESENT("Image appears somewhere"),
     IMAGE_ABSENT("Image absent"),
-    FOREGROUND("Foreground package"),
+    FOREGROUND("App is open"),
     VARIABLE("Variable comparison"),
     ORIENTATION("Orientation"),
     AND("All conditions"),
@@ -1132,3 +1134,10 @@ private fun Condition.threshold(): Double = when (this) {
 }
 
 private val FULL_SCREEN_REGION = NormalizedRect(0.0, 0.0, 1.0, 1.0)
+
+internal fun EditableConditionKind.optionGroup(): Int = when (this) {
+    EditableConditionKind.PIXEL, EditableConditionKind.SCREEN_STATE, EditableConditionKind.IMAGE_PRESENT, EditableConditionKind.IMAGE_ABSENT -> 0
+    EditableConditionKind.FOREGROUND, EditableConditionKind.ORIENTATION -> 1
+    EditableConditionKind.VARIABLE -> 2
+    EditableConditionKind.AND, EditableConditionKind.OR, EditableConditionKind.NOT -> 3
+}

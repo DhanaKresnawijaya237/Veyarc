@@ -61,7 +61,7 @@ internal fun ComparisonOperator.displayName(): String = when (this) {
 }
 
 internal fun Operand.displayName(): String = when (this) {
-    is com.veyarc.model.ImageResultOperand -> "${name.value} / ${field.name.lowercase()}"
+    is com.veyarc.model.ImageResultOperand -> "${name.value} ${if (field == com.veyarc.model.ImageResultField.FOUND) "was found" else "score"}"
     is VariableOperand -> name.value
     is LiteralOperand -> if (value is StringValue) "\"${value.editorText()}\"" else value.editorText()
 }
@@ -224,4 +224,23 @@ internal fun WorkflowDraft.renameImageSearch(previous: VariableName, name: Varia
         }
     }
     return copy(steps = update(steps))
+}
+
+internal fun imageResultFields(type: VariableType?): List<com.veyarc.model.ImageResultField> = com.veyarc.model.ImageResultField.entries.filter {
+    type == null || type == if (it == com.veyarc.model.ImageResultField.FOUND) VariableType.BOOLEAN else VariableType.NUMBER
+}
+
+internal fun com.veyarc.model.ImageResultField.displayName(): String = when (this) {
+    com.veyarc.model.ImageResultField.FOUND -> "Found"
+    com.veyarc.model.ImageResultField.SCORE -> "Score"
+}
+
+internal fun VariableComparisonCondition.comparisonText(): String {
+    val found = left as? com.veyarc.model.ImageResultOperand
+    val expected = (right as? LiteralOperand)?.value as? BooleanValue
+    if (found?.field == com.veyarc.model.ImageResultField.FOUND && expected != null && (operator == ComparisonOperator.EQUALS || operator == ComparisonOperator.NOT_EQUALS)) {
+        val wantsFound = expected.value == (operator == ComparisonOperator.EQUALS)
+        return "${found.name.value} was ${if (wantsFound) "" else "not "}found"
+    }
+    return "${left.displayName()} ${operator.displayName()} ${right.displayName()}"
 }

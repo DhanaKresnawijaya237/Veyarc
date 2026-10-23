@@ -25,11 +25,13 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -239,18 +241,28 @@ internal fun allowedApplicationPickerIntent(): Intent = Intent(Intent.ACTION_PIC
 
 @Composable
 internal fun LaunchApplicationPicker(selected: String, packages: List<String>, onSelect: (String) -> Unit) {
-    val context = LocalContext.current
-    fun appName(packageName: String): String = runCatching {
-        context.packageManager.getApplicationLabel(context.packageManager.getApplicationInfo(packageName, 0)).toString()
-    }.getOrElse { packageName.substringAfterLast('.') }
-    val options = remember(packages) { packages.map { VeyarcChoice(it, appName(it)) } }
-    val label = remember(selected) { appName(selected) }
+    val names = rememberApplicationNames((packages + selected).distinct())
+    val options = remember(packages, names) { packages.map { VeyarcChoice(it, names.getValue(it)) } }
+    val label = names.getValue(selected)
     var expanded by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
-    Text(label, Modifier.clickable(indication = null, interactionSource = null) { expanded = true }.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
+    Surface(onClick = { expanded = true }, shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.primary) {
+        Text(label, Modifier.padding(horizontal = 12.dp, vertical = 10.dp), style = MaterialTheme.typography.bodyMedium)
+    }
     if (expanded) {
         VeyarcChoicePicker(title = "Allowed apps", options = options, selectedId = selected, onDismiss = { expanded = false }, onSelect = {
             expanded = false
             onSelect(it.id)
         })
+    }
+}
+
+@Composable
+internal fun rememberApplicationNames(packages: List<String>): Map<String, String> {
+    val context = LocalContext.current
+    return remember(packages, context) {
+        packages.associateWith { name ->
+            runCatching { context.packageManager.getApplicationLabel(context.packageManager.getApplicationInfo(name, 0)).toString() }
+                .getOrElse { name.substringAfterLast('.') }
+        }
     }
 }

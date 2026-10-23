@@ -31,7 +31,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.veyarc.model.ArithmeticOperator
 import com.veyarc.model.CaptureImage
@@ -120,10 +123,10 @@ private fun VariableDeclarationDialog(draft: WorkflowDraft, originalName: String
 }
 
 @Composable
-internal fun VariableChoice(title: String, label: String, options: List<VeyarcChoice>, selectedId: String? = null, modifier: Modifier = Modifier, onSelect: (String) -> Unit) {
+internal fun VariableChoice(title: String, label: String, options: List<VeyarcChoice>, selectedId: String? = null, modifier: Modifier = Modifier, textStyle: TextStyle = MaterialTheme.typography.bodyMedium, onSelect: (String) -> Unit) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     Surface(modifier = modifier, onClick = { expanded = true }, enabled = options.isNotEmpty(), shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.primary) {
-        Text(label, Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.bodyMedium)
+        Text(label, Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = textStyle)
     }
     if (expanded) {
         VeyarcChoicePicker(title = title, options = options, selectedId = selectedId, onDismiss = { expanded = false }, onSelect = {
@@ -134,17 +137,17 @@ internal fun VariableChoice(title: String, label: String, options: List<VeyarcCh
 }
 
 @Composable
-private fun ScalarValueField(type: VariableType, text: String, onChange: (String) -> Unit, label: String) {
+private fun ScalarValueField(type: VariableType, text: String, onChange: (String) -> Unit, label: String?) {
     if (type == VariableType.BOOLEAN) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            label?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             InlineVariableOptions(listOf("true" to "True", "false" to "False"), text, onChange)
         }
     } else {
         TextField(
             shape = RoundedCornerShape(14.dp),
             colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
-            value = text, onValueChange = onChange, modifier = Modifier.fillMaxWidth(), label = { Text(label) },
+            value = text, onValueChange = onChange, modifier = Modifier.fillMaxWidth(), label = label?.let { { Text(it) } },
             keyboardOptions = KeyboardOptions(keyboardType = if (type == VariableType.NUMBER) KeyboardType.Decimal else KeyboardType.Text),
             singleLine = type == VariableType.NUMBER, maxLines = if (type == VariableType.NUMBER) 1 else 4,
             isError = parseVariableValue(type, text) == null,
@@ -158,12 +161,12 @@ private fun ScalarValueField(type: VariableType, text: String, onChange: (String
 }
 
 @Composable
-private fun ScalarValueButton(value: ScalarValue, onChange: (ScalarValue) -> Unit) {
+private fun ScalarValueButton(value: ScalarValue, showLabel: Boolean = true, onChange: (ScalarValue) -> Unit) {
     var text by rememberNumericEditorText(value.editorText())
     ScalarValueField(value.variableType(), text, {
         text = it
         parseVariableValue(value.variableType(), it)?.let(onChange)
-    }, "Value")
+    }, if (showLabel) "Value" else null)
 }
 
 @Composable
@@ -266,7 +269,7 @@ internal fun VariableComparisonFields(condition: VariableComparisonCondition, va
         is com.veyarc.model.ImageResultOperand -> if (left.field == com.veyarc.model.ImageResultField.FOUND) VariableType.BOOLEAN else VariableType.NUMBER
     }
     val leftValue: @Composable () -> Unit = {
-        OperandField("Value", condition.left, variables, null) { left ->
+        OperandField("Value", condition.left, variables, null, emphasized = true) { left ->
             val nextType = when (left) {
                 is LiteralOperand -> left.value.variableType()
                 is VariableOperand -> variables.getValue(left.name.value).type
@@ -275,10 +278,10 @@ internal fun VariableComparisonFields(condition: VariableComparisonCondition, va
             onChange(if (nextType == type) condition.copy(left = left) else condition.copy(left = left, operator = ComparisonOperator.EQUALS, right = LiteralOperand(nextType.defaultValue())))
         }
     }
-    val rightValue: @Composable () -> Unit = { OperandField("Compare with", condition.right, variables, type ?: VariableType.NUMBER) { onChange(condition.copy(right = it)) } }
+    val rightValue: @Composable () -> Unit = { OperandField("Compare with", condition.right, variables, type ?: VariableType.NUMBER, emphasized = true) { onChange(condition.copy(right = it)) } }
     val operators = ComparisonOperator.entries.filter { type == VariableType.NUMBER || it == ComparisonOperator.EQUALS || it == ComparisonOperator.NOT_EQUALS }
     val comparison: @Composable () -> Unit = {
-        VariableChoice("Comparison", condition.operator.displayName(), operators.map { VeyarcChoice(it.name, it.displayName()) }, condition.operator.name) { onChange(condition.copy(operator = ComparisonOperator.valueOf(it))) }
+        VariableChoice("Comparison", condition.operator.displayName(), operators.map { VeyarcChoice(it.name, it.displayName()) }, condition.operator.name, textStyle = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)) { onChange(condition.copy(operator = ComparisonOperator.valueOf(it))) }
     }
     if (LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -291,6 +294,7 @@ internal fun VariableComparisonFields(condition: VariableComparisonCondition, va
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { comparison() }
         ComparisonOperandPanel(content = rightValue)
     }
+    Text("True when ${condition.comparisonText()}.", Modifier.fillMaxWidth(), textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @Composable
@@ -301,22 +305,26 @@ private fun ComparisonOperandPanel(modifier: Modifier = Modifier, content: @Comp
 }
 
 @Composable
-private fun OperandField(title: String, operand: Operand, variables: Map<String, VariableDeclaration>, type: VariableType?, onChange: (Operand) -> Unit) {
+private fun OperandField(title: String, operand: Operand, variables: Map<String, VariableDeclaration>, type: VariableType?, emphasized: Boolean = false, onChange: (Operand) -> Unit) {
     val available = variables.filterValues { type == null || it.type == type }
     val types = type?.let(::listOf) ?: VariableType.entries
-    val results = LocalImageResults.current.flatMap { name ->
-        com.veyarc.model.ImageResultField.entries.mapNotNull { field ->
-            val fieldType = if (field == com.veyarc.model.ImageResultField.FOUND) VariableType.BOOLEAN else VariableType.NUMBER
-            if (type == null || type == fieldType) VeyarcChoice("result:$name:${field.name}", "$name / ${field.name.lowercase()}", group = 2) else null
-        }
-    }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        VariableChoice(title, if (operand is LiteralOperand) "${operand.value.variableType().displayName()} value" else operand.displayName(), available.map { VeyarcChoice("variable:${it.key}", it.key) } + types.map { VeyarcChoice("literal:${it.name}", "${it.displayName()} value", group = 1) } + results, modifier = Modifier.weight(1.4f)) { selection ->
+    val resultFields = imageResultFields(type)
+    val results = if (resultFields.isEmpty()) emptyList() else LocalImageResults.current.map { name -> VeyarcChoice("result:$name", name, group = 2) }
+    val sourceChoice: @Composable (Modifier) -> Unit = { modifier ->
+        VariableChoice(
+            title,
+            when (operand) {
+                is LiteralOperand -> operand.value.variableType().displayName()
+                is com.veyarc.model.ImageResultOperand -> operand.name.value
+                else -> operand.displayName()
+            },
+            available.map { VeyarcChoice("variable:${it.key}", it.key) } + types.map { VeyarcChoice("literal:${it.name}", it.displayName(), group = 1) } + results,
+            modifier = modifier,
+        ) { selection ->
             onChange(
                 if (selection.startsWith("result:")) {
-                    val parts = selection.split(':')
-                    com.veyarc.model.ImageResultOperand(VariableName(parts[1]), com.veyarc.model.ImageResultField.valueOf(parts[2]))
+                    val field = (operand as? com.veyarc.model.ImageResultOperand)?.field?.takeIf { it in resultFields } ?: resultFields.first()
+                    com.veyarc.model.ImageResultOperand(VariableName(selection.removePrefix("result:")), field)
                 } else if (selection.startsWith("variable:")) {
                     VariableOperand(VariableName(selection.removePrefix("variable:")))
                 } else {
@@ -325,7 +333,25 @@ private fun OperandField(title: String, operand: Operand, variables: Map<String,
             )
         }
     }
-    if (operand is LiteralOperand) ScalarValueButton(operand.value) { onChange(LiteralOperand(it)) }
+    if (emphasized) {
+        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        sourceChoice(Modifier.fillMaxWidth())
+    } else {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            sourceChoice(Modifier.weight(1.4f))
+        }
+    }
+    if (operand is com.veyarc.model.ImageResultOperand) {
+        if (resultFields.size > 1) {
+            InlineVariableOptions(resultFields.map { it.name to it.displayName() }, operand.field.name) { field ->
+                onChange(operand.copy(field = com.veyarc.model.ImageResultField.valueOf(field)))
+            }
+        } else {
+            Text(operand.field.displayName(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+        }
+    }
+    if (operand is LiteralOperand) ScalarValueButton(operand.value, showLabel = !emphasized) { onChange(LiteralOperand(it)) }
     if (operand is VariableOperand && operand.name.value !in variables) Text("${operand.name.value} is missing from Variables.", color = MaterialTheme.colorScheme.error)
 }
 
@@ -335,7 +361,7 @@ internal fun ImagePositionFields(binding: com.veyarc.model.ImagePositionBinding?
     if (live.isEmpty() && binding == null) return
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Position", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Position", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             VariableChoice("Tap position", binding?.name?.value ?: "Fixed point", listOf(VeyarcChoice("fixed", "Fixed point")) + live.keys.map { VeyarcChoice("result:$it", it) }, binding?.let { "result:${it.name.value}" } ?: "fixed") { selected ->
                 onChange(if (selected == "fixed") null else com.veyarc.model.ImagePositionBinding(VariableName(selected.removePrefix("result:"))))
             }

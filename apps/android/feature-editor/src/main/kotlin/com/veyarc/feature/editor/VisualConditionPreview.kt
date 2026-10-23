@@ -42,6 +42,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.veyarc.data.storage.AndroidKeystoreKeySource
 import com.veyarc.data.storage.DecodedTemplate
@@ -72,6 +73,8 @@ internal fun ImageConditionPreview(
     screenStateMode: Boolean = false,
     colorSearch: Boolean = false,
     runtimeImage: Boolean = false,
+    capturedTargetName: String? = null,
+    capturedTargetRegion: NormalizedRect? = null,
     resultPreview: Boolean = false,
     onRegionChange: ((NormalizedRect) -> Unit)?,
 ) {
@@ -138,6 +141,8 @@ internal fun ImageConditionPreview(
                 displayWidthPx = safeDisplayWidth,
                 displayHeightPx = safeDisplayHeight,
                 template = (preview as? TemplatePreviewState.Ready)?.data,
+                capturedTargetName = capturedTargetName,
+                capturedTargetRegion = capturedTargetRegion,
                 backgroundTemplate = backgroundPreview,
                 onRegionChange = onRegionChange,
                 screenStateMode = screenStateMode,
@@ -179,6 +184,8 @@ private fun DeviceComparisonPreview(
     displayWidthPx: Int,
     displayHeightPx: Int,
     template: TemplatePreviewData?,
+    capturedTargetName: String?,
+    capturedTargetRegion: NormalizedRect?,
     backgroundTemplate: TemplatePreviewData?,
     onRegionChange: ((NormalizedRect) -> Unit)?,
     screenStateMode: Boolean,
@@ -230,6 +237,26 @@ private fun DeviceComparisonPreview(
                         .border(2.dp, templateBorderColor, RoundedCornerShape(3.dp)),
                     contentScale = ContentScale.FillBounds,
                 )
+            }
+            if (capturedTargetName != null && capturedTargetRegion != null) {
+                val bounds = PreviewPixelBounds.from(capturedTargetRegion, displayWidthPx, displayHeightPx)
+                val width = screenWidth * bounds.width.toFloat() / displayWidthPx
+                val height = screenHeight * bounds.height.toFloat() / displayHeightPx
+                Box(
+                    Modifier
+                        .offset(
+                            x = screenWidth * displayedRegion.x.toFloat() + (screenWidth * displayedRegion.width.toFloat() - width) / 2,
+                            y = screenHeight * displayedRegion.y.toFloat() + (screenHeight * displayedRegion.height.toFloat() - height) / 2,
+                        )
+                        .size(width, height)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(templateBorderColor.copy(alpha = 0.3f))
+                        .border(2.dp, templateBorderColor, RoundedCornerShape(3.dp))
+                        .testTag("captured-target-preview"),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(capturedTargetName, Modifier.padding(4.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface, textAlign = TextAlign.Center, maxLines = 2)
+                }
             }
             var activeHandle by remember { mutableStateOf<RegionDragHandle?>(null) }
             val currentRegion by rememberUpdatedState(region)

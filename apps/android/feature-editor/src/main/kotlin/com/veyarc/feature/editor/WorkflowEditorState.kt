@@ -1060,7 +1060,7 @@ fun WorkflowStep.displayName(): String = when (this) {
     else -> "Step"
 }
 
-fun WorkflowStep.summary(assetNames: Map<String, String> = emptyMap()): String = when (this) {
+fun WorkflowStep.summary(assetNames: Map<String, String> = emptyMap(), appNames: Map<String, String> = emptyMap()): String = when (this) {
     is TapPoint -> "Tap at ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}% of the screen"
     is TapRegion -> "Tap inside a ${(region.width * 100).toInt()}% × ${(region.height * 100).toInt()}% area"
     is LongPress -> "Hold for ${durationMs.value} ms at ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}%"
@@ -1068,19 +1068,19 @@ fun WorkflowStep.summary(assetNames: Map<String, String> = emptyMap()): String =
     is Wait -> "Wait ${durationVariable?.value ?: durationMs.value} ms"
     is StageBoundary -> "Separate this stage from the next"
     is Jump -> "Continue from the selected point until this section has run $maxVisits times"
-    is WaitUntil -> "Wait until ${condition.summary(assetNames)} · timeout ${timeoutMs.value} ms, check every ${pollIntervalMs.value} ms"
-    is IfElse -> "If ${condition.summary(assetNames)} · ${thenSteps.size} then / ${elseSteps.size} else blocks"
+    is WaitUntil -> "Wait until ${condition.summary(assetNames, appNames)} · timeout ${timeoutMs.value} ms, check every ${pollIntervalMs.value} ms"
+    is IfElse -> "If ${condition.summary(assetNames, appNames)} · ${thenSteps.size} then / ${elseSteps.size} else blocks"
     is Repeat -> "Run ${bodySteps.size} nested blocks ${countVariable?.value ?: count} times"
-    is WhileStep -> "While ${condition.summary(assetNames)} · up to $maxIterations times"
-    is LaunchApp -> "Open ${packageName.value} and wait up to ${foregroundTimeoutMs.value} ms"
-    is com.veyarc.model.FindImage -> "Find ${condition.summary(assetNames)} and save as ${name.value}"
+    is WhileStep -> "While ${condition.summary(assetNames, appNames)} · up to $maxIterations times"
+    is LaunchApp -> "Open ${appNames[packageName.value] ?: packageName.value.substringAfterLast('.')} and wait up to ${foregroundTimeoutMs.value} ms"
+    is com.veyarc.model.FindImage -> "Find ${condition.summary(assetNames, appNames)} and save as ${name.value}"
     is com.veyarc.model.CaptureImage -> "Capture ${name.value} for this run"
     is com.veyarc.model.SetVariable -> assignmentSummary()
     is Stop -> message ?: reason.name.lowercase().replace('_', ' ')
     else -> "Configured workflow step"
 }
 
-fun Condition.summary(assetNames: Map<String, String> = emptyMap()): String = when (this) {
+fun Condition.summary(assetNames: Map<String, String> = emptyMap(), appNames: Map<String, String> = emptyMap()): String = when (this) {
     is com.veyarc.model.CapturedImageCondition -> "captured ${name.value} ${if (present) "appears" else "is absent"}"
 
     is PixelColorCondition -> if (region == null) "the pixel at ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}% has the selected color" else "the selected color appears in the search area"
@@ -1092,11 +1092,11 @@ fun Condition.summary(assetNames: Map<String, String> = emptyMap()): String = wh
 
     is ImageAbsentCondition -> "${capturedImage?.value ?: assetNames[assetId?.value] ?: "the selected image"} is absent"
 
-    is ForegroundPackageCondition -> "${packageName.value} is open"
+    is ForegroundPackageCondition -> "${appNames[packageName.value] ?: packageName.value.substringAfterLast('.')} is open"
 
     is com.veyarc.model.OrientationCondition -> "the screen is ${orientation.name.lowercase()}"
 
-    is com.veyarc.model.VariableComparisonCondition -> "${left.displayName()} ${operator.displayName()} ${right.displayName()}"
+    is com.veyarc.model.VariableComparisonCondition -> comparisonText()
 
     is com.veyarc.model.StepResultCondition -> "Step result ${stepId.take(8)}…"
 
@@ -1104,5 +1104,13 @@ fun Condition.summary(assetNames: Map<String, String> = emptyMap()): String = wh
 
     is OrCondition -> "any of ${conditions.size} conditions is true"
 
-    is NotCondition -> "not (${condition.summary(assetNames)})"
+    is NotCondition -> "not (${condition.summary(assetNames, appNames)})"
+}
+
+internal fun WorkflowStepKind.optionGroup(): Int = when (this) {
+    WorkflowStepKind.LAUNCH_APP, WorkflowStepKind.TAP_POINT, WorkflowStepKind.TAP_REGION, WorkflowStepKind.LONG_PRESS, WorkflowStepKind.SWIPE_PATH -> 1
+    WorkflowStepKind.WAIT, WorkflowStepKind.WAIT_UNTIL -> 2
+    WorkflowStepKind.IF_ELSE, WorkflowStepKind.WHILE, WorkflowStepKind.REPEAT -> 3
+    WorkflowStepKind.CAPTURE_IMAGE, WorkflowStepKind.FIND_IMAGE, WorkflowStepKind.SET_VARIABLE -> 4
+    WorkflowStepKind.STAGE_BOUNDARY, WorkflowStepKind.JUMP, WorkflowStepKind.STOP -> 5
 }

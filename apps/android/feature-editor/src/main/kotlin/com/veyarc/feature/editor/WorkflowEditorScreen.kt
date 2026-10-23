@@ -145,7 +145,6 @@ import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -2626,14 +2625,15 @@ private fun EditableStepSummary(
     step: WorkflowStep,
     onDraftChange: (WorkflowDraft) -> Unit,
 ) {
+    val appNames = if (step is IfElse || step is WaitUntil || step is WhileStep) rememberApplicationNames(draft.allowedPackagesText.packageNames()) else emptyMap()
     when (step) {
         is TapPoint -> {
-            Text(step.imagePosition?.let { "Tap ${it.name.value} at its center" } ?: step.summary(draft.assetNames), style = MaterialTheme.typography.bodyMedium)
+            Text(step.imagePosition?.let { "Tap ${it.name.value} at its center" } ?: step.summary(draft.assetNames, appNames), style = MaterialTheme.typography.bodyMedium)
             return
         }
 
         is LongPress -> {
-            Text(step.imagePosition?.let { "Hold ${it.name.value} at its center for ${step.durationMs.value} ms" } ?: step.summary(draft.assetNames), style = MaterialTheme.typography.bodyMedium)
+            Text(step.imagePosition?.let { "Hold ${it.name.value} at its center for ${step.durationMs.value} ms" } ?: step.summary(draft.assetNames, appNames), style = MaterialTheme.typography.bodyMedium)
             return
         }
 
@@ -2656,27 +2656,35 @@ private fun EditableStepSummary(
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Continue from", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    JumpTargetPicker(draft.jumpTargetLists(path), step.targetStepId, step.id, Modifier.weight(1f)) { targetId ->
+                    JumpTargetPicker(draft.jumpTargetLists(path), step.targetStepId, step.id) { targetId ->
                         onDraftChange(draft.updateStep(path, index) { step.copy(targetStepId = targetId) })
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Repeat up to", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    var visits by rememberNumericEditorText(step.maxVisits.toString(), draft.lastSavedRevision)
-                    BasicTextField(
-                        visits,
-                        { candidate ->
-                            if (candidate.all(Char::isDigit)) {
-                                visits = candidate
-                                candidate.toIntOrNull()?.takeIf { it in 1..draft.runLimits.maxLoopIterations }?.let { value -> onDraftChange(draft.updateStep(path, index) { step.copy(maxVisits = value) }) }
-                            }
-                        },
-                        Modifier.width(64.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 10.dp),
-                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.primary, textAlign = TextAlign.Center),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    )
+                    InlineLongField(step.maxVisits.toLong(), 1, draft.runLimits.maxLoopIterations.toLong(), draft.lastSavedRevision) { value ->
+                        onDraftChange(draft.updateStep(path, index) { step.copy(maxVisits = value.toInt()) })
+                    }
                     Text("times", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            return
+        }
+
+        is LaunchApp -> {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Open", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    LaunchApplicationPicker(step.packageName.value, draft.allowedPackagesText.packageNames()) { selected ->
+                        onDraftChange(draft.updateStep(path, index) { step.copy(packageName = com.veyarc.model.PackageName(selected)) })
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Wait up to", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    InlineLongField(step.foregroundTimeoutMs.value, 1, resetKey = draft.lastSavedRevision) { value ->
+                        onDraftChange(draft.updateStep(path, index) { step.copy(foregroundTimeoutMs = com.veyarc.model.DurationMillis(value)) })
+                    }
+                    Text("ms", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             return
@@ -2703,7 +2711,7 @@ private fun EditableStepSummary(
             }
 
             is WaitUntil -> {
-                Text("Wait until ${step.condition.summary(draft.assetNames)} · timeout", style = MaterialTheme.typography.bodyMedium)
+                Text("Wait until ${step.condition.summary(draft.assetNames, appNames)} · timeout", style = MaterialTheme.typography.bodyMedium)
                 InlineLongField(step.timeoutMs.value, 0, resetKey = draft.lastSavedRevision) { value ->
                     onDraftChange(draft.updateStep(path, index) { step.copy(timeoutMs = com.veyarc.model.DurationMillis(value)) })
                 }
@@ -2727,36 +2735,20 @@ private fun EditableStepSummary(
             }
 
             is WhileStep -> {
-                Text("While ${step.condition.summary(draft.assetNames)} · up to", style = MaterialTheme.typography.bodyMedium)
+                Text("While ${step.condition.summary(draft.assetNames, appNames)} · up to", style = MaterialTheme.typography.bodyMedium)
                 InlineLongField(step.maxIterations.toLong(), 1, Int.MAX_VALUE.toLong(), draft.lastSavedRevision) { value ->
                     onDraftChange(draft.updateStep(path, index) { step.copy(maxIterations = value.toInt()) })
                 }
                 Text("iterations, ${step.bodySteps.size} nested blocks", style = MaterialTheme.typography.bodyMedium)
             }
 
-            is LaunchApp -> {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Open", style = MaterialTheme.typography.bodyMedium)
-                    LaunchApplicationPicker(step.packageName.value, draft.allowedPackagesText.packageNames()) { selected ->
-                        onDraftChange(draft.updateStep(path, index) { step.copy(packageName = com.veyarc.model.PackageName(selected)) })
-                    }
-                }
-                Text("Wait up to", style = MaterialTheme.typography.bodyMedium)
-                InlineLongField(step.foregroundTimeoutMs.value, 1, resetKey = draft.lastSavedRevision) { value ->
-                    onDraftChange(
-                        draft.updateStep(path, index) {
-                            step.copy(foregroundTimeoutMs = com.veyarc.model.DurationMillis(value))
-                        },
-                    )
-                }
-                Text("ms", style = MaterialTheme.typography.bodyMedium)
-            }
+            is LaunchApp -> Unit
 
             is Jump -> Unit
 
             is com.veyarc.model.FindImage, is com.veyarc.model.CaptureImage, is com.veyarc.model.SetVariable -> Unit
 
-            else -> Text(step.summary(draft.assetNames), style = MaterialTheme.typography.bodyMedium)
+            else -> Text(step.summary(draft.assetNames, appNames), style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
@@ -2782,7 +2774,7 @@ private fun JumpTargetPicker(
     }
     val selected = options.firstOrNull { it.id == selectedId }
     Box(modifier) {
-        Surface(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.primary) {
+        Surface(onClick = { expanded = true }, shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.primary) {
             Text(selected?.label ?: "Choose a destination", Modifier.padding(horizontal = 12.dp, vertical = 10.dp), style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         if (expanded) {
@@ -2924,7 +2916,7 @@ private fun AddBlockMenu(
                 options = buildList {
                     if (onRecord != null) add(VeyarcChoice("record", "Record here", highlighted = true))
                     if (clipboard?.clipboardAvailable == true) add(VeyarcChoice("paste", "Paste blocks", highlighted = true))
-                    WorkflowStepKind.entries.filter { (it != WorkflowStepKind.JUMP || canAddJump) && (it != WorkflowStepKind.SET_VARIABLE || canAddVariable) }.forEach { add(VeyarcChoice(it.name, it.displayName(), group = 1)) }
+                    WorkflowStepKind.entries.filter { (it != WorkflowStepKind.JUMP || canAddJump) && (it != WorkflowStepKind.SET_VARIABLE || canAddVariable) }.sortedBy { it.optionGroup() }.forEach { add(VeyarcChoice(it.name, it.displayName(), group = it.optionGroup())) }
                 },
                 onDismiss = { expanded = false },
                 onSelect = { choice ->

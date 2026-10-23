@@ -71,6 +71,8 @@ fun StoredRunDetailScreen(
     // ponytail: Reveals saved events only; older discarded events need a separate retention change.
     var visibleEvents by remember(record.runId) { mutableIntStateOf(12) }
     val firstEvent = (record.eventHistory.size - visibleEvents).coerceAtLeast(0)
+    val packages = remember(record.eventHistory) { record.eventHistory.flatMap { event -> runApplicationReference.findAll(event.message).map { it.groupValues[2] }.toList() }.distinct() }
+    val appNames = rememberApplicationNames(packages)
     val sections = remember(record.eventHistory, firstEvent) { runActivitySections(record.eventHistory, firstEvent) }
     var collapsedSections by remember(record.runId) { mutableStateOf(emptySet<Int>()) }
     val timelineColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
@@ -171,7 +173,7 @@ fun StoredRunDetailScreen(
                         }
                         group.forEach { (index, event) ->
                             Row(Modifier.fillMaxWidth().testTag("run-event-$index"), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.Top) {
-                                Text(readableRunMessage(event.message).replace(": true", ": met").replace(": false", ": not met"), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                                Text(readableRunMessage(event.message, appNames).replace(": true", ": met").replace(": false", ": not met"), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                                 if (index > 0) Text("+${formatEventGap(event.atMs - record.eventHistory[index - 1].atMs)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
@@ -205,7 +207,12 @@ private fun runTitle(status: StoredRunStatus): String = when (status) {
 }
 
 // Historical messages remain intact in storage; technical identifiers aren't useful in this view.
-internal fun readableRunMessage(message: String): String = message.replace(runIdentifier, "").replace(Regex(" {2,}"), " ").trim()
+internal fun readableRunMessage(message: String, appNames: Map<String, String> = emptyMap()): String = message.replace(runIdentifier, "").replace(runApplicationReference) {
+    val name = it.groupValues[2]
+    val label = appNames[name] ?: name.substringAfterLast('.')
+    if (it.groupValues[1] == "Launch") "Open $label" else "$label is open"
+}.replace(Regex(" {2,}"), " ").trim()
+private val runApplicationReference = Regex("(Launch|Foreground package) ([a-zA-Z][a-zA-Z0-9_]*(?:\\.[a-zA-Z][a-zA-Z0-9_]*)+)")
 private val runIdentifier = Regex("(?i)\\b(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{64})\\b")
 
 internal fun formatEventGap(durationMs: Long): String = String.format(Locale.getDefault(), "%.1fs", durationMs.coerceAtLeast(0L) / 1000.0)
