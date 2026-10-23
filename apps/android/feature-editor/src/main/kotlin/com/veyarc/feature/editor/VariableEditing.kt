@@ -30,7 +30,7 @@ import com.veyarc.model.WorkflowStep
 internal fun VariableType.displayName(): String = when (this) {
     VariableType.NUMBER -> "Number"
     VariableType.STRING -> "Text"
-    VariableType.BOOLEAN -> "True / false"
+    VariableType.BOOLEAN -> "Boolean"
 }
 
 internal fun VariableType.defaultValue(): ScalarValue = when (this) {

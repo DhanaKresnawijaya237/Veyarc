@@ -1,11 +1,13 @@
 package com.veyarc.feature.editor
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DataObject
@@ -15,8 +17,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -24,6 +28,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.veyarc.model.ArithmeticOperator
@@ -54,7 +59,7 @@ internal fun VariableSection(session: WorkflowEditorSession, draft: WorkflowDraf
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Starting values reset for each run.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             draft.variables.forEach { (name, declaration) ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(14.dp)).padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(
                         Modifier.weight(1f).clickable(indication = null, interactionSource = null) {
                             selectedName = name
@@ -101,7 +106,7 @@ private fun VariableDeclarationDialog(draft: WorkflowDraft, originalName: String
                 Text(type.displayName(), style = MaterialTheme.typography.bodyLarge)
                 Text("Remove its uses before changing the type or deleting it.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
-                VariableChoice("Type", type.displayName(), VariableType.entries.map { VeyarcChoice(it.name, it.displayName()) }, type.name) {
+                InlineVariableOptions(VariableType.entries.map { it.name to it.displayName() }, type.name) {
                     type = VariableType.valueOf(it)
                     text = type.defaultValue().editorText()
                 }
@@ -115,7 +120,9 @@ private fun VariableDeclarationDialog(draft: WorkflowDraft, originalName: String
 @Composable
 internal fun VariableChoice(title: String, label: String, options: List<VeyarcChoice>, selectedId: String? = null, onSelect: (String) -> Unit) {
     var expanded by rememberSaveable { mutableStateOf(false) }
-    TextButton(onClick = { expanded = true }, enabled = options.isNotEmpty()) { Text(label) }
+    Surface(onClick = { expanded = true }, enabled = options.isNotEmpty(), shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.primary) {
+        Text(label, Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.bodyMedium)
+    }
     if (expanded) {
         VeyarcChoicePicker(title = title, options = options, selectedId = selectedId, onDismiss = { expanded = false }, onSelect = {
             expanded = false
@@ -127,9 +134,14 @@ internal fun VariableChoice(title: String, label: String, options: List<VeyarcCh
 @Composable
 private fun ScalarValueField(type: VariableType, text: String, onChange: (String) -> Unit, label: String) {
     if (type == VariableType.BOOLEAN) {
-        VariableChoice(label, text, listOf(VeyarcChoice("true", "true"), VeyarcChoice("false", "false")), text, onChange)
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            InlineVariableOptions(listOf("true" to "True", "false" to "False"), text, onChange)
+        }
     } else {
-        OutlinedTextField(
+        TextField(
+            shape = RoundedCornerShape(14.dp),
+            colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
             value = text, onValueChange = onChange, modifier = Modifier.fillMaxWidth(), label = { Text(label) },
             keyboardOptions = KeyboardOptions(keyboardType = if (type == VariableType.NUMBER) KeyboardType.Decimal else KeyboardType.Text),
             singleLine = type == VariableType.NUMBER, maxLines = if (type == VariableType.NUMBER) 1 else 4,
@@ -145,19 +157,25 @@ private fun ScalarValueField(type: VariableType, text: String, onChange: (String
 
 @Composable
 private fun ScalarValueButton(value: ScalarValue, onChange: (ScalarValue) -> Unit) {
-    var editing by rememberSaveable { mutableStateOf(false) }
-    TextButton(onClick = { editing = true }) { Text(if (value is com.veyarc.model.StringValue) "\"${value.editorText()}\"" else value.editorText(), maxLines = 3) }
-    if (editing) {
-        var text by rememberSaveable { mutableStateOf(value.editorText()) }
-        val parsed = parseVariableValue(value.variableType(), text)
-        EditorSheetDialog(compact = true, onDismiss = { editing = false }) {
-            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Set value", style = MaterialTheme.typography.titleLarge)
-                ScalarValueField(value.variableType(), text, { text = it }, "Value")
-                Button(onClick = {
-                    onChange(parsed!!)
-                    editing = false
-                }, enabled = parsed != null, modifier = Modifier.align(Alignment.End)) { Text("Apply") }
+    var text by rememberNumericEditorText(value.editorText())
+    ScalarValueField(value.variableType(), text, {
+        text = it
+        parseVariableValue(value.variableType(), it)?.let(onChange)
+    }, "Value")
+}
+
+@Composable
+private fun InlineVariableOptions(options: List<Pair<String, String>>, selected: String, onSelect: (String) -> Unit) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        options.forEach { (id, label) ->
+            Surface(
+                onClick = { onSelect(id) },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(12.dp),
+                color = if (id == selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                contentColor = if (id == selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+            ) {
+                Text(label, Modifier.padding(horizontal = 6.dp, vertical = 12.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center, style = MaterialTheme.typography.labelLarge)
             }
         }
     }
@@ -165,9 +183,12 @@ private fun ScalarValueButton(value: ScalarValue, onChange: (ScalarValue) -> Uni
 
 @Composable
 internal fun SetVariableFields(step: SetVariable, variables: Map<String, VariableDeclaration>, onChange: (SetVariable) -> Unit) {
-    Column {
-        VariableChoice("Variable", step.name.value, variables.map { VeyarcChoice(it.key, it.key) }, step.name.value) { name ->
-            onChange(step.copy(name = VariableName(name), value = variables.getValue(name).initialValue, source = null, calculation = null))
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("Assign to", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            VariableChoice("Variable", step.name.value, variables.map { VeyarcChoice(it.key, it.key) }, step.name.value) { name ->
+                onChange(step.copy(name = VariableName(name), value = variables.getValue(name).initialValue, source = null, calculation = null))
+            }
         }
         val type = variables[step.name.value]?.type ?: step.value.variableType()
         OperandField("Value", step.source ?: LiteralOperand(step.value), variables, type) { source ->
@@ -198,8 +219,15 @@ internal fun NumberVariableBinding(title: String, selected: VariableName?, varia
 @Composable
 internal fun CaptureImageFields(step: CaptureImage, onRename: (VariableName) -> Unit) {
     var editing by rememberSaveable { mutableStateOf(false) }
-    TextButton(onClick = { editing = true }) { Text(step.name.value) }
-    Text("Temporary image · Replaced each time this block runs", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Column {
+            Text("Save capture as", style = MaterialTheme.typography.bodyMedium)
+            Text("This run only", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Surface(onClick = { editing = true }, shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.primary) {
+            Text(step.name.value, Modifier.padding(horizontal = 14.dp, vertical = 10.dp), style = MaterialTheme.typography.bodyMedium)
+        }
+    }
     if (editing) {
         var name by rememberSaveable { mutableStateOf(step.name.value) }
         val parsed = runCatching { VariableName(name) }.getOrNull()
@@ -245,8 +273,8 @@ internal fun VariableComparisonFields(condition: VariableComparisonCondition, va
 private fun OperandField(title: String, operand: Operand, variables: Map<String, VariableDeclaration>, type: VariableType?, onChange: (Operand) -> Unit) {
     val available = variables.filterValues { type == null || it.type == type }
     val types = type?.let(::listOf) ?: VariableType.entries
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(title, style = MaterialTheme.typography.bodyMedium)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Text(title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         VariableChoice(title, if (operand is LiteralOperand) "${operand.value.variableType().displayName()} value" else operand.displayName(), available.map { VeyarcChoice("variable:${it.key}", it.key) } + types.map { VeyarcChoice("literal:${it.name}", "${it.displayName()} value", group = 1) }) { selection ->
             onChange(if (selection.startsWith("variable:")) VariableOperand(VariableName(selection.removePrefix("variable:"))) else LiteralOperand(VariableType.valueOf(selection.removePrefix("literal:")).defaultValue()))
         }

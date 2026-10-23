@@ -105,6 +105,7 @@ internal fun GeometryEditorDialog(
     assetNames: Map<String, String>,
     loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
     onDismiss: () -> Unit,
+    onAddImage: () -> Unit,
     onApply: (WorkflowStep) -> Unit,
 ) {
     var pickerOpen by rememberSaveable { mutableStateOf(false) }
@@ -133,6 +134,7 @@ internal fun GeometryEditorDialog(
                     compact = compactLandscape,
                     background = referenceImage,
                     onToggleReference = { pickerOpen = !pickerOpen },
+                    onAddImage = onAddImage,
                     onApply = { point -> apply(step.copy(point = point)) },
                 )
 
@@ -142,6 +144,7 @@ internal fun GeometryEditorDialog(
                     compact = compactLandscape,
                     background = referenceImage,
                     onToggleReference = { pickerOpen = !pickerOpen },
+                    onAddImage = onAddImage,
                     onApply = ::apply,
                 )
 
@@ -151,6 +154,7 @@ internal fun GeometryEditorDialog(
                     compact = compactLandscape,
                     background = referenceImage,
                     onToggleReference = { pickerOpen = !pickerOpen },
+                    onAddImage = onAddImage,
                     onApply = { updated -> apply(step.copy(region = (updated as TapRegion).region)) },
                     capture = true,
                 )
@@ -161,6 +165,7 @@ internal fun GeometryEditorDialog(
                     compact = compactLandscape,
                     background = referenceImage,
                     onToggleReference = { pickerOpen = !pickerOpen },
+                    onAddImage = onAddImage,
                     onApply = ::apply,
                 )
 
@@ -171,6 +176,7 @@ internal fun GeometryEditorDialog(
                     compact = compactLandscape,
                     background = referenceImage,
                     onToggleReference = { pickerOpen = !pickerOpen },
+                    onAddImage = onAddImage,
                     onApply = ::apply,
                 )
 
@@ -455,6 +461,7 @@ private fun PointGeometryEditor(
     compact: Boolean,
     background: ImageBitmap?,
     onToggleReference: () -> Unit,
+    onAddImage: () -> Unit,
     onApply: (NormalizedCoordinate) -> Unit,
 ) {
     var selectedPoint by remember(point) { mutableStateOf(point) }
@@ -462,6 +469,7 @@ private fun PointGeometryEditor(
         title = title,
         compact = compact,
         onToggleReference = onToggleReference,
+        onAddImage = onAddImage,
         onApply = { onApply(selectedPoint) },
     ) {
         Text("Tap the display preview to place the contact point.")
@@ -497,6 +505,7 @@ private fun LongPressGeometryEditor(
     compact: Boolean,
     background: ImageBitmap?,
     onToggleReference: () -> Unit,
+    onAddImage: () -> Unit,
     onApply: (WorkflowStep) -> Unit,
 ) {
     var selectedPoint by remember(step) { mutableStateOf(step.point) }
@@ -507,6 +516,7 @@ private fun LongPressGeometryEditor(
         title = "Edit long press",
         compact = compact,
         onToggleReference = onToggleReference,
+        onAddImage = onAddImage,
         applyEnabled = validDuration,
         onApply = {
             if (duration != null && duration > 0) {
@@ -558,6 +568,7 @@ private fun RegionGeometryEditor(
     compact: Boolean,
     background: ImageBitmap?,
     onToggleReference: () -> Unit,
+    onAddImage: () -> Unit,
     onApply: (WorkflowStep) -> Unit,
     capture: Boolean = false,
 ) {
@@ -574,6 +585,7 @@ private fun RegionGeometryEditor(
         title = if (capture) "Capture area" else "Edit touch region",
         compact = compact,
         onToggleReference = onToggleReference,
+        onAddImage = onAddImage,
         applyEnabled = validAnchor,
         onApply = { anchor?.let { onApply(step.copy(region = region, anchor = it)) } },
     ) {
@@ -663,6 +675,7 @@ private fun PathGeometryEditor(
     compact: Boolean,
     background: ImageBitmap?,
     onToggleReference: () -> Unit,
+    onAddImage: () -> Unit,
     onApply: (WorkflowStep) -> Unit,
 ) {
     var points by remember(step) { mutableStateOf(step.points.map { it.point }) }
@@ -679,28 +692,8 @@ private fun PathGeometryEditor(
         title = "Edit swipe path",
         compact = compact,
         onToggleReference = onToggleReference,
+        onAddImage = onAddImage,
         applyEnabled = validPath,
-        headerAction = {
-            IconButton(
-                enabled = validPath && !previewing,
-                onClick = {
-                    previewScope.launch {
-                        previewing = true
-                        previewProgress.snapTo(0f)
-                        previewProgress.animateTo(
-                            targetValue = 1f,
-                            animationSpec = tween(durationMillis = (duration ?: 1L).coerceIn(1L, 10_000L).toInt()),
-                        )
-                        previewing = false
-                    }
-                },
-            ) {
-                Icon(
-                    Icons.Outlined.PlayArrow,
-                    contentDescription = if (previewing) "Previewing swipe path" else "Preview swipe path",
-                )
-            }
-        },
         onApply = {
             if (duration != null && timedPoints != null) {
                 onApply(step.copy(durationMs = com.veyarc.model.DurationMillis(duration), points = timedPoints))
@@ -738,12 +731,28 @@ private fun PathGeometryEditor(
         ) {
             drawSwipePath(points, previewPoint)
         }
-        LongEditorField(
-            label = "Path duration (ms)",
-            value = durationText,
-            onValueChange = { durationText = it },
-            modifier = Modifier.fillMaxWidth(),
-        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LongEditorField(label = "Path duration (ms)", value = durationText, onValueChange = { durationText = it }, modifier = Modifier.weight(1f))
+            IconButton(
+                enabled = validPath && !previewing,
+                onClick = {
+                    previewScope.launch {
+                        previewing = true
+                        previewProgress.snapTo(0f)
+                        previewProgress.animateTo(
+                            targetValue = 1f,
+                            animationSpec = tween(durationMillis = (duration ?: 1L).coerceIn(1L, 10_000L).toInt()),
+                        )
+                        previewing = false
+                    }
+                },
+            ) {
+                Icon(
+                    Icons.Outlined.PlayArrow,
+                    contentDescription = if (previewing) "Previewing swipe path" else "Preview swipe path",
+                )
+            }
+        }
         Text(
             when {
                 points.size < 2 -> "Draw at least two points."
@@ -762,8 +771,8 @@ private fun GeometryEditorLayout(
     title: String,
     compact: Boolean,
     applyEnabled: Boolean = true,
-    headerAction: (@Composable () -> Unit)? = null,
     onToggleReference: (() -> Unit)? = null,
+    onAddImage: (() -> Unit)? = null,
     onApply: () -> Unit,
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -791,7 +800,7 @@ private fun GeometryEditorLayout(
                     Icon(Icons.Outlined.Image, contentDescription = "Choose background template")
                 }
             }
-            headerAction?.invoke()
+            onAddImage?.let { add -> IconButton(onClick = add) { Icon(Icons.Outlined.AddPhotoAlternate, "Add image") } }
             Button(enabled = applyEnabled, onClick = onApply) { Text("Apply") }
         }
         content()

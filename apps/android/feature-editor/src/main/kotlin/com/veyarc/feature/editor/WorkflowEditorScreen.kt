@@ -704,6 +704,7 @@ fun WorkflowEditorScreen(
                     assetNames = draft.assetNames,
                     loadPreview = ::loadDraftPreview,
                     onDismiss = { geometryTarget = null },
+                    onAddImage = { templatePicker.launch("image/*") },
                     onApply = { updatedStep ->
                         session.update(draft.updateStep(target.path, target.index) { updatedStep })
                         geometryTarget = null
@@ -2620,6 +2621,19 @@ private fun EditableStepSummary(
     step: WorkflowStep,
     onDraftChange: (WorkflowDraft) -> Unit,
 ) {
+    when (step) {
+        is com.veyarc.model.CaptureImage -> {
+            CaptureImageFields(step) { name -> onDraftChange(draft.renameCapturedImage(step.name, name)) }
+            return
+        }
+
+        is com.veyarc.model.SetVariable -> {
+            SetVariableFields(step, draft.variables) { updated -> onDraftChange(draft.updateStep(path, index) { updated }) }
+            return
+        }
+
+        else -> Unit
+    }
     FlowRow(
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -2671,7 +2685,13 @@ private fun EditableStepSummary(
             }
 
             is LaunchApp -> {
-                Text("Open ${step.packageName.value} · wait up to", style = MaterialTheme.typography.bodyMedium)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Open", style = MaterialTheme.typography.bodyMedium)
+                    LaunchApplicationPicker(step.packageName.value, draft.allowedPackagesText.packageNames()) { selected ->
+                        onDraftChange(draft.updateStep(path, index) { step.copy(packageName = com.veyarc.model.PackageName(selected)) })
+                    }
+                }
+                Text("Wait up to", style = MaterialTheme.typography.bodyMedium)
                 InlineLongField(step.foregroundTimeoutMs.value, 1, resetKey = draft.lastSavedRevision) { value ->
                     onDraftChange(
                         draft.updateStep(path, index) {
@@ -2683,21 +2703,25 @@ private fun EditableStepSummary(
             }
 
             is Jump -> {
-                Text("Continue from", style = MaterialTheme.typography.bodyMedium)
-                JumpTargetPicker(
-                    targetLists = draft.jumpTargetLists(path),
-                    selectedId = step.targetStepId,
-                    excludedId = step.id,
-                    onSelect = { targetId ->
-                        onDraftChange(draft.updateStep(path, index) { step.copy(targetStepId = targetId) })
-                    },
-                )
-                Text("until this section has run", style = MaterialTheme.typography.bodyMedium)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Continue from", style = MaterialTheme.typography.bodyMedium)
+                    JumpTargetPicker(
+                        targetLists = draft.jumpTargetLists(path),
+                        selectedId = step.targetStepId,
+                        excludedId = step.id,
+                        onSelect = { targetId ->
+                            onDraftChange(draft.updateStep(path, index) { step.copy(targetStepId = targetId) })
+                        },
+                    )
+                }
+                Text("up to", style = MaterialTheme.typography.bodyMedium)
                 InlineLongField(step.maxVisits.toLong(), 1, draft.runLimits.maxLoopIterations.toLong(), draft.lastSavedRevision) { value ->
                     onDraftChange(draft.updateStep(path, index) { step.copy(maxVisits = value.toInt()) })
                 }
                 Text("times", style = MaterialTheme.typography.bodyMedium)
             }
+
+            is com.veyarc.model.CaptureImage, is com.veyarc.model.SetVariable -> Unit
 
             else -> Text(step.summary(draft.assetNames), style = MaterialTheme.typography.bodyMedium)
         }
@@ -2786,9 +2810,7 @@ private fun StepEditorFields(
     onEditCondition: (StepListPath, Int) -> Unit,
 ) {
     when (step) {
-        is com.veyarc.model.CaptureImage -> CaptureImageFields(step) { name -> onDraftChange(draft.renameCapturedImage(step.name, name)) }
-
-        is com.veyarc.model.SetVariable -> SetVariableFields(step, draft.variables) { updated -> onDraftChange(draft.updateStep(path, index) { updated }) }
+        is com.veyarc.model.CaptureImage, is com.veyarc.model.SetVariable -> Unit
 
         is Wait,
         is StageBoundary,

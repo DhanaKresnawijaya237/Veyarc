@@ -236,3 +236,21 @@ internal fun allowedApplicationPickerIntent(): Intent = Intent(Intent.ACTION_PIC
     Intent.EXTRA_INTENT,
     Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER),
 )
+
+@Composable
+internal fun LaunchApplicationPicker(selected: String, packages: List<String>, onSelect: (String) -> Unit) {
+    val context = LocalContext.current
+    fun appName(packageName: String): String = runCatching {
+        context.packageManager.getApplicationLabel(context.packageManager.getApplicationInfo(packageName, 0)).toString()
+    }.getOrElse { packageName.substringAfterLast('.') }
+    val options = remember(packages) { packages.map { VeyarcChoice(it, appName(it)) } }
+    val label = remember(selected) { appName(selected) }
+    var expanded by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    Text(label, Modifier.clickable(indication = null, interactionSource = null) { expanded = true }.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
+    if (expanded) {
+        VeyarcChoicePicker(title = "Allowed apps", options = options, selectedId = selected, onDismiss = { expanded = false }, onSelect = {
+            expanded = false
+            onSelect(it.id)
+        })
+    }
+}
