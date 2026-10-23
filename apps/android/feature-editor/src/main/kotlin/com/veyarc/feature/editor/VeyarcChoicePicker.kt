@@ -54,6 +54,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -76,6 +77,8 @@ data class VeyarcChoice(
     val destructive: Boolean = false,
     val group: Int = 0,
     val highlighted: Boolean = false,
+    val groupTitle: String? = null,
+    val icon: ImageVector? = null,
 )
 
 /** A bounded, searchable picker that stays usable in portrait, landscape, and long lists. */
@@ -100,9 +103,10 @@ fun VeyarcChoicePicker(
         with(density) {
             val titleWidth = textMeasurer.measure(title, titleStyle).size.width.toDp() + if (searchable) 160.dp else 96.dp
             val optionWidth = options.maxOfOrNull { option ->
-                maxOf(textMeasurer.measure(option.label, optionStyle).size.width, option.detail?.let { textMeasurer.measure(it, detailStyle).size.width } ?: 0).toDp() + 64.dp
+                maxOf(textMeasurer.measure(option.label, optionStyle).size.width, option.detail?.let { textMeasurer.measure(it, detailStyle).size.width } ?: 0).toDp() + if (option.icon != null) 112.dp else 64.dp
             } ?: 0.dp
-            maxOf(titleWidth, optionWidth).coerceIn(220.dp, 400.dp)
+            val groupWidth = options.mapNotNull { it.groupTitle }.maxOfOrNull { textMeasurer.measure(it, detailStyle).size.width.toDp() + 80.dp } ?: 0.dp
+            maxOf(titleWidth, optionWidth, groupWidth).coerceIn(220.dp, 400.dp)
         }
     }
     var searchExpanded by remember { mutableStateOf(false) }
@@ -256,8 +260,16 @@ fun VeyarcChoicePicker(
                             ) {
                                 itemsIndexed(filtered, key = { _, option -> option.id }) { index, option ->
                                     Column {
-                                        if (index > 0 && option.group != filtered[index - 1].group) {
-                                            HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                                        if (index == 0 || option.group != filtered[index - 1].group) {
+                                            if (option.groupTitle != null) {
+                                                Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                    HorizontalDivider(Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant)
+                                                    Text(option.groupTitle, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                    HorizontalDivider(Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant)
+                                                }
+                                            } else if (index > 0) {
+                                                HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                                            }
                                         }
                                         val isSelected = option.id == selectedId
                                         Surface(
@@ -270,7 +282,7 @@ fun VeyarcChoicePicker(
                                                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(16.dp),
                                                 contentAlignment = Alignment.Center,
                                             ) {
-                                                Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = if (option.icon != null) 24.dp else 0.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                                                     Text(
                                                         option.label,
                                                         modifier = Modifier.fillMaxWidth(),
@@ -286,6 +298,7 @@ fun VeyarcChoicePicker(
                                                         Text(detail, modifier = Modifier.fillMaxWidth(), style = detailStyle, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
                                                     }
                                                 }
+                                                option.icon?.let { Icon(it, null, Modifier.align(Alignment.CenterStart).size(20.dp), tint = MaterialTheme.colorScheme.primary) }
                                             }
                                         }
                                     }
