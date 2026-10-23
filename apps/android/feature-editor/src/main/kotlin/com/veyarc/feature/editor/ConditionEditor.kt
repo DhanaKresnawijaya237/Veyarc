@@ -88,6 +88,7 @@ import androidx.compose.ui.unit.dp
 import com.veyarc.data.storage.WorkflowAssetDescriptor
 import com.veyarc.model.AndCondition
 import com.veyarc.model.AssetId
+import com.veyarc.model.CaptureImage
 import com.veyarc.model.CapturedImageCondition
 import com.veyarc.model.Condition
 import com.veyarc.model.DisplayOrientation
@@ -109,9 +110,10 @@ import com.veyarc.model.WorkflowIds
 import com.veyarc.model.WorkflowJson
 import com.veyarc.model.backgroundAssetId
 import com.veyarc.model.bundle.BundleAsset
-import com.veyarc.model.capturedBackgroundName
 import com.veyarc.model.capturedImageName
+import com.veyarc.model.capturedTargetIssue
 import com.veyarc.model.integratedImageCondition
+import com.veyarc.model.isFullScreenCapture
 import kotlin.math.roundToInt
 
 private const val MAX_COMPOSED_CONDITIONS = 8
@@ -129,7 +131,7 @@ internal fun Condition.usesCompactEditorSheet(): Boolean = this is ForegroundPac
 internal val LocalImageResults = androidx.compose.runtime.staticCompositionLocalOf<Set<String>> { emptySet() }
 internal val LocalFindImagePreview = androidx.compose.runtime.staticCompositionLocalOf { false }
 
-private val LocalCapturedImages = androidx.compose.runtime.staticCompositionLocalOf<Set<String>> { emptySet() }
+private val LocalCapturedImages = androidx.compose.runtime.staticCompositionLocalOf<Map<String, List<CaptureImage>>> { emptyMap() }
 
 private val LocalConditionVariables = androidx.compose.runtime.staticCompositionLocalOf<Map<String, com.veyarc.model.VariableDeclaration>> { emptyMap() }
 
@@ -137,7 +139,7 @@ private val LocalConditionVariables = androidx.compose.runtime.staticComposition
 internal fun ConditionEditorDialog(
     initialCondition: Condition,
     variables: Map<String, com.veyarc.model.VariableDeclaration> = emptyMap(),
-    capturedImages: Set<String> = emptySet(),
+    capturedImages: Map<String, List<CaptureImage>> = emptyMap(),
     imageResults: Set<String> = emptySet(),
     imageSearchOnly: Boolean = false,
     assets: List<WorkflowAssetDescriptor>,
@@ -154,6 +156,7 @@ internal fun ConditionEditorDialog(
     onApply: (Condition) -> Unit,
 ) {
     var condition by rememberSaveable(initialCondition, stateSaver = ConditionEditorSaver) { mutableStateOf(initialCondition.integratedImageCondition()) }
+    val captureIssue = condition.capturedTargetIssue(capturedImages, previewWidthPx, previewHeightPx)
     val compact = condition.usesCompactEditorSheet()
     val listState = rememberLazyListState()
     val children = when (condition) {
@@ -175,13 +178,9 @@ internal fun ConditionEditorDialog(
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Edit condition", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-                Button(onClick = { onApply(condition) }) { Text("Apply") }
+                Button(enabled = captureIssue == null, onClick = { onApply(condition) }) { Text("Apply") }
             }
-            Text(
-                "Conditions are checked only at their step's polling interval. Screen checks use temporary frames; no video is saved.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            captureIssue?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         }
     }
     androidx.compose.runtime.CompositionLocalProvider(LocalConditionVariables provides variables, LocalCapturedImages provides capturedImages, LocalImageResults provides imageResults, LocalFindImagePreview provides imageSearchOnly) {
@@ -539,12 +538,6 @@ private fun PixelConditionFields(
         TemplatePickerSheet(
             visible = showBackgrounds,
             title = "Background",
-            capturedImages = LocalCapturedImages.current,
-            selectedCapture = condition.capturedBackground?.value,
-            onSelectCapture = { name ->
-                showBackgrounds = false
-                onChange(condition.copy(capturedBackground = VariableName(name)))
-            },
             assets = assets,
             assetNames = assetNames,
             displayWidthPx = previewWidthPx,
@@ -565,7 +558,6 @@ private fun PixelConditionFields(
         toleranceText = next
         next.toIntOrNull()?.takeIf { it in 0..255 }?.let { onChange(condition.copy(tolerance = it)) }
     })
-    condition.capturedBackground?.let { Text("Search in ${it.value} · Captured this run", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
     ImageCheckTestPanel(condition, assets, assetNames, loadAsset, loadPreview, previewWidthPx, previewHeightPx)
 }
 
@@ -668,11 +660,10 @@ private fun ImageConditionFields(
         }
     }
     Text(
-        condition.capturedImageName()?.value?.let { "$it · Captured this run" } ?: assetNames[assetId?.value] ?: "Choose target image",
+        condition.capturedImageName()?.value ?: assetNames[assetId?.value] ?: "Choose target image",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    condition.capturedBackgroundName()?.let { Text("Search in ${it.value} · Captured this run", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
     if (showAdjustments) ImageConditionAdjustments(condition, assets, assetNames, loadAsset, loadPreview, previewWidthPx, previewHeightPx, onChange)
     pickerMode?.let { mode ->
         TemplatePickerSheet(
@@ -683,14 +674,14 @@ private fun ImageConditionFields(
             displayWidthPx = previewWidthPx,
             displayHeightPx = previewHeightPx,
             fullScreenOnly = mode != ImagePickerMode.TARGET,
-            allowAnySize = mode == ImagePickerMode.TARGET,
-            capturedImages = LocalCapturedImages.current,
-            selectedCapture = if (mode == ImagePickerMode.BACKGROUND) condition.capturedBackgroundName()?.value else condition.capturedImageName()?.value,
+            allowAnySize = false,
+            capturedImages = if (mode == ImagePickerMode.BACKGROUND) emptySet() else LocalCapturedImages.current.filterValues { definitions -> definitions.all { it.isFullScreenCapture() == isScreenState } }.keys,
+            selectedCapture = condition.capturedImageName()?.value,
             onSelectCapture = { name ->
                 onChange(
                     when (condition) {
-                        is ImagePresentCondition -> if (mode == ImagePickerMode.BACKGROUND) condition.copy(capturedBackground = VariableName(name)) else condition.copy(assetId = null, capturedImage = VariableName(name))
-                        is ImageAbsentCondition -> if (mode == ImagePickerMode.BACKGROUND) condition.copy(capturedBackground = VariableName(name)) else condition.copy(assetId = null, capturedImage = VariableName(name))
+                        is ImagePresentCondition -> condition.copy(assetId = null, capturedImage = VariableName(name), capturedBackground = null)
+                        is ImageAbsentCondition -> condition.copy(assetId = null, capturedImage = VariableName(name), capturedBackground = null)
                         else -> condition
                     },
                 )

@@ -82,6 +82,8 @@ import com.veyarc.data.storage.WorkflowAssetDescriptor
 import com.veyarc.model.AssetId
 import com.veyarc.model.CaptureImage
 import com.veyarc.model.DisplayOrientation
+import com.veyarc.model.FindImage
+import com.veyarc.model.ImagePositionBinding
 import com.veyarc.model.LongPress
 import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.NormalizedRect
@@ -89,6 +91,7 @@ import com.veyarc.model.RegionAnchor
 import com.veyarc.model.SwipePath
 import com.veyarc.model.TapPoint
 import com.veyarc.model.TapRegion
+import com.veyarc.model.VariableName
 import com.veyarc.model.ViewportSpec
 import com.veyarc.model.WorkflowStep
 import com.veyarc.model.backgroundAssetId
@@ -107,10 +110,34 @@ internal fun GeometryEditorDialog(
     onDismiss: () -> Unit,
     onAddImage: () -> Unit,
     onApply: (WorkflowStep) -> Unit,
+    imageSearches: Map<String, List<FindImage>> = emptyMap(),
 ) {
     var pickerOpen by rememberSaveable { mutableStateOf(false) }
     var selectedAssetId by rememberSaveable(step.id) { mutableStateOf(step.backgroundAssetId()?.value) }
-    fun apply(value: WorkflowStep) = onApply(value.withBackgroundAsset(selectedAssetId?.let(::AssetId)))
+    val originalBinding = when (step) {
+        is TapPoint -> step.imagePosition
+        is LongPress -> step.imagePosition
+        else -> null
+    }
+    var resultName by rememberSaveable(step.id) { mutableStateOf(originalBinding?.name?.value) }
+    var offsetX by rememberSaveable(step.id) { mutableStateOf(originalBinding?.offsetXPx ?: 0) }
+    var offsetY by rememberSaveable(step.id) { mutableStateOf(originalBinding?.offsetYPx ?: 0) }
+    val binding = resultName?.let { ImagePositionBinding(VariableName(it), offsetX, offsetY) }
+    val positionControls: @Composable () -> Unit = {
+        ImagePositionFields(binding, imageSearches) {
+            resultName = it?.name?.value
+            offsetX = it?.offsetXPx ?: 0
+            offsetY = it?.offsetYPx ?: 0
+        }
+    }
+    fun apply(value: WorkflowStep) {
+        val positioned = when (value) {
+            is TapPoint -> value.copy(imagePosition = binding)
+            is LongPress -> value.copy(imagePosition = binding)
+            else -> value
+        }
+        onApply(positioned.withBackgroundAsset(selectedAssetId?.let(::AssetId)))
+    }
     val referenceImage by produceState(selectedAssetId?.let { cachedTemplatePreview(AssetId(it), PREVIEW_MAX_DIMENSION)?.image }, selectedAssetId) {
         value = selectedAssetId?.let { cachedTemplatePreview(AssetId(it), PREVIEW_MAX_DIMENSION)?.image }
         value = selectedAssetId?.let { (cachedTemplatePreview(AssetId(it), PREVIEW_MAX_DIMENSION) ?: loadPreview(AssetId(it), PREVIEW_MAX_DIMENSION))?.image }
@@ -118,20 +145,23 @@ internal fun GeometryEditorDialog(
     val configuration = LocalConfiguration.current
     val compactLandscape = configuration.screenWidthDp < configuration.screenHeightDp &&
         viewport.recordedOrientation == DisplayOrientation.LANDSCAPE
+    val compact = compactLandscape || binding != null
     EditorSheetDialog(
-        compact = compactLandscape,
+        compact = compact,
         onDismiss = onDismiss,
         compactMaxHeightFraction = 0.86f,
         largeHeightFraction = 1f,
         contentScrollable = false,
     ) {
-        Box(if (compactLandscape) Modifier.fillMaxWidth() else Modifier.fillMaxSize()) {
+        Box(if (compact) Modifier.fillMaxWidth() else Modifier.fillMaxSize()) {
             when (step) {
                 is TapPoint -> PointGeometryEditor(
                     title = "Edit tap point",
                     point = step.point,
+                    positionControls = positionControls,
+                    dynamicPosition = binding != null,
                     viewport = viewport,
-                    compact = compactLandscape,
+                    compact = compact,
                     background = referenceImage,
                     onToggleReference = { pickerOpen = !pickerOpen },
                     onAddImage = onAddImage,
@@ -140,8 +170,10 @@ internal fun GeometryEditorDialog(
 
                 is LongPress -> LongPressGeometryEditor(
                     step = step,
+                    positionControls = positionControls,
+                    dynamicPosition = binding != null,
                     viewport = viewport,
-                    compact = compactLandscape,
+                    compact = compact,
                     background = referenceImage,
                     onToggleReference = { pickerOpen = !pickerOpen },
                     onAddImage = onAddImage,
@@ -151,7 +183,7 @@ internal fun GeometryEditorDialog(
                 is CaptureImage -> RegionGeometryEditor(
                     step = TapRegion(step.id, step.region, RegionAnchor.Center),
                     viewport = viewport,
-                    compact = compactLandscape,
+                    compact = compact,
                     background = referenceImage,
                     onToggleReference = { pickerOpen = !pickerOpen },
                     onAddImage = onAddImage,
@@ -162,7 +194,7 @@ internal fun GeometryEditorDialog(
                 is TapRegion -> RegionGeometryEditor(
                     step = step,
                     viewport = viewport,
-                    compact = compactLandscape,
+                    compact = compact,
                     background = referenceImage,
                     onToggleReference = { pickerOpen = !pickerOpen },
                     onAddImage = onAddImage,
@@ -173,7 +205,7 @@ internal fun GeometryEditorDialog(
                     step = step,
                     viewport = viewport,
                     maxPathPoints = maxPathPoints,
-                    compact = compactLandscape,
+                    compact = compact,
                     background = referenceImage,
                     onToggleReference = { pickerOpen = !pickerOpen },
                     onAddImage = onAddImage,
@@ -267,13 +299,13 @@ internal fun TemplatePickerSheet(
                         Surface(onClick = { onSelectCapture(name) }, shape = RoundedCornerShape(12.dp), color = if (name == selectedCapture) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh) {
                             Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
                                 Text(name, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
-                                Text("Captured this run", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
                 }
             }
             if (allowNone) {
+                if (capturedImages.isNotEmpty()) Spacer(Modifier.height(14.dp))
                 Surface(
                     onClick = { onSelect(null) },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
@@ -457,6 +489,8 @@ private sealed interface TemplatePickerPreviewState {
 private fun PointGeometryEditor(
     title: String,
     point: NormalizedCoordinate,
+    positionControls: @Composable () -> Unit,
+    dynamicPosition: Boolean,
     viewport: ViewportSpec,
     compact: Boolean,
     background: ImageBitmap?,
@@ -472,35 +506,40 @@ private fun PointGeometryEditor(
         onAddImage = onAddImage,
         onApply = { onApply(selectedPoint) },
     ) {
-        Text("Tap the display preview to place the contact point.")
-        GeometryPreview(
-            viewport = viewport,
-            background = background,
-            modifier = geometryPreviewModifier(viewport, compact),
-            gestureModifier = Modifier.pointerInput(Unit) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    down.consume()
-                    selectedPoint = down.position.toNormalized(size)
-                    var pressed = true
-                    while (pressed) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        change.consume()
-                        pressed = change.pressed
+        positionControls()
+        if (!dynamicPosition) {
+            Text("Tap the display preview to place the contact point.")
+            GeometryPreview(
+                viewport = viewport,
+                background = background,
+                modifier = geometryPreviewModifier(viewport, compact),
+                gestureModifier = Modifier.pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        selectedPoint = down.position.toNormalized(size)
+                        var pressed = true
+                        while (pressed) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            change.consume()
+                            pressed = change.pressed
+                        }
                     }
-                }
-            },
-        ) {
-            drawTargetMarker(selectedPoint)
+                },
+            ) {
+                drawTargetMarker(selectedPoint)
+            }
+            Text(selectedPoint.displayText())
         }
-        Text(selectedPoint.displayText())
     }
 }
 
 @Composable
 private fun LongPressGeometryEditor(
     step: LongPress,
+    positionControls: @Composable () -> Unit,
+    dynamicPosition: Boolean,
     viewport: ViewportSpec,
     compact: Boolean,
     background: ImageBitmap?,
@@ -524,27 +563,31 @@ private fun LongPressGeometryEditor(
             }
         },
     ) {
-        Text("Tap the display preview to place the press point.")
-        GeometryPreview(
-            viewport = viewport,
-            background = background,
-            modifier = geometryPreviewModifier(viewport, compact),
-            gestureModifier = Modifier.pointerInput(Unit) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    down.consume()
-                    selectedPoint = down.position.toNormalized(size)
-                    var pressed = true
-                    while (pressed) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        change.consume()
-                        pressed = change.pressed
+        positionControls()
+        if (!dynamicPosition) {
+            Text("Tap the display preview to place the press point.")
+            GeometryPreview(
+                viewport = viewport,
+                background = background,
+                modifier = geometryPreviewModifier(viewport, compact),
+                gestureModifier = Modifier.pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        selectedPoint = down.position.toNormalized(size)
+                        var pressed = true
+                        while (pressed) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            change.consume()
+                            pressed = change.pressed
+                        }
                     }
-                }
-            },
-        ) {
-            drawTargetMarker(selectedPoint)
+                },
+            ) {
+                drawTargetMarker(selectedPoint)
+            }
+            Text(selectedPoint.displayText())
         }
         LongEditorField(
             label = "Hold duration (ms)",
@@ -557,7 +600,6 @@ private fun LongPressGeometryEditor(
                 color = MaterialTheme.colorScheme.error,
             )
         }
-        Text(selectedPoint.displayText())
     }
 }
 
@@ -589,34 +631,44 @@ private fun RegionGeometryEditor(
         applyEnabled = validAnchor,
         onApply = { anchor?.let { onApply(step.copy(region = region, anchor = it)) } },
     ) {
-        Text("Drag a corner to resize the region, or drag inside it to move it.")
+        val fullCapture = capture && region == NormalizedRect(0.0, 0.0, 1.0, 1.0)
+        if (capture) {
+            InlineVariableOptions(listOf("crop" to "Crop", "screen" to "Full screen"), if (fullCapture) "screen" else "crop") {
+                region = if (it == "screen") NormalizedRect(0.0, 0.0, 1.0, 1.0) else NormalizedRect(0.25, 0.25, 0.5, 0.5)
+            }
+        }
+        if (!fullCapture) Text("Drag a corner to resize the region, or drag inside it to move it.")
         GeometryPreview(
             viewport = viewport,
             background = background,
             modifier = geometryPreviewModifier(viewport, compact),
-            gestureModifier = Modifier.pointerInput(Unit) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    down.consume()
-                    val start = down.position.toNormalized(size)
-                    activeHandle = selectRegionHandle(region, start, threshold = 0.08)
-                    var previous = down.position
-                    var pressed = true
-                    while (pressed) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        val current = change.position
-                        val handle = activeHandle
-                        if (handle != null) {
-                            val deltaX = (current.x - previous.x) / size.width
-                            val deltaY = (current.y - previous.y) / size.height
-                            region = updateRegion(region, handle, deltaX.toDouble(), deltaY.toDouble())
+            gestureModifier = if (fullCapture) {
+                Modifier
+            } else {
+                Modifier.pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        val start = down.position.toNormalized(size)
+                        activeHandle = selectRegionHandle(region, start, threshold = 0.08)
+                        var previous = down.position
+                        var pressed = true
+                        while (pressed) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            val current = change.position
+                            val handle = activeHandle
+                            if (handle != null) {
+                                val deltaX = (current.x - previous.x) / size.width
+                                val deltaY = (current.y - previous.y) / size.height
+                                region = updateRegion(region, handle, deltaX.toDouble(), deltaY.toDouble())
+                            }
+                            previous = current
+                            change.consume()
+                            pressed = change.pressed
                         }
-                        previous = current
-                        change.consume()
-                        pressed = change.pressed
+                        activeHandle = null
                     }
-                    activeHandle = null
                 }
             },
         ) {

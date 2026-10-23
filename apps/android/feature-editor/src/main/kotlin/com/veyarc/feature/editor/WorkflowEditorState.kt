@@ -977,7 +977,7 @@ fun newStep(kind: WorkflowStepKind, defaultPackage: String, jumpTargetId: String
             com.veyarc.model.SetVariable(id, com.veyarc.model.VariableName(name), declaration.initialValue)
         }
 
-        WorkflowStepKind.FIND_IMAGE -> com.veyarc.model.FindImage(id, com.veyarc.model.VariableName("match"), ImagePresentCondition(region = NormalizedRect(0.0, 0.0, 1.0, 1.0), matchThreshold = 0.9))
+        WorkflowStepKind.FIND_IMAGE -> com.veyarc.model.FindImage(id, com.veyarc.model.VariableName("match"), ImagePresentCondition(region = NormalizedRect(0.25, 0.25, 0.5, 0.5), matchThreshold = 0.9))
 
         WorkflowStepKind.CAPTURE_IMAGE -> com.veyarc.model.CaptureImage(id, com.veyarc.model.VariableName("image"), NormalizedRect(0.25, 0.25, 0.5, 0.5))
 

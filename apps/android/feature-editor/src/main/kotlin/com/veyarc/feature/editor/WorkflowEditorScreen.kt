@@ -145,6 +145,7 @@ import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -175,7 +176,7 @@ import com.veyarc.model.WorkflowIds
 import com.veyarc.model.WorkflowStep
 import com.veyarc.model.bundle.WorkflowBundle
 import com.veyarc.model.capturedImages
-import com.veyarc.model.imageSearches
+import com.veyarc.model.imageSearchesByStep
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -706,6 +707,7 @@ fun WorkflowEditorScreen(
                     loadPreview = ::loadDraftPreview,
                     onDismiss = { geometryTarget = null },
                     onAddImage = { templatePicker.launch("image/*") },
+                    imageSearches = remember(draft.steps, targetStep.id) { draft.steps.imageSearchesByStep()[targetStep.id].orEmpty() },
                     onApply = { updatedStep ->
                         session.update(draft.updateStep(target.path, target.index) { updatedStep })
                         geometryTarget = null
@@ -721,8 +723,8 @@ fun WorkflowEditorScreen(
                     ConditionEditorDialog(
                         initialCondition = condition,
                         variables = draft.variables,
-                        capturedImages = draft.steps.capturedImages().keys,
-                        imageResults = draft.steps.imageSearches().keys,
+                        capturedImages = draft.steps.capturedImages(),
+                        imageResults = remember(draft.steps, targetStep.id) { draft.steps.imageSearchesByStep()[targetStep.id].orEmpty().keys },
                         imageSearchOnly = targetStep is com.veyarc.model.FindImage,
                         assets = draft.assetDescriptors,
                         assetNames = draft.assetNames,
@@ -2626,19 +2628,12 @@ private fun EditableStepSummary(
 ) {
     when (step) {
         is TapPoint -> {
-            ImagePositionFields(step.imagePosition, draft.steps.imageSearches()) { binding -> onDraftChange(draft.updateStep(path, index) { step.copy(imagePosition = binding) }) }
-            Text(if (step.imagePosition == null) step.summary(draft.assetNames) else "Tap the matched image's center", style = MaterialTheme.typography.bodyMedium)
+            Text(step.imagePosition?.let { "Tap ${it.name.value} at its center" } ?: step.summary(draft.assetNames), style = MaterialTheme.typography.bodyMedium)
             return
         }
 
         is LongPress -> {
-            ImagePositionFields(step.imagePosition, draft.steps.imageSearches()) { binding -> onDraftChange(draft.updateStep(path, index) { step.copy(imagePosition = binding) }) }
-            Text(if (step.imagePosition == null) "Hold at ${(step.point.x * 100).toInt()}%, ${(step.point.y * 100).toInt()}%" else "Hold the matched image's center", style = MaterialTheme.typography.bodyMedium)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Hold for ", style = MaterialTheme.typography.bodyMedium)
-                InlineLongField(step.durationMs.value, 1, resetKey = draft.lastSavedRevision) { value -> onDraftChange(draft.updateStep(path, index) { step.copy(durationMs = com.veyarc.model.DurationMillis(value)) }) }
-                Text(" ms", style = MaterialTheme.typography.bodyMedium)
-            }
+            Text(step.imagePosition?.let { "Hold ${it.name.value} at its center for ${step.durationMs.value} ms" } ?: step.summary(draft.assetNames), style = MaterialTheme.typography.bodyMedium)
             return
         }
 
@@ -2653,7 +2648,37 @@ private fun EditableStepSummary(
         }
 
         is com.veyarc.model.SetVariable -> {
-            SetVariableFields(step, draft.variables, draft.steps.imageSearches().keys) { updated -> onDraftChange(draft.updateStep(path, index) { updated }) }
+            SetVariableFields(step, draft.variables, remember(draft.steps, step.id) { draft.steps.imageSearchesByStep()[step.id].orEmpty().keys }) { updated -> onDraftChange(draft.updateStep(path, index) { updated }) }
+            return
+        }
+
+        is Jump -> {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Continue from", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    JumpTargetPicker(draft.jumpTargetLists(path), step.targetStepId, step.id, Modifier.weight(1f)) { targetId ->
+                        onDraftChange(draft.updateStep(path, index) { step.copy(targetStepId = targetId) })
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Repeat up to", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    var visits by rememberNumericEditorText(step.maxVisits.toString(), draft.lastSavedRevision)
+                    BasicTextField(
+                        visits,
+                        { candidate ->
+                            if (candidate.all(Char::isDigit)) {
+                                visits = candidate
+                                candidate.toIntOrNull()?.takeIf { it in 1..draft.runLimits.maxLoopIterations }?.let { value -> onDraftChange(draft.updateStep(path, index) { step.copy(maxVisits = value) }) }
+                            }
+                        },
+                        Modifier.width(64.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 10.dp),
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.primary, textAlign = TextAlign.Center),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    )
+                    Text("times", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
             return
         }
 
@@ -2727,24 +2752,7 @@ private fun EditableStepSummary(
                 Text("ms", style = MaterialTheme.typography.bodyMedium)
             }
 
-            is Jump -> {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Continue from", style = MaterialTheme.typography.bodyMedium)
-                    JumpTargetPicker(
-                        targetLists = draft.jumpTargetLists(path),
-                        selectedId = step.targetStepId,
-                        excludedId = step.id,
-                        onSelect = { targetId ->
-                            onDraftChange(draft.updateStep(path, index) { step.copy(targetStepId = targetId) })
-                        },
-                    )
-                }
-                Text("up to", style = MaterialTheme.typography.bodyMedium)
-                InlineLongField(step.maxVisits.toLong(), 1, draft.runLimits.maxLoopIterations.toLong(), draft.lastSavedRevision) { value ->
-                    onDraftChange(draft.updateStep(path, index) { step.copy(maxVisits = value.toInt()) })
-                }
-                Text("times", style = MaterialTheme.typography.bodyMedium)
-            }
+            is Jump -> Unit
 
             is com.veyarc.model.FindImage, is com.veyarc.model.CaptureImage, is com.veyarc.model.SetVariable -> Unit
 
@@ -2758,6 +2766,7 @@ private fun JumpTargetPicker(
     targetLists: List<List<WorkflowStep>>,
     selectedId: String,
     excludedId: String,
+    modifier: Modifier = Modifier,
     onSelect: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -2772,9 +2781,9 @@ private fun JumpTargetPicker(
         }
     }
     val selected = options.firstOrNull { it.id == selectedId }
-    Box {
-        TextButton(onClick = { expanded = true }) {
-            Text(selected?.label ?: "Choose a destination", maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Box(modifier) {
+        Surface(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.primary) {
+            Text(selected?.label ?: "Choose a destination", Modifier.padding(horizontal = 12.dp, vertical = 10.dp), style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         if (expanded) {
             VeyarcChoicePicker(
@@ -2949,7 +2958,7 @@ private fun WorkflowStep.conditionOrNull(): Condition? = when (this) {
     else -> null
 }
 
-private fun WorkflowStep.hasEditableGeometry(): Boolean = this is com.veyarc.model.CaptureImage || (this is TapPoint && imagePosition == null) || this is TapRegion || (this is LongPress && imagePosition == null) || this is SwipePath
+private fun WorkflowStep.hasEditableGeometry(): Boolean = this is com.veyarc.model.CaptureImage || this is TapPoint || this is TapRegion || this is LongPress || this is SwipePath
 
 private fun viewportFor(context: Context): com.veyarc.model.ViewportSpec {
     val metrics = context.resources.displayMetrics

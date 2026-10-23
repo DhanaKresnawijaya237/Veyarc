@@ -3,6 +3,7 @@ package com.veyarc.feature.editor
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -29,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.veyarc.model.ArithmeticOperator
@@ -118,9 +120,9 @@ private fun VariableDeclarationDialog(draft: WorkflowDraft, originalName: String
 }
 
 @Composable
-internal fun VariableChoice(title: String, label: String, options: List<VeyarcChoice>, selectedId: String? = null, onSelect: (String) -> Unit) {
+internal fun VariableChoice(title: String, label: String, options: List<VeyarcChoice>, selectedId: String? = null, modifier: Modifier = Modifier, onSelect: (String) -> Unit) {
     var expanded by rememberSaveable { mutableStateOf(false) }
-    Surface(onClick = { expanded = true }, enabled = options.isNotEmpty(), shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.primary) {
+    Surface(modifier = modifier, onClick = { expanded = true }, enabled = options.isNotEmpty(), shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.primary) {
         Text(label, Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.bodyMedium)
     }
     if (expanded) {
@@ -165,7 +167,7 @@ private fun ScalarValueButton(value: ScalarValue, onChange: (ScalarValue) -> Uni
 }
 
 @Composable
-private fun InlineVariableOptions(options: List<Pair<String, String>>, selected: String, onSelect: (String) -> Unit) {
+internal fun InlineVariableOptions(options: List<Pair<String, String>>, selected: String, onSelect: (String) -> Unit) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         options.forEach { (id, label) ->
             Surface(
@@ -263,17 +265,39 @@ internal fun VariableComparisonFields(condition: VariableComparisonCondition, va
         is VariableOperand -> variables[left.name.value]?.type
         is com.veyarc.model.ImageResultOperand -> if (left.field == com.veyarc.model.ImageResultField.FOUND) VariableType.BOOLEAN else VariableType.NUMBER
     }
-    OperandField("Compare", condition.left, variables, null) { left ->
-        val nextType = when (left) {
-            is LiteralOperand -> left.value.variableType()
-            is VariableOperand -> variables.getValue(left.name.value).type
-            is com.veyarc.model.ImageResultOperand -> if (left.field == com.veyarc.model.ImageResultField.FOUND) VariableType.BOOLEAN else VariableType.NUMBER
+    val leftValue: @Composable () -> Unit = {
+        OperandField("Value", condition.left, variables, null) { left ->
+            val nextType = when (left) {
+                is LiteralOperand -> left.value.variableType()
+                is VariableOperand -> variables.getValue(left.name.value).type
+                is com.veyarc.model.ImageResultOperand -> if (left.field == com.veyarc.model.ImageResultField.FOUND) VariableType.BOOLEAN else VariableType.NUMBER
+            }
+            onChange(if (nextType == type) condition.copy(left = left) else condition.copy(left = left, operator = ComparisonOperator.EQUALS, right = LiteralOperand(nextType.defaultValue())))
         }
-        onChange(if (nextType == type) condition.copy(left = left) else condition.copy(left = left, operator = ComparisonOperator.EQUALS, right = LiteralOperand(nextType.defaultValue())))
     }
+    val rightValue: @Composable () -> Unit = { OperandField("Compare with", condition.right, variables, type ?: VariableType.NUMBER) { onChange(condition.copy(right = it)) } }
     val operators = ComparisonOperator.entries.filter { type == VariableType.NUMBER || it == ComparisonOperator.EQUALS || it == ComparisonOperator.NOT_EQUALS }
-    VariableChoice("Comparison", condition.operator.displayName(), operators.map { VeyarcChoice(it.name, it.displayName()) }, condition.operator.name) { onChange(condition.copy(operator = ComparisonOperator.valueOf(it))) }
-    OperandField("With", condition.right, variables, type ?: VariableType.NUMBER) { onChange(condition.copy(right = it)) }
+    val comparison: @Composable () -> Unit = {
+        VariableChoice("Comparison", condition.operator.displayName(), operators.map { VeyarcChoice(it.name, it.displayName()) }, condition.operator.name) { onChange(condition.copy(operator = ComparisonOperator.valueOf(it))) }
+    }
+    if (LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            ComparisonOperandPanel(Modifier.weight(1f), leftValue)
+            comparison()
+            ComparisonOperandPanel(Modifier.weight(1f), rightValue)
+        }
+    } else {
+        ComparisonOperandPanel(content = leftValue)
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { comparison() }
+        ComparisonOperandPanel(content = rightValue)
+    }
+}
+
+@Composable
+private fun ComparisonOperandPanel(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Surface(modifier = modifier, shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { content() }
+    }
 }
 
 @Composable
@@ -287,8 +311,8 @@ private fun OperandField(title: String, operand: Operand, variables: Map<String,
         }
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Text(title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        VariableChoice(title, if (operand is LiteralOperand) "${operand.value.variableType().displayName()} value" else operand.displayName(), available.map { VeyarcChoice("variable:${it.key}", it.key) } + types.map { VeyarcChoice("literal:${it.name}", "${it.displayName()} value", group = 1) } + results) { selection ->
+        Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        VariableChoice(title, if (operand is LiteralOperand) "${operand.value.variableType().displayName()} value" else operand.displayName(), available.map { VeyarcChoice("variable:${it.key}", it.key) } + types.map { VeyarcChoice("literal:${it.name}", "${it.displayName()} value", group = 1) } + results, modifier = Modifier.weight(1.4f)) { selection ->
             onChange(
                 if (selection.startsWith("result:")) {
                     val parts = selection.split(':')
