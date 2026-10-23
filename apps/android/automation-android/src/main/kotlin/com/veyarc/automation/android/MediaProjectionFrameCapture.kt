@@ -159,22 +159,23 @@ class EphemeralScreenFrame internal constructor(
             "Template crop is too large to store safely"
         }
         val output = ByteArray(cropWidth * cropHeight * BYTES_PER_PIXEL)
-        withRgbaBytes { bytes ->
-            for (row in 0 until cropHeight) {
-                val sourceOffset = ((bounds.top + row) * capturedBounds.width + bounds.left) * BYTES_PER_PIXEL
-                val destinationOffset = row * cropWidth * BYTES_PER_PIXEL
-                bytes.copyInto(
-                    destination = output,
-                    destinationOffset = destinationOffset,
-                    startIndex = sourceOffset,
-                    endIndex = sourceOffset + cropWidth * BYTES_PER_PIXEL,
-                )
-            }
-        }
         return try {
-            RgbaTemplate.fromRgba(cropWidth, cropHeight, output)
-        } finally {
+            withRgbaBytes { bytes ->
+                for (row in 0 until cropHeight) {
+                    val sourceOffset = ((bounds.top + row) * capturedBounds.width + bounds.left) * BYTES_PER_PIXEL
+                    val destinationOffset = row * cropWidth * BYTES_PER_PIXEL
+                    bytes.copyInto(
+                        destination = output,
+                        destinationOffset = destinationOffset,
+                        startIndex = sourceOffset,
+                        endIndex = sourceOffset + cropWidth * BYTES_PER_PIXEL,
+                    )
+                }
+            }
+            RgbaTemplate.fromOwnedRgba(cropWidth, cropHeight, output)
+        } catch (error: Throwable) {
             output.fill(0)
+            throw error
         }
     }
 

@@ -321,6 +321,7 @@ internal fun remapClipboardSteps(steps: List<WorkflowStep>, assetIds: Map<String
     }
     steps.forEach(::assign)
     fun condition(value: Condition): Condition = when (value) {
+        is com.veyarc.model.CapturedImageCondition -> value.copy(backgroundAssetId = value.backgroundAssetId?.let { assetIds[it.value] ?: it })
         is com.veyarc.model.PixelColorCondition -> value.copy(backgroundAssetId = value.backgroundAssetId?.let { assetIds[it.value] ?: it })
         is ImagePresentCondition -> value.copy(assetId = assetIds[value.assetId.value] ?: value.assetId, backgroundAssetId = value.backgroundAssetId?.let { assetIds[it.value] ?: it })
         is ImageAbsentCondition -> value.copy(assetId = assetIds[value.assetId.value] ?: value.assetId, backgroundAssetId = value.backgroundAssetId?.let { assetIds[it.value] ?: it })
@@ -333,6 +334,7 @@ internal fun remapClipboardSteps(steps: List<WorkflowStep>, assetIds: Map<String
     fun step(value: WorkflowStep): WorkflowStep {
         val id = requireNotNull(stepIds[value.id])
         return when (value) {
+            is com.veyarc.model.CaptureImage -> value.copy(id = id)
             is com.veyarc.model.TapPoint -> value.copy(id = id)
             is com.veyarc.model.TapRegion -> value.copy(id = id)
             is com.veyarc.model.LongPress -> value.copy(id = id)

@@ -1,5 +1,6 @@
 package com.veyarc.automation.android
 
+import android.app.ActivityManager
 import android.content.Context
 import com.veyarc.engine.AutomationDriver
 import com.veyarc.engine.CancellationSignal
@@ -32,6 +33,7 @@ class AndroidWorkflowExecutor private constructor(
             clock = AndroidExecutionClock,
             runner = WorkflowRunner(),
             startupPackage = PackageName(context.applicationContext.packageName),
+            runtimeImageMemoryBytes = maxOf(1L, context.getSystemService(ActivityManager::class.java).memoryClass.toLong() / 8) * 1024 * 1024,
         ),
     )
 
@@ -88,6 +90,7 @@ class AndroidWorkflowExecutor private constructor(
                 frameSource = MediaProjectionCaptureRuntime::captureLatestFrame,
                 templateSource = templateSource ?: ImageTemplateSource { null },
                 cancellation = cancellation,
+                maxRuntimeImageBytes = dependencies.runtimeImageMemoryBytes,
             )
         } else {
             null
@@ -112,6 +115,7 @@ class AndroidWorkflowExecutor private constructor(
         val clock: ExecutionClock,
         val runner: WorkflowRunner,
         val startupPackage: PackageName?,
+        val runtimeImageMemoryBytes: Long = 32L * 1024 * 1024,
     )
 }
 

@@ -80,6 +80,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.veyarc.data.storage.WorkflowAssetDescriptor
 import com.veyarc.model.AssetId
+import com.veyarc.model.CaptureImage
 import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.LongPress
 import com.veyarc.model.NormalizedCoordinate
@@ -142,6 +143,16 @@ internal fun GeometryEditorDialog(
                     background = referenceImage,
                     onToggleReference = { pickerOpen = !pickerOpen },
                     onApply = ::apply,
+                )
+
+                is CaptureImage -> RegionGeometryEditor(
+                    step = TapRegion(step.id, step.region, RegionAnchor.Center),
+                    viewport = viewport,
+                    compact = compactLandscape,
+                    background = referenceImage,
+                    onToggleReference = { pickerOpen = !pickerOpen },
+                    onApply = { updated -> apply(step.copy(region = (updated as TapRegion).region)) },
+                    capture = true,
                 )
 
                 is TapRegion -> RegionGeometryEditor(
@@ -532,6 +543,7 @@ private fun RegionGeometryEditor(
     background: ImageBitmap?,
     onToggleReference: () -> Unit,
     onApply: (WorkflowStep) -> Unit,
+    capture: Boolean = false,
 ) {
     var region by remember(step) { mutableStateOf(step.region) }
     var anchorPreset by remember(step) { mutableStateOf(AnchorPreset.from(step.anchor)) }
@@ -543,7 +555,7 @@ private fun RegionGeometryEditor(
     val validAnchor = anchor != null
 
     GeometryEditorLayout(
-        title = "Edit touch region",
+        title = if (capture) "Capture area" else "Edit touch region",
         compact = compact,
         onToggleReference = onToggleReference,
         applyEnabled = validAnchor,
@@ -580,46 +592,48 @@ private fun RegionGeometryEditor(
                 }
             },
         ) {
-            drawRegion(region, anchor)
+            drawRegion(region, if (capture) null else anchor)
         }
         Text(region.displayText())
-        Box {
-            OutlinedButton(onClick = { anchorMenuExpanded = true }) {
-                Text("Anchor: ${anchorPreset.label}")
+        if (!capture) {
+            Box {
+                OutlinedButton(onClick = { anchorMenuExpanded = true }) {
+                    Text("Anchor: ${anchorPreset.label}")
+                }
+                if (anchorMenuExpanded) {
+                    VeyarcChoicePicker(
+                        title = "Tap anchor",
+                        options = AnchorPreset.entries.map { VeyarcChoice(it.name, it.label) },
+                        selectedId = anchorPreset.name,
+                        onDismiss = { anchorMenuExpanded = false },
+                        onSelect = { choice ->
+                            anchorPreset = AnchorPreset.entries.first { it.name == choice.id }
+                            anchorMenuExpanded = false
+                        },
+                    )
+                }
             }
-            if (anchorMenuExpanded) {
-                VeyarcChoicePicker(
-                    title = "Tap anchor",
-                    options = AnchorPreset.entries.map { VeyarcChoice(it.name, it.label) },
-                    selectedId = anchorPreset.name,
-                    onDismiss = { anchorMenuExpanded = false },
-                    onSelect = { choice ->
-                        anchorPreset = AnchorPreset.entries.first { it.name == choice.id }
-                        anchorMenuExpanded = false
-                    },
-                )
-            }
-        }
-        if (anchorPreset == AnchorPreset.CUSTOM) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DecimalEditorField(
-                    label = "Anchor X",
-                    value = customAnchorX,
-                    onValueChange = { customAnchorX = it },
-                    modifier = Modifier.weight(1f),
-                )
-                DecimalEditorField(
-                    label = "Anchor Y",
-                    value = customAnchorY,
-                    onValueChange = { customAnchorY = it },
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            if (!validAnchor) {
-                Text(
-                    "Custom anchor coordinates must be between 0 and 1.",
-                    color = MaterialTheme.colorScheme.error,
-                )
+            if (anchorPreset == AnchorPreset.CUSTOM) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DecimalEditorField(
+                        label = "Anchor X",
+                        value = customAnchorX,
+                        onValueChange = { customAnchorX = it },
+                        modifier = Modifier.weight(1f),
+                    )
+                    DecimalEditorField(
+                        label = "Anchor Y",
+                        value = customAnchorY,
+                        onValueChange = { customAnchorY = it },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (!validAnchor) {
+                    Text(
+                        "Custom anchor coordinates must be between 0 and 1.",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
         }
     }

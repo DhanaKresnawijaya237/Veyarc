@@ -4,6 +4,7 @@ package com.veyarc.model
 object WorkflowValidator {
     fun validate(document: WorkflowDocument): List<ValidationError> {
         val errors = mutableListOf<ValidationError>()
+        val runtimeCaptures = document.steps.capturedImages()
         if (document.schemaVersion != WorkflowDocument.CURRENT_SCHEMA_VERSION) {
             errors += error(
                 ValidationErrorCode.UNSUPPORTED_SCHEMA_VERSION,
@@ -98,6 +99,7 @@ object WorkflowValidator {
             path = "/steps",
             depth = 1,
             document = document,
+            runtimeCaptures = runtimeCaptures,
             allStepIds = allStepIds,
             seenStepIds = seenStepIds,
             declaredAssets = declaredAssets,
@@ -146,6 +148,7 @@ object WorkflowValidator {
         path: String,
         depth: Int,
         document: WorkflowDocument,
+        runtimeCaptures: Map<String, List<CaptureImage>>,
         allStepIds: Set<String>,
         seenStepIds: MutableSet<String>,
         declaredAssets: Map<String, AssetReference>,
@@ -170,6 +173,7 @@ object WorkflowValidator {
                         condition = step.condition,
                         path = "$stepPath/condition",
                         document = document,
+                        runtimeCaptures = runtimeCaptures,
                         allStepIds = allStepIds,
                         seenStepIds = seenStepIds,
                         declaredAssets = declaredAssets,
@@ -182,6 +186,7 @@ object WorkflowValidator {
                     condition = step.condition,
                     path = "$stepPath/condition",
                     document = document,
+                    runtimeCaptures = runtimeCaptures,
                     allStepIds = allStepIds,
                     seenStepIds = seenStepIds,
                     declaredAssets = declaredAssets,
@@ -194,6 +199,7 @@ object WorkflowValidator {
                         condition = step.condition,
                         path = "$stepPath/condition",
                         document = document,
+                        runtimeCaptures = runtimeCaptures,
                         allStepIds = allStepIds,
                         seenStepIds = seenStepIds,
                         declaredAssets = declaredAssets,
@@ -255,7 +261,7 @@ object WorkflowValidator {
 
                 is Wait -> step.durationVariable?.let { validateNumberVariable(it, "$stepPath/durationVariable", document, errors) }
 
-                is LongPress, is StageBoundary, is Stop, is TapPoint, is TapRegion -> Unit
+                is CaptureImage, is LongPress, is StageBoundary, is Stop, is TapPoint, is TapRegion -> Unit
             }
 
             seenStepIds += step.id
@@ -266,6 +272,7 @@ object WorkflowValidator {
                         "$stepPath/thenSteps",
                         depth + 1,
                         document,
+                        runtimeCaptures,
                         allStepIds,
                         seenStepIds,
                         declaredAssets,
@@ -278,6 +285,7 @@ object WorkflowValidator {
                         "$stepPath/elseSteps",
                         depth + 1,
                         document,
+                        runtimeCaptures,
                         allStepIds,
                         seenStepIds,
                         declaredAssets,
@@ -292,6 +300,7 @@ object WorkflowValidator {
                     "$stepPath/bodySteps",
                     depth + 1,
                     document,
+                    runtimeCaptures,
                     allStepIds,
                     seenStepIds,
                     declaredAssets,
@@ -305,6 +314,7 @@ object WorkflowValidator {
                     "$stepPath/bodySteps",
                     depth + 1,
                     document,
+                    runtimeCaptures,
                     allStepIds,
                     seenStepIds,
                     declaredAssets,
@@ -322,6 +332,7 @@ object WorkflowValidator {
         condition: Condition,
         path: String,
         document: WorkflowDocument,
+        runtimeCaptures: Map<String, List<CaptureImage>>,
         allStepIds: Set<String>,
         seenStepIds: Set<String>,
         declaredAssets: Map<String, AssetReference>,
@@ -330,6 +341,21 @@ object WorkflowValidator {
     ) {
         condition.backgroundAssetId()?.let { validateImageAsset(it, "$path/backgroundAssetId", AssetKind.IMAGE_TEMPLATE, declaredAssets, referencedAssets, errors) }
         when (condition) {
+            is CapturedImageCondition -> {
+                val captures = runtimeCaptures[condition.name.value]
+                if (captures.isNullOrEmpty()) {
+                    errors += error(ValidationErrorCode.MISSING_VARIABLE, "$path/name", "Add a Capture image block for ${condition.name.value}")
+                } else {
+                    captures.forEach { capture ->
+                        fun span(start: Double, size: Double, pixels: Int) = kotlin.math.ceil((start + size) * pixels).toInt().coerceAtMost(pixels) - kotlin.math.floor(start * pixels).toInt()
+                        val width = span(capture.region.x, capture.region.width, document.viewport.recordedWidthPx)
+                        val height = span(capture.region.y, capture.region.height, document.viewport.recordedHeightPx)
+                        val asset = AssetReference(AssetId("runtime-image"), AssetKind.IMAGE_TEMPLATE, condition.name.value, width, height)
+                        validateImageBounds(asset.assetId, condition.region, false, path, document, mapOf(asset.assetId.value to asset), errors)
+                    }
+                }
+            }
+
             is PixelColorCondition -> Unit
 
             is ImagePresentCondition -> {
@@ -379,6 +405,7 @@ object WorkflowValidator {
                         child,
                         "$path/conditions/$index",
                         document,
+                        runtimeCaptures,
                         allStepIds,
                         seenStepIds,
                         declaredAssets,
@@ -401,6 +428,7 @@ object WorkflowValidator {
                         child,
                         "$path/conditions/$index",
                         document,
+                        runtimeCaptures,
                         allStepIds,
                         seenStepIds,
                         declaredAssets,
@@ -414,6 +442,7 @@ object WorkflowValidator {
                 condition.condition,
                 "$path/condition",
                 document,
+                runtimeCaptures,
                 allStepIds,
                 seenStepIds,
                 declaredAssets,

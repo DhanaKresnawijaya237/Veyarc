@@ -2,6 +2,8 @@ package com.veyarc.feature.runner
 
 import com.veyarc.engine.RunEvent
 import com.veyarc.model.AndCondition
+import com.veyarc.model.CaptureImage
+import com.veyarc.model.CapturedImageCondition
 import com.veyarc.model.Condition
 import com.veyarc.model.ForegroundPackageCondition
 import com.veyarc.model.IfElse
@@ -91,7 +93,8 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
         if (threshold == null) return "$base: ${event.result}"
 
         val score = event.matchScore
-        val imageNotFound = (condition is ImageAbsentCondition && event.result) ||
+        val imageNotFound = (condition is CapturedImageCondition && event.result != condition.present) ||
+            (condition is ImageAbsentCondition && event.result) ||
             (condition is ImagePresentCondition && !event.result)
         val match = when {
             score != null && imageNotFound && (condition as? ImagePresentCondition)?.matchMode != ImageMatchMode.SCREEN_STATE ->
@@ -135,6 +138,8 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
 
         is Stop -> "Stop workflow"
 
+        is CaptureImage -> "Capture ${step.name.value}"
+
         is SetVariable -> "Set variable ${step.name.value}"
 
         null -> "Workflow step"
@@ -154,11 +159,14 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
         is WhileStep -> "While loop"
         is LaunchApp -> "Launch app"
         is Stop -> "Stop workflow"
+        is CaptureImage -> "Capture image"
         is SetVariable -> "Set variable"
         null -> "Step"
     }
 
     private fun conditionName(condition: Condition): String = when (condition) {
+        is CapturedImageCondition -> "Captured ${condition.name.value} ${if (condition.present) "appears" else "is absent"}"
+
         is PixelColorCondition -> if (condition.region == null) "Pixel color at ${formatPoint(condition.point)}" else "Color appears in the search area"
 
         is ImagePresentCondition -> when (condition.matchMode) {
@@ -185,6 +193,7 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
 
     private fun Condition.matchThresholdOrNull(): Double? = when (this) {
         is ImagePresentCondition -> matchThreshold
+        is CapturedImageCondition -> matchThreshold
         is ImageAbsentCondition -> matchThreshold
         else -> null
     }

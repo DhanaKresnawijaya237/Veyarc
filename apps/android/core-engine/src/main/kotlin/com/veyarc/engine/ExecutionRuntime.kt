@@ -36,6 +36,10 @@ interface ConditionObserver {
     fun observe(condition: Condition): ConditionObservation
 }
 
+interface RuntimeImageCapture {
+    fun captureImage(name: com.veyarc.model.VariableName, region: com.veyarc.model.NormalizedRect): Unit = throw UnsupportedOperationException("Runtime image capture is unavailable")
+}
+
 data class ColorMatchObservation(
     val targetArgb: Long,
     val closestArgb: Long,
@@ -70,7 +74,8 @@ interface AutomationDriver :
     AppLauncher,
     ForegroundPackageSource,
     ViewportSource,
-    ConditionObserver
+    ConditionObserver,
+    RuntimeImageCapture
 
 /** Monotonic time and sleeping are injected so tests do not depend on wall-clock timing. */
 interface ExecutionClock {

@@ -1,6 +1,8 @@
 package com.veyarc.engine
 
 import com.veyarc.model.AndCondition
+import com.veyarc.model.CaptureImage
+import com.veyarc.model.CapturedImageCondition
 import com.veyarc.model.Condition
 import com.veyarc.model.ForegroundPackageCondition
 import com.veyarc.model.IfElse
@@ -70,6 +72,8 @@ object WorkflowCompiler {
     private fun compileSteps(steps: List<WorkflowStep>): List<ExecutionStep> = immutableList(
         steps.map { step ->
             when (step) {
+                is CaptureImage -> ExecutionStep.CaptureImage(step.id, step.name, step.region)
+
                 is TapPoint -> ExecutionStep.TapPoint(step.id, step.point)
 
                 is TapRegion -> ExecutionStep.TapRegion(
@@ -198,6 +202,7 @@ object WorkflowCompiler {
     }
 
     private fun stepCapability(step: WorkflowStep): EngineCapability = when (step) {
+        is CaptureImage -> EngineCapability.CAPTURE_IMAGE
         is TapPoint -> EngineCapability.TAP_POINT
         is TapRegion -> EngineCapability.TAP_REGION
         is LongPress -> EngineCapability.LONG_PRESS
@@ -215,6 +220,7 @@ object WorkflowCompiler {
     }
 
     private fun conditionCapability(condition: Condition): EngineCapability = when (condition) {
+        is CapturedImageCondition -> EngineCapability.CAPTURE_IMAGE
         is PixelColorCondition -> EngineCapability.PIXEL_COLOR_CONDITION
         is ImagePresentCondition, is ImageAbsentCondition -> EngineCapability.IMAGE_TEMPLATE_CONDITION
         is ForegroundPackageCondition -> EngineCapability.FOREGROUND_PACKAGE_CONDITION

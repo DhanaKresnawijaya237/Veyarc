@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.veyarc.model.ArithmeticOperator
+import com.veyarc.model.CaptureImage
 import com.veyarc.model.ComparisonOperator
 import com.veyarc.model.LiteralOperand
 import com.veyarc.model.NumberValue
@@ -190,6 +191,34 @@ internal fun NumberVariableBinding(title: String, selected: VariableName?, varia
     if (numbers.isNotEmpty() || selected != null) {
         VariableChoice(title, selected?.value ?: "Use variable", listOf(VeyarcChoice("fixed", "Fixed number")) + numbers.map { VeyarcChoice("variable:${it.key}", it.key) }, selected?.let { "variable:${it.value}" } ?: "fixed") {
             onChange(if (it == "fixed") null else VariableName(it.removePrefix("variable:")))
+        }
+    }
+}
+
+@Composable
+internal fun CaptureImageFields(step: CaptureImage, onRename: (VariableName) -> Unit) {
+    var editing by rememberSaveable { mutableStateOf(false) }
+    TextButton(onClick = { editing = true }) { Text(step.name.value) }
+    Text("Temporary image · Replaced each time this block runs", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (editing) {
+        var name by rememberSaveable { mutableStateOf(step.name.value) }
+        val parsed = runCatching { VariableName(name) }.getOrNull()
+        EditorSheetDialog(compact = true, onDismiss = { editing = false }) {
+            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Image name", style = MaterialTheme.typography.titleLarge)
+                OutlinedTextField(
+                    name,
+                    { name = it },
+                    Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    isError = parsed == null,
+                    supportingText = { Text("Use lowercase letters, numbers and _. Reuse a name to replace that image.") },
+                )
+                Button(enabled = parsed != null, onClick = {
+                    onRename(parsed!!)
+                    editing = false
+                }, modifier = Modifier.align(Alignment.End)) { Text("Apply") }
+            }
         }
     }
 }

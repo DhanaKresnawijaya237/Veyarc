@@ -174,6 +174,7 @@ import com.veyarc.model.WhileStep
 import com.veyarc.model.WorkflowIds
 import com.veyarc.model.WorkflowStep
 import com.veyarc.model.bundle.WorkflowBundle
+import com.veyarc.model.capturedImages
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -718,6 +719,7 @@ fun WorkflowEditorScreen(
                     ConditionEditorDialog(
                         initialCondition = condition,
                         variables = draft.variables,
+                        capturedImages = draft.steps.capturedImages().keys,
                         assets = draft.assetDescriptors,
                         assetNames = draft.assetNames,
                         defaultPackage = draft.allowedPackagesText.firstPackageOrDefault(),
@@ -2210,7 +2212,7 @@ private fun StepCard(
                     }
                     if (step.hasEditableGeometry()) {
                         IconButton(onClick = { onEditGeometry(path, index) }) {
-                            Icon(Icons.Outlined.Edit, contentDescription = "Edit touch geometry")
+                            Icon(Icons.Outlined.Edit, contentDescription = if (step is com.veyarc.model.CaptureImage) "Edit capture area" else "Edit touch geometry")
                         }
                     }
                     if (step.conditionOrNull() != null) {
@@ -2556,6 +2558,7 @@ private fun WorkflowStep.blockCategory(): BlockCategory = when (this) {
     is IfElse -> BlockCategory.BRANCH
     is Repeat, is WhileStep -> BlockCategory.LOOP
     is Jump -> BlockCategory.JUMP
+    is com.veyarc.model.CaptureImage -> BlockCategory.CONDITION
     is com.veyarc.model.SetVariable -> BlockCategory.VARIABLE
     is LaunchApp -> BlockCategory.APP
     is Stop -> BlockCategory.STOP
@@ -2783,6 +2786,8 @@ private fun StepEditorFields(
     onEditCondition: (StepListPath, Int) -> Unit,
 ) {
     when (step) {
+        is com.veyarc.model.CaptureImage -> CaptureImageFields(step) { name -> onDraftChange(draft.renameCapturedImage(step.name, name)) }
+
         is com.veyarc.model.SetVariable -> SetVariableFields(step, draft.variables) { updated -> onDraftChange(draft.updateStep(path, index) { updated }) }
 
         is Wait,
@@ -2896,7 +2901,7 @@ private fun WorkflowStep.conditionOrNull(): Condition? = when (this) {
     else -> null
 }
 
-private fun WorkflowStep.hasEditableGeometry(): Boolean = this is TapPoint || this is TapRegion || this is LongPress || this is SwipePath
+private fun WorkflowStep.hasEditableGeometry(): Boolean = this is com.veyarc.model.CaptureImage || this is TapPoint || this is TapRegion || this is LongPress || this is SwipePath
 
 private fun viewportFor(context: Context): com.veyarc.model.ViewportSpec {
     val metrics = context.resources.displayMetrics

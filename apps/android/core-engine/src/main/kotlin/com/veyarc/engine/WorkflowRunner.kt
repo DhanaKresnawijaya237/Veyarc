@@ -2,6 +2,7 @@ package com.veyarc.engine
 
 import com.veyarc.model.AndCondition
 import com.veyarc.model.ArithmeticOperator
+import com.veyarc.model.CapturedImageCondition
 import com.veyarc.model.ComparisonOperator
 import com.veyarc.model.Condition
 import com.veyarc.model.ForegroundPackageCondition
@@ -170,6 +171,11 @@ class WorkflowRunner {
     }
 
     private fun executeStepBody(step: ExecutionStep, state: RunState): StepExecution = when (step) {
+        is ExecutionStep.CaptureImage -> {
+            state.driver.captureImage(step.name, step.region)
+            StepExecution(StepOutcome.COMPLETED)
+        }
+
         is ExecutionStep.TapPoint -> {
             dispatchAtViewport(
                 state = state,
@@ -362,6 +368,7 @@ class WorkflowRunner {
         var observation: ConditionObservation? = null
         val result = when (condition) {
             is PixelColorCondition,
+            is CapturedImageCondition,
             is ImagePresentCondition,
             is ImageAbsentCondition,
             is OrientationCondition,

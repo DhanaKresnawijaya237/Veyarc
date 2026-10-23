@@ -71,6 +71,7 @@ internal fun ImageConditionPreview(
     loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
     screenStateMode: Boolean = false,
     colorSearch: Boolean = false,
+    runtimeImage: Boolean = false,
     onRegionChange: ((NormalizedRect) -> Unit)?,
 ) {
     val safeDisplayWidth = displayWidthPx.coerceAtLeast(1)
@@ -109,7 +110,16 @@ internal fun ImageConditionPreview(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Text(if (colorSearch) "Colour search area" else "Current-device comparison", style = MaterialTheme.typography.titleSmall)
+            Text(
+                if (runtimeImage) {
+                    "Captured image search area"
+                } else if (colorSearch) {
+                    "Colour search area"
+                } else {
+                    "Current-device comparison"
+                },
+                style = MaterialTheme.typography.titleSmall,
+            )
             Text(
                 if (screenStateMode) "Compare with the whole screen." else "Drag the area or its corners to choose where Veyarc searches.",
                 modifier = Modifier.padding(top = 4.dp),
@@ -142,7 +152,7 @@ internal fun ImageConditionPreview(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (!colorSearch) {
+            if (!colorSearch && !runtimeImage) {
                 TemplateScaleDetails(
                     preview = preview,
                     displayWidthPx = safeDisplayWidth,

@@ -3,6 +3,8 @@ package com.veyarc.feature.editor
 import com.veyarc.model.AndCondition
 import com.veyarc.model.ArithmeticOperator
 import com.veyarc.model.BooleanValue
+import com.veyarc.model.CaptureImage
+import com.veyarc.model.CapturedImageCondition
 import com.veyarc.model.ComparisonOperator
 import com.veyarc.model.Condition
 import com.veyarc.model.IfElse
@@ -169,4 +171,25 @@ private fun List<WorkflowStep>.mapVariableNames(transform: (VariableName) -> Var
             else -> step
         }
     }
+}
+
+internal fun WorkflowDraft.renameCapturedImage(previous: VariableName, name: VariableName): WorkflowDraft {
+    fun condition(value: Condition): Condition = when (value) {
+        is CapturedImageCondition -> if (value.name == previous) value.copy(name = name) else value
+        is AndCondition -> value.copy(conditions = value.conditions.map(::condition))
+        is OrCondition -> value.copy(conditions = value.conditions.map(::condition))
+        is NotCondition -> value.copy(condition = condition(value.condition))
+        else -> value
+    }
+    fun update(items: List<WorkflowStep>): List<WorkflowStep> = items.map { step ->
+        when (step) {
+            is CaptureImage -> if (step.name == previous) step.copy(name = name) else step
+            is WaitUntil -> step.copy(condition = condition(step.condition))
+            is IfElse -> step.copy(condition = condition(step.condition), thenSteps = update(step.thenSteps), elseSteps = update(step.elseSteps))
+            is Repeat -> step.copy(bodySteps = update(step.bodySteps))
+            is WhileStep -> step.copy(condition = condition(step.condition), bodySteps = update(step.bodySteps))
+            else -> step
+        }
+    }
+    return copy(steps = update(steps))
 }

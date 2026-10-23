@@ -5,13 +5,16 @@ import com.veyarc.engine.CancellationSignals
 import com.veyarc.engine.ColorMatchObservation
 import com.veyarc.engine.ConditionObservation
 import com.veyarc.engine.ConditionObserver
+import com.veyarc.engine.RuntimeImageCapture
 import com.veyarc.model.AssetId
+import com.veyarc.model.CapturedImageCondition
 import com.veyarc.model.Condition
 import com.veyarc.model.ImageAbsentCondition
 import com.veyarc.model.ImageMatchMode
 import com.veyarc.model.ImagePresentCondition
 import com.veyarc.model.NormalizedRect
 import com.veyarc.model.PixelColorCondition
+import com.veyarc.model.VariableName
 import java.io.Closeable
 import java.util.concurrent.CancellationException
 import kotlin.math.abs
@@ -24,9 +27,8 @@ fun interface ImageTemplateSource {
 /**
  * A decoded RGBA template held in memory for the duration of condition evaluation.
  *
- * The template is deliberately separate from [EphemeralScreenFrame]: templates are user-selected
- * assets and will be supplied by the encrypted asset layer, while captured screen frames must be
- * released immediately after each observation.
+ * Saved templates come from encrypted assets. Runtime captures belong to one evaluator and are
+ * wiped on replacement or close. Both are independent of the immediately released screen frame.
  */
 class RgbaTemplate private constructor(
     val widthPx: Int,
@@ -78,14 +80,19 @@ class VisualConditionEvaluator(
     private val templateSource: ImageTemplateSource,
     private val maxSearchOrigins: Long = DEFAULT_MAX_SEARCH_ORIGINS,
     private val cancellation: CancellationSignal = CancellationSignals.NONE,
+    private val maxRuntimeImageBytes: Long = 32L * 1024 * 1024,
 ) : ConditionObserver,
+    RuntimeImageCapture,
     Closeable {
     private val imageMatcher = lazy { OpenCvImageMatcher() }
+    private val runtimeImages = mutableMapOf<VariableName, RgbaTemplate>()
+    private var runtimeImageBytes = 0L
 
     @Volatile private var closed = false
 
     init {
         require(maxSearchOrigins > 0L) { "Visual search-origin budget must be positive" }
+        require(maxRuntimeImageBytes > 0L) { "Runtime image memory must be positive" }
     }
 
     /** Evaluates only visual conditions; other condition types are owned by the engine/driver. */
@@ -99,7 +106,7 @@ class VisualConditionEvaluator(
             is PixelColorCondition -> evaluatePixelColor(condition)
 
             is ImagePresentCondition -> evaluateImage(
-                assetId = condition.assetId,
+                template = requireTemplate(condition.assetId),
                 region = condition.region,
                 threshold = condition.matchThreshold,
                 present = true,
@@ -107,11 +114,20 @@ class VisualConditionEvaluator(
             )
 
             is ImageAbsentCondition -> evaluateImage(
-                assetId = condition.assetId,
+                template = requireTemplate(condition.assetId),
                 region = condition.region,
                 threshold = condition.matchThreshold,
                 present = false,
                 matchMode = ImageMatchMode.APPEARS_WITHIN_REGION,
+            )
+
+            is CapturedImageCondition -> evaluateImage(
+                template = runtimeImages[condition.name] ?: throw VisualConditionEvaluationException("Image ${condition.name.value} has not been captured in this run. Run its Capture image block first."),
+                region = condition.region,
+                threshold = condition.matchThreshold,
+                present = condition.present,
+                matchMode = ImageMatchMode.APPEARS_WITHIN_REGION,
+                requireFit = true,
             )
 
             else -> throw AndroidAutomationException(
@@ -122,9 +138,39 @@ class VisualConditionEvaluator(
 
     @Synchronized
     override fun close() {
+        if (closed) return
         closed = true
+        runtimeImages.values.forEach(RgbaTemplate::clear)
+        runtimeImages.clear()
+        runtimeImageBytes = 0L
         if (imageMatcher.isInitialized()) imageMatcher.value.close()
     }
+
+    @Synchronized
+    override fun captureImage(name: VariableName, region: NormalizedRect) {
+        checkCancellation()
+        check(!closed) { "Visual evaluator is closed" }
+        val frame = requireFrame(ScreenCaptureArea.Region(region))
+        var replacement: RgbaTemplate? = null
+        try {
+            val bounds = FramePixelBounds.from(region, frame.widthPx, frame.heightPx)
+            val previous = runtimeImages[name]
+            val previousBytes = previous?.let { it.widthPx.toLong() * it.heightPx * 4 } ?: 0L
+            val nextBytes = runtimeImageBytes - previousBytes + bounds.width.toLong() * bounds.height * 4
+            if (nextBytes > maxRuntimeImageBytes) throw VisualConditionEvaluationException("Captured images do not fit in available memory. Reuse an image name or capture a smaller area.")
+            replacement = frame.copyRegion(region)
+            checkCancellation()
+            runtimeImages.put(name, replacement)?.clear()
+            runtimeImageBytes = nextBytes
+            replacement = null
+        } finally {
+            replacement?.clear()
+            frame.close()
+        }
+    }
+
+    private fun requireTemplate(assetId: AssetId): RgbaTemplate = templateSource.templateFor(assetId)
+        ?: throw VisualConditionEvaluationException("Image template asset ${assetId.value} is unavailable")
 
     private fun checkCancellation() {
         if (cancellation.isCancellationRequested() || Thread.currentThread().isInterrupted) {
@@ -177,16 +223,13 @@ class VisualConditionEvaluator(
     }
 
     private fun evaluateImage(
-        assetId: AssetId,
+        template: RgbaTemplate,
         region: NormalizedRect,
         threshold: Double,
         present: Boolean,
         matchMode: ImageMatchMode,
+        requireFit: Boolean = false,
     ): ConditionObservation {
-        val template = templateSource.templateFor(assetId)
-            ?: throw VisualConditionEvaluationException(
-                "Image template asset ${assetId.value} is unavailable",
-            )
         val area = if (matchMode == ImageMatchMode.SCREEN_STATE) ScreenCaptureArea.FullScreen else ScreenCaptureArea.Region(region)
         val frame = requireFrame(area)
         return try {
@@ -198,7 +241,10 @@ class VisualConditionEvaluator(
             } else {
                 FramePixelBounds.from(region, frame.widthPx, frame.heightPx).relativeTo(frame.capturedBounds)
             }
-            if (template.widthPx > bounds.width || template.heightPx > bounds.height) return ConditionObservation(!present, threshold = threshold)
+            if (template.widthPx > bounds.width || template.heightPx > bounds.height) {
+                if (requireFit) throw VisualConditionEvaluationException("The captured image does not fit the search area. Enlarge the area or capture a smaller crop.")
+                return ConditionObservation(!present, threshold = threshold)
+            }
             val origins = (bounds.width - template.widthPx + 1).toLong() * (bounds.height - template.heightPx + 1)
             if (origins > maxSearchOrigins) throw VisualConditionEvaluationException("Image template search covers $origins positions, exceeding $maxSearchOrigins. Narrow the search area.")
             val score = frame.withRgbaBytes { frameBytes ->

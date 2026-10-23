@@ -88,6 +88,7 @@ import androidx.compose.ui.unit.dp
 import com.veyarc.data.storage.WorkflowAssetDescriptor
 import com.veyarc.model.AndCondition
 import com.veyarc.model.AssetId
+import com.veyarc.model.CapturedImageCondition
 import com.veyarc.model.Condition
 import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.ForegroundPackageCondition
@@ -103,6 +104,7 @@ import com.veyarc.model.PackageName
 import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.StepResultCondition
 import com.veyarc.model.VariableComparisonCondition
+import com.veyarc.model.VariableName
 import com.veyarc.model.WorkflowIds
 import com.veyarc.model.WorkflowJson
 import com.veyarc.model.backgroundAssetId
@@ -121,12 +123,15 @@ internal fun Condition.usesCompactEditorSheet(): Boolean = this is ForegroundPac
     this is StepResultCondition ||
     this is VariableComparisonCondition
 
+private val LocalCapturedImages = androidx.compose.runtime.staticCompositionLocalOf<Set<String>> { emptySet() }
+
 private val LocalConditionVariables = androidx.compose.runtime.staticCompositionLocalOf<Map<String, com.veyarc.model.VariableDeclaration>> { emptyMap() }
 
 @Composable
 internal fun ConditionEditorDialog(
     initialCondition: Condition,
     variables: Map<String, com.veyarc.model.VariableDeclaration> = emptyMap(),
+    capturedImages: Set<String> = emptySet(),
     assets: List<WorkflowAssetDescriptor>,
     assetNames: Map<String, String>,
     defaultPackage: String,
@@ -171,7 +176,7 @@ internal fun ConditionEditorDialog(
             )
         }
     }
-    androidx.compose.runtime.CompositionLocalProvider(LocalConditionVariables provides variables) {
+    androidx.compose.runtime.CompositionLocalProvider(LocalConditionVariables provides variables, LocalCapturedImages provides capturedImages) {
         EditorSheetDialog(
             compact = compact,
             onDismiss = onDismiss,
@@ -273,6 +278,8 @@ private fun ConditionNodeEditor(
             ConditionKindPicker(condition, defaultPackage, onChange, Modifier.fillMaxWidth(), showDividers = true)
         }
         when (condition) {
+            is CapturedImageCondition -> CapturedImageFields(condition, assets, assetNames, loadPreview, previewWidthPx, previewHeightPx, onChange)
+
             is PixelColorCondition -> PixelConditionFields(condition, assets, assetNames, onAddTemplate, loadAsset, loadPreview, previewWidthPx, previewHeightPx, onChange)
 
             is ImagePresentCondition -> ImageConditionFields(
@@ -374,6 +381,7 @@ private fun ConditionKindPicker(
 ) {
     var expanded by remember(condition::class) { mutableStateOf(false) }
     val variables = LocalConditionVariables.current
+    val captures = LocalCapturedImages.current
     if (showDividers) {
         Row(
             modifier.heightIn(min = 48.dp).clickable(
@@ -403,12 +411,14 @@ private fun ConditionKindPicker(
     if (expanded) {
         VeyarcChoicePicker(
             title = "Condition type",
-            options = EditableConditionKind.entries.filter { it != EditableConditionKind.VARIABLE || variables.isNotEmpty() }.map { VeyarcChoice(it.name, it.label) },
+            options = EditableConditionKind.entries.filter { (it != EditableConditionKind.VARIABLE || variables.isNotEmpty()) && (it != EditableConditionKind.CAPTURED || captures.isNotEmpty()) }.map { VeyarcChoice(it.name, it.label) },
             selectedId = condition.kind().name,
             onDismiss = { expanded = false },
             onSelect = { choice ->
                 expanded = false
-                if (choice.id == EditableConditionKind.VARIABLE.name) {
+                if (choice.id == EditableConditionKind.CAPTURED.name) {
+                    onChange(CapturedImageCondition(VariableName(captures.first()), FULL_SCREEN_REGION, 0.9))
+                } else if (choice.id == EditableConditionKind.VARIABLE.name) {
                     val (name, declaration) = variables.entries.first()
                     onChange(VariableComparisonCondition(com.veyarc.model.VariableOperand(com.veyarc.model.VariableName(name)), com.veyarc.model.ComparisonOperator.EQUALS, com.veyarc.model.LiteralOperand(declaration.initialValue)))
                 } else {
@@ -417,6 +427,31 @@ private fun ConditionKindPicker(
             },
         )
     }
+}
+
+@Composable
+private fun CapturedImageFields(condition: CapturedImageCondition, assets: List<WorkflowAssetDescriptor>, names: Map<String, String>, loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?, width: Int, height: Int, onChange: (Condition) -> Unit) {
+    var backgrounds by rememberSaveable { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        VariableChoice("Captured image", condition.name.value, LocalCapturedImages.current.map { VeyarcChoice(it, it) }, condition.name.value) { onChange(condition.copy(name = VariableName(it))) }
+        VariableChoice("Check", if (condition.present) "Image appears" else "Image is absent", listOf(VeyarcChoice("present", "Image appears"), VeyarcChoice("absent", "Image is absent")), if (condition.present) "present" else "absent") { onChange(condition.copy(present = it == "present")) }
+        Text("Uses the latest capture from this run.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        TextButton(onClick = { backgrounds = true }) {
+            Icon(Icons.Outlined.Image, "Background")
+            Text("Background", Modifier.padding(start = 8.dp))
+        }
+        ImageConditionPreview(condition.region, width, height, assetId = null, backgroundAssetId = condition.backgroundAssetId, loadPreview = loadPreview, runtimeImage = true, onRegionChange = { onChange(condition.copy(region = it)) })
+        RegionConditionFields(condition.region) { onChange(condition.copy(region = it)) }
+        var threshold by rememberNumericEditorText(condition.matchThreshold.toEditorText())
+        ConditionNumberField("Match threshold (0 to 1)", threshold, { text ->
+            threshold = text
+            text.toDoubleOrNull()?.takeIf { it.isFinite() && it in 0.0..1.0 }?.let { onChange(condition.copy(matchThreshold = it)) }
+        }, Modifier.fillMaxWidth())
+    }
+    TemplatePickerSheet(visible = backgrounds, title = "Background", assets = assets, assetNames = names, displayWidthPx = width, displayHeightPx = height, fullScreenOnly = true, selectedAssetId = condition.backgroundAssetId?.value, allowNone = true, onDismiss = { backgrounds = false }, onSelect = {
+        backgrounds = false
+        onChange(condition.copy(backgroundAssetId = it))
+    }, loadPreview = loadPreview)
 }
 
 @Composable
@@ -962,6 +997,7 @@ internal enum class EditableConditionKind(val label: String) {
     SCREEN_STATE("Screen state matches"),
     IMAGE_PRESENT("Image appears somewhere"),
     IMAGE_ABSENT("Image absent"),
+    CAPTURED("Captured image"),
     FOREGROUND("Foreground package"),
     VARIABLE("Variable comparison"),
     ORIENTATION("Orientation"),
@@ -971,6 +1007,8 @@ internal enum class EditableConditionKind(val label: String) {
     ;
 
     fun defaultCondition(defaultPackage: String): Condition = when (this) {
+        CAPTURED -> CapturedImageCondition(VariableName("image"), FULL_SCREEN_REGION, 0.9)
+
         VARIABLE -> VariableComparisonCondition(com.veyarc.model.LiteralOperand(com.veyarc.model.NumberValue(0.0)), com.veyarc.model.ComparisonOperator.EQUALS, com.veyarc.model.LiteralOperand(com.veyarc.model.NumberValue(0.0)))
 
         PIXEL -> PixelColorCondition(NormalizedCoordinate(0.5, 0.5), 0xFFFFFFFFL, 16)
@@ -1017,6 +1055,8 @@ internal enum class EditableConditionKind(val label: String) {
 }
 
 private fun Condition.kind(): EditableConditionKind = when (this) {
+    is CapturedImageCondition -> EditableConditionKind.CAPTURED
+
     is VariableComparisonCondition -> EditableConditionKind.VARIABLE
 
     is PixelColorCondition -> EditableConditionKind.PIXEL

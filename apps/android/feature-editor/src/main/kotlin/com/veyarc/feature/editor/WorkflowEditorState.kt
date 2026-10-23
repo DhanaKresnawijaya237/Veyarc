@@ -48,6 +48,7 @@ import com.veyarc.model.WorkflowValidator
 import com.veyarc.model.backgroundAssetId
 import com.veyarc.model.bundle.BundleAsset
 import com.veyarc.model.bundle.WorkflowBundle
+import com.veyarc.model.capturedImages
 import com.veyarc.model.withBackgroundAsset
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -66,6 +67,7 @@ enum class WorkflowStepKind {
     WHILE,
     LAUNCH_APP,
     SET_VARIABLE,
+    CAPTURE_IMAGE,
     STOP,
 }
 
@@ -537,7 +539,15 @@ data class WorkflowDraft(
         val current = stepsAt(path)
         val jumpTargetId = current.getOrNull((index - 1).coerceAtLeast(0))?.id
             ?: jumpTargetLists(path).drop(1).firstOrNull()?.firstOrNull()?.id
-        val step = newStep(kind, defaultPackage, jumpTargetId, variables.entries.firstOrNull()?.toPair())
+        val step = newStep(kind, defaultPackage, jumpTargetId, variables.entries.firstOrNull()?.toPair()).let { created ->
+            if (created is com.veyarc.model.CaptureImage) {
+                val names = steps.capturedImages().keys
+                val name = generateSequence(1) { it + 1 }.map { if (it == 1) "image" else "image_$it" }.first { it !in names }
+                created.copy(name = com.veyarc.model.VariableName(name))
+            } else {
+                created
+            }
+        }
         return updateList(path) { current ->
             current.toMutableList().apply { add(index.coerceIn(0, size), step) }
         }
@@ -825,6 +835,7 @@ data class WorkflowDraft(
 
 private fun List<WorkflowStep>.withoutBackground(assetId: com.veyarc.model.AssetId): List<WorkflowStep> {
     fun condition(value: Condition): Condition = when (value) {
+        is com.veyarc.model.CapturedImageCondition -> if (value.backgroundAssetId == assetId) value.copy(backgroundAssetId = null) else value
         is PixelColorCondition -> if (value.backgroundAssetId == assetId) value.copy(backgroundAssetId = null) else value
         is ImagePresentCondition -> if (value.backgroundAssetId == assetId) value.copy(backgroundAssetId = null) else value
         is ImageAbsentCondition -> if (value.backgroundAssetId == assetId) value.copy(backgroundAssetId = null) else value
@@ -957,6 +968,8 @@ fun newStep(kind: WorkflowStepKind, defaultPackage: String, jumpTargetId: String
             com.veyarc.model.SetVariable(id, com.veyarc.model.VariableName(name), declaration.initialValue)
         }
 
+        WorkflowStepKind.CAPTURE_IMAGE -> com.veyarc.model.CaptureImage(id, com.veyarc.model.VariableName("image"), NormalizedRect(0.25, 0.25, 0.5, 0.5))
+
         WorkflowStepKind.STOP -> Stop(id, StopReason.USER_REQUESTED, "Stopped by workflow")
     }
 }
@@ -1009,6 +1022,7 @@ fun WorkflowStepKind.displayName(): String = when (this) {
     WorkflowStepKind.WHILE -> "While"
     WorkflowStepKind.LAUNCH_APP -> "Launch app"
     WorkflowStepKind.SET_VARIABLE -> "Set variable"
+    WorkflowStepKind.CAPTURE_IMAGE -> "Capture image"
     WorkflowStepKind.STOP -> "Stop"
 }
 
@@ -1025,6 +1039,7 @@ fun WorkflowStep.displayName(): String = when (this) {
     is Repeat -> "Repeat"
     is WhileStep -> "While"
     is LaunchApp -> "Launch app"
+    is com.veyarc.model.CaptureImage -> "Capture image"
     is com.veyarc.model.SetVariable -> "Set variable"
     is Stop -> "Stop"
     else -> "Step"
@@ -1043,12 +1058,15 @@ fun WorkflowStep.summary(assetNames: Map<String, String> = emptyMap()): String =
     is Repeat -> "Run ${bodySteps.size} nested blocks ${countVariable?.value ?: count} times"
     is WhileStep -> "While ${condition.summary(assetNames)} · up to $maxIterations times"
     is LaunchApp -> "Open ${packageName.value} and wait up to ${foregroundTimeoutMs.value} ms"
+    is com.veyarc.model.CaptureImage -> "Capture ${name.value} for this run"
     is com.veyarc.model.SetVariable -> assignmentSummary()
     is Stop -> message ?: reason.name.lowercase().replace('_', ' ')
     else -> "Configured workflow step"
 }
 
 fun Condition.summary(assetNames: Map<String, String> = emptyMap()): String = when (this) {
+    is com.veyarc.model.CapturedImageCondition -> "captured ${name.value} ${if (present) "appears" else "is absent"}"
+
     is PixelColorCondition -> if (region == null) "the pixel at ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}% has the selected color" else "the selected color appears in the search area"
 
     is ImagePresentCondition -> when (matchMode) {
