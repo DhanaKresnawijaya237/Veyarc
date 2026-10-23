@@ -49,6 +49,7 @@ import com.veyarc.model.backgroundAssetId
 import com.veyarc.model.bundle.BundleAsset
 import com.veyarc.model.bundle.WorkflowBundle
 import com.veyarc.model.capturedImages
+import com.veyarc.model.imageSearches
 import com.veyarc.model.withBackgroundAsset
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -68,6 +69,7 @@ enum class WorkflowStepKind {
     LAUNCH_APP,
     SET_VARIABLE,
     CAPTURE_IMAGE,
+    FIND_IMAGE,
     STOP,
 }
 
@@ -544,6 +546,10 @@ data class WorkflowDraft(
                 val names = steps.capturedImages().keys
                 val name = generateSequence(1) { it + 1 }.map { if (it == 1) "image" else "image_$it" }.first { it !in names }
                 created.copy(name = com.veyarc.model.VariableName(name))
+            } else if (created is com.veyarc.model.FindImage) {
+                val names = steps.imageSearches().keys
+                val name = generateSequence(1) { it + 1 }.map { if (it == 1) "match" else "match_$it" }.first { it !in names }
+                created.copy(name = com.veyarc.model.VariableName(name))
             } else {
                 created
             }
@@ -608,6 +614,7 @@ data class WorkflowDraft(
         transform: (Condition) -> Condition,
     ): WorkflowDraft = updateStep(path, index) { step ->
         when (step) {
+            is com.veyarc.model.FindImage -> step.copy(condition = transform(step.condition) as ImagePresentCondition)
             is WaitUntil -> step.copy(condition = transform(step.condition))
             is IfElse -> step.copy(condition = transform(step.condition))
             is WhileStep -> step.copy(condition = transform(step.condition))
@@ -643,6 +650,7 @@ data class WorkflowDraft(
                 val label = "$prefix$number"
                 step.backgroundAssetId()?.let { backgrounds.getOrPut(it.value) { linkedSetOf() }.add(label) }
                 when (step) {
+                    is com.veyarc.model.FindImage -> conditionUses(step.condition, label)
                     is WaitUntil -> conditionUses(step.condition, label)
                     is IfElse -> conditionUses(step.condition, label)
                     is WhileStep -> conditionUses(step.condition, label)
@@ -847,6 +855,7 @@ private fun List<WorkflowStep>.withoutBackground(assetId: com.veyarc.model.Asset
     return map { original ->
         val step = if (original.backgroundAssetId() == assetId) original.withBackgroundAsset(null) else original
         when (step) {
+            is com.veyarc.model.FindImage -> step.copy(condition = condition(step.condition) as ImagePresentCondition)
             is WaitUntil -> step.copy(condition = condition(step.condition))
             is IfElse -> step.copy(condition = condition(step.condition), thenSteps = step.thenSteps.withoutBackground(assetId), elseSteps = step.elseSteps.withoutBackground(assetId))
             is WhileStep -> step.copy(condition = condition(step.condition), bodySteps = step.bodySteps.withoutBackground(assetId))
@@ -968,6 +977,8 @@ fun newStep(kind: WorkflowStepKind, defaultPackage: String, jumpTargetId: String
             com.veyarc.model.SetVariable(id, com.veyarc.model.VariableName(name), declaration.initialValue)
         }
 
+        WorkflowStepKind.FIND_IMAGE -> com.veyarc.model.FindImage(id, com.veyarc.model.VariableName("match"), ImagePresentCondition(region = NormalizedRect(0.0, 0.0, 1.0, 1.0), matchThreshold = 0.9))
+
         WorkflowStepKind.CAPTURE_IMAGE -> com.veyarc.model.CaptureImage(id, com.veyarc.model.VariableName("image"), NormalizedRect(0.25, 0.25, 0.5, 0.5))
 
         WorkflowStepKind.STOP -> Stop(id, StopReason.USER_REQUESTED, "Stopped by workflow")
@@ -977,6 +988,8 @@ fun newStep(kind: WorkflowStepKind, defaultPackage: String, jumpTargetId: String
 private fun MutableSet<String>.addStepAssetReferences(step: WorkflowStep) {
     step.backgroundAssetId()?.let { add(it.value) }
     when (step) {
+        is com.veyarc.model.FindImage -> addConditionAssetReferences(step.condition)
+
         is WaitUntil -> addConditionAssetReferences(step.condition)
 
         is IfElse -> {
@@ -1022,6 +1035,7 @@ fun WorkflowStepKind.displayName(): String = when (this) {
     WorkflowStepKind.WHILE -> "While"
     WorkflowStepKind.LAUNCH_APP -> "Launch app"
     WorkflowStepKind.SET_VARIABLE -> "Set variable"
+    WorkflowStepKind.FIND_IMAGE -> "Find image"
     WorkflowStepKind.CAPTURE_IMAGE -> "Capture image"
     WorkflowStepKind.STOP -> "Stop"
 }
@@ -1039,6 +1053,7 @@ fun WorkflowStep.displayName(): String = when (this) {
     is Repeat -> "Repeat"
     is WhileStep -> "While"
     is LaunchApp -> "Launch app"
+    is com.veyarc.model.FindImage -> "Find image"
     is com.veyarc.model.CaptureImage -> "Capture image"
     is com.veyarc.model.SetVariable -> "Set variable"
     is Stop -> "Stop"
@@ -1058,6 +1073,7 @@ fun WorkflowStep.summary(assetNames: Map<String, String> = emptyMap()): String =
     is Repeat -> "Run ${bodySteps.size} nested blocks ${countVariable?.value ?: count} times"
     is WhileStep -> "While ${condition.summary(assetNames)} · up to $maxIterations times"
     is LaunchApp -> "Open ${packageName.value} and wait up to ${foregroundTimeoutMs.value} ms"
+    is com.veyarc.model.FindImage -> "Find ${condition.summary(assetNames)} and save as ${name.value}"
     is com.veyarc.model.CaptureImage -> "Capture ${name.value} for this run"
     is com.veyarc.model.SetVariable -> assignmentSummary()
     is Stop -> message ?: reason.name.lowercase().replace('_', ' ')

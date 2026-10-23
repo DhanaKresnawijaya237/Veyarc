@@ -36,6 +36,10 @@ interface ConditionObserver {
     fun observe(condition: Condition): ConditionObservation
 }
 
+interface ImageSearch {
+    fun findImage(condition: com.veyarc.model.ImagePresentCondition): ConditionObservation = throw UnsupportedOperationException("Image search is unavailable")
+}
+
 interface RuntimeImageCapture {
     fun captureImage(name: com.veyarc.model.VariableName, region: com.veyarc.model.NormalizedRect): Unit = throw UnsupportedOperationException("Runtime image capture is unavailable")
 }
@@ -57,6 +61,7 @@ data class ConditionObservation(
     val matchScore: Double? = null,
     val threshold: Double? = null,
     val colorMatch: ColorMatchObservation? = null,
+    val matchedArea: com.veyarc.model.NormalizedRect? = null,
 ) {
     init {
         require(matchScore == null || matchScore in 0.0..1.0) {
@@ -75,7 +80,8 @@ interface AutomationDriver :
     ForegroundPackageSource,
     ViewportSource,
     ConditionObserver,
-    RuntimeImageCapture
+    RuntimeImageCapture,
+    ImageSearch
 
 /** Monotonic time and sleeping are injected so tests do not depend on wall-clock timing. */
 interface ExecutionClock {
@@ -180,6 +186,7 @@ sealed interface RunEvent {
         val matchScore: Double? = null,
         val threshold: Double? = null,
         val colorMatch: ColorMatchObservation? = null,
+        val matchedArea: com.veyarc.model.NormalizedRect? = null,
     ) : RunEvent
 
     data class StepFinished(

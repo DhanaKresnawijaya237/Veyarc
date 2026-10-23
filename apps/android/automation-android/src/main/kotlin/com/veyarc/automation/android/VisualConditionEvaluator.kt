@@ -5,6 +5,7 @@ import com.veyarc.engine.CancellationSignals
 import com.veyarc.engine.ColorMatchObservation
 import com.veyarc.engine.ConditionObservation
 import com.veyarc.engine.ConditionObserver
+import com.veyarc.engine.ImageSearch
 import com.veyarc.engine.RuntimeImageCapture
 import com.veyarc.model.AssetId
 import com.veyarc.model.CapturedImageCondition
@@ -83,6 +84,7 @@ class VisualConditionEvaluator(
     private val maxRuntimeImageBytes: Long = 32L * 1024 * 1024,
 ) : ConditionObserver,
     RuntimeImageCapture,
+    ImageSearch,
     Closeable {
     private val imageMatcher = lazy { OpenCvImageMatcher() }
     private val runtimeImages = mutableMapOf<VariableName, RgbaTemplate>()
@@ -138,6 +140,13 @@ class VisualConditionEvaluator(
                 "Visual evaluator does not support ${condition::class.simpleName} conditions",
             )
         }
+    }
+
+    @Synchronized
+    override fun findImage(condition: ImagePresentCondition): ConditionObservation {
+        checkCancellation()
+        check(!closed) { "Visual evaluator is closed" }
+        return evaluateImage(requireTemplate(condition.assetId, condition.capturedImage), condition.region, condition.matchThreshold, true, condition.matchMode, requireFit = true, capturedBackground = condition.capturedBackground, findBest = true)
     }
 
     @Synchronized
@@ -249,6 +258,7 @@ class VisualConditionEvaluator(
         matchMode: ImageMatchMode,
         requireFit: Boolean = false,
         capturedBackground: VariableName? = null,
+        findBest: Boolean = false,
     ): ConditionObservation {
         val area = if (matchMode == ImageMatchMode.SCREEN_STATE) ScreenCaptureArea.FullScreen else ScreenCaptureArea.Region(region)
         return withSearchPixels(capturedBackground, area) { width, height, capturedBounds, frameBytes ->
@@ -266,12 +276,19 @@ class VisualConditionEvaluator(
             }
             val origins = (bounds.width - template.widthPx + 1).toLong() * (bounds.height - template.heightPx + 1)
             if (origins > maxSearchOrigins) throw VisualConditionEvaluationException("Image template search covers $origins positions, exceeding $maxSearchOrigins. Narrow the search area.")
-            val score = imageMatcher.value.score(frameBytes, capturedBounds.width, capturedBounds.height, bounds, template, threshold, ::checkCancellation)
+            val match = if (findBest) imageMatcher.value.find(frameBytes, capturedBounds.width, capturedBounds.height, bounds, template, threshold, ::checkCancellation) else null
+            val score = match?.score ?: imageMatcher.value.score(frameBytes, capturedBounds.width, capturedBounds.height, bounds, template, threshold, ::checkCancellation)
+            val matchedArea = match?.takeIf { score >= threshold }?.let {
+                val left = (capturedBounds.left + it.left).toDouble() / width
+                val top = (capturedBounds.top + it.top).toDouble() / height
+                NormalizedRect(left, top, (capturedBounds.left + it.left + template.widthPx).toDouble() / width - left, (capturedBounds.top + it.top + template.heightPx).toDouble() / height - top)
+            }
             checkCancellation()
             ConditionObservation(
                 result = if (present) score >= threshold else score < threshold,
                 matchScore = score,
                 threshold = threshold,
+                matchedArea = matchedArea,
             )
         }
     }

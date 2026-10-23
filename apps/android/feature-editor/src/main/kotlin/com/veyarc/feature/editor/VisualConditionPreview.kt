@@ -72,6 +72,7 @@ internal fun ImageConditionPreview(
     screenStateMode: Boolean = false,
     colorSearch: Boolean = false,
     runtimeImage: Boolean = false,
+    resultPreview: Boolean = false,
     onRegionChange: ((NormalizedRect) -> Unit)?,
 ) {
     val safeDisplayWidth = displayWidthPx.coerceAtLeast(1)
@@ -97,7 +98,9 @@ internal fun ImageConditionPreview(
     }
     val configuration = LocalConfiguration.current
     val portrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
-    val previewHeight = if (portrait && safeDisplayWidth > safeDisplayHeight) {
+    val previewHeight = if (resultPreview) {
+        180f
+    } else if (portrait && safeDisplayWidth > safeDisplayHeight) {
         max(180f, configuration.screenWidthDp * safeDisplayHeight.toFloat() / safeDisplayWidth + 28f)
     } else if (portrait) {
         460f
@@ -111,7 +114,9 @@ internal fun ImageConditionPreview(
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(
-                if (runtimeImage) {
+                if (resultPreview) {
+                    "Match location"
+                } else if (runtimeImage) {
                     "Captured image search area"
                 } else if (colorSearch) {
                     "Colour search area"
@@ -120,12 +125,14 @@ internal fun ImageConditionPreview(
                 },
                 style = MaterialTheme.typography.titleSmall,
             )
-            Text(
-                if (screenStateMode) "Compare with the whole screen." else "Drag the area or its corners to choose where Veyarc searches.",
-                modifier = Modifier.padding(top = 4.dp),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (!resultPreview) {
+                Text(
+                    if (screenStateMode) "Compare with the whole screen." else "Drag the area or its corners to choose where Veyarc searches.",
+                    modifier = Modifier.padding(top = 4.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             DeviceComparisonPreview(
                 region = region,
                 displayWidthPx = safeDisplayWidth,
@@ -152,7 +159,7 @@ internal fun ImageConditionPreview(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (!colorSearch && !runtimeImage) {
+            if (!colorSearch && !runtimeImage && !resultPreview) {
                 TemplateScaleDetails(
                     preview = preview,
                     displayWidthPx = safeDisplayWidth,

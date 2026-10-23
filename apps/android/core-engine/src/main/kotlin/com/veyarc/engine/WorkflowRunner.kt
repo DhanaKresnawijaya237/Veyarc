@@ -8,6 +8,8 @@ import com.veyarc.model.Condition
 import com.veyarc.model.ForegroundPackageCondition
 import com.veyarc.model.ImageAbsentCondition
 import com.veyarc.model.ImagePresentCondition
+import com.veyarc.model.ImageResultField
+import com.veyarc.model.ImageResultOperand
 import com.veyarc.model.LiteralOperand
 import com.veyarc.model.NotCondition
 import com.veyarc.model.NumberValue
@@ -171,6 +173,19 @@ class WorkflowRunner {
     }
 
     private fun executeStepBody(step: ExecutionStep, state: RunState): StepExecution = when (step) {
+        is ExecutionStep.FindImage -> {
+            state.imageResults.remove(step.name.value)
+            val viewport = currentViewportOrAbort(state)
+            val foreground = state.driver.currentForegroundPackage()
+            val observation = state.driver.findImage(step.condition)
+            ensureBoundary(state)
+            check(currentViewportOrAbort(state) == viewport && state.driver.currentForegroundPackage() == foreground) { "The screen changed during image search. Find the image again." }
+            require(observation.matchScore != null && (!observation.result || observation.matchedArea != null)) { "Image search returned an incomplete result" }
+            state.imageResults[step.name.value] = SavedImageResult(observation.copy(matchedArea = observation.matchedArea.takeIf { observation.result }), viewport, foreground, step.condition.capturedBackground == null)
+            state.emit(RunEvent.ConditionEvaluated(state.nowMs(), step.id, "${step.id}/condition", observation.result, observation.matchScore, step.condition.matchThreshold, matchedArea = observation.matchedArea.takeIf { observation.result }))
+            StepExecution(StepOutcome.COMPLETED)
+        }
+
         is ExecutionStep.CaptureImage -> {
             state.driver.captureImage(step.name, step.region)
             StepExecution(StepOutcome.COMPLETED)
@@ -429,6 +444,11 @@ class WorkflowRunner {
     }
 
     private fun resolveOperand(operand: Operand, state: RunState) = when (operand) {
+        is ImageResultOperand -> {
+            val result = state.imageResults[operand.name.value]?.observation ?: invalidVariableValue("Run Find image for ${operand.name.value} first", state)
+            if (operand.field == ImageResultField.FOUND) com.veyarc.model.BooleanValue(result.result) else NumberValue(requireNotNull(result.matchScore))
+        }
+
         is LiteralOperand -> operand.value
 
         is VariableOperand -> state.variables[operand.name.value] ?: throw RunAbort(
@@ -653,6 +673,8 @@ class WorkflowRunner {
 
     private fun deadline(startMs: Long, durationMs: Long): Long = if (durationMs > Long.MAX_VALUE - startMs) Long.MAX_VALUE else startMs + durationMs
 
+    private data class SavedImageResult(val observation: ConditionObservation, val viewport: ActiveViewport, val foreground: PackageName?, val liveScreen: Boolean)
+
     private class RunState(
         val plan: ExecutionPlan,
         val driver: AutomationDriver,
@@ -667,6 +689,7 @@ class WorkflowRunner {
         val stepOutcomes = collectStepIds(plan.steps).associateWith { StepOutcome.NOT_EXECUTED }.toMutableMap()
         val variables = LinkedHashMap(plan.variables.mapValues { it.value.initialValue })
         val jumpVisits = mutableMapOf<String, Int>()
+        val imageResults = mutableMapOf<String, SavedImageResult>()
         var currentStepId: String? = null
         var currentPath: String = "/"
         var startupHandoffPending: Boolean = startupPackage != null && plan.steps.firstOrNull() is ExecutionStep.LaunchApp

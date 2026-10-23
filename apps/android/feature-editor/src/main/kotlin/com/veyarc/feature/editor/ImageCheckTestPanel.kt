@@ -69,6 +69,7 @@ internal fun ImageCheckTestPanel(condition: Condition, assets: List<WorkflowAsse
         Text("Captured images are checked during the run.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
     }
+    val findBest = LocalFindImagePreview.current
     var showImages by rememberSaveable { mutableStateOf(false) }
     var expanded by rememberSaveable { mutableStateOf(true) }
     var sourceId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -111,7 +112,7 @@ internal fun ImageCheckTestPanel(condition: Condition, assets: List<WorkflowAsse
                             else -> error("Select an image or colour condition.")
                         }
                         val target = requireNotNull(loadAsset(requireNotNull(targetId))) { "The target image is unavailable." }
-                        testImageCondition(condition, target, image, width, height)
+                        testImageCondition(condition, target, image, width, height, findBest)
                     }
                     SavedConditionCheck(id, observation)
                 } catch (cancelled: CancellationException) {
@@ -164,6 +165,9 @@ internal fun ImageCheckTestPanel(condition: Condition, assets: List<WorkflowAsse
                                     Text("Threshold ${observation.threshold?.let(::imageCheckPercent) ?: "—"}", style = MaterialTheme.typography.bodyMedium)
                                 }
                             }
+                        }
+                        check?.observation?.matchedArea?.let { area ->
+                            ImageConditionPreview(area, width, height, assetId = null, backgroundAssetId = AssetId(id), loadPreview = loadPreview, onRegionChange = null, resultPreview = true)
                         }
                         check?.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                         Text(names[id] ?: "Test image", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

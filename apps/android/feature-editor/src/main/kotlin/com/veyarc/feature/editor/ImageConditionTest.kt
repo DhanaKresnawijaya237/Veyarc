@@ -22,10 +22,10 @@ internal suspend fun testColorCondition(condition: PixelColorCondition, image: B
     }
 }
 
-suspend fun testImageCondition(condition: Condition, target: BundleAsset, background: BundleAsset, viewportWidth: Int, viewportHeight: Int): ConditionObservation = runInterruptible(Dispatchers.Default) {
+suspend fun testImageCondition(condition: Condition, target: BundleAsset, background: BundleAsset, viewportWidth: Int, viewportHeight: Int, findBest: Boolean = false): ConditionObservation = runInterruptible(Dispatchers.Default) {
     val decoded = imageTestCodec().decrypt(background.assetId, background.bytes)
     try {
-        compareImagePixels(condition, target, decoded.widthPx, decoded.heightPx, decoded.takeRgbaBytes(), viewportWidth, viewportHeight)
+        compareImagePixels(condition, target, decoded.widthPx, decoded.heightPx, decoded.takeRgbaBytes(), viewportWidth, viewportHeight, findBest)
     } finally {
         decoded.clear()
     }
@@ -36,7 +36,7 @@ suspend fun testImageCondition(condition: Condition, target: BundleAsset, backgr
     compareImagePixels(condition, target, background.width, background.height, background.toRgbaBytes(), viewportWidth, viewportHeight)
 }
 
-private fun compareImagePixels(condition: Condition, target: BundleAsset, width: Int, height: Int, pixels: ByteArray, viewportWidth: Int, viewportHeight: Int): ConditionObservation {
+private fun compareImagePixels(condition: Condition, target: BundleAsset, width: Int, height: Int, pixels: ByteArray, viewportWidth: Int, viewportHeight: Int, findBest: Boolean = false): ConditionObservation {
     try {
         val decoded = imageTestCodec().decrypt(target.assetId, target.bytes)
         try {
@@ -44,7 +44,7 @@ private fun compareImagePixels(condition: Condition, target: BundleAsset, width:
             try {
                 val template = RgbaTemplate.fromOwnedRgba(decoded.widthPx, decoded.heightPx, templatePixels)
                 try {
-                    return SavedImageCheck.compare(condition, width, height, pixels, template, viewportWidth, viewportHeight)
+                    return SavedImageCheck.compare(condition, width, height, pixels, template, viewportWidth, viewportHeight, findBest)
                 } finally {
                     template.clear()
                 }

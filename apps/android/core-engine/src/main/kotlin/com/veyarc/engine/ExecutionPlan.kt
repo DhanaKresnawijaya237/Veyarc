@@ -39,6 +39,7 @@ enum class EngineCapability {
     STOP,
     SET_VARIABLE,
     CAPTURE_IMAGE,
+    FIND_IMAGE,
     PIXEL_COLOR_CONDITION,
     IMAGE_TEMPLATE_CONDITION,
     FOREGROUND_PACKAGE_CONDITION,
@@ -142,6 +143,8 @@ fun ExecutionPlan.referencedImageAssets(): Map<AssetId, Set<ImageAssetUse>> {
     fun collect(steps: List<ExecutionStep>) {
         steps.forEach { step ->
             when (step) {
+                is ExecutionStep.FindImage -> collect(step.condition)
+
                 is ExecutionStep.WaitUntil -> collect(step.condition)
 
                 is ExecutionStep.IfElse -> {
@@ -169,6 +172,8 @@ fun ExecutionPlan.referencedImageAssets(): Map<AssetId, Set<ImageAssetUse>> {
 /** Typed steps consumed by the deterministic runner. */
 sealed interface ExecutionStep {
     val id: String
+
+    data class FindImage(override val id: String, val name: com.veyarc.model.VariableName, val condition: ImagePresentCondition) : ExecutionStep
 
     data class CaptureImage(override val id: String, val name: com.veyarc.model.VariableName, val region: NormalizedRect) : ExecutionStep
 

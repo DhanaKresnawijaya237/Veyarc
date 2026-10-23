@@ -281,6 +281,8 @@ internal fun List<WorkflowStep>.clipboardImageIds(): Set<String> = buildSet {
     fun step(value: WorkflowStep) {
         value.backgroundAssetId()?.let { add(it.value) }
         when (value) {
+            is com.veyarc.model.FindImage -> condition(value.condition)
+
             is WaitUntil -> condition(value.condition)
 
             is IfElse -> {
@@ -334,6 +336,7 @@ internal fun remapClipboardSteps(steps: List<WorkflowStep>, assetIds: Map<String
     fun step(value: WorkflowStep): WorkflowStep {
         val id = requireNotNull(stepIds[value.id])
         return when (value) {
+            is com.veyarc.model.FindImage -> value.copy(id = id, condition = condition(value.condition) as ImagePresentCondition)
             is com.veyarc.model.CaptureImage -> value.copy(id = id)
             is com.veyarc.model.TapPoint -> value.copy(id = id)
             is com.veyarc.model.TapRegion -> value.copy(id = id)

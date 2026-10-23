@@ -182,27 +182,29 @@ private fun InlineVariableOptions(options: List<Pair<String, String>>, selected:
 }
 
 @Composable
-internal fun SetVariableFields(step: SetVariable, variables: Map<String, VariableDeclaration>, onChange: (SetVariable) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("Assign to", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            VariableChoice("Variable", step.name.value, variables.map { VeyarcChoice(it.key, it.key) }, step.name.value) { name ->
-                onChange(step.copy(name = VariableName(name), value = variables.getValue(name).initialValue, source = null, calculation = null))
+internal fun SetVariableFields(step: SetVariable, variables: Map<String, VariableDeclaration>, imageResults: Set<String> = emptySet(), onChange: (SetVariable) -> Unit) {
+    androidx.compose.runtime.CompositionLocalProvider(LocalImageResults provides imageResults) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("Assign to", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                VariableChoice("Variable", step.name.value, variables.map { VeyarcChoice(it.key, it.key) }, step.name.value) { name ->
+                    onChange(step.copy(name = VariableName(name), value = variables.getValue(name).initialValue, source = null, calculation = null))
+                }
             }
-        }
-        val type = variables[step.name.value]?.type ?: step.value.variableType()
-        OperandField("Value", step.source ?: LiteralOperand(step.value), variables, type) { source ->
-            onChange(if (source is LiteralOperand) step.copy(value = source.value, source = null) else step.copy(source = source))
-        }
-        if (type == VariableType.NUMBER) {
-            VariableChoice("Calculation", step.calculation?.operator?.displayName() ?: "Set value", listOf(VeyarcChoice("none", "Set value")) + ArithmeticOperator.entries.map { VeyarcChoice(it.name, it.displayName()) }, step.calculation?.operator?.name ?: "none") { selected ->
-                onChange(step.copy(calculation = if (selected == "none") null else VariableCalculation(ArithmeticOperator.valueOf(selected), step.calculation?.operand ?: LiteralOperand(NumberValue(1.0)))))
+            val type = variables[step.name.value]?.type ?: step.value.variableType()
+            OperandField("Value", step.source ?: LiteralOperand(step.value), variables, type) { source ->
+                onChange(if (source is LiteralOperand) step.copy(value = source.value, source = null) else step.copy(source = source))
             }
-            step.calculation?.let { calculation ->
-                OperandField("With", calculation.operand, variables, VariableType.NUMBER) { onChange(step.copy(calculation = calculation.copy(operand = it))) }
+            if (type == VariableType.NUMBER) {
+                VariableChoice("Calculation", step.calculation?.operator?.displayName() ?: "Set value", listOf(VeyarcChoice("none", "Set value")) + ArithmeticOperator.entries.map { VeyarcChoice(it.name, it.displayName()) }, step.calculation?.operator?.name ?: "none") { selected ->
+                    onChange(step.copy(calculation = if (selected == "none") null else VariableCalculation(ArithmeticOperator.valueOf(selected), step.calculation?.operand ?: LiteralOperand(NumberValue(1.0)))))
+                }
+                step.calculation?.let { calculation ->
+                    OperandField("With", calculation.operand, variables, VariableType.NUMBER) { onChange(step.copy(calculation = calculation.copy(operand = it))) }
+                }
             }
+            if (step.name.value !in variables) Text("Add this variable in Variables, or choose another.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
-        if (step.name.value !in variables) Text("Add this variable in Variables, or choose another.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -217,30 +219,33 @@ internal fun NumberVariableBinding(title: String, selected: VariableName?, varia
 }
 
 @Composable
-internal fun CaptureImageFields(step: CaptureImage, onRename: (VariableName) -> Unit) {
+internal fun CaptureImageFields(step: CaptureImage, onRename: (VariableName) -> Unit) = RunValueNameFields(step.name, "Save capture as", onRename)
+
+@Composable
+internal fun RunValueNameFields(value: VariableName, title: String, onRename: (VariableName) -> Unit) {
     var editing by rememberSaveable { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
         Column {
-            Text("Save capture as", style = MaterialTheme.typography.bodyMedium)
+            Text(title, style = MaterialTheme.typography.bodyMedium)
             Text("This run only", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Surface(onClick = { editing = true }, shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.primary) {
-            Text(step.name.value, Modifier.padding(horizontal = 14.dp, vertical = 10.dp), style = MaterialTheme.typography.bodyMedium)
+            Text(value.value, Modifier.padding(horizontal = 14.dp, vertical = 10.dp), style = MaterialTheme.typography.bodyMedium)
         }
     }
     if (editing) {
-        var name by rememberSaveable { mutableStateOf(step.name.value) }
+        var name by rememberSaveable { mutableStateOf(value.value) }
         val parsed = runCatching { VariableName(name) }.getOrNull()
         EditorSheetDialog(compact = true, onDismiss = { editing = false }) {
             Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Image name", style = MaterialTheme.typography.titleLarge)
+                Text("Name", style = MaterialTheme.typography.titleLarge)
                 OutlinedTextField(
                     name,
                     { name = it },
                     Modifier.fillMaxWidth(),
                     singleLine = true,
                     isError = parsed == null,
-                    supportingText = { Text("Use lowercase letters, numbers and _. Reuse a name to replace that image.") },
+                    supportingText = { Text("Use lowercase letters, numbers and _. Reuse a name to replace its value.") },
                 )
                 Button(enabled = parsed != null, onClick = {
                     onRename(parsed!!)
@@ -256,11 +261,13 @@ internal fun VariableComparisonFields(condition: VariableComparisonCondition, va
     val type = when (val left = condition.left) {
         is LiteralOperand -> left.value.variableType()
         is VariableOperand -> variables[left.name.value]?.type
+        is com.veyarc.model.ImageResultOperand -> if (left.field == com.veyarc.model.ImageResultField.FOUND) VariableType.BOOLEAN else VariableType.NUMBER
     }
     OperandField("Compare", condition.left, variables, null) { left ->
         val nextType = when (left) {
             is LiteralOperand -> left.value.variableType()
             is VariableOperand -> variables.getValue(left.name.value).type
+            is com.veyarc.model.ImageResultOperand -> if (left.field == com.veyarc.model.ImageResultField.FOUND) VariableType.BOOLEAN else VariableType.NUMBER
         }
         onChange(if (nextType == type) condition.copy(left = left) else condition.copy(left = left, operator = ComparisonOperator.EQUALS, right = LiteralOperand(nextType.defaultValue())))
     }
@@ -273,10 +280,25 @@ internal fun VariableComparisonFields(condition: VariableComparisonCondition, va
 private fun OperandField(title: String, operand: Operand, variables: Map<String, VariableDeclaration>, type: VariableType?, onChange: (Operand) -> Unit) {
     val available = variables.filterValues { type == null || it.type == type }
     val types = type?.let(::listOf) ?: VariableType.entries
+    val results = LocalImageResults.current.flatMap { name ->
+        com.veyarc.model.ImageResultField.entries.mapNotNull { field ->
+            val fieldType = if (field == com.veyarc.model.ImageResultField.FOUND) VariableType.BOOLEAN else VariableType.NUMBER
+            if (type == null || type == fieldType) VeyarcChoice("result:$name:${field.name}", "$name / ${field.name.lowercase()}", group = 2) else null
+        }
+    }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         Text(title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        VariableChoice(title, if (operand is LiteralOperand) "${operand.value.variableType().displayName()} value" else operand.displayName(), available.map { VeyarcChoice("variable:${it.key}", it.key) } + types.map { VeyarcChoice("literal:${it.name}", "${it.displayName()} value", group = 1) }) { selection ->
-            onChange(if (selection.startsWith("variable:")) VariableOperand(VariableName(selection.removePrefix("variable:"))) else LiteralOperand(VariableType.valueOf(selection.removePrefix("literal:")).defaultValue()))
+        VariableChoice(title, if (operand is LiteralOperand) "${operand.value.variableType().displayName()} value" else operand.displayName(), available.map { VeyarcChoice("variable:${it.key}", it.key) } + types.map { VeyarcChoice("literal:${it.name}", "${it.displayName()} value", group = 1) } + results) { selection ->
+            onChange(
+                if (selection.startsWith("result:")) {
+                    val parts = selection.split(':')
+                    com.veyarc.model.ImageResultOperand(VariableName(parts[1]), com.veyarc.model.ImageResultField.valueOf(parts[2]))
+                } else if (selection.startsWith("variable:")) {
+                    VariableOperand(VariableName(selection.removePrefix("variable:")))
+                } else {
+                    LiteralOperand(VariableType.valueOf(selection.removePrefix("literal:")).defaultValue())
+                },
+            )
         }
     }
     if (operand is LiteralOperand) ScalarValueButton(operand.value) { onChange(LiteralOperand(it)) }

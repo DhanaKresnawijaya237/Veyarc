@@ -31,7 +31,13 @@ internal class OpenCvImageMatcher : Closeable {
     private val result = Mat()
     private val storage = listOf(rgba, rgb, targetRgba, target, result)
 
-    fun score(bytes: ByteArray, width: Int, height: Int, bounds: FramePixelBounds, template: RgbaTemplate, threshold: Double, checkCancellation: () -> Unit): Double {
+    data class ImageMatch(val score: Double, val left: Int, val top: Int)
+
+    fun score(bytes: ByteArray, width: Int, height: Int, bounds: FramePixelBounds, template: RgbaTemplate, threshold: Double, checkCancellation: () -> Unit): Double = match(bytes, width, height, bounds, template, threshold, checkCancellation, false).score
+
+    fun find(bytes: ByteArray, width: Int, height: Int, bounds: FramePixelBounds, template: RgbaTemplate, threshold: Double, checkCancellation: () -> Unit): ImageMatch = match(bytes, width, height, bounds, template, threshold, checkCancellation, true)
+
+    private fun match(bytes: ByteArray, width: Int, height: Int, bounds: FramePixelBounds, template: RgbaTemplate, threshold: Double, checkCancellation: () -> Unit, fullSearch: Boolean): ImageMatch {
         try {
             checkCancellation()
             rgba.create(height, width, CvType.CV_8UC4)
@@ -50,6 +56,16 @@ internal class OpenCvImageMatcher : Closeable {
             val maximumError = 3.0 * 255 * 255 * template.widthPx * template.heightPx
             val allowedError = (1.0 - threshold) * (1.0 - threshold) * maximumError
             var bestError = Double.POSITIVE_INFINITY
+            var bestX = 0
+            var bestY = 0
+            fun record(error: Double, x: Int, y: Int) {
+                if (error < bestError || (error == bestError && (y < bestY || (y == bestY && x < bestX)))) {
+                    bestError = error
+                    bestX = x
+                    bestY = y
+                }
+            }
+            fun found() = ImageMatch(similarity(bestError, maximumError), bounds.left + bestX, bounds.top + bestY)
             val originRows = rgb.rows() - target.rows() + 1
             var row = 0
             while (row < originRows) {
@@ -59,7 +75,7 @@ internal class OpenCvImageMatcher : Closeable {
                 val strip = rgb.rowRange(row, row + count + target.rows() - 1)
                 try {
                     if (count == 1 && rgb.cols() == target.cols()) {
-                        bestError = minOf(bestError, Core.norm(strip, target, Core.NORM_L2SQR).roundToLong().toDouble())
+                        record(Core.norm(strip, target, Core.NORM_L2SQR).roundToLong().toDouble(), 0, row)
                     } else {
                         Imgproc.matchTemplate(strip, target, result, Imgproc.TM_SQDIFF)
                         checkCancellation()
@@ -76,12 +92,12 @@ internal class OpenCvImageMatcher : Closeable {
                             }
                         }
                         // Eight-bit squared differences are integers; remove native norm rounding at cutoffs.
-                        bestError = minOf(bestError, exactError(x, y))
-                        if (similarity(bestError, maximumError) >= threshold) return similarity(bestError, maximumError)
+                        record(exactError(x, y), x, row + y)
+                        if (!fullSearch && similarity(bestError, maximumError) >= threshold) return found()
 
                         // FFT rounding can reorder nearly equal candidates. Verify those near the cutoff.
                         val roundingMargin = maximumError * 0.00001
-                        if (minimum.minVal <= allowedError + roundingMargin) {
+                        if (fullSearch || minimum.minVal <= allowedError + roundingMargin) {
                             val scores = FloatArray(result.cols())
                             try {
                                 for (resultY in 0 until result.rows()) {
@@ -89,9 +105,9 @@ internal class OpenCvImageMatcher : Closeable {
                                     result.get(resultY, 0, scores)
                                     for (resultX in scores.indices) {
                                         if (resultX == x && resultY == y) continue
-                                        if (scores[resultX] > allowedError + roundingMargin) continue
-                                        bestError = minOf(bestError, exactError(resultX, resultY))
-                                        if (similarity(bestError, maximumError) >= threshold) return similarity(bestError, maximumError)
+                                        if (scores[resultX] > (if (fullSearch) minimum.minVal else allowedError) + roundingMargin) continue
+                                        record(exactError(resultX, resultY), resultX, row + resultY)
+                                        if (!fullSearch && similarity(bestError, maximumError) >= threshold) return found()
                                     }
                                 }
                             } finally {
@@ -107,7 +123,7 @@ internal class OpenCvImageMatcher : Closeable {
                 row += count
             }
             checkCancellation()
-            return similarity(bestError, maximumError)
+            return found()
         } catch (error: CvException) {
             throw VisualConditionEvaluationException("Image matching failed. Try the image check again.", error)
         } finally {

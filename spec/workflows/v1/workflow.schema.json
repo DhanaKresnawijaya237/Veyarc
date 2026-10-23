@@ -199,6 +199,31 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": [
+            "type",
+            "name",
+            "field"
+          ],
+          "description": "Read a named Find image result from this run. found is Boolean; score is a number from 0 to 1. Before the named Find image block has run, this value is unavailable and stops the run.",
+          "properties": {
+            "type": {
+              "const": "imageResult"
+            },
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{0,63}$"
+            },
+            "field": {
+              "enum": [
+                "found",
+                "score"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["type", "value"],
           "properties": { "type": { "const": "literal" }, "value": { "$ref": "#/$defs/scalarValue" } }
         },
@@ -356,6 +381,43 @@
     },
     "step": {
       "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "id",
+            "name",
+            "condition"
+          ],
+          "description": "Search the entire chosen area for the strongest image match. Save a named temporary result with found, score, and matched area. Reusing a name replaces the previous result. A failed search clears its position but keeps the score. condition must be imagePresent, with a saved or captured target and an optional captured search background. Captured pixels remain on device.",
+          "properties": {
+            "type": {
+              "const": "findImage"
+            },
+            "id": {
+              "$ref": "#/$defs/uuid"
+            },
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{0,63}$"
+            },
+            "condition": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/condition"
+                },
+                {
+                  "properties": {
+                    "type": {
+                      "const": "imagePresent"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
         {
           "type": "object",
           "additionalProperties": false,

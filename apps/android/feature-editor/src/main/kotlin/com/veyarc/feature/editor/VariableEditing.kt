@@ -61,6 +61,7 @@ internal fun ComparisonOperator.displayName(): String = when (this) {
 }
 
 internal fun Operand.displayName(): String = when (this) {
+    is com.veyarc.model.ImageResultOperand -> "${name.value} / ${field.name.lowercase()}"
     is VariableOperand -> name.value
     is LiteralOperand -> if (value is StringValue) "\"${value.editorText()}\"" else value.editorText()
 }
@@ -151,6 +152,7 @@ internal fun WorkflowDraft.removeVariable(name: String): WorkflowDraft {
 private fun List<WorkflowStep>.mapVariableNames(transform: (VariableName) -> VariableName): List<WorkflowStep> {
     fun operand(value: Operand): Operand = when (value) {
         is VariableOperand -> value.copy(name = transform(value.name))
+        is com.veyarc.model.ImageResultOperand -> value
         is LiteralOperand -> value
     }
     fun condition(value: Condition): Condition = when (value) {
@@ -164,6 +166,7 @@ private fun List<WorkflowStep>.mapVariableNames(transform: (VariableName) -> Var
         when (step) {
             is SetVariable -> step.copy(name = transform(step.name), source = step.source?.let(::operand), calculation = step.calculation?.let { it.copy(operand = operand(it.operand)) })
             is Wait -> step.copy(durationVariable = step.durationVariable?.let(transform))
+            is com.veyarc.model.FindImage -> step.copy(condition = condition(step.condition) as com.veyarc.model.ImagePresentCondition)
             is WaitUntil -> step.copy(condition = condition(step.condition))
             is IfElse -> step.copy(condition = condition(step.condition), thenSteps = step.thenSteps.mapVariableNames(transform), elseSteps = step.elseSteps.mapVariableNames(transform))
             is Repeat -> step.copy(bodySteps = step.bodySteps.mapVariableNames(transform), countVariable = step.countVariable?.let(transform))
@@ -187,6 +190,30 @@ internal fun WorkflowDraft.renameCapturedImage(previous: VariableName, name: Var
     fun update(items: List<WorkflowStep>): List<WorkflowStep> = items.map { step ->
         when (step) {
             is CaptureImage -> if (step.name == previous) step.copy(name = name) else step
+            is com.veyarc.model.FindImage -> step.copy(condition = condition(step.condition) as com.veyarc.model.ImagePresentCondition)
+            is WaitUntil -> step.copy(condition = condition(step.condition))
+            is IfElse -> step.copy(condition = condition(step.condition), thenSteps = update(step.thenSteps), elseSteps = update(step.elseSteps))
+            is Repeat -> step.copy(bodySteps = update(step.bodySteps))
+            is WhileStep -> step.copy(condition = condition(step.condition), bodySteps = update(step.bodySteps))
+            else -> step
+        }
+    }
+    return copy(steps = update(steps))
+}
+
+internal fun WorkflowDraft.renameImageSearch(previous: VariableName, name: VariableName): WorkflowDraft {
+    fun operand(value: Operand): Operand = if (value is com.veyarc.model.ImageResultOperand && value.name == previous) value.copy(name = name) else value
+    fun condition(value: Condition): Condition = when (value) {
+        is VariableComparisonCondition -> value.copy(left = operand(value.left), right = operand(value.right))
+        is AndCondition -> value.copy(conditions = value.conditions.map(::condition))
+        is OrCondition -> value.copy(conditions = value.conditions.map(::condition))
+        is NotCondition -> value.copy(condition = condition(value.condition))
+        else -> value
+    }
+    fun update(items: List<WorkflowStep>): List<WorkflowStep> = items.map { step ->
+        when (step) {
+            is com.veyarc.model.FindImage -> if (step.name == previous) step.copy(name = name) else step
+            is SetVariable -> step.copy(source = step.source?.let(::operand), calculation = step.calculation?.let { it.copy(operand = operand(it.operand)) })
             is WaitUntil -> step.copy(condition = condition(step.condition))
             is IfElse -> step.copy(condition = condition(step.condition), thenSteps = update(step.thenSteps), elseSteps = update(step.elseSteps))
             is Repeat -> step.copy(bodySteps = update(step.bodySteps))

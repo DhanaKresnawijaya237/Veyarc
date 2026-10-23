@@ -4,6 +4,7 @@ import com.veyarc.model.AndCondition
 import com.veyarc.model.CaptureImage
 import com.veyarc.model.CapturedImageCondition
 import com.veyarc.model.Condition
+import com.veyarc.model.FindImage
 import com.veyarc.model.ForegroundPackageCondition
 import com.veyarc.model.IfElse
 import com.veyarc.model.ImageAbsentCondition
@@ -74,6 +75,8 @@ object WorkflowCompiler {
     private fun compileSteps(steps: List<WorkflowStep>): List<ExecutionStep> = immutableList(
         steps.map { step ->
             when (step) {
+                is FindImage -> ExecutionStep.FindImage(step.id, step.name, step.image)
+
                 is CaptureImage -> ExecutionStep.CaptureImage(step.id, step.name, step.region)
 
                 is TapPoint -> ExecutionStep.TapPoint(step.id, step.point)
@@ -156,6 +159,8 @@ object WorkflowCompiler {
             val stepPath = "$path/$index"
             requireCapability(stepCapability(step), stepPath, capabilities, errors)
             when (step) {
+                is FindImage -> validateConditionCapabilities(step.condition, "$stepPath/condition", capabilities, errors)
+
                 is WaitUntil -> validateConditionCapabilities(
                     step.condition,
                     "$stepPath/condition",
@@ -205,6 +210,7 @@ object WorkflowCompiler {
     }
 
     private fun stepCapability(step: WorkflowStep): EngineCapability = when (step) {
+        is FindImage -> EngineCapability.FIND_IMAGE
         is CaptureImage -> EngineCapability.CAPTURE_IMAGE
         is TapPoint -> EngineCapability.TAP_POINT
         is TapRegion -> EngineCapability.TAP_REGION

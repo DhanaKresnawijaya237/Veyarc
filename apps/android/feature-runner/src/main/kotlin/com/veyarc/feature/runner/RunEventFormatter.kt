@@ -80,6 +80,9 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
 
     private fun conditionResult(event: RunEvent.ConditionEvaluated): String {
         val condition = conditionsByPath[event.path]
+        (stepsById[event.stepId] as? com.veyarc.model.FindImage)?.let { search ->
+            return "${search.name.value}: ${if (event.result) "Found" else "Not found"} / Score ${event.matchScore?.let(::formatPercent) ?: "unavailable"} / Threshold ${formatPercent(search.image.matchThreshold)}" + event.matchedArea?.let { " / Center ${formatPoint(com.veyarc.model.NormalizedCoordinate(it.x + it.width / 2, it.y + it.height / 2))}" }.orEmpty()
+        }
         event.colorMatch?.let { match ->
             val location = (condition as? PixelColorCondition)?.let { if (it.region == null) " at ${formatPoint(it.point)}" else " in the search area" }.orEmpty()
             val closest = String.format(Locale.ROOT, "#%08X", match.closestArgb)
@@ -138,6 +141,8 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
 
         is Stop -> "Stop workflow"
 
+        is com.veyarc.model.FindImage -> "Find image / ${step.name.value}"
+
         is CaptureImage -> "Capture ${step.name.value}"
 
         is SetVariable -> "Set variable ${step.name.value}"
@@ -159,6 +164,7 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
         is WhileStep -> "While loop"
         is LaunchApp -> "Launch app"
         is Stop -> "Stop workflow"
+        is com.veyarc.model.FindImage -> "Find image"
         is CaptureImage -> "Capture image"
         is SetVariable -> "Set variable"
         null -> "Step"
@@ -214,6 +220,8 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
             blockLabels[step.id] = label
             blockContexts[step.id] = context
             when (step) {
+                is com.veyarc.model.FindImage -> indexCondition(step.condition, "${step.id}/condition")
+
                 is WaitUntil -> indexCondition(step.condition, "${step.id}/condition")
 
                 is IfElse -> {

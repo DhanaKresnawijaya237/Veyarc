@@ -23,7 +23,7 @@ object SavedImageCheck {
         }
     }
 
-    fun compare(condition: Condition, width: Int, height: Int, backgroundRgba: ByteArray, target: RgbaTemplate, viewportWidth: Int, viewportHeight: Int): ConditionObservation {
+    fun compare(condition: Condition, width: Int, height: Int, backgroundRgba: ByteArray, target: RgbaTemplate, viewportWidth: Int, viewportHeight: Int, findBest: Boolean = false): ConditionObservation {
         try {
             require(width == viewportWidth && height == viewportHeight) {
                 "Use an original screenshot at $viewportWidth × $viewportHeight. This image is $width × $height; it won't be resized."
@@ -46,7 +46,7 @@ object SavedImageCheck {
                 require(target.widthPx <= bounds.width && target.heightPx <= bounds.height) { "The target image is larger than this block's search area." }
             }
             EphemeralScreenFrame(width, height, 0L, backgroundRgba).use { frame ->
-                return VisualConditionEvaluator({ frame }, { if (it == assetId) target else null }).use { it.observe(condition) }
+                return VisualConditionEvaluator({ frame }, { if (it == assetId) target else null }).use { if (findBest) it.findImage(condition as ImagePresentCondition) else it.observe(condition) }
             }
         } finally {
             backgroundRgba.fill(0)

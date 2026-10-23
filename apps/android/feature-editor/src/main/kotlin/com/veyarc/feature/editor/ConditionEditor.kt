@@ -126,6 +126,9 @@ internal fun Condition.usesCompactEditorSheet(): Boolean = this is ForegroundPac
     this is StepResultCondition ||
     this is VariableComparisonCondition
 
+internal val LocalImageResults = androidx.compose.runtime.staticCompositionLocalOf<Set<String>> { emptySet() }
+internal val LocalFindImagePreview = androidx.compose.runtime.staticCompositionLocalOf { false }
+
 private val LocalCapturedImages = androidx.compose.runtime.staticCompositionLocalOf<Set<String>> { emptySet() }
 
 private val LocalConditionVariables = androidx.compose.runtime.staticCompositionLocalOf<Map<String, com.veyarc.model.VariableDeclaration>> { emptyMap() }
@@ -135,6 +138,8 @@ internal fun ConditionEditorDialog(
     initialCondition: Condition,
     variables: Map<String, com.veyarc.model.VariableDeclaration> = emptyMap(),
     capturedImages: Set<String> = emptySet(),
+    imageResults: Set<String> = emptySet(),
+    imageSearchOnly: Boolean = false,
     assets: List<WorkflowAssetDescriptor>,
     assetNames: Map<String, String>,
     defaultPackage: String,
@@ -179,7 +184,7 @@ internal fun ConditionEditorDialog(
             )
         }
     }
-    androidx.compose.runtime.CompositionLocalProvider(LocalConditionVariables provides variables, LocalCapturedImages provides capturedImages) {
+    androidx.compose.runtime.CompositionLocalProvider(LocalConditionVariables provides variables, LocalCapturedImages provides capturedImages, LocalImageResults provides imageResults, LocalFindImagePreview provides imageSearchOnly) {
         EditorSheetDialog(
             compact = compact,
             onDismiss = onDismiss,
@@ -202,7 +207,7 @@ internal fun ConditionEditorDialog(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     item(key = "header") { header() }
-                    item(key = "type") { ConditionKindPicker(condition, defaultPackage, { condition = it }, Modifier.fillMaxWidth(), showDividers = true) }
+                    item(key = "type") { if (imageSearchOnly) Text("Find the strongest match", style = MaterialTheme.typography.labelLarge) else ConditionKindPicker(condition, defaultPackage, { condition = it }, Modifier.fillMaxWidth(), showDividers = true) }
                     if (condition is ImagePresentCondition || condition is ImageAbsentCondition) {
                         item(key = "image-preview") {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -384,6 +389,7 @@ private fun ConditionKindPicker(
 ) {
     var expanded by remember(condition::class) { mutableStateOf(false) }
     val variables = LocalConditionVariables.current
+    val imageResults = LocalImageResults.current
     if (showDividers) {
         Row(
             modifier.heightIn(min = 48.dp).clickable(
@@ -413,14 +419,18 @@ private fun ConditionKindPicker(
     if (expanded) {
         VeyarcChoicePicker(
             title = "Condition type",
-            options = EditableConditionKind.entries.filter { (it != EditableConditionKind.VARIABLE || variables.isNotEmpty()) }.map { VeyarcChoice(it.name, it.label) },
+            options = EditableConditionKind.entries.filter { (it != EditableConditionKind.VARIABLE || variables.isNotEmpty() || imageResults.isNotEmpty()) }.map { VeyarcChoice(it.name, it.label) },
             selectedId = condition.kind().name,
             onDismiss = { expanded = false },
             onSelect = { choice ->
                 expanded = false
                 if (choice.id == EditableConditionKind.VARIABLE.name) {
-                    val (name, declaration) = variables.entries.first()
-                    onChange(VariableComparisonCondition(com.veyarc.model.VariableOperand(com.veyarc.model.VariableName(name)), com.veyarc.model.ComparisonOperator.EQUALS, com.veyarc.model.LiteralOperand(declaration.initialValue)))
+                    if (variables.isEmpty()) {
+                        onChange(VariableComparisonCondition(com.veyarc.model.ImageResultOperand(VariableName(imageResults.first()), com.veyarc.model.ImageResultField.FOUND), com.veyarc.model.ComparisonOperator.EQUALS, com.veyarc.model.LiteralOperand(com.veyarc.model.BooleanValue(true))))
+                    } else {
+                        val (name, declaration) = variables.entries.first()
+                        onChange(VariableComparisonCondition(com.veyarc.model.VariableOperand(com.veyarc.model.VariableName(name)), com.veyarc.model.ComparisonOperator.EQUALS, com.veyarc.model.LiteralOperand(declaration.initialValue)))
+                    }
                 } else {
                     onChange(EditableConditionKind.entries.first { it.name == choice.id }.defaultCondition(defaultPackage))
                 }
@@ -673,6 +683,7 @@ private fun ImageConditionFields(
             displayWidthPx = previewWidthPx,
             displayHeightPx = previewHeightPx,
             fullScreenOnly = mode != ImagePickerMode.TARGET,
+            allowAnySize = mode == ImagePickerMode.TARGET,
             capturedImages = LocalCapturedImages.current,
             selectedCapture = if (mode == ImagePickerMode.BACKGROUND) condition.capturedBackgroundName()?.value else condition.capturedImageName()?.value,
             onSelectCapture = { name ->

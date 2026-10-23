@@ -168,6 +168,8 @@ object WorkflowValidator {
             val stepPath = "$path/$index"
             step.backgroundAssetId()?.let { validateImageAsset(it, "$stepPath/backgroundAssetId", AssetKind.IMAGE_TEMPLATE, declaredAssets, referencedAssets, errors) }
             when (step) {
+                is FindImage -> validateCondition(step.condition, "$stepPath/condition", document, runtimeCaptures, allStepIds, seenStepIds, declaredAssets, referencedAssets, errors)
+
                 is WaitUntil -> {
                     validateCondition(
                         condition = step.condition,
@@ -556,6 +558,11 @@ object WorkflowValidator {
         document: WorkflowDocument,
         errors: MutableList<ValidationError>,
     ): VariableType? = when (operand) {
+        is ImageResultOperand -> {
+            if (operand.name.value !in document.steps.imageSearches()) errors += error(ValidationErrorCode.MISSING_VARIABLE, path, "Add a Find image block for ${operand.name.value}")
+            if (operand.field == ImageResultField.FOUND) VariableType.BOOLEAN else VariableType.NUMBER
+        }
+
         is LiteralOperand -> operand.value.variableType()
 
         is VariableOperand -> document.variables[operand.name.value]?.type ?: run {

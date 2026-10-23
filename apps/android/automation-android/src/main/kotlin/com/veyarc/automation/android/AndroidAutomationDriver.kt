@@ -151,6 +151,19 @@ private class BlockingAndroidAutomationDriver(
         return observation
     }
 
+    override fun findImage(condition: ImagePresentCondition): ConditionObservation {
+        requireBackgroundThread()
+        requireSafeDeviceState()
+        val expectedViewport = requireGestureViewport()
+        val expectedPackage = requireGesturePackage()
+        val search = visualConditionObserver as? com.veyarc.engine.ImageSearch ?: throw AndroidAutomationException("Image search is not configured for this run")
+        val result = search.findImage(condition)
+        requireSafeDeviceState()
+        requireGestureViewport(expectedViewport)
+        requireGesturePackage(expectedPackage)
+        return result
+    }
+
     override fun captureImage(name: VariableName, region: NormalizedRect) {
         requireBackgroundThread()
         requireSafeDeviceState()

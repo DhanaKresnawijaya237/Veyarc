@@ -175,6 +175,7 @@ import com.veyarc.model.WorkflowIds
 import com.veyarc.model.WorkflowStep
 import com.veyarc.model.bundle.WorkflowBundle
 import com.veyarc.model.capturedImages
+import com.veyarc.model.imageSearches
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -721,6 +722,8 @@ fun WorkflowEditorScreen(
                         initialCondition = condition,
                         variables = draft.variables,
                         capturedImages = draft.steps.capturedImages().keys,
+                        imageResults = draft.steps.imageSearches().keys,
+                        imageSearchOnly = targetStep is com.veyarc.model.FindImage,
                         assets = draft.assetDescriptors,
                         assetNames = draft.assetNames,
                         defaultPackage = draft.allowedPackagesText.firstPackageOrDefault(),
@@ -2559,7 +2562,7 @@ private fun WorkflowStep.blockCategory(): BlockCategory = when (this) {
     is IfElse -> BlockCategory.BRANCH
     is Repeat, is WhileStep -> BlockCategory.LOOP
     is Jump -> BlockCategory.JUMP
-    is com.veyarc.model.CaptureImage -> BlockCategory.CONDITION
+    is com.veyarc.model.FindImage, is com.veyarc.model.CaptureImage -> BlockCategory.CONDITION
     is com.veyarc.model.SetVariable -> BlockCategory.VARIABLE
     is LaunchApp -> BlockCategory.APP
     is Stop -> BlockCategory.STOP
@@ -2622,13 +2625,18 @@ private fun EditableStepSummary(
     onDraftChange: (WorkflowDraft) -> Unit,
 ) {
     when (step) {
+        is com.veyarc.model.FindImage -> {
+            RunValueNameFields(step.name, "Save result as") { name -> onDraftChange(draft.renameImageSearch(step.name, name)) }
+            return
+        }
+
         is com.veyarc.model.CaptureImage -> {
             CaptureImageFields(step) { name -> onDraftChange(draft.renameCapturedImage(step.name, name)) }
             return
         }
 
         is com.veyarc.model.SetVariable -> {
-            SetVariableFields(step, draft.variables) { updated -> onDraftChange(draft.updateStep(path, index) { updated }) }
+            SetVariableFields(step, draft.variables, draft.steps.imageSearches().keys) { updated -> onDraftChange(draft.updateStep(path, index) { updated }) }
             return
         }
 
@@ -2721,7 +2729,7 @@ private fun EditableStepSummary(
                 Text("times", style = MaterialTheme.typography.bodyMedium)
             }
 
-            is com.veyarc.model.CaptureImage, is com.veyarc.model.SetVariable -> Unit
+            is com.veyarc.model.FindImage, is com.veyarc.model.CaptureImage, is com.veyarc.model.SetVariable -> Unit
 
             else -> Text(step.summary(draft.assetNames), style = MaterialTheme.typography.bodyMedium)
         }
@@ -2810,7 +2818,7 @@ private fun StepEditorFields(
     onEditCondition: (StepListPath, Int) -> Unit,
 ) {
     when (step) {
-        is com.veyarc.model.CaptureImage, is com.veyarc.model.SetVariable -> Unit
+        is com.veyarc.model.FindImage, is com.veyarc.model.CaptureImage, is com.veyarc.model.SetVariable -> Unit
 
         is Wait,
         is StageBoundary,
@@ -2917,6 +2925,7 @@ private fun String.packageNames(): List<String> = split(',', ' ', '\n', '\t')
     .distinct()
 
 private fun WorkflowStep.conditionOrNull(): Condition? = when (this) {
+    is com.veyarc.model.FindImage -> condition
     is WaitUntil -> condition
     is IfElse -> condition
     is WhileStep -> condition

@@ -4,7 +4,7 @@ package com.veyarc.model
 fun WorkflowDocument.usesVisualConditions(): Boolean = steps.any(::stepUsesVisualCondition)
 
 private fun stepUsesVisualCondition(step: WorkflowStep): Boolean = when (step) {
-    is CaptureImage -> true
+    is CaptureImage, is FindImage -> true
 
     is WaitUntil -> step.condition.usesVisualCondition()
 
