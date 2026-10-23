@@ -65,6 +65,7 @@ enum class WorkflowStepKind {
     REPEAT,
     WHILE,
     LAUNCH_APP,
+    SET_VARIABLE,
     STOP,
 }
 
@@ -163,6 +164,7 @@ class WorkflowEditorSession {
     internal val colorPickerImages = ColorPickerImages()
     internal var allowedAppsExpanded by mutableStateOf(true)
     internal var templatesExpanded by mutableStateOf(true)
+    internal var variablesExpanded by mutableStateOf(false)
     internal var revisionPickerExpanded by mutableStateOf(false)
     internal var validationDetailsVisible by mutableStateOf(false)
     internal var renameTemplateTarget by mutableStateOf<com.veyarc.model.AssetId?>(null)
@@ -394,6 +396,7 @@ class WorkflowEditorSession {
         editTemplateTarget = null
         allowedAppsExpanded = true
         templatesExpanded = true
+        variablesExpanded = false
         revisionPickerExpanded = false
         validationDetailsVisible = false
         renameTemplateTarget = null
@@ -534,7 +537,7 @@ data class WorkflowDraft(
         val current = stepsAt(path)
         val jumpTargetId = current.getOrNull((index - 1).coerceAtLeast(0))?.id
             ?: jumpTargetLists(path).drop(1).firstOrNull()?.firstOrNull()?.id
-        val step = newStep(kind, defaultPackage, jumpTargetId)
+        val step = newStep(kind, defaultPackage, jumpTargetId, variables.entries.firstOrNull()?.toPair())
         return updateList(path) { current ->
             current.toMutableList().apply { add(index.coerceIn(0, size), step) }
         }
@@ -895,7 +898,7 @@ private inline fun WorkflowStep.replaceChildren(
     NestedBranch.IF_ELSE -> (this as? IfElse)?.copy(elseSteps = transform(elseSteps)) ?: this
 }
 
-fun newStep(kind: WorkflowStepKind, defaultPackage: String, jumpTargetId: String? = null): WorkflowStep {
+fun newStep(kind: WorkflowStepKind, defaultPackage: String, jumpTargetId: String? = null, variable: Pair<String, com.veyarc.model.VariableDeclaration>? = null): WorkflowStep {
     val id = WorkflowIds.newUuid()
     val packageName = runCatching { PackageName(defaultPackage) }.getOrElse { PackageName("com.veyarc.app") }
     val condition: Condition = ForegroundPackageCondition(packageName)
@@ -949,6 +952,11 @@ fun newStep(kind: WorkflowStepKind, defaultPackage: String, jumpTargetId: String
 
         WorkflowStepKind.LAUNCH_APP -> LaunchApp(id, packageName, DurationMillis(5_000))
 
+        WorkflowStepKind.SET_VARIABLE -> {
+            val (name, declaration) = requireNotNull(variable) { "Add a variable before adding an assignment block" }
+            com.veyarc.model.SetVariable(id, com.veyarc.model.VariableName(name), declaration.initialValue)
+        }
+
         WorkflowStepKind.STOP -> Stop(id, StopReason.USER_REQUESTED, "Stopped by workflow")
     }
 }
@@ -1000,6 +1008,7 @@ fun WorkflowStepKind.displayName(): String = when (this) {
     WorkflowStepKind.REPEAT -> "Repeat"
     WorkflowStepKind.WHILE -> "While"
     WorkflowStepKind.LAUNCH_APP -> "Launch app"
+    WorkflowStepKind.SET_VARIABLE -> "Set variable"
     WorkflowStepKind.STOP -> "Stop"
 }
 
@@ -1016,6 +1025,7 @@ fun WorkflowStep.displayName(): String = when (this) {
     is Repeat -> "Repeat"
     is WhileStep -> "While"
     is LaunchApp -> "Launch app"
+    is com.veyarc.model.SetVariable -> "Set variable"
     is Stop -> "Stop"
     else -> "Step"
 }
@@ -1033,6 +1043,7 @@ fun WorkflowStep.summary(assetNames: Map<String, String> = emptyMap()): String =
     is Repeat -> "Run ${bodySteps.size} nested blocks $count times"
     is WhileStep -> "While ${condition.summary(assetNames)} · up to $maxIterations times"
     is LaunchApp -> "Open ${packageName.value} and wait up to ${foregroundTimeoutMs.value} ms"
+    is com.veyarc.model.SetVariable -> "${name.value} = ${value.editorText()}"
     is Stop -> message ?: reason.name.lowercase().replace('_', ' ')
     else -> "Configured workflow step"
 }
@@ -1051,7 +1062,7 @@ fun Condition.summary(assetNames: Map<String, String> = emptyMap()): String = wh
 
     is com.veyarc.model.OrientationCondition -> "the screen is ${orientation.name.lowercase()}"
 
-    is com.veyarc.model.VariableComparisonCondition -> "Variable comparison"
+    is com.veyarc.model.VariableComparisonCondition -> "${left.displayName()} ${operator.displayName()} ${right.displayName()}"
 
     is com.veyarc.model.StepResultCondition -> "Step result ${stepId.take(8)}…"
 

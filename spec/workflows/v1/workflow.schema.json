@@ -186,6 +186,7 @@
     },
     "variableDeclaration": {
       "type": "object",
+      "description": "A named number, text or true/false value. Each run starts from initialValue; assignments are shared across that run's branches and loops, never persisted back to the workflow. The initialValue scalar type must match type.",
       "additionalProperties": false,
       "required": ["type", "initialValue"],
       "properties": {
@@ -281,7 +282,7 @@
           "additionalProperties": false,
           "required": ["type", "left", "operator", "right"],
           "properties": {
-            "type": { "const": "variableComparison" },
+            "type": { "const": "variableComparison", "description": "Compare literals or declared variables of the same type. Only numbers support ordered comparisons; text and true/false support equals and notEquals." },
             "left": { "$ref": "#/$defs/operand" },
             "operator": { "enum": ["equals", "notEquals", "lessThan", "lessThanOrEqual", "greaterThan", "greaterThanOrEqual"] },
             "right": { "$ref": "#/$defs/operand" }
@@ -412,7 +413,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["type", "id", "name", "value"],
-          "properties": { "type": { "const": "setVariable" }, "id": { "$ref": "#/$defs/uuid" }, "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" }, "value": { "$ref": "#/$defs/scalarValue" } }
+          "properties": { "type": { "const": "setVariable", "description": "Assign a literal scalar to an existing declared variable for the current run. The value must match its declared type. Expressions, calculations and image values are not supported." }, "id": { "$ref": "#/$defs/uuid" }, "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" }, "value": { "$ref": "#/$defs/scalarValue" } }
         }
       ]
     }

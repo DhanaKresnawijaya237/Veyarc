@@ -717,6 +717,7 @@ fun WorkflowEditorScreen(
                 CompositionLocalProvider(LocalColorPickerImages provides session.colorPickerImages) {
                     ConditionEditorDialog(
                         initialCondition = condition,
+                        variables = draft.variables,
                         assets = draft.assetDescriptors,
                         assetNames = draft.assetNames,
                         defaultPackage = draft.allowedPackagesText.firstPackageOrDefault(),
@@ -1371,6 +1372,7 @@ private fun WorkflowDraftCanvas(
                             )
                         },
                     )
+                    VariableSection(session, draft, onDraftChange)
                     TemplateAssetSection(
                         session = session,
                         assets = draft.assetDescriptors,
@@ -1854,7 +1856,7 @@ private fun TemplateAssetSection(
 }
 
 @Composable
-private fun EditorSetupSection(
+internal fun EditorSetupSection(
     title: String,
     icon: ImageVector,
     expanded: Boolean,
@@ -2058,6 +2060,7 @@ private fun StepListFooter(
         val recording = LocalRecordingEditorControls.current
         Row(Modifier.align(Alignment.CenterHorizontally), horizontalArrangement = Arrangement.spacedBy(32.dp), verticalAlignment = Alignment.CenterVertically) {
             AddBlockMenu(
+                canAddVariable = draft.variables.isNotEmpty(),
                 compact = true,
                 canAddJump = steps.isNotEmpty() || path.segments.isNotEmpty(),
                 modifier = Modifier,
@@ -2273,6 +2276,7 @@ private fun StepCard(
             )
             if (index < draft.stepsAt(path).lastIndex && !dragging) {
                 AddBlockMenu(
+                    canAddVariable = draft.variables.isNotEmpty(),
                     compact = true,
                     subdued = true,
                     canAddJump = draft.stepsAt(path).size > 1 || path.segments.isNotEmpty() || step !is Jump,
@@ -2390,6 +2394,7 @@ private fun StageBoundaryRow(
         }
         if (index < draft.stepsAt(path).lastIndex && !dragging) {
             AddBlockMenu(
+                canAddVariable = draft.variables.isNotEmpty(),
                 compact = true,
                 subdued = true,
                 canAddJump = true,
@@ -2540,6 +2545,7 @@ private enum class BlockCategory(val label: String, val icon: ImageVector) {
     LOOP("Loop", Icons.Outlined.Loop),
     JUMP("Go to", Icons.AutoMirrored.Outlined.Redo),
     APP("App", Icons.Outlined.Apps),
+    VARIABLE("Variable", Icons.Outlined.Tune),
     STOP("Stop", Icons.Outlined.StopCircle),
 }
 
@@ -2550,6 +2556,7 @@ private fun WorkflowStep.blockCategory(): BlockCategory = when (this) {
     is IfElse -> BlockCategory.BRANCH
     is Repeat, is WhileStep -> BlockCategory.LOOP
     is Jump -> BlockCategory.JUMP
+    is com.veyarc.model.SetVariable -> BlockCategory.VARIABLE
     is LaunchApp -> BlockCategory.APP
     is Stop -> BlockCategory.STOP
     else -> BlockCategory.ACTION
@@ -2563,7 +2570,7 @@ private fun BlockCategory.accent(): Color = when (this) {
     BlockCategory.BRANCH -> MaterialTheme.colorScheme.primary
     BlockCategory.LOOP -> MaterialTheme.colorScheme.tertiary
     BlockCategory.JUMP -> MaterialTheme.colorScheme.primary
-    BlockCategory.APP -> MaterialTheme.colorScheme.secondary
+    BlockCategory.APP, BlockCategory.VARIABLE -> MaterialTheme.colorScheme.secondary
     BlockCategory.STOP -> MaterialTheme.colorScheme.error
 }
 
@@ -2766,6 +2773,8 @@ private fun StepEditorFields(
     onEditCondition: (StepListPath, Int) -> Unit,
 ) {
     when (step) {
+        is com.veyarc.model.SetVariable -> SetVariableFields(step, draft.variables) { updated -> onDraftChange(draft.updateStep(path, index) { updated }) }
+
         is Wait,
         is StageBoundary,
         is Jump,
@@ -2815,6 +2824,7 @@ private fun AddBlockMenu(
     compact: Boolean = false,
     subdued: Boolean = false,
     canAddJump: Boolean = true,
+    canAddVariable: Boolean = true,
     modifier: Modifier = Modifier,
     onRecord: (() -> Unit)? = null,
 ) {
@@ -2843,7 +2853,7 @@ private fun AddBlockMenu(
                 options = buildList {
                     if (onRecord != null) add(VeyarcChoice("record", "Record here", highlighted = true))
                     if (clipboard?.clipboardAvailable == true) add(VeyarcChoice("paste", "Paste blocks", highlighted = true))
-                    WorkflowStepKind.entries.filter { it != WorkflowStepKind.JUMP || canAddJump }.forEach { add(VeyarcChoice(it.name, it.displayName(), group = 1)) }
+                    WorkflowStepKind.entries.filter { (it != WorkflowStepKind.JUMP || canAddJump) && (it != WorkflowStepKind.SET_VARIABLE || canAddVariable) }.forEach { add(VeyarcChoice(it.name, it.displayName(), group = 1)) }
                 },
                 onDismiss = { expanded = false },
                 onSelect = { choice ->
