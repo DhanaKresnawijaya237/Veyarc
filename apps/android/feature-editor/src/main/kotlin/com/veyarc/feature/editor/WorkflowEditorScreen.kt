@@ -68,8 +68,11 @@ import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.ContentPaste
+import androidx.compose.material.icons.outlined.DataObject
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.FiberManualRecord
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
@@ -2690,6 +2693,27 @@ private fun EditableStepSummary(
             return
         }
 
+        is Wait -> {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Wait", style = MaterialTheme.typography.bodyMedium)
+                NumberValueControl("Wait time", step.durationVariable, draft.variables, { variable -> onDraftChange(draft.updateStep(path, index) { step.copy(durationVariable = variable) }) }) {
+                    InlineLongField(step.durationMs.value, 0, resetKey = draft.lastSavedRevision) { value -> onDraftChange(draft.updateStep(path, index) { step.copy(durationMs = com.veyarc.model.DurationMillis(value)) }) }
+                }
+                Text("ms", style = MaterialTheme.typography.bodyMedium)
+            }
+            return
+        }
+
+        is Repeat -> {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                NumberValueControl("Repeat count", step.countVariable, draft.variables, { variable -> onDraftChange(draft.updateStep(path, index) { step.copy(countVariable = variable) }) }) {
+                    InlineLongField(step.count.toLong(), 0, Int.MAX_VALUE.toLong(), draft.lastSavedRevision) { value -> onDraftChange(draft.updateStep(path, index) { step.copy(count = value.toInt()) }) }
+                }
+                Text("iterations, ${step.bodySteps.size} nested blocks", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            }
+            return
+        }
+
         else -> Unit
     }
     FlowRow(
@@ -2697,18 +2721,7 @@ private fun EditableStepSummary(
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         when (step) {
-            is Wait -> {
-                Text("Wait", style = MaterialTheme.typography.bodyMedium)
-                if (step.durationVariable == null) {
-                    InlineLongField(step.durationMs.value, 0, resetKey = draft.lastSavedRevision) { value ->
-                        onDraftChange(draft.updateStep(path, index) { step.copy(durationMs = com.veyarc.model.DurationMillis(value)) })
-                    }
-                }
-                NumberVariableBinding("Wait time", step.durationVariable, draft.variables) { variable ->
-                    onDraftChange(draft.updateStep(path, index) { step.copy(durationVariable = variable) })
-                }
-                Text("ms", style = MaterialTheme.typography.bodyMedium)
-            }
+            is Wait -> Unit
 
             is WaitUntil -> {
                 Text("Wait until ${step.condition.summary(draft.assetNames, appNames)} · timeout", style = MaterialTheme.typography.bodyMedium)
@@ -2722,17 +2735,7 @@ private fun EditableStepSummary(
                 Text("ms", style = MaterialTheme.typography.bodyMedium)
             }
 
-            is Repeat -> {
-                if (step.countVariable == null) {
-                    InlineLongField(step.count.toLong(), 0, Int.MAX_VALUE.toLong(), draft.lastSavedRevision) { value ->
-                        onDraftChange(draft.updateStep(path, index) { step.copy(count = value.toInt()) })
-                    }
-                }
-                NumberVariableBinding("Repeat count", step.countVariable, draft.variables) { variable ->
-                    onDraftChange(draft.updateStep(path, index) { step.copy(countVariable = variable) })
-                }
-                Text("iterations, ${step.bodySteps.size} nested blocks", style = MaterialTheme.typography.bodyMedium)
-            }
+            is Repeat -> Unit
 
             is WhileStep -> {
                 Text("While ${step.condition.summary(draft.assetNames, appNames)} · up to", style = MaterialTheme.typography.bodyMedium)
@@ -2774,9 +2777,7 @@ private fun JumpTargetPicker(
     }
     val selected = options.firstOrNull { it.id == selectedId }
     Box(modifier) {
-        Surface(onClick = { expanded = true }, shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.primary) {
-            Text(selected?.label ?: "Choose a destination", Modifier.padding(horizontal = 12.dp, vertical = 10.dp), style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        }
+        Text(selected?.label ?: "Choose a destination", Modifier.clickable(indication = null, interactionSource = null) { expanded = true }.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
         if (expanded) {
             VeyarcChoicePicker(
                 title = "Go to",
@@ -2914,9 +2915,9 @@ private fun AddBlockMenu(
             VeyarcChoicePicker(
                 title = "Add block",
                 options = buildList {
-                    if (onRecord != null) add(VeyarcChoice("record", "Record here", highlighted = true))
-                    if (clipboard?.clipboardAvailable == true) add(VeyarcChoice("paste", "Paste blocks", highlighted = true))
-                    WorkflowStepKind.entries.filter { (it != WorkflowStepKind.JUMP || canAddJump) && (it != WorkflowStepKind.SET_VARIABLE || canAddVariable) }.sortedBy { it.optionGroup() }.forEach { add(VeyarcChoice(it.name, it.displayName(), group = it.optionGroup())) }
+                    if (onRecord != null) add(VeyarcChoice("record", "Record here", highlighted = true, groupTitle = "Quick actions", icon = Icons.Outlined.FiberManualRecord))
+                    if (clipboard?.clipboardAvailable == true) add(VeyarcChoice("paste", "Paste blocks", highlighted = true, groupTitle = "Quick actions", icon = Icons.Outlined.ContentPaste))
+                    WorkflowStepKind.entries.filter { (it != WorkflowStepKind.JUMP || canAddJump) && (it != WorkflowStepKind.SET_VARIABLE || canAddVariable) }.sortedBy { it.optionGroup() }.forEach { add(VeyarcChoice(it.name, it.displayName(), group = it.optionGroup(), groupTitle = it.optionGroupTitle(), icon = it.optionIcon())) }
                 },
                 onDismiss = { expanded = false },
                 onSelect = { choice ->
@@ -3048,4 +3049,17 @@ private fun TemplateRenameDialog(
             dismissButton = { if (!landscape) cancelButton() },
         )
     }
+}
+
+private fun WorkflowStepKind.optionIcon(): ImageVector? = when (this) {
+    WorkflowStepKind.TAP_POINT, WorkflowStepKind.TAP_REGION, WorkflowStepKind.LONG_PRESS, WorkflowStepKind.SWIPE_PATH -> Icons.Outlined.TouchApp
+    WorkflowStepKind.WAIT, WorkflowStepKind.WAIT_UNTIL -> Icons.Outlined.Schedule
+    WorkflowStepKind.IF_ELSE -> Icons.AutoMirrored.Outlined.CallSplit
+    WorkflowStepKind.REPEAT, WorkflowStepKind.WHILE -> Icons.Outlined.Loop
+    WorkflowStepKind.LAUNCH_APP -> Icons.Outlined.Apps
+    WorkflowStepKind.CAPTURE_IMAGE, WorkflowStepKind.FIND_IMAGE -> Icons.Outlined.Image
+    WorkflowStepKind.SET_VARIABLE -> Icons.Outlined.DataObject
+    WorkflowStepKind.JUMP -> Icons.AutoMirrored.Outlined.Redo
+    WorkflowStepKind.STOP -> Icons.Outlined.StopCircle
+    WorkflowStepKind.STAGE_BOUNDARY -> null
 }

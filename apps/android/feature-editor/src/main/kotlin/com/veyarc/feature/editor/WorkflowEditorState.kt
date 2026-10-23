@@ -1114,3 +1114,11 @@ internal fun WorkflowStepKind.optionGroup(): Int = when (this) {
     WorkflowStepKind.CAPTURE_IMAGE, WorkflowStepKind.FIND_IMAGE, WorkflowStepKind.SET_VARIABLE -> 4
     WorkflowStepKind.STAGE_BOUNDARY, WorkflowStepKind.JUMP, WorkflowStepKind.STOP -> 5
 }
+
+internal fun WorkflowStepKind.optionGroupTitle(): String = when (optionGroup()) {
+    1 -> "Actions"
+    2 -> "Timing"
+    3 -> "Conditions & loops"
+    4 -> "Images & variables"
+    else -> "Flow control"
+}

@@ -8,11 +8,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DataObject
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -35,6 +38,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.veyarc.model.ArithmeticOperator
 import com.veyarc.model.CaptureImage
@@ -104,7 +108,10 @@ private fun VariableDeclarationDialog(draft: WorkflowDraft, originalName: String
     }
     EditorSheetDialog(compact = true, onDismiss = onDismiss) {
         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(if (originalName == null) "Add variable" else "Edit variable", style = MaterialTheme.typography.titleLarge)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(if (originalName == null) "Add variable" else "Edit variable", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                Button(onClick = { onSave(name, VariableDeclaration(type, value!!)) }, enabled = name.isNotEmpty() && nameError == null && value != null) { Text("Save") }
+            }
             OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("Name") }, singleLine = true, isError = nameError != null)
             nameError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
             if (used) {
@@ -117,7 +124,6 @@ private fun VariableDeclarationDialog(draft: WorkflowDraft, originalName: String
                 }
             }
             ScalarValueField(type, text, { text = it }, "Starting value")
-            Button(onClick = { onSave(name, VariableDeclaration(type, value!!)) }, enabled = name.isNotEmpty() && nameError == null && value != null, modifier = Modifier.align(Alignment.End)) { Text("Save") }
         }
     }
 }
@@ -214,12 +220,26 @@ internal fun SetVariableFields(step: SetVariable, variables: Map<String, Variabl
 }
 
 @Composable
-internal fun NumberVariableBinding(title: String, selected: VariableName?, variables: Map<String, VariableDeclaration>, onChange: (VariableName?) -> Unit) {
-    val numbers = variables.filterValues { it.type == VariableType.NUMBER }
-    if (numbers.isNotEmpty() || selected != null) {
-        VariableChoice(title, selected?.value ?: "Use variable", listOf(VeyarcChoice("fixed", "Fixed number")) + numbers.map { VeyarcChoice("variable:${it.key}", it.key) }, selected?.let { "variable:${it.value}" } ?: "fixed") {
-            onChange(if (it == "fixed") null else VariableName(it.removePrefix("variable:")))
+internal fun NumberValueControl(title: String, selected: VariableName?, variables: Map<String, VariableDeclaration>, onChange: (VariableName?) -> Unit, fixedValue: @Composable () -> Unit) {
+    val options = numberValueChoices(variables)
+    var choosing by rememberSaveable { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        if (selected == null) {
+            fixedValue()
+            if (options.size > 1) {
+                IconButton(onClick = { choosing = true }, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.Outlined.DataObject, "Choose $title", Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+        } else {
+            Text(selected.value, Modifier.widthIn(max = 160.dp).clickable(indication = null, interactionSource = null) { choosing = true }.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
+    }
+    if (choosing) {
+        VeyarcChoicePicker(title, options, selected?.let { "variable:${it.value}" } ?: "fixed", onDismiss = { choosing = false }, onSelect = {
+            onChange(if (it.id == "fixed") null else VariableName(it.id.removePrefix("variable:")))
+            choosing = false
+        })
     }
 }
 
@@ -309,7 +329,7 @@ private fun OperandField(title: String, operand: Operand, variables: Map<String,
     val available = variables.filterValues { type == null || it.type == type }
     val types = type?.let(::listOf) ?: VariableType.entries
     val resultFields = imageResultFields(type)
-    val results = if (resultFields.isEmpty()) emptyList() else LocalImageResults.current.map { name -> VeyarcChoice("result:$name", name, group = 2) }
+    val results = if (resultFields.isEmpty()) emptyList() else LocalImageResults.current.map { name -> VeyarcChoice("result:$name", name, group = 2, groupTitle = "Image results", icon = Icons.Outlined.Image) }
     val sourceChoice: @Composable (Modifier) -> Unit = { modifier ->
         VariableChoice(
             title,
@@ -318,7 +338,7 @@ private fun OperandField(title: String, operand: Operand, variables: Map<String,
                 is com.veyarc.model.ImageResultOperand -> operand.name.value
                 else -> operand.displayName()
             },
-            available.map { VeyarcChoice("variable:${it.key}", it.key) } + types.map { VeyarcChoice("literal:${it.name}", it.displayName(), group = 1) } + results,
+            available.map { VeyarcChoice("variable:${it.key}", it.key, groupTitle = "Variables", icon = Icons.Outlined.DataObject) } + types.map { VeyarcChoice("literal:${it.name}", it.displayName(), group = 1, groupTitle = "Fixed values") } + results,
             modifier = modifier,
         ) { selection ->
             onChange(
@@ -333,14 +353,9 @@ private fun OperandField(title: String, operand: Operand, variables: Map<String,
             )
         }
     }
-    if (emphasized) {
-        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        sourceChoice(Modifier.fillMaxWidth())
-    } else {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            sourceChoice(Modifier.weight(1.4f))
-        }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(title, Modifier.weight(1f), style = if (emphasized) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyMedium, fontWeight = if (emphasized) FontWeight.Bold else null, color = if (emphasized) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+        sourceChoice(Modifier.widthIn(max = 140.dp))
     }
     if (operand is com.veyarc.model.ImageResultOperand) {
         if (resultFields.size > 1) {

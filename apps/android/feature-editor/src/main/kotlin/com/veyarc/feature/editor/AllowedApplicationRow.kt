@@ -25,13 +25,11 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -245,9 +243,7 @@ internal fun LaunchApplicationPicker(selected: String, packages: List<String>, o
     val options = remember(packages, names) { packages.map { VeyarcChoice(it, names.getValue(it)) } }
     val label = names.getValue(selected)
     var expanded by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
-    Surface(onClick = { expanded = true }, shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.primary) {
-        Text(label, Modifier.padding(horizontal = 12.dp, vertical = 10.dp), style = MaterialTheme.typography.bodyMedium)
-    }
+    Text(label, Modifier.clickable(indication = null, interactionSource = null) { expanded = true }.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
     if (expanded) {
         VeyarcChoicePicker(title = "Allowed apps", options = options, selectedId = selected, onDismiss = { expanded = false }, onSelect = {
             expanded = false

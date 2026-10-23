@@ -37,9 +37,13 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
+import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.CenterFocusStrong
+import androidx.compose.material.icons.outlined.DataObject
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.ScreenRotation
 import androidx.compose.material.icons.outlined.StayCurrentLandscape
 import androidx.compose.material.icons.outlined.StayCurrentPortrait
 import androidx.compose.material3.AlertDialog
@@ -418,7 +422,7 @@ private fun ConditionKindPicker(
     if (expanded) {
         VeyarcChoicePicker(
             title = "Condition type",
-            options = EditableConditionKind.entries.filter { (it != EditableConditionKind.VARIABLE || variables.isNotEmpty() || imageResults.isNotEmpty()) }.sortedBy { it.optionGroup() }.map { VeyarcChoice(it.name, it.label, group = it.optionGroup()) },
+            options = EditableConditionKind.entries.filter { (it != EditableConditionKind.VARIABLE || variables.isNotEmpty() || imageResults.isNotEmpty()) }.sortedBy { it.optionGroup() }.map { VeyarcChoice(it.name, it.label, group = it.optionGroup(), groupTitle = it.optionGroupTitle(), icon = it.optionIcon()) },
             selectedId = condition.kind().name,
             onDismiss = { expanded = false },
             onSelect = { choice ->
@@ -1140,4 +1144,20 @@ internal fun EditableConditionKind.optionGroup(): Int = when (this) {
     EditableConditionKind.FOREGROUND, EditableConditionKind.ORIENTATION -> 1
     EditableConditionKind.VARIABLE -> 2
     EditableConditionKind.AND, EditableConditionKind.OR, EditableConditionKind.NOT -> 3
+}
+
+internal fun EditableConditionKind.optionGroupTitle(): String = when (optionGroup()) {
+    0 -> "Screen checks"
+    1 -> "Device"
+    2 -> "Values"
+    else -> "Logic"
+}
+
+private fun EditableConditionKind.optionIcon(): androidx.compose.ui.graphics.vector.ImageVector? = when (this) {
+    EditableConditionKind.PIXEL -> Icons.Outlined.Palette
+    EditableConditionKind.SCREEN_STATE, EditableConditionKind.IMAGE_PRESENT, EditableConditionKind.IMAGE_ABSENT -> Icons.Outlined.Image
+    EditableConditionKind.FOREGROUND -> Icons.Outlined.Apps
+    EditableConditionKind.ORIENTATION -> Icons.Outlined.ScreenRotation
+    EditableConditionKind.VARIABLE -> Icons.Outlined.DataObject
+    else -> null
 }

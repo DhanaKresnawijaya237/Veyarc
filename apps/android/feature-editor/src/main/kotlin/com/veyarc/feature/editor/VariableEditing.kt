@@ -244,3 +244,6 @@ internal fun VariableComparisonCondition.comparisonText(): String {
     }
     return "${left.displayName()} ${operator.displayName()} ${right.displayName()}"
 }
+
+internal fun numberValueChoices(variables: Map<String, VariableDeclaration>): List<VeyarcChoice> = listOf(VeyarcChoice("fixed", "Fixed number", groupTitle = "Value")) +
+    variables.filterValues { it.type == VariableType.NUMBER }.map { VeyarcChoice("variable:${it.key}", it.key, group = 1, groupTitle = "Variables") }
