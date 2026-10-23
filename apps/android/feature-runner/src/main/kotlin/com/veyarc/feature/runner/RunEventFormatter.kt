@@ -113,11 +113,11 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
     }
 
     private fun stepDescription(stepId: String): String = when (val step = stepsById[stepId]) {
-        is TapPoint -> "Tap at ${formatPoint(step.point)}"
+        is TapPoint -> step.imagePosition?.let { "Tap ${it.name.value} / Offset ${it.offsetXPx}, ${it.offsetYPx} px" } ?: "Tap at ${formatPoint(step.point)}"
 
         is TapRegion -> "Tap region at ${formatPoint(step.resolvePoint())}"
 
-        is LongPress -> "Long press at ${formatPoint(step.point)} for ${step.durationMs.value} ms"
+        is LongPress -> step.imagePosition?.let { "Hold ${it.name.value} for ${step.durationMs.value} ms / Offset ${it.offsetXPx}, ${it.offsetYPx} px" } ?: "Long press at ${formatPoint(step.point)} for ${step.durationMs.value} ms"
 
         is SwipePath ->
             "Swipe from ${formatPoint(step.points.first().point)} to ${formatPoint(step.points.last().point)} " +

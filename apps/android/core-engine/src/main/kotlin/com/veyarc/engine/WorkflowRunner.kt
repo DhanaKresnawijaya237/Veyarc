@@ -177,11 +177,12 @@ class WorkflowRunner {
             state.imageResults.remove(step.name.value)
             val viewport = currentViewportOrAbort(state)
             val foreground = state.driver.currentForegroundPackage()
+            val positionEpoch = state.positionEpoch
             val observation = state.driver.findImage(step.condition)
             ensureBoundary(state)
             check(currentViewportOrAbort(state) == viewport && state.driver.currentForegroundPackage() == foreground) { "The screen changed during image search. Find the image again." }
             require(observation.matchScore != null && (!observation.result || observation.matchedArea != null)) { "Image search returned an incomplete result" }
-            state.imageResults[step.name.value] = SavedImageResult(observation.copy(matchedArea = observation.matchedArea.takeIf { observation.result }), viewport, foreground, step.condition.capturedBackground == null)
+            state.imageResults[step.name.value] = SavedImageResult(observation.copy(matchedArea = observation.matchedArea.takeIf { observation.result }), viewport, foreground, step.condition.capturedBackground == null, positionEpoch)
             state.emit(RunEvent.ConditionEvaluated(state.nowMs(), step.id, "${step.id}/condition", observation.result, observation.matchScore, step.condition.matchThreshold, matchedArea = observation.matchedArea.takeIf { observation.result }))
             StepExecution(StepOutcome.COMPLETED)
         }
@@ -194,7 +195,7 @@ class WorkflowRunner {
         is ExecutionStep.TapPoint -> {
             dispatchAtViewport(
                 state = state,
-                map = { viewport -> ViewportMapper.map(step.point, viewport) },
+                map = { viewport -> resolvePoint(step.point, step.imagePosition, viewport, state) },
                 dispatch = { point -> state.driver.tap(point) },
             )
             StepExecution(StepOutcome.COMPLETED)
@@ -212,7 +213,7 @@ class WorkflowRunner {
         is ExecutionStep.LongPress -> {
             dispatchAtViewport(
                 state = state,
-                map = { viewport -> ViewportMapper.map(step.point, viewport) },
+                map = { viewport -> resolvePoint(step.point, step.imagePosition, viewport, state) },
                 dispatch = { point -> state.driver.longPress(point, step.durationMs.value) },
             )
             StepExecution(StepOutcome.COMPLETED)
@@ -283,6 +284,7 @@ class WorkflowRunner {
         }
 
         is ExecutionStep.LaunchApp -> {
+            state.positionEpoch++
             state.driver.launchApp(step.packageName)
             awaitForeground(step.packageName, step.foregroundTimeoutMs.value, state)
             state.startupHandoffPending = false
@@ -469,6 +471,20 @@ class WorkflowRunner {
         else -> throw IllegalStateException("Ordered comparison requires number values")
     }
 
+    private fun resolvePoint(fixed: com.veyarc.model.NormalizedCoordinate, binding: com.veyarc.model.ImagePositionBinding?, viewport: ActiveViewport, state: RunState): DisplayCoordinate {
+        if (binding == null) return ViewportMapper.map(fixed, viewport)
+        val saved = state.imageResults[binding.name.value] ?: invalidVariableValue("Run Find image for ${binding.name.value} before using its position", state)
+        val area = saved.observation.matchedArea?.takeIf { saved.observation.result }
+            ?: invalidVariableValue("${binding.name.value} was not found. Find it again before using its position.", state)
+        if (!saved.liveScreen) invalidVariableValue("A captured background result cannot control a tap. Find ${binding.name.value} on the current screen.", state)
+        if (saved.viewport != viewport || saved.foreground != state.driver.currentForegroundPackage() || saved.positionEpoch != state.positionEpoch) invalidVariableValue("The screen changed or the run was paused. Find ${binding.name.value} again before tapping.", state)
+        // Match rectangles use pixel boundaries; touch coordinates use pixel centers.
+        val x = (area.x + area.width / 2) * viewport.widthPx - 0.5 + binding.offsetXPx
+        val y = (area.y + area.height / 2) * viewport.heightPx - 0.5 + binding.offsetYPx
+        if (x !in 0.0..(viewport.widthPx - 1).toDouble() || y !in 0.0..(viewport.heightPx - 1).toDouble()) invalidVariableValue("The image position and offset fall outside the screen. Reduce the offset.", state)
+        return DisplayCoordinate(x, y)
+    }
+
     private fun wholeNumberVariable(name: com.veyarc.model.VariableName, maximum: Long, label: String, state: RunState): Long {
         val value = (resolveOperand(VariableOperand(name), state) as? NumberValue)?.value
             ?: invalidVariableValue("$label requires a number variable", state)
@@ -533,6 +549,7 @@ class WorkflowRunner {
             return
         }
         if (!state.pauseEventPublished) {
+            state.positionEpoch++
             state.emit(RunEvent.Paused(state.nowMs()))
             state.pauseEventPublished = true
         }
@@ -673,7 +690,7 @@ class WorkflowRunner {
 
     private fun deadline(startMs: Long, durationMs: Long): Long = if (durationMs > Long.MAX_VALUE - startMs) Long.MAX_VALUE else startMs + durationMs
 
-    private data class SavedImageResult(val observation: ConditionObservation, val viewport: ActiveViewport, val foreground: PackageName?, val liveScreen: Boolean)
+    private data class SavedImageResult(val observation: ConditionObservation, val viewport: ActiveViewport, val foreground: PackageName?, val liveScreen: Boolean, val positionEpoch: Long)
 
     private class RunState(
         val plan: ExecutionPlan,
@@ -690,6 +707,7 @@ class WorkflowRunner {
         val variables = LinkedHashMap(plan.variables.mapValues { it.value.initialValue })
         val jumpVisits = mutableMapOf<String, Int>()
         val imageResults = mutableMapOf<String, SavedImageResult>()
+        var positionEpoch = 0L
         var currentStepId: String? = null
         var currentPath: String = "/"
         var startupHandoffPending: Boolean = startupPackage != null && plan.steps.firstOrNull() is ExecutionStep.LaunchApp

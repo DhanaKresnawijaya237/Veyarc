@@ -24,6 +24,7 @@ data class TapPoint(
     override val id: String,
     val point: NormalizedCoordinate,
     val backgroundAssetId: AssetId? = null,
+    val imagePosition: ImagePositionBinding? = null,
 ) : WorkflowStep {
     init {
         ContractChecks.requireStableId(id, "Step id")
@@ -60,6 +61,7 @@ data class LongPress(
     val point: NormalizedCoordinate,
     val durationMs: DurationMillis,
     val backgroundAssetId: AssetId? = null,
+    val imagePosition: ImagePositionBinding? = null,
 ) : WorkflowStep {
     init {
         ContractChecks.requireStableId(id, "Step id")

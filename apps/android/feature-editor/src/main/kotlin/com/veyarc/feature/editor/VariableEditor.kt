@@ -304,3 +304,35 @@ private fun OperandField(title: String, operand: Operand, variables: Map<String,
     if (operand is LiteralOperand) ScalarValueButton(operand.value) { onChange(LiteralOperand(it)) }
     if (operand is VariableOperand && operand.name.value !in variables) Text("${operand.name.value} is missing from Variables.", color = MaterialTheme.colorScheme.error)
 }
+
+@Composable
+internal fun ImagePositionFields(binding: com.veyarc.model.ImagePositionBinding?, searches: Map<String, List<com.veyarc.model.FindImage>>, onChange: (com.veyarc.model.ImagePositionBinding?) -> Unit) {
+    val live = searches.filterValues { definitions -> definitions.all { it.image.capturedBackground == null } }
+    if (live.isEmpty() && binding == null) return
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("Position", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            VariableChoice("Tap position", binding?.name?.value ?: "Fixed point", listOf(VeyarcChoice("fixed", "Fixed point")) + live.keys.map { VeyarcChoice("result:$it", it) }, binding?.let { "result:${it.name.value}" } ?: "fixed") { selected ->
+                onChange(if (selected == "fixed") null else com.veyarc.model.ImagePositionBinding(VariableName(selected.removePrefix("result:"))))
+            }
+        }
+        binding?.let { value ->
+            Text("Center of the matched image", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ImageOffsetField("X offset (px)", value.offsetXPx, Modifier.weight(1f)) { onChange(value.copy(offsetXPx = it)) }
+                ImageOffsetField("Y offset (px)", value.offsetYPx, Modifier.weight(1f)) { onChange(value.copy(offsetYPx = it)) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImageOffsetField(label: String, value: Int, modifier: Modifier, onChange: (Int) -> Unit) {
+    var text by rememberNumericEditorText(value.toString())
+    OutlinedTextField(text, { candidate ->
+        if (candidate.removePrefix("-").all(Char::isDigit)) {
+            text = candidate
+            candidate.toIntOrNull()?.let(onChange)
+        }
+    }, modifier, label = { Text(label) }, singleLine = true, shape = RoundedCornerShape(12.dp), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+}

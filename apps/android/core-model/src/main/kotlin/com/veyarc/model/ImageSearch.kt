@@ -47,3 +47,6 @@ fun List<WorkflowStep>.imageSearches(): Map<String, List<FindImage>> = buildMap<
     }
     visit(this@imageSearches)
 }
+
+@Serializable
+data class ImagePositionBinding(val name: VariableName, val offsetXPx: Int = 0, val offsetYPx: Int = 0)

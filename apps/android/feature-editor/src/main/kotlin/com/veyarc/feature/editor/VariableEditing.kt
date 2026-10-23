@@ -213,6 +213,8 @@ internal fun WorkflowDraft.renameImageSearch(previous: VariableName, name: Varia
     fun update(items: List<WorkflowStep>): List<WorkflowStep> = items.map { step ->
         when (step) {
             is com.veyarc.model.FindImage -> if (step.name == previous) step.copy(name = name) else step
+            is com.veyarc.model.TapPoint -> step.copy(imagePosition = step.imagePosition?.let { if (it.name == previous) it.copy(name = name) else it })
+            is com.veyarc.model.LongPress -> step.copy(imagePosition = step.imagePosition?.let { if (it.name == previous) it.copy(name = name) else it })
             is SetVariable -> step.copy(source = step.source?.let(::operand), calculation = step.calculation?.let { it.copy(operand = operand(it.operand)) })
             is WaitUntil -> step.copy(condition = condition(step.condition))
             is IfElse -> step.copy(condition = condition(step.condition), thenSteps = update(step.thenSteps), elseSteps = update(step.elseSteps))

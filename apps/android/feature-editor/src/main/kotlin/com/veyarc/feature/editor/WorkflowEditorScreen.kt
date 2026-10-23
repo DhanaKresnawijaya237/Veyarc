@@ -2625,6 +2625,23 @@ private fun EditableStepSummary(
     onDraftChange: (WorkflowDraft) -> Unit,
 ) {
     when (step) {
+        is TapPoint -> {
+            ImagePositionFields(step.imagePosition, draft.steps.imageSearches()) { binding -> onDraftChange(draft.updateStep(path, index) { step.copy(imagePosition = binding) }) }
+            Text(if (step.imagePosition == null) step.summary(draft.assetNames) else "Tap the matched image's center", style = MaterialTheme.typography.bodyMedium)
+            return
+        }
+
+        is LongPress -> {
+            ImagePositionFields(step.imagePosition, draft.steps.imageSearches()) { binding -> onDraftChange(draft.updateStep(path, index) { step.copy(imagePosition = binding) }) }
+            Text(if (step.imagePosition == null) "Hold at ${(step.point.x * 100).toInt()}%, ${(step.point.y * 100).toInt()}%" else "Hold the matched image's center", style = MaterialTheme.typography.bodyMedium)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Hold for ", style = MaterialTheme.typography.bodyMedium)
+                InlineLongField(step.durationMs.value, 1, resetKey = draft.lastSavedRevision) { value -> onDraftChange(draft.updateStep(path, index) { step.copy(durationMs = com.veyarc.model.DurationMillis(value)) }) }
+                Text(" ms", style = MaterialTheme.typography.bodyMedium)
+            }
+            return
+        }
+
         is com.veyarc.model.FindImage -> {
             RunValueNameFields(step.name, "Save result as") { name -> onDraftChange(draft.renameImageSearch(step.name, name)) }
             return
@@ -2932,7 +2949,7 @@ private fun WorkflowStep.conditionOrNull(): Condition? = when (this) {
     else -> null
 }
 
-private fun WorkflowStep.hasEditableGeometry(): Boolean = this is com.veyarc.model.CaptureImage || this is TapPoint || this is TapRegion || this is LongPress || this is SwipePath
+private fun WorkflowStep.hasEditableGeometry(): Boolean = this is com.veyarc.model.CaptureImage || (this is TapPoint && imagePosition == null) || this is TapRegion || (this is LongPress && imagePosition == null) || this is SwipePath
 
 private fun viewportFor(context: Context): com.veyarc.model.ViewportSpec {
     val metrics = context.resources.displayMetrics

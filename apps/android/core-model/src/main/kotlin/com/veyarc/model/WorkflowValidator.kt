@@ -263,7 +263,11 @@ object WorkflowValidator {
 
                 is Wait -> step.durationVariable?.let { validateNumberVariable(it, "$stepPath/durationVariable", document, errors) }
 
-                is CaptureImage, is LongPress, is StageBoundary, is Stop, is TapPoint, is TapRegion -> Unit
+                is TapPoint -> step.imagePosition?.let { validateImagePosition(it, stepPath, document, errors) }
+
+                is LongPress -> step.imagePosition?.let { validateImagePosition(it, stepPath, document, errors) }
+
+                is CaptureImage, is StageBoundary, is Stop, is TapRegion -> Unit
             }
 
             seenStepIds += step.id
@@ -433,6 +437,12 @@ object WorkflowValidator {
                 errors,
             )
         }
+    }
+
+    private fun validateImagePosition(binding: ImagePositionBinding, path: String, document: WorkflowDocument, errors: MutableList<ValidationError>) {
+        val searches = document.steps.imageSearches()[binding.name.value]
+        if (searches.isNullOrEmpty()) errors += error(ValidationErrorCode.MISSING_VARIABLE, "$path/imagePosition", "Add a Find image block for ${binding.name.value}")
+        if (searches.orEmpty().any { it.image.capturedBackground != null }) errors += error(ValidationErrorCode.VARIABLE_TYPE_MISMATCH, "$path/imagePosition", "For tapping, ${binding.name.value} must search the current screen, not a captured background.")
     }
 
     private fun captureDimensions(name: VariableName, path: String, document: WorkflowDocument, captures: Map<String, List<CaptureImage>>, errors: MutableList<ValidationError>): List<Pair<Int, Int>> {

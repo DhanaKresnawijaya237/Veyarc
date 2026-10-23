@@ -93,6 +93,7 @@ internal class OpenCvImageMatcher : Closeable {
                         }
                         // Eight-bit squared differences are integers; remove native norm rounding at cutoffs.
                         record(exactError(x, y), x, row + y)
+                        if (bestError == 0.0) return found()
                         if (!fullSearch && similarity(bestError, maximumError) >= threshold) return found()
 
                         // FFT rounding can reorder nearly equal candidates. Verify those near the cutoff.
@@ -107,6 +108,7 @@ internal class OpenCvImageMatcher : Closeable {
                                         if (resultX == x && resultY == y) continue
                                         if (scores[resultX] > (if (fullSearch) minimum.minVal else allowedError) + roundingMargin) continue
                                         record(exactError(resultX, resultY), resultX, row + resultY)
+                                        if (bestError == 0.0) return found()
                                         if (!fullSearch && similarity(bestError, maximumError) >= threshold) return found()
                                     }
                                 }

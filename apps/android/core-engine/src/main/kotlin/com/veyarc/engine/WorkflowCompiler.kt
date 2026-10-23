@@ -79,7 +79,7 @@ object WorkflowCompiler {
 
                 is CaptureImage -> ExecutionStep.CaptureImage(step.id, step.name, step.region)
 
-                is TapPoint -> ExecutionStep.TapPoint(step.id, step.point)
+                is TapPoint -> ExecutionStep.TapPoint(step.id, step.point, step.imagePosition)
 
                 is TapRegion -> ExecutionStep.TapRegion(
                     id = step.id,
@@ -88,7 +88,7 @@ object WorkflowCompiler {
                     resolvedPoint = step.resolvePoint(),
                 )
 
-                is LongPress -> ExecutionStep.LongPress(step.id, step.point, step.durationMs)
+                is LongPress -> ExecutionStep.LongPress(step.id, step.point, step.durationMs, step.imagePosition)
 
                 is com.veyarc.model.SwipePath -> ExecutionStep.SwipePath(
                     step.id,

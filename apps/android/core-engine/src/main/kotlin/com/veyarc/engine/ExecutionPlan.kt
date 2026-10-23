@@ -180,6 +180,7 @@ sealed interface ExecutionStep {
     data class TapPoint(
         override val id: String,
         val point: NormalizedCoordinate,
+        val imagePosition: com.veyarc.model.ImagePositionBinding? = null,
     ) : ExecutionStep
 
     data class TapRegion(
@@ -193,6 +194,7 @@ sealed interface ExecutionStep {
         override val id: String,
         val point: NormalizedCoordinate,
         val durationMs: DurationMillis,
+        val imagePosition: com.veyarc.model.ImagePositionBinding? = null,
     ) : ExecutionStep
 
     data class SwipePath(
