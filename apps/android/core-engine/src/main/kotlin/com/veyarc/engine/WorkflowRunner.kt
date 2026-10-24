@@ -21,7 +21,9 @@ import com.veyarc.model.StepOutcome
 import com.veyarc.model.StepResultCondition
 import com.veyarc.model.StopReason
 import com.veyarc.model.VariableComparisonCondition
+import com.veyarc.model.VariableName
 import com.veyarc.model.VariableOperand
+import com.veyarc.model.withCaptureNames
 import java.util.LinkedHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.min
@@ -90,7 +92,7 @@ class WorkflowRunner {
                 code = RunFailureCode.DRIVER_ERROR,
                 stepId = state.currentStepId,
                 path = state.currentPath,
-                message = error.message ?: "Execution dependency failed",
+                message = state.visibleError(error.message ?: "Execution dependency failed"),
             )
             finish(state, RunOutcome.FAILED, failure, null)
         } finally {
@@ -137,26 +139,26 @@ class WorkflowRunner {
         state.currentStepId = step.id
         state.currentPath = "/steps/${step.id}"
         ensureBoundary(state)
-        state.emit(RunEvent.StepStarted(state.nowMs(), step.id))
+        state.emit(RunEvent.StepStarted(state.nowMs(), step.id, state.sectionCallId))
         var finished = false
         return try {
             val execution = executeStepBody(step, state)
             state.stepOutcomes[step.id] = execution.outcome
-            state.emit(RunEvent.StepFinished(state.nowMs(), step.id, execution.outcome, execution.details))
+            state.emit(RunEvent.StepFinished(state.nowMs(), step.id, execution.outcome, execution.details, state.sectionCallId))
             finished = true
             if (execution.halt == null) ensureBoundary(state)
             execution
         } catch (abort: RunAbort) {
             if (!finished) {
                 state.stepOutcomes[step.id] = abort.stepOutcome
-                state.emit(RunEvent.StepFinished(state.nowMs(), step.id, abort.stepOutcome))
+                state.emit(RunEvent.StepFinished(state.nowMs(), step.id, abort.stepOutcome, sectionCallId = state.sectionCallId))
             }
             throw abort
         } catch (error: Exception) {
             if (state.cancellation.isCancellationRequested()) {
                 if (!finished) {
                     state.stepOutcomes[step.id] = StepOutcome.CANCELLED
-                    state.emit(RunEvent.StepFinished(state.nowMs(), step.id, StepOutcome.CANCELLED))
+                    state.emit(RunEvent.StepFinished(state.nowMs(), step.id, StepOutcome.CANCELLED, sectionCallId = state.sectionCallId))
                 }
                 ensureNotCancelled(state)
             }
@@ -164,31 +166,59 @@ class WorkflowRunner {
                 code = RunFailureCode.DRIVER_ERROR,
                 stepId = step.id,
                 path = state.currentPath,
-                message = error.message ?: "Execution dependency failed",
+                message = state.visibleError(error.message ?: "Execution dependency failed"),
             )
             state.stepOutcomes[step.id] = StepOutcome.FAILED
-            state.emit(RunEvent.StepFinished(state.nowMs(), step.id, StepOutcome.FAILED))
+            state.emit(RunEvent.StepFinished(state.nowMs(), step.id, StepOutcome.FAILED, sectionCallId = state.sectionCallId))
             throw RunAbort(RunOutcome.FAILED, StepOutcome.FAILED, failure, null)
         }
     }
 
     private fun executeStepBody(step: ExecutionStep, state: RunState): StepExecution = when (step) {
+        is ExecutionStep.RunSection -> {
+            check(state.sectionCallId == null) { "A section cannot run another section" }
+            val section = state.plan.sections.getValue(step.sectionId)
+            val previousResults = state.imageResults
+            val captures = section.captureAliases.values.toSet()
+            state.sectionCallId = step.id
+            state.captureAliases = section.captureAliases
+            state.imageResults = mutableMapOf()
+            section.stepIds.forEach {
+                state.stepOutcomes[it] = StepOutcome.NOT_EXECUTED
+                state.jumpVisits.remove(it)
+            }
+            try {
+                state.driver.releaseCapturedImages(captures)
+                val result = executeSteps(section.steps, state)
+                check(result.jumpTargetId == null) { "A section cannot jump outside its body" }
+                result
+            } finally {
+                try {
+                    state.driver.releaseCapturedImages(captures)
+                } finally {
+                    state.imageResults = previousResults
+                    state.captureAliases = emptyMap()
+                    state.sectionCallId = null
+                }
+            }
+        }
+
         is ExecutionStep.FindImage -> {
             state.imageResults.remove(step.name.value)
             val viewport = currentViewportOrAbort(state)
             val foreground = state.driver.currentForegroundPackage()
             val positionEpoch = state.positionEpoch
-            val observation = state.driver.findImage(step.condition)
+            val observation = state.driver.findImage(step.condition.withCaptureNames(state.captureAliases) as ImagePresentCondition)
             ensureBoundary(state)
             check(currentViewportOrAbort(state) == viewport && state.driver.currentForegroundPackage() == foreground) { "The screen changed during image search. Find the image again." }
             require(observation.matchScore != null && (!observation.result || observation.matchedArea != null)) { "Image search returned an incomplete result" }
             state.imageResults[step.name.value] = SavedImageResult(observation.copy(matchedArea = observation.matchedArea.takeIf { observation.result }), viewport, foreground, step.condition.capturedBackground == null, positionEpoch)
-            state.emit(RunEvent.ConditionEvaluated(state.nowMs(), step.id, "${step.id}/condition", observation.result, observation.matchScore, step.condition.matchThreshold, matchedArea = observation.matchedArea.takeIf { observation.result }))
+            state.emit(RunEvent.ConditionEvaluated(state.nowMs(), step.id, "${step.id}/condition", observation.result, observation.matchScore, step.condition.matchThreshold, matchedArea = observation.matchedArea.takeIf { observation.result }, sectionCallId = state.sectionCallId))
             StepExecution(StepOutcome.COMPLETED)
         }
 
         is ExecutionStep.CaptureImage -> {
-            state.driver.captureImage(step.name, step.region)
+            state.driver.captureImage(state.captureAliases[step.name] ?: step.name, step.region)
             StepExecution(StepOutcome.COMPLETED)
         }
 
@@ -392,7 +422,7 @@ class WorkflowRunner {
             is ImagePresentCondition,
             is ImageAbsentCondition,
             is OrientationCondition,
-            -> state.driver.observe(condition).also { observation = it }.result
+            -> state.driver.observe(condition.withCaptureNames(state.captureAliases)).also { observation = it }.result
 
             is ForegroundPackageCondition -> {
                 ensureForeground(state)
@@ -427,6 +457,7 @@ class WorkflowRunner {
                 threshold = observation?.threshold,
                 colorMatch = observation?.colorMatch,
                 comparison = comparison,
+                sectionCallId = state.sectionCallId,
             ),
         )
         return result
@@ -716,10 +747,13 @@ class WorkflowRunner {
         val startedAtMs: Long,
     ) {
         val events = mutableListOf<RunEvent>()
-        val stepOutcomes = collectStepIds(plan.steps).associateWith { StepOutcome.NOT_EXECUTED }.toMutableMap()
+        val stepOutcomes = (collectStepIds(plan.steps) + plan.sections.values.flatMap { it.stepIds }).associateWith { StepOutcome.NOT_EXECUTED }.toMutableMap()
         val variables = LinkedHashMap(plan.variables.mapValues { it.value.initialValue })
         val jumpVisits = mutableMapOf<String, Int>()
-        val imageResults = mutableMapOf<String, SavedImageResult>()
+        var imageResults = mutableMapOf<String, SavedImageResult>()
+        var sectionCallId: String? = null
+        var captureAliases: Map<VariableName, VariableName> = emptyMap()
+        fun visibleError(message: String): String = captureAliases.entries.fold(message) { text, (original, alias) -> text.replace(alias.value, original.value) }
         var positionEpoch = 0L
         var currentStepId: String? = null
         var currentPath: String = "/"

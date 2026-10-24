@@ -176,6 +176,12 @@ private class BlockingAndroidAutomationDriver(
         requireGesturePackage(expectedPackage)
     }
 
+    override fun releaseCapturedImages(names: Set<VariableName>) {
+        val capture = visualConditionObserver as? RuntimeImageCapture
+        check(capture != null || names.isEmpty()) { "Runtime image cleanup is unavailable" }
+        capture?.releaseCapturedImages(names)
+    }
+
     private fun requireBackgroundThread() {
         check(!isMainThread.invoke()) {
             "Workflow gestures must run off the Android main thread"

@@ -155,6 +155,7 @@ object AssistantCandidateValidator {
 
     private fun flatten(steps: List<WorkflowStep>): List<WorkflowStep> = steps.flatMap { listOf(it) + flatten(children(it)) }
     private fun children(step: WorkflowStep): List<WorkflowStep> = when (step) {
+        is com.veyarc.model.ReusableSection -> step.bodySteps
         is Repeat -> step.bodySteps
         is WhileStep -> step.bodySteps
         is IfElse -> step.thenSteps + step.elseSteps

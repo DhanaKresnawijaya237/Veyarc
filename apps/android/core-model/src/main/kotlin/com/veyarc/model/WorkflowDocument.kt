@@ -32,6 +32,9 @@ data class WorkflowDocument(
 
 @Serializable
 enum class ValidationErrorCode {
+    @SerialName("invalidSection")
+    INVALID_SECTION,
+
     @SerialName("unsupportedSchemaVersion")
     UNSUPPORTED_SCHEMA_VERSION,
 

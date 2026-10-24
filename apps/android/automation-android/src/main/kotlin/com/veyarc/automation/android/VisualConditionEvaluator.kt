@@ -187,6 +187,17 @@ class VisualConditionEvaluator(
         }
     }
 
+    @Synchronized
+    override fun releaseCapturedImages(names: Set<VariableName>) {
+        names.forEach { name ->
+            runtimeCaptureRegions.remove(name)
+            runtimeImages.remove(name)?.let { image ->
+                runtimeImageBytes -= image.widthPx.toLong() * image.heightPx * 4
+                image.clear()
+            }
+        }
+    }
+
     private fun validateCaptureSource(condition: Condition) {
         if (condition.capturedBackgroundName() != null) throw VisualConditionEvaluationException("Captured images cannot be visual backgrounds. Choose a saved preview; checks use the current screen.")
         val name = condition.capturedImageName() ?: return

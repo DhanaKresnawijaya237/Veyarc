@@ -65,7 +65,15 @@ internal fun assistantStepNames(steps: JsonArray?): Map<String, String> = buildM
             val type = block.getValue("type").jsonPrimitive.content
             val label = if (type == "stageBoundary") "Stage ${++stageNumber}" else "Step ${++blockNumber}: ${friendlyField(type)}"
             put(block.getValue("id").jsonPrimitive.content, prefix + label)
-            listOf("bodySteps" to if (type == "while") "while" else "repeat", "thenSteps" to "true", "elseSteps" to "false").forEach { (field, branch) ->
+            listOf(
+                "bodySteps" to when (type) {
+                    "while" -> "while"
+                    "section" -> "section"
+                    else -> "repeat"
+                },
+                "thenSteps" to "true",
+                "elseSteps" to "false",
+            ).forEach { (field, branch) ->
                 visit(block[field] as? JsonArray, "${prefix}Step $blockNumber $branch / ")
             }
         }
@@ -101,5 +109,8 @@ private fun friendlyField(value: String): String = when (value) {
     "jump" -> "Go to"
     "stop" -> "Stop"
     "stageBoundary" -> "Stage boundary"
+    "section" -> "Reusable section"
+    "runSection" -> "Run section"
+    "sectionId" -> "Section"
     else -> value.replace(Regex("([a-z])([A-Z])"), "$1 $2").replaceFirstChar(Char::uppercaseChar)
 }

@@ -14,6 +14,7 @@ import com.veyarc.model.NumberValue
 import com.veyarc.model.Operand
 import com.veyarc.model.OrCondition
 import com.veyarc.model.Repeat
+import com.veyarc.model.ReusableSection
 import com.veyarc.model.ScalarValue
 import com.veyarc.model.SetVariable
 import com.veyarc.model.StringValue
@@ -125,6 +126,8 @@ internal fun WorkflowDraft.usedVariableNames(): Set<String> = buildSet {
                     visit(step.bodySteps)
                 }
 
+                is ReusableSection -> visit(step.bodySteps)
+
                 is WhileStep -> {
                     condition(step.condition)
                     visit(step.bodySteps)
@@ -181,6 +184,7 @@ private fun List<WorkflowStep>.mapVariableNames(transform: (VariableName) -> Var
             is com.veyarc.model.FindImage -> step.copy(condition = condition(step.condition) as com.veyarc.model.ImagePresentCondition)
             is WaitUntil -> step.copy(condition = condition(step.condition))
             is IfElse -> step.copy(condition = condition(step.condition), thenSteps = step.thenSteps.mapVariableNames(transform), elseSteps = step.elseSteps.mapVariableNames(transform))
+            is ReusableSection -> step.copy(bodySteps = step.bodySteps.mapVariableNames(transform))
             is Repeat -> step.copy(bodySteps = step.bodySteps.mapVariableNames(transform), countVariable = step.countVariable?.let(transform))
             is WhileStep -> step.copy(condition = condition(step.condition), bodySteps = step.bodySteps.mapVariableNames(transform))
             else -> step
@@ -188,7 +192,7 @@ private fun List<WorkflowStep>.mapVariableNames(transform: (VariableName) -> Var
     }
 }
 
-internal fun WorkflowDraft.renameCapturedImage(previous: VariableName, name: VariableName): WorkflowDraft {
+internal fun WorkflowDraft.renameCapturedImage(previous: VariableName, name: VariableName, sectionId: String? = null): WorkflowDraft {
     fun condition(value: Condition): Condition = when (value) {
         is CapturedImageCondition -> if (value.name == previous) value.copy(name = name) else value
         is com.veyarc.model.ImagePresentCondition -> value.copy(capturedImage = if (value.capturedImage == previous) name else value.capturedImage, capturedBackground = if (value.capturedBackground == previous) name else value.capturedBackground)
@@ -210,10 +214,10 @@ internal fun WorkflowDraft.renameCapturedImage(previous: VariableName, name: Var
             else -> step
         }
     }
-    return copy(steps = update(steps))
+    return updateRuntimeScope(sectionId, ::update)
 }
 
-internal fun WorkflowDraft.renameImageSearch(previous: VariableName, name: VariableName): WorkflowDraft {
+internal fun WorkflowDraft.renameImageSearch(previous: VariableName, name: VariableName, sectionId: String? = null): WorkflowDraft {
     fun operand(value: Operand): Operand = if (value is com.veyarc.model.ImageResultOperand && value.name == previous) value.copy(name = name) else value
     fun condition(value: Condition): Condition = when (value) {
         is VariableComparisonCondition -> value.copy(left = operand(value.left), right = operand(value.right))
@@ -235,7 +239,7 @@ internal fun WorkflowDraft.renameImageSearch(previous: VariableName, name: Varia
             else -> step
         }
     }
-    return copy(steps = update(steps))
+    return updateRuntimeScope(sectionId, ::update)
 }
 
 internal fun imageResultFields(type: VariableType?): List<com.veyarc.model.ImageResultField> = com.veyarc.model.ImageResultField.entries.filter {
@@ -259,3 +263,5 @@ internal fun VariableComparisonCondition.comparisonText(): String {
 
 internal fun numberValueChoices(variables: Map<String, VariableDeclaration>): List<VeyarcChoice> = listOf(VeyarcChoice("fixed", "Fixed number", groupTitle = "Value")) +
     variables.filterValues { it.type == VariableType.NUMBER }.map { VeyarcChoice("variable:${it.key}", it.key, group = 1, groupTitle = "Variables") }
+
+private fun WorkflowDraft.updateRuntimeScope(sectionId: String?, transform: (List<WorkflowStep>) -> List<WorkflowStep>): WorkflowDraft = copy(steps = if (sectionId == null) transform(steps) else steps.map { if (it is ReusableSection && it.id == sectionId) it.copy(bodySteps = transform(it.bodySteps)) else it })

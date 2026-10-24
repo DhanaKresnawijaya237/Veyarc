@@ -66,6 +66,7 @@ internal class AssistantDraftBridge(
                     if (step.id == call.stepId) return step
                     val children = when (step) {
                         is IfElse -> step.thenSteps + step.elseSteps
+                        is com.veyarc.model.ReusableSection -> step.bodySteps
                         is Repeat -> step.bodySteps
                         is WhileStep -> step.bodySteps
                         else -> emptyList()

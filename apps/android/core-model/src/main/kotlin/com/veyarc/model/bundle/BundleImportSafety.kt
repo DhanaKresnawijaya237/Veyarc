@@ -95,6 +95,8 @@ internal object BundleImportSafety {
                     step.elseSteps.forEach { pendingSteps.addLast(DepthValue(it, depth + 1)) }
                 }
 
+                is com.veyarc.model.ReusableSection -> step.bodySteps.forEach { pendingSteps.addLast(DepthValue(it, depth + 1)) }
+
                 is Repeat -> step.bodySteps.forEach { pendingSteps.addLast(DepthValue(it, depth + 1)) }
 
                 is WhileStep -> {

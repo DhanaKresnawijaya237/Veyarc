@@ -16,6 +16,8 @@ import com.veyarc.model.NotCondition
 import com.veyarc.model.OrientationCondition
 import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.Repeat
+import com.veyarc.model.ReusableSection
+import com.veyarc.model.RunSection
 import com.veyarc.model.SetVariable
 import com.veyarc.model.StageBoundary
 import com.veyarc.model.StepResultCondition
@@ -32,7 +34,10 @@ import com.veyarc.model.WorkflowStep
 import com.veyarc.model.WorkflowValidator
 import com.veyarc.model.capturedBackgroundName
 import com.veyarc.model.capturedImageName
+import com.veyarc.model.capturedImages
 import com.veyarc.model.resolvePoint
+import com.veyarc.model.reusableSections
+import com.veyarc.model.walkSteps
 
 /** Compiles editable workflow documents into bounded, immutable execution plans. */
 object WorkflowCompiler {
@@ -42,9 +47,14 @@ object WorkflowCompiler {
     ): WorkflowCompilationResult {
         val errors = mutableListOf<CompilationError>()
         errors += WorkflowValidator.validate(document).map(::invalidWorkflowError)
+        if (errors.isNotEmpty()) return failure(errors)
+        val definitions = document.steps.reusableSections()
+        val called = document.steps.walkSteps().filterIsInstance<RunSection>().map { it.sectionId }.toSet()
         validateCapabilities(document.steps, "/steps", capabilities, errors)
-
-        val analysis = analyzeWorkflow(document.steps)
+        val used = definitions.filterKeys { it in called }
+        used.values.forEach { section -> validateCapabilities(section.bodySteps, "/steps/${document.steps.indexOf(section)}/bodySteps", capabilities, errors) }
+        val sectionCosts = used.mapValues { analyzeWorkflow(it.value.bodySteps) }
+        val analysis = analyzeWorkflow(document.steps.filterNot { it is ReusableSection }, sectionCosts)
         validateAnalysis(document, analysis, errors)
 
         if (errors.isNotEmpty()) return failure(errors)
@@ -61,6 +71,20 @@ object WorkflowCompiler {
             assets = immutableList(document.assets),
             steps = compileSteps(document.steps),
             analysis = analysis,
+            sections = immutableMap(
+                used.mapValues { (_, section) ->
+                    val occupied = document.steps.capturedImages().keys.toMutableSet()
+                    val aliases = section.bodySteps.capturedImages().keys.associate { name ->
+                        var suffix = 0
+                        var alias: String
+                        do {
+                            alias = "section_" + java.util.UUID.nameUUIDFromBytes("${section.id}:$name:${suffix++}".toByteArray(Charsets.UTF_8)).toString().replace("-", "")
+                        } while (!occupied.add(alias))
+                        com.veyarc.model.VariableName(name) to com.veyarc.model.VariableName(alias)
+                    }
+                    ExecutionSection(section.name, compileSteps(section.bodySteps), immutableMap(aliases), immutableSet(section.bodySteps.walkSteps().map { it.id }.toSet()))
+                },
+            ),
         )
         return WorkflowCompilationResult(plan, emptyList())
     }
@@ -73,8 +97,12 @@ object WorkflowCompiler {
     }
 
     private fun compileSteps(steps: List<WorkflowStep>): List<ExecutionStep> = immutableList(
-        steps.map { step ->
+        steps.filterNot { it is ReusableSection }.map { step ->
             when (step) {
+                is ReusableSection -> error("Section declarations are not executable")
+
+                is RunSection -> ExecutionStep.RunSection(step.id, step.sectionId)
+
                 is FindImage -> ExecutionStep.FindImage(step.id, step.name, step.image)
 
                 is CaptureImage -> ExecutionStep.CaptureImage(step.id, step.name, step.region)
@@ -157,6 +185,7 @@ object WorkflowCompiler {
     ) {
         steps.forEachIndexed { index, step ->
             val stepPath = "$path/$index"
+            if (step is ReusableSection) return@forEachIndexed
             requireCapability(stepCapability(step), stepPath, capabilities, errors)
             when (step) {
                 is FindImage -> validateConditionCapabilities(step.condition, "$stepPath/condition", capabilities, errors)
@@ -210,6 +239,7 @@ object WorkflowCompiler {
     }
 
     private fun stepCapability(step: WorkflowStep): EngineCapability = when (step) {
+        is ReusableSection, is RunSection -> EngineCapability.RUN_SECTION
         is FindImage -> EngineCapability.FIND_IMAGE
         is CaptureImage -> EngineCapability.CAPTURE_IMAGE
         is TapPoint -> EngineCapability.TAP_POINT
@@ -255,10 +285,10 @@ object WorkflowCompiler {
         }
     }
 
-    private fun analyzeWorkflow(steps: List<WorkflowStep>): ControlFlowAnalysis {
-        val dynamicCount = hasDynamicStepCount(steps)
-        if (jumpCount(steps, nestedOnly = true).value == 0L) return analyzeSteps(steps, depth = 1).copy(hasDynamicStepCount = dynamicCount)
-        val analysis = analyzeSteps(steps, depth = 1, followJumps = false)
+    private fun analyzeWorkflow(steps: List<WorkflowStep>, sections: Map<String, ControlFlowAnalysis> = emptyMap()): ControlFlowAnalysis {
+        val dynamicCount = hasDynamicStepCount(steps, sections)
+        if (jumpCount(steps, nestedOnly = true).value == 0L) return analyzeSteps(steps, depth = 1, sections = sections).copy(hasDynamicStepCount = dynamicCount)
+        val analysis = analyzeSteps(steps, depth = 1, followJumps = false, sections = sections)
         val passes = add(Cost(1L, false), jumpCount(steps, nestedOnly = false))
         // Nested jump counters outlive each invocation of the nest, so later entries can
         // execute code skipped on the first pass even when the destination is local.
@@ -274,11 +304,12 @@ object WorkflowCompiler {
         )
     }
 
-    private fun hasDynamicStepCount(steps: List<WorkflowStep>): Boolean = steps.any { step ->
+    private fun hasDynamicStepCount(steps: List<WorkflowStep>, sections: Map<String, ControlFlowAnalysis>): Boolean = steps.any { step ->
         when (step) {
-            is Repeat -> step.countVariable != null || hasDynamicStepCount(step.bodySteps)
-            is IfElse -> hasDynamicStepCount(step.thenSteps) || hasDynamicStepCount(step.elseSteps)
-            is WhileStep -> hasDynamicStepCount(step.bodySteps)
+            is RunSection -> sections.getValue(step.sectionId).hasDynamicStepCount
+            is Repeat -> step.countVariable != null || hasDynamicStepCount(step.bodySteps, sections)
+            is IfElse -> hasDynamicStepCount(step.thenSteps, sections) || hasDynamicStepCount(step.elseSteps, sections)
+            is WhileStep -> hasDynamicStepCount(step.bodySteps, sections)
             else -> false
         }
     }
@@ -300,7 +331,7 @@ object WorkflowCompiler {
         return count
     }
 
-    private fun analyzeSteps(steps: List<WorkflowStep>, depth: Int, followJumps: Boolean = true): ControlFlowAnalysis {
+    private fun analyzeSteps(steps: List<WorkflowStep>, depth: Int, followJumps: Boolean = true, sections: Map<String, ControlFlowAnalysis> = emptyMap()): ControlFlowAnalysis {
         var totalSteps = Cost(0L, false)
         var totalRuntime = Cost(0L, false)
         var maxDepth = depth
@@ -316,7 +347,7 @@ object WorkflowCompiler {
                 return ControlFlowAnalysis(Long.MAX_VALUE, Long.MAX_VALUE, maxDepth, maxLoopBound, true)
             }
             val step = steps[index]
-            val cost = stepCosts?.getOrPut(index) { analyzeStep(step, depth, followJumps) } ?: analyzeStep(step, depth, followJumps)
+            val cost = stepCosts?.getOrPut(index) { analyzeStep(step, depth, followJumps, sections) } ?: analyzeStep(step, depth, followJumps, sections)
             totalSteps = add(totalSteps, cost.steps)
             totalRuntime = add(totalRuntime, cost.runtime)
             maxDepth = maxOf(maxDepth, cost.maxDepth)
@@ -343,7 +374,7 @@ object WorkflowCompiler {
         )
     }
 
-    private fun analyzeStep(step: WorkflowStep, depth: Int, followJumps: Boolean): StepCost {
+    private fun analyzeStep(step: WorkflowStep, depth: Int, followJumps: Boolean, sections: Map<String, ControlFlowAnalysis>): StepCost {
         val ownRuntime = when (step) {
             is LongPress -> if (step.durationVariable == null) step.durationMs.value else MAX_GESTURE_DURATION_MS
             is com.veyarc.model.SwipePath -> step.durationMs.value
@@ -365,9 +396,20 @@ object WorkflowCompiler {
         )
 
         return when (step) {
+            is RunSection -> {
+                val body = sections.getValue(step.sectionId)
+                own.copy(
+                    steps = add(own.steps, Cost(body.worstCaseStepCount, body.arithmeticOverflow)),
+                    runtime = Cost(body.worstCaseRuntimeMs, body.arithmeticOverflow),
+                    maxDepth = depth + body.maxNestingDepth,
+                    maxLoopBound = body.maxLoopBound,
+                    overflowed = body.arithmeticOverflow,
+                )
+            }
+
             is IfElse -> {
-                val thenCost = analyzeSteps(step.thenSteps, depth + 1, followJumps)
-                val elseCost = analyzeSteps(step.elseSteps, depth + 1, followJumps)
+                val thenCost = analyzeSteps(step.thenSteps, depth + 1, followJumps, sections)
+                val elseCost = analyzeSteps(step.elseSteps, depth + 1, followJumps, sections)
                 own.copy(
                     steps = add(own.steps, maxCost(thenCost, elseCost, CostSelector.STEPS)),
                     runtime = add(own.runtime, maxCost(thenCost, elseCost, CostSelector.RUNTIME)),
@@ -378,7 +420,7 @@ object WorkflowCompiler {
             }
 
             is Repeat -> {
-                val bodyCost = analyzeSteps(step.bodySteps, depth + 1, followJumps)
+                val bodyCost = analyzeSteps(step.bodySteps, depth + 1, followJumps, sections)
                 val count = if (step.countVariable == null) step.count.toLong() else Int.MAX_VALUE.toLong()
                 own.copy(
                     steps = add(own.steps, multiply(bodyCost.worstCaseStepCount, count, bodyCost.arithmeticOverflow)),
@@ -390,7 +432,7 @@ object WorkflowCompiler {
             }
 
             is WhileStep -> {
-                val bodyCost = analyzeSteps(step.bodySteps, depth + 1, followJumps)
+                val bodyCost = analyzeSteps(step.bodySteps, depth + 1, followJumps, sections)
                 own.copy(
                     steps = add(own.steps, multiply(bodyCost.worstCaseStepCount, step.maxIterations.toLong(), bodyCost.arithmeticOverflow)),
                     runtime = add(own.runtime, multiply(bodyCost.worstCaseRuntimeMs, step.maxIterations.toLong(), bodyCost.arithmeticOverflow)),

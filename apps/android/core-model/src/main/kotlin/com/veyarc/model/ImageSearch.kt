@@ -63,6 +63,10 @@ fun List<WorkflowStep>.imageSearchesByStep(): Map<String, Map<String, List<FindI
         var available = inherited
         items.forEach { step ->
             put(step.id, available)
+            if (step is ReusableSection) {
+                visit(step.bodySteps, emptyMap())
+                return@forEach
+            }
             val children = when (step) {
                 is IfElse -> listOf(step.thenSteps, step.elseSteps)
                 is Repeat -> listOf(step.bodySteps)

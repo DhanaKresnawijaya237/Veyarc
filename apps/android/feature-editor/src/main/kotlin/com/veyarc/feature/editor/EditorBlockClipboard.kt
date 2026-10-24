@@ -24,6 +24,8 @@ import com.veyarc.model.Jump
 import com.veyarc.model.NotCondition
 import com.veyarc.model.OrCondition
 import com.veyarc.model.Repeat
+import com.veyarc.model.ReusableSection
+import com.veyarc.model.RunSection
 import com.veyarc.model.StepResultCondition
 import com.veyarc.model.WaitUntil
 import com.veyarc.model.WhileStep
@@ -32,6 +34,8 @@ import com.veyarc.model.WorkflowJson
 import com.veyarc.model.WorkflowStep
 import com.veyarc.model.backgroundAssetId
 import com.veyarc.model.bundle.BundleAsset
+import com.veyarc.model.reusableSections
+import com.veyarc.model.walkSteps
 import com.veyarc.model.withBackgroundAsset
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -135,13 +139,14 @@ internal class EditorBlockClipboard(context: Context) {
                     withContext(Dispatchers.IO) {
                         val repository = WorkflowRepository(app)
                         try {
-                            val images = steps.clipboardImageIds().map { id ->
+                            val copied = steps.withSectionDependencies(source.steps)
+                            val images = copied.clipboardImageIds().map { id ->
                                 val assetId = AssetId(id)
                                 val asset = source.assets.firstOrNull { it.assetId == assetId }
                                     ?: repository.loadRevisionAsset(source.workflowId, requireNotNull(source.lastSavedRevision), assetId)
                                 asset to (source.assetNames[id] ?: "Image")
                             }
-                            EditorBlockClipboard(app).replace(source.viewport.recordedOrientation, steps, images)
+                            EditorBlockClipboard(app).replace(source.viewport.recordedOrientation, copied, images)
                         } finally {
                             repository.close()
                         }
@@ -171,7 +176,7 @@ internal class EditorBlockClipboard(context: Context) {
                                 expected.assets.firstOrNull { it.assetId == id }
                                     ?: repository.loadRevisionAsset(expected.workflowId, requireNotNull(expected.lastSavedRevision), id)
                             }
-                            var result = expected.insertSteps(path, index, remapClipboardSteps(entry.steps, loaded.assetIds))
+                            var result = expected.pasteSectionSteps(path, index, entry.steps, loaded.assetIds)
                             loaded.assets.forEach { (image, asset) ->
                                 result = result.addAsset(asset).renameAsset(asset.assetId, uniqueClipboardImageName(result, image.name))
                             }
@@ -291,6 +296,8 @@ internal fun List<WorkflowStep>.clipboardImageIds(): Set<String> = buildSet {
                 value.elseSteps.forEach(::step)
             }
 
+            is ReusableSection -> value.bodySteps.forEach(::step)
+
             is Repeat -> value.bodySteps.forEach(::step)
 
             is WhileStep -> {
@@ -304,8 +311,8 @@ internal fun List<WorkflowStep>.clipboardImageIds(): Set<String> = buildSet {
     forEach(::step)
 }
 
-internal fun remapClipboardSteps(steps: List<WorkflowStep>, assetIds: Map<String, AssetId>): List<WorkflowStep> {
-    val stepIds = mutableMapOf<String, String>()
+internal fun remapClipboardSteps(steps: List<WorkflowStep>, assetIds: Map<String, AssetId>, existingSectionIds: Map<String, String> = emptyMap()): List<WorkflowStep> {
+    val stepIds = existingSectionIds.toMutableMap()
     fun assign(value: WorkflowStep) {
         stepIds[value.id] = WorkflowIds.newUuid()
         when (value) {
@@ -313,6 +320,8 @@ internal fun remapClipboardSteps(steps: List<WorkflowStep>, assetIds: Map<String
                 value.thenSteps.forEach(::assign)
                 value.elseSteps.forEach(::assign)
             }
+
+            is ReusableSection -> value.bodySteps.forEach(::assign)
 
             is Repeat -> value.bodySteps.forEach(::assign)
 
@@ -336,6 +345,8 @@ internal fun remapClipboardSteps(steps: List<WorkflowStep>, assetIds: Map<String
     fun step(value: WorkflowStep): WorkflowStep {
         val id = requireNotNull(stepIds[value.id])
         return when (value) {
+            is ReusableSection -> value.copy(id = id, bodySteps = value.bodySteps.map(::step))
+            is RunSection -> value.copy(id = id, sectionId = stepIds[value.sectionId] ?: value.sectionId)
             is com.veyarc.model.FindImage -> value.copy(id = id, condition = condition(value.condition) as ImagePresentCondition)
             is com.veyarc.model.CaptureImage -> value.copy(id = id)
             is com.veyarc.model.TapPoint -> value.copy(id = id)
@@ -355,4 +366,28 @@ internal fun remapClipboardSteps(steps: List<WorkflowStep>, assetIds: Map<String
         }.withBackgroundAsset(value.backgroundAssetId()?.let { assetIds[it.value] ?: it })
     }
     return steps.map(::step)
+}
+
+internal fun List<WorkflowStep>.withSectionDependencies(source: List<WorkflowStep>): List<WorkflowStep> {
+    val included = filterIsInstance<ReusableSection>().mapTo(mutableSetOf()) { it.id }
+    val definitions = source.reusableSections()
+    val dependencies = walkSteps().filterIsInstance<RunSection>().map { it.sectionId }.distinct()
+        .filter { it !in included }.map { requireNotNull(definitions[it]) { "This section was removed" } }.toList()
+    return this + dependencies
+}
+
+internal fun WorkflowDraft.pasteSectionSteps(path: StepListPath, index: Int, copied: List<WorkflowStep>, assetIds: Map<String, AssetId>): WorkflowDraft {
+    val existing = steps.reusableSections()
+    val reused = copied.filterIsInstance<ReusableSection>().filter { existing[it.id] == it }.associate { it.id to it.id }
+    val incoming = remapClipboardSteps(copied.filterNot { it is ReusableSection && it.id in reused }, assetIds, reused)
+    val usedNames = existing.values.mapTo(mutableSetOf()) { it.name.lowercase() }
+    val definitions = incoming.filterIsInstance<ReusableSection>().map { section ->
+        val base = section.name.take(72)
+        val name = generateSequence(1) { it + 1 }.map { if (it == 1) base else "$base $it" }.first { it.lowercase() !in usedNames }
+        usedNames += name.lowercase()
+        section.copy(name = name)
+    }
+    val blocks = incoming.filterNot { it is ReusableSection }
+    val withDefinitions = insertSteps(StepListPath(), steps.size, definitions)
+    return withDefinitions.insertSteps(path, index, blocks)
 }

@@ -27,6 +27,8 @@ import com.veyarc.model.OrCondition
 import com.veyarc.model.OrientationCondition
 import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.Repeat
+import com.veyarc.model.ReusableSection
+import com.veyarc.model.RunSection
 import com.veyarc.model.ScalarValue
 import com.veyarc.model.SetVariable
 import com.veyarc.model.StageBoundary
@@ -45,11 +47,13 @@ import com.veyarc.model.WorkflowDocument
 import com.veyarc.model.WorkflowStep
 import com.veyarc.model.isFullScreenCapture
 import com.veyarc.model.resolvePoint
+import com.veyarc.model.reusableSections
 import java.util.Locale
 import kotlin.math.roundToInt
 
 /** Produces local run history with bounded value summaries, never screen captures. */
 internal class RunEventFormatter(private val document: WorkflowDocument) {
+    private val sections = document.steps.reusableSections()
     private val stepsById = mutableMapOf<String, WorkflowStep>()
     private val blockLabels = mutableMapOf<String, String>()
     private val blockContexts = mutableMapOf<String, String>()
@@ -69,7 +73,13 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
             else -> null
         }
         val conditionLocation = (event as? RunEvent.ConditionEvaluated)?.path?.let(conditionLocations::get)
-        val context = listOfNotNull(stepId?.let(blockContexts::get), conditionLocation?.takeIf(String::isNotBlank)).joinToString(" › ").ifBlank { null }
+        val callId = when (event) {
+            is RunEvent.StepStarted -> event.sectionCallId
+            is RunEvent.StepFinished -> event.sectionCallId
+            is RunEvent.ConditionEvaluated -> event.sectionCallId
+            else -> null
+        }
+        val context = listOfNotNull(callId?.let(blockContexts::get), callId?.let(blockLabels::get), stepId?.let(blockContexts::get), conditionLocation?.takeIf(String::isNotBlank)).joinToString(" › ").ifBlank { null }
         return RedactedRunEvent(event.atMs, format(event), stepId?.let(blockLabels::get), context)
     }
 
@@ -102,6 +112,7 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
 
     private fun completionResult(event: RunEvent.StepFinished): String {
         val step = stepsById[event.stepId]
+        if (step is RunSection) return "${sections[step.sectionId]?.name ?: "Section"} ${event.outcome.name.lowercase(Locale.ROOT)}"
         when (val detail = event.details) {
             is StepCompletionDetails.GestureResult -> {
                 val point = "At (${detail.point.x.roundToInt()}, ${detail.point.y.roundToInt()} px on screen)"
@@ -197,6 +208,10 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
     }
 
     private fun stepDescription(stepId: String): String = when (val step = stepsById[stepId]) {
+        is ReusableSection -> "Section ${step.name}"
+
+        is RunSection -> "Run ${sections[step.sectionId]?.name ?: "section"}"
+
         is TapPoint -> step.imagePosition?.let { "Tap ${it.name.value} / Offset ${it.offsetXVariable?.value ?: it.offsetXPx}, ${it.offsetYVariable?.value ?: it.offsetYPx} px" } ?: "Tap at ${formatPoint(step.point)}"
 
         is TapRegion -> "Tap region at ${formatPoint(step.resolvePoint())}"
@@ -235,6 +250,8 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
     }
 
     private fun stepName(stepId: String): String = when (stepsById[stepId]) {
+        is ReusableSection -> "Reusable section"
+        is RunSection -> "Run section"
         is TapPoint -> "Tap"
         is TapRegion -> "Tap region"
         is LongPress -> "Long press"
@@ -304,6 +321,8 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
             blockLabels[step.id] = label
             blockContexts[step.id] = context
             when (step) {
+                is ReusableSection -> indexSteps(step.bodySteps, "Section · ${step.name}")
+
                 is com.veyarc.model.FindImage -> indexCondition(step.condition, "${step.id}/condition")
 
                 is WaitUntil -> indexCondition(step.condition, "${step.id}/condition")

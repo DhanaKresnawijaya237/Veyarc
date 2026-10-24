@@ -1,22 +1,22 @@
 package com.veyarc.model
 
 /** Returns whether a workflow needs a temporary MediaProjection frame during execution. */
-fun WorkflowDocument.usesVisualConditions(): Boolean = steps.any(::stepUsesVisualCondition)
-
-private fun stepUsesVisualCondition(step: WorkflowStep): Boolean = when (step) {
-    is CaptureImage, is FindImage -> true
-
-    is WaitUntil -> step.condition.usesVisualCondition()
-
-    is IfElse -> step.condition.usesVisualCondition() ||
-        step.thenSteps.any(::stepUsesVisualCondition) ||
-        step.elseSteps.any(::stepUsesVisualCondition)
-
-    is WhileStep -> step.condition.usesVisualCondition() || step.bodySteps.any(::stepUsesVisualCondition)
-
-    is Repeat -> step.bodySteps.any(::stepUsesVisualCondition)
-
-    else -> false
+fun WorkflowDocument.usesVisualConditions(): Boolean {
+    val sections = steps.reusableSections()
+    val visited = mutableSetOf<String>()
+    fun uses(items: List<WorkflowStep>): Boolean = items.any { step ->
+        when (step) {
+            is ReusableSection -> false
+            is RunSection -> visited.add(step.sectionId) && sections[step.sectionId]?.let { uses(it.bodySteps) } == true
+            is CaptureImage, is FindImage -> true
+            is WaitUntil -> step.condition.usesVisualCondition()
+            is IfElse -> step.condition.usesVisualCondition() || uses(step.thenSteps) || uses(step.elseSteps)
+            is WhileStep -> step.condition.usesVisualCondition() || uses(step.bodySteps)
+            is Repeat -> uses(step.bodySteps)
+            else -> false
+        }
+    }
+    return uses(steps)
 }
 
 private fun Condition.usesVisualCondition(): Boolean = when (this) {

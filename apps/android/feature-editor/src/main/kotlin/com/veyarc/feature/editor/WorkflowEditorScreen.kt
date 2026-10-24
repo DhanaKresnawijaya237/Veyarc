@@ -166,6 +166,8 @@ import com.veyarc.model.Jump
 import com.veyarc.model.LaunchApp
 import com.veyarc.model.LongPress
 import com.veyarc.model.Repeat
+import com.veyarc.model.ReusableSection
+import com.veyarc.model.RunSection
 import com.veyarc.model.StageBoundary
 import com.veyarc.model.Stop
 import com.veyarc.model.SwipePath
@@ -177,8 +179,10 @@ import com.veyarc.model.WhileStep
 import com.veyarc.model.WorkflowIds
 import com.veyarc.model.WorkflowStep
 import com.veyarc.model.bundle.WorkflowBundle
-import com.veyarc.model.capturedImages
+import com.veyarc.model.capturedImagesByStep
 import com.veyarc.model.imageSearchesByStep
+import com.veyarc.model.reusableSections
+import com.veyarc.model.walkSteps
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -726,7 +730,7 @@ fun WorkflowEditorScreen(
                     ConditionEditorDialog(
                         initialCondition = condition,
                         variables = draft.variables,
-                        capturedImages = draft.steps.capturedImages(),
+                        capturedImages = remember(draft.steps, targetStep.id) { draft.steps.capturedImagesByStep()[targetStep.id].orEmpty() },
                         imageResults = remember(draft.steps, targetStep.id) { draft.steps.imageSearchesByStep()[targetStep.id].orEmpty().keys },
                         imageSearchOnly = targetStep is com.veyarc.model.FindImage,
                         assets = draft.assetDescriptors,
@@ -1243,10 +1247,14 @@ internal class StepDragCoordinator {
     private fun updateTarget(draft: WorkflowDraft) {
         val active = source ?: return
         val pointer = Offset(pointerWindowX, pointerWindowY)
+        val heldStep = draft.stepsAt(active.path).firstOrNull { it.id == active.stepId }
+        val containsCalls = heldStep?.let { listOf(it).walkSteps().any { child -> child is RunSection } } == true
         val destinationPath = pipelineBounds.entries
             .asSequence()
             .filter { (_, bounds) -> bounds.contains(pointer) }
             .filterNot { (path, _) -> path.segments.any { it.parentId == active.stepId } }
+            .filterNot { (path, _) -> heldStep is ReusableSection && path.segments.isNotEmpty() }
+            .filterNot { (path, _) -> containsCalls && path.sectionId != null }
             .sortedWith(
                 compareByDescending<Map.Entry<StepListPath, Rect>> { it.key.segments.size }
                     .thenBy { it.value.height },
@@ -2072,6 +2080,8 @@ private fun StepListFooter(
         Row(Modifier.align(Alignment.CenterHorizontally), horizontalArrangement = Arrangement.spacedBy(32.dp), verticalAlignment = Alignment.CenterVertically) {
             AddBlockMenu(
                 canAddVariable = draft.variables.isNotEmpty(),
+                canAddSection = path.segments.isEmpty(),
+                canRunSection = path.sectionId == null && draft.steps.reusableSections().isNotEmpty(),
                 compact = true,
                 canAddJump = steps.isNotEmpty() || path.segments.isNotEmpty(),
                 modifier = Modifier,
@@ -2217,6 +2227,10 @@ private fun StepCard(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                        if (!expanded && (step is ReusableSection || step is RunSection)) {
+                            val name = if (step is ReusableSection) step.name else draft.steps.reusableSections()[(step as RunSection).sectionId]?.name ?: "Choose a section"
+                            Text(name, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
                         if (issues.isNotEmpty()) Text("Needs attention", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
                     }
                     if (step.hasEditableGeometry()) {
@@ -2288,6 +2302,8 @@ private fun StepCard(
             if (index < draft.stepsAt(path).lastIndex && !dragging) {
                 AddBlockMenu(
                     canAddVariable = draft.variables.isNotEmpty(),
+                    canAddSection = path.segments.isEmpty(),
+                    canRunSection = path.sectionId == null && draft.steps.reusableSections().isNotEmpty(),
                     compact = true,
                     subdued = true,
                     canAddJump = draft.stepsAt(path).size > 1 || path.segments.isNotEmpty() || step !is Jump,
@@ -2406,6 +2422,8 @@ private fun StageBoundaryRow(
         if (index < draft.stepsAt(path).lastIndex && !dragging) {
             AddBlockMenu(
                 canAddVariable = draft.variables.isNotEmpty(),
+                canAddSection = path.segments.isEmpty(),
+                canRunSection = path.sectionId == null && draft.steps.reusableSections().isNotEmpty(),
                 compact = true,
                 subdued = true,
                 canAddJump = true,
@@ -2449,6 +2467,20 @@ private fun NestedStepLists(
     dragCoordinator: StepDragCoordinator,
 ) {
     when (step) {
+        is ReusableSection -> BranchTray(
+            draft = draft,
+            path = path.child(step.id, NestedBranch.SECTION_BODY),
+            heading = "Section actions",
+            validation = validation,
+            selection = selection,
+            showInlineInspector = showInlineInspector,
+            onSelectionChange = onSelectionChange,
+            onDraftChange = onDraftChange,
+            onEditGeometry = onEditGeometry,
+            onEditCondition = onEditCondition,
+            dragCoordinator = dragCoordinator,
+        )
+
         is Repeat -> BranchTray(
             draft = draft,
             path = path.child(step.id, NestedBranch.REPEAT_BODY),
@@ -2566,6 +2598,7 @@ private fun WorkflowStep.blockCategory(): BlockCategory = when (this) {
     is WaitUntil -> BlockCategory.CONDITION
     is IfElse -> BlockCategory.BRANCH
     is Repeat, is WhileStep -> BlockCategory.LOOP
+    is ReusableSection, is RunSection -> BlockCategory.BRANCH
     is Jump -> BlockCategory.JUMP
     is com.veyarc.model.FindImage, is com.veyarc.model.CaptureImage -> BlockCategory.CONDITION
     is com.veyarc.model.SetVariable -> BlockCategory.VARIABLE
@@ -2604,7 +2637,7 @@ private fun WorkflowDraft.modelPath(path: StepListPath, index: Int): String {
         if (parentIndex < 0) return "$prefix/$index"
         val parent = current[parentIndex]
         val childName = when (segment.branch) {
-            NestedBranch.REPEAT_BODY, NestedBranch.WHILE_BODY -> "bodySteps"
+            NestedBranch.SECTION_BODY, NestedBranch.REPEAT_BODY, NestedBranch.WHILE_BODY -> "bodySteps"
             NestedBranch.IF_THEN -> "thenSteps"
             NestedBranch.IF_ELSE -> "elseSteps"
         }
@@ -2615,6 +2648,7 @@ private fun WorkflowDraft.modelPath(path: StepListPath, index: Int): String {
 }
 
 private fun WorkflowStep.childrenForEditor(branch: NestedBranch): List<WorkflowStep> = when (branch) {
+    NestedBranch.SECTION_BODY -> (this as? ReusableSection)?.bodySteps.orEmpty()
     NestedBranch.REPEAT_BODY -> (this as? Repeat)?.bodySteps.orEmpty()
     NestedBranch.WHILE_BODY -> (this as? WhileStep)?.bodySteps.orEmpty()
     NestedBranch.IF_THEN -> (this as? IfElse)?.thenSteps.orEmpty()
@@ -2631,6 +2665,20 @@ private fun EditableStepSummary(
 ) {
     val appNames = if (step is IfElse || step is WaitUntil || step is WhileStep) rememberApplicationNames(draft.allowedPackagesText.packageNames()) else emptyMap()
     when (step) {
+        is ReusableSection -> {
+            ReusableSectionName(step.name, draft.steps.reusableSections().values.filterNot { it.id == step.id }.map { it.name }) { name ->
+                onDraftChange(draft.updateStep(path, index) { step.copy(name = name) })
+            }
+            return
+        }
+
+        is RunSection -> {
+            SectionCallPicker(draft.steps.reusableSections().values.toList(), step.sectionId) { sectionId ->
+                onDraftChange(draft.updateStep(path, index) { step.copy(sectionId = sectionId) })
+            }
+            return
+        }
+
         is TapPoint -> {
             Text(step.imagePosition?.let { "Tap ${it.name.value} at its center" } ?: step.summary(draft.assetNames, appNames), style = MaterialTheme.typography.bodyMedium)
             return
@@ -2642,12 +2690,12 @@ private fun EditableStepSummary(
         }
 
         is com.veyarc.model.FindImage -> {
-            RunValueNameFields(step.name, "Save result as") { name -> onDraftChange(draft.renameImageSearch(step.name, name)) }
+            RunValueNameFields(step.name, "Save result as") { name -> onDraftChange(draft.renameImageSearch(step.name, name, path.sectionId)) }
             return
         }
 
         is com.veyarc.model.CaptureImage -> {
-            CaptureImageFields(step) { name -> onDraftChange(draft.renameCapturedImage(step.name, name)) }
+            CaptureImageFields(step) { name -> onDraftChange(draft.renameCapturedImage(step.name, name, path.sectionId)) }
             return
         }
 
@@ -2842,7 +2890,7 @@ private fun StepEditorFields(
     onEditCondition: (StepListPath, Int) -> Unit,
 ) {
     when (step) {
-        is com.veyarc.model.FindImage, is com.veyarc.model.CaptureImage, is com.veyarc.model.SetVariable -> Unit
+        is ReusableSection, is RunSection, is com.veyarc.model.FindImage, is com.veyarc.model.CaptureImage, is com.veyarc.model.SetVariable -> Unit
 
         is Wait,
         is StageBoundary,
@@ -2894,6 +2942,8 @@ private fun AddBlockMenu(
     subdued: Boolean = false,
     canAddJump: Boolean = true,
     canAddVariable: Boolean = true,
+    canAddSection: Boolean = true,
+    canRunSection: Boolean = false,
     modifier: Modifier = Modifier,
     onRecord: (() -> Unit)? = null,
 ) {
@@ -2922,7 +2972,7 @@ private fun AddBlockMenu(
                 options = buildList {
                     if (onRecord != null) add(VeyarcChoice("record", "Record here", highlighted = true, groupTitle = "Quick actions", icon = Icons.Outlined.FiberManualRecord))
                     if (clipboard?.clipboardAvailable == true) add(VeyarcChoice("paste", "Paste blocks", highlighted = true, groupTitle = "Quick actions", icon = Icons.Outlined.ContentPaste))
-                    WorkflowStepKind.entries.filter { (it != WorkflowStepKind.JUMP || canAddJump) && (it != WorkflowStepKind.SET_VARIABLE || canAddVariable) }.sortedBy { it.optionGroup() }.forEach { add(VeyarcChoice(it.name, it.displayName(), group = it.optionGroup(), groupTitle = it.optionGroupTitle(), icon = it.optionIcon())) }
+                    WorkflowStepKind.entries.filter { (it != WorkflowStepKind.JUMP || canAddJump) && (it != WorkflowStepKind.SET_VARIABLE || canAddVariable) && (it != WorkflowStepKind.SECTION || canAddSection) && (it != WorkflowStepKind.RUN_SECTION || canRunSection) }.sortedBy { it.optionGroup() }.forEach { add(VeyarcChoice(it.name, it.displayName(), group = it.optionGroup(), groupTitle = it.optionGroupTitle(), icon = it.optionIcon())) }
                 },
                 onDismiss = { expanded = false },
                 onSelect = { choice ->
@@ -3059,7 +3109,7 @@ private fun TemplateRenameDialog(
 private fun WorkflowStepKind.optionIcon(): ImageVector? = when (this) {
     WorkflowStepKind.TAP_POINT, WorkflowStepKind.TAP_REGION, WorkflowStepKind.LONG_PRESS, WorkflowStepKind.SWIPE_PATH -> Icons.Outlined.TouchApp
     WorkflowStepKind.WAIT, WorkflowStepKind.WAIT_UNTIL -> Icons.Outlined.Schedule
-    WorkflowStepKind.IF_ELSE -> Icons.AutoMirrored.Outlined.CallSplit
+    WorkflowStepKind.SECTION, WorkflowStepKind.RUN_SECTION, WorkflowStepKind.IF_ELSE -> Icons.AutoMirrored.Outlined.CallSplit
     WorkflowStepKind.REPEAT, WorkflowStepKind.WHILE -> Icons.Outlined.Loop
     WorkflowStepKind.LAUNCH_APP -> Icons.Outlined.Apps
     WorkflowStepKind.CAPTURE_IMAGE, WorkflowStepKind.FIND_IMAGE -> Icons.Outlined.Image

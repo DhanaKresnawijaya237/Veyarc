@@ -24,6 +24,7 @@ import java.util.Collections
 
 /** A platform-neutral feature that a runner or driver must support. */
 enum class EngineCapability {
+    RUN_SECTION,
     TAP_POINT,
     TAP_REGION,
     LONG_PRESS,
@@ -101,6 +102,14 @@ data class ExecutionPlan(
     val assets: List<AssetReference>,
     val steps: List<ExecutionStep>,
     val analysis: ControlFlowAnalysis,
+    val sections: Map<String, ExecutionSection> = emptyMap(),
+)
+
+data class ExecutionSection(
+    val name: String,
+    val steps: List<ExecutionStep>,
+    val captureAliases: Map<com.veyarc.model.VariableName, com.veyarc.model.VariableName>,
+    val stepIds: Set<String>,
 )
 
 enum class ImageAssetUse {
@@ -111,6 +120,7 @@ enum class ImageAssetUse {
 /** Returns only the image assets that execution can reach, including nested conditions. */
 fun ExecutionPlan.referencedImageAssets(): Map<AssetId, Set<ImageAssetUse>> {
     val referenced = linkedMapOf<AssetId, MutableSet<ImageAssetUse>>()
+    val visitedSections = mutableSetOf<String>()
 
     fun collect(condition: Condition) {
         when (condition) {
@@ -142,6 +152,7 @@ fun ExecutionPlan.referencedImageAssets(): Map<AssetId, Set<ImageAssetUse>> {
 
     fun collect(steps: List<ExecutionStep>) {
         steps.forEach { step ->
+            if (step is ExecutionStep.RunSection && visitedSections.add(step.sectionId)) collect(sections.getValue(step.sectionId).steps)
             when (step) {
                 is ExecutionStep.FindImage -> collect(step.condition)
 
@@ -172,6 +183,8 @@ fun ExecutionPlan.referencedImageAssets(): Map<AssetId, Set<ImageAssetUse>> {
 /** Typed steps consumed by the deterministic runner. */
 sealed interface ExecutionStep {
     val id: String
+
+    data class RunSection(override val id: String, val sectionId: String) : ExecutionStep
 
     data class FindImage(override val id: String, val name: com.veyarc.model.VariableName, val condition: ImagePresentCondition) : ExecutionStep
 

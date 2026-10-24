@@ -45,6 +45,10 @@ interface ImageSearch {
 
 interface RuntimeImageCapture {
     fun captureImage(name: com.veyarc.model.VariableName, region: com.veyarc.model.NormalizedRect): Unit = throw UnsupportedOperationException("Runtime image capture is unavailable")
+
+    fun releaseCapturedImages(names: Set<com.veyarc.model.VariableName>) {
+        check(names.isEmpty()) { "Runtime image cleanup is unavailable" }
+    }
 }
 
 data class ColorMatchObservation(
@@ -191,6 +195,7 @@ sealed interface RunEvent {
     data class StepStarted(
         override val atMs: Long,
         val stepId: String,
+        val sectionCallId: String? = null,
     ) : RunEvent
 
     data class ConditionEvaluated(
@@ -203,6 +208,7 @@ sealed interface RunEvent {
         val colorMatch: ColorMatchObservation? = null,
         val matchedArea: com.veyarc.model.NormalizedRect? = null,
         val comparison: ComparisonValues? = null,
+        val sectionCallId: String? = null,
     ) : RunEvent
 
     data class StepFinished(
@@ -210,6 +216,7 @@ sealed interface RunEvent {
         val stepId: String,
         val outcome: StepOutcome,
         val details: StepCompletionDetails? = null,
+        val sectionCallId: String? = null,
     ) : RunEvent
 
     data class Paused(

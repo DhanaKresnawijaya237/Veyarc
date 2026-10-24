@@ -382,6 +382,18 @@
     "step": {
       "oneOf": [
         {
+          "type": "object", "additionalProperties": false,
+          "required": ["type", "id", "name", "bodySteps"],
+          "description": "A workflow-local reusable section. Declare only in the root steps list. A declaration does not run on its own; runSection calls it. Its body cannot contain section or runSection. Scalar variables are shared with callers. Captures and Find image results are private to each call and cleared afterward. Go to and stepResult references cannot cross section boundaries.",
+          "properties": { "type": { "const": "section" }, "id": { "$ref": "#/$defs/uuid" }, "name": { "type": "string", "minLength": 1, "maxLength": 80, "description": "Unique within this workflow, ignoring case and surrounding whitespace." }, "bodySteps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/step" } } }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["type", "id", "sectionId"],
+          "description": "Run a top-level section by its id. May appear in the main workflow and its conditions/loops, never inside a reusable section body. A stop or failure inside the section stops the whole run.",
+          "properties": { "type": { "const": "runSection" }, "id": { "$ref": "#/$defs/uuid" }, "sectionId": { "$ref": "#/$defs/uuid" } }
+        },
+        {
           "type": "object",
           "additionalProperties": false,
           "required": [

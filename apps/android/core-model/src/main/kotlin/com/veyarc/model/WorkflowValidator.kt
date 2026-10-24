@@ -4,6 +4,10 @@ package com.veyarc.model
 object WorkflowValidator {
     fun validate(document: WorkflowDocument): List<ValidationError> {
         val errors = mutableListOf<ValidationError>()
+        val sections = document.steps.reusableSections()
+        sections.values.groupBy { it.name.trim().lowercase() }.values.filter { it.size > 1 }.flatten().forEach { section ->
+            errors += error(ValidationErrorCode.INVALID_SECTION, "/steps/${document.steps.indexOf(section)}/name", "Choose a different section name")
+        }
         val runtimeCaptures = document.steps.capturedImages()
         val imageSearchScopes = document.steps.imageSearchesByStep()
         val imageSearchNames = document.steps.imageSearches().keys
@@ -14,6 +18,8 @@ object WorkflowValidator {
                     errors += error(if (name.value in imageSearchNames) ValidationErrorCode.FORWARD_STEP_REFERENCE else ValidationErrorCode.MISSING_VARIABLE, stepPath, "Find image for ${name.value} must appear before this block on the same execution path.")
                 }
                 when (step) {
+                    is ReusableSection -> validateImageResultOrder(step.bodySteps, "$stepPath/bodySteps")
+
                     is IfElse -> {
                         validateImageResultOrder(step.thenSteps, "$stepPath/thenSteps")
                         validateImageResultOrder(step.elseSteps, "$stepPath/elseSteps")
@@ -123,7 +129,7 @@ object WorkflowValidator {
             depth = 1,
             document = document,
             runtimeCaptures = runtimeCaptures,
-            allStepIds = allStepIds,
+            allStepIds = visibleStepIds(document.steps),
             seenStepIds = seenStepIds,
             declaredAssets = declaredAssets,
             referencedAssets = referencedAssets,
@@ -152,6 +158,8 @@ object WorkflowValidator {
                 duplicates += step.id
             }
             when (step) {
+                is ReusableSection -> collectStepIds(step.bodySteps, ids, duplicates)
+
                 is IfElse -> {
                     collectStepIds(step.thenSteps, ids, duplicates)
                     collectStepIds(step.elseSteps, ids, duplicates)
@@ -178,6 +186,7 @@ object WorkflowValidator {
         referencedAssets: MutableSet<String>,
         errors: MutableList<ValidationError>,
         enclosingStepIds: Set<String> = emptySet(),
+        insideSection: Boolean = false,
     ) {
         if (depth > document.runLimits.maxNestingDepth) {
             errors += error(
@@ -186,7 +195,7 @@ object WorkflowValidator {
                 "Workflow nesting depth exceeds maxNestingDepth",
             )
         }
-        val availableJumpTargets = enclosingStepIds + steps.map { it.id }
+        val availableJumpTargets = enclosingStepIds + steps.filterNot { it is ReusableSection }.map { it.id }
         steps.forEachIndexed { index, step ->
             val stepPath = "$path/$index"
             step.backgroundAssetId()?.let { validateImageAsset(it, "$stepPath/backgroundAssetId", AssetKind.IMAGE_TEMPLATE, declaredAssets, referencedAssets, errors) }
@@ -198,6 +207,16 @@ object WorkflowValidator {
             imagePosition?.offsetXVariable?.let { validateNumberVariable(it, "$stepPath/imagePosition/offsetXVariable", document, errors) }
             imagePosition?.offsetYVariable?.let { validateNumberVariable(it, "$stepPath/imagePosition/offsetYVariable", document, errors) }
             when (step) {
+                is ReusableSection -> {
+                    if (depth != 1 || insideSection) errors += error(ValidationErrorCode.INVALID_SECTION, stepPath, "Keep reusable sections at the workflow's top level")
+                    if (step.bodySteps.isEmpty()) errors += error(ValidationErrorCode.INVALID_SECTION, "$stepPath/bodySteps", "Add blocks to this section")
+                }
+
+                is RunSection -> {
+                    if (insideSection) errors += error(ValidationErrorCode.INVALID_SECTION, stepPath, "A section cannot run another section")
+                    if (step.sectionId !in document.steps.reusableSections()) errors += error(ValidationErrorCode.UNKNOWN_STEP_REFERENCE, "$stepPath/sectionId", "Choose a reusable section from this workflow")
+                }
+
                 is FindImage -> validateCondition(step.condition, "$stepPath/condition", document, runtimeCaptures, allStepIds, seenStepIds, declaredAssets, referencedAssets, errors)
 
                 is WaitUntil -> {
@@ -300,6 +319,12 @@ object WorkflowValidator {
 
             seenStepIds += step.id
             when (step) {
+                is ReusableSection -> validateSteps(
+                    step.bodySteps, "$stepPath/bodySteps", if (depth == 1) 1 else depth + 1, document,
+                    step.bodySteps.capturedImages(), visibleStepIds(step.bodySteps), linkedSetOf(), declaredAssets, referencedAssets, errors,
+                    insideSection = true,
+                )
+
                 is IfElse -> {
                     validateSteps(
                         step.thenSteps,
@@ -313,6 +338,7 @@ object WorkflowValidator {
                         referencedAssets,
                         errors,
                         availableJumpTargets,
+                        insideSection,
                     )
                     validateSteps(
                         step.elseSteps,
@@ -326,6 +352,7 @@ object WorkflowValidator {
                         referencedAssets,
                         errors,
                         availableJumpTargets,
+                        insideSection,
                     )
                 }
 
@@ -341,6 +368,7 @@ object WorkflowValidator {
                     referencedAssets,
                     errors,
                     availableJumpTargets,
+                    insideSection,
                 )
 
                 is WhileStep -> validateSteps(
@@ -355,11 +383,22 @@ object WorkflowValidator {
                     referencedAssets,
                     errors,
                     availableJumpTargets,
+                    insideSection,
                 )
 
                 else -> Unit
             }
         }
+    }
+
+    private fun visibleStepIds(steps: List<WorkflowStep>): Set<String> = buildSet {
+        fun visit(items: List<WorkflowStep>) {
+            items.filterNot { it is ReusableSection }.forEach {
+                add(it.id)
+                visit(it.childSteps())
+            }
+        }
+        visit(steps)
     }
 
     private fun validateCondition(
