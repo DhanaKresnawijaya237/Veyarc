@@ -164,6 +164,16 @@ data class RunFailure(
     val message: String,
 )
 
+data class ComparisonValues(val left: ScalarValue, val right: ScalarValue)
+
+sealed interface StepCompletionDetails {
+    data class VariableChange(val before: ScalarValue?, val after: ScalarValue) : StepCompletionDetails
+
+    data class WaitDuration(val durationMs: Long) : StepCompletionDetails
+
+    data class LoopResult(val iterations: Int, val limitReached: Boolean = false) : StepCompletionDetails
+}
+
 sealed interface RunEvent {
     val atMs: Long
 
@@ -187,12 +197,14 @@ sealed interface RunEvent {
         val threshold: Double? = null,
         val colorMatch: ColorMatchObservation? = null,
         val matchedArea: com.veyarc.model.NormalizedRect? = null,
+        val comparison: ComparisonValues? = null,
     ) : RunEvent
 
     data class StepFinished(
         override val atMs: Long,
         val stepId: String,
         val outcome: StepOutcome,
+        val details: StepCompletionDetails? = null,
     ) : RunEvent
 
     data class Paused(

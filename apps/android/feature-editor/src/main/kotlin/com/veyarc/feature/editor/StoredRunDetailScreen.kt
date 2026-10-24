@@ -173,7 +173,7 @@ fun StoredRunDetailScreen(
                         }
                         group.forEach { (index, event) ->
                             Row(Modifier.fillMaxWidth().testTag("run-event-$index"), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.Top) {
-                                Text(readableRunMessage(event.message, appNames).replace(": true", ": met").replace(": false", ": not met"), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                                RunActivityMessage(event.message, appNames, Modifier.weight(1f))
                                 if (index > 0) Text("+${formatEventGap(event.atMs - record.eventHistory[index - 1].atMs)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
@@ -184,6 +184,22 @@ fun StoredRunDetailScreen(
         if (record.eventHistory.isEmpty()) {
             item {
                 Text(if (record.hasStoredDetails) "No activity recorded." else "Activity wasn't saved for this older run.", Modifier.padding(horizontal = 4.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RunActivityMessage(message: String, appNames: Map<String, String>, modifier: Modifier = Modifier) {
+    val title = readableRunMessage(message.substringBefore('\n'), appNames).replace(": true", ": met").replace(": false", ": not met")
+    val detail = message.substringAfter('\n', "")
+    if (detail.isEmpty()) {
+        Text(title, modifier, style = MaterialTheme.typography.bodyMedium)
+    } else {
+        Surface(modifier, shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
+                Text(detail, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

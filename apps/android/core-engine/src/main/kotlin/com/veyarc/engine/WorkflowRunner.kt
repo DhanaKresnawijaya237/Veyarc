@@ -142,7 +142,7 @@ class WorkflowRunner {
         return try {
             val execution = executeStepBody(step, state)
             state.stepOutcomes[step.id] = execution.outcome
-            state.emit(RunEvent.StepFinished(state.nowMs(), step.id, execution.outcome))
+            state.emit(RunEvent.StepFinished(state.nowMs(), step.id, execution.outcome, execution.details))
             finished = true
             if (execution.halt == null) ensureBoundary(state)
             execution
@@ -230,12 +230,13 @@ class WorkflowRunner {
 
         is ExecutionStep.Wait -> {
             val variable = step.durationVariable
+            val duration = variable?.let { wholeNumberVariable(it, Long.MAX_VALUE, "Wait time", state) } ?: step.durationMs.value
             if (variable == null) {
-                state.clock.sleep(step.durationMs.value)
+                state.clock.sleep(duration)
             } else {
-                sleepWithControls(wholeNumberVariable(variable, Long.MAX_VALUE, "Wait time", state), state)
+                sleepWithControls(duration, state)
             }
-            StepExecution(StepOutcome.COMPLETED)
+            StepExecution(StepOutcome.COMPLETED, details = variable?.let { StepCompletionDetails.WaitDuration(duration) })
         }
 
         is ExecutionStep.StageBoundary -> StepExecution(StepOutcome.COMPLETED)
@@ -267,7 +268,7 @@ class WorkflowRunner {
                 val execution = executeSteps(step.bodySteps, state)
                 if (execution.halt != null || execution.jumpTargetId != null) return execution
             }
-            StepExecution(StepOutcome.COMPLETED)
+            StepExecution(StepOutcome.COMPLETED, details = StepCompletionDetails.LoopResult(count))
         }
 
         is ExecutionStep.While -> {
@@ -280,7 +281,7 @@ class WorkflowRunner {
                 if (execution.halt != null || execution.jumpTargetId != null) return execution
                 iterations++
             }
-            StepExecution(StepOutcome.COMPLETED)
+            StepExecution(StepOutcome.COMPLETED, details = StepCompletionDetails.LoopResult(iterations, iterations == step.maxIterations))
         }
 
         is ExecutionStep.LaunchApp -> {
@@ -318,8 +319,8 @@ class WorkflowRunner {
                 if (!result.isFinite()) invalidVariableValue("Calculation for ${step.name.value} produced a number too large to use", state)
                 NumberValue(result)
             } ?: source
-            state.variables[step.name.value] = value
-            StepExecution(StepOutcome.COMPLETED)
+            val previous = state.variables.put(step.name.value, value)
+            StepExecution(StepOutcome.COMPLETED, details = StepCompletionDetails.VariableChange(previous, value))
         }
     }
 
@@ -383,6 +384,7 @@ class WorkflowRunner {
         state: RunState,
     ): Boolean {
         var observation: ConditionObservation? = null
+        var comparison: ComparisonValues? = null
         val result = when (condition) {
             is PixelColorCondition,
             is CapturedImageCondition,
@@ -396,7 +398,11 @@ class WorkflowRunner {
                 state.driver.currentForegroundPackage() == condition.packageName
             }
 
-            is VariableComparisonCondition -> compare(condition, state)
+            is VariableComparisonCondition -> {
+                val values = ComparisonValues(resolveOperand(condition.left, state), resolveOperand(condition.right, state))
+                comparison = values
+                compare(condition, values)
+            }
 
             is StepResultCondition -> state.stepOutcomes[condition.stepId] == condition.outcome
 
@@ -419,14 +425,14 @@ class WorkflowRunner {
                 matchScore = observation?.matchScore,
                 threshold = observation?.threshold,
                 colorMatch = observation?.colorMatch,
+                comparison = comparison,
             ),
         )
         return result
     }
 
-    private fun compare(condition: VariableComparisonCondition, state: RunState): Boolean {
-        val left = resolveOperand(condition.left, state)
-        val right = resolveOperand(condition.right, state)
+    private fun compare(condition: VariableComparisonCondition, values: ComparisonValues): Boolean {
+        val (left, right) = values
         return when (condition.operator) {
             ComparisonOperator.EQUALS -> scalarEquals(left, right)
             ComparisonOperator.NOT_EQUALS -> !scalarEquals(left, right)
@@ -726,6 +732,7 @@ class WorkflowRunner {
         val outcome: StepOutcome,
         val halt: RunHalt? = null,
         val jumpTargetId: String? = null,
+        val details: StepCompletionDetails? = null,
     )
 
     private data class RunHalt(

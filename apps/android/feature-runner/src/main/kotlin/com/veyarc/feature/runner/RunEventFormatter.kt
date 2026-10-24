@@ -1,42 +1,54 @@
 package com.veyarc.feature.runner
 
 import com.veyarc.engine.RunEvent
+import com.veyarc.engine.StepCompletionDetails
 import com.veyarc.model.AndCondition
+import com.veyarc.model.BooleanValue
 import com.veyarc.model.CaptureImage
 import com.veyarc.model.CapturedImageCondition
+import com.veyarc.model.ComparisonOperator
 import com.veyarc.model.Condition
 import com.veyarc.model.ForegroundPackageCondition
 import com.veyarc.model.IfElse
 import com.veyarc.model.ImageAbsentCondition
 import com.veyarc.model.ImageMatchMode
 import com.veyarc.model.ImagePresentCondition
+import com.veyarc.model.ImageResultField
+import com.veyarc.model.ImageResultOperand
 import com.veyarc.model.Jump
 import com.veyarc.model.LaunchApp
+import com.veyarc.model.LiteralOperand
 import com.veyarc.model.LongPress
 import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.NotCondition
+import com.veyarc.model.NumberValue
+import com.veyarc.model.Operand
 import com.veyarc.model.OrCondition
 import com.veyarc.model.OrientationCondition
 import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.Repeat
+import com.veyarc.model.ScalarValue
 import com.veyarc.model.SetVariable
 import com.veyarc.model.StageBoundary
 import com.veyarc.model.StepResultCondition
 import com.veyarc.model.Stop
+import com.veyarc.model.StringValue
 import com.veyarc.model.SwipePath
 import com.veyarc.model.TapPoint
 import com.veyarc.model.TapRegion
 import com.veyarc.model.VariableComparisonCondition
+import com.veyarc.model.VariableOperand
 import com.veyarc.model.Wait
 import com.veyarc.model.WaitUntil
 import com.veyarc.model.WhileStep
 import com.veyarc.model.WorkflowDocument
 import com.veyarc.model.WorkflowStep
+import com.veyarc.model.isFullScreenCapture
 import com.veyarc.model.resolvePoint
 import java.util.Locale
 import kotlin.math.roundToInt
 
-/** Produces local, human-readable run history without exposing variable values or screen captures. */
+/** Produces local run history with bounded value summaries, never screen captures. */
 internal class RunEventFormatter(private val document: WorkflowDocument) {
     private val stepsById = mutableMapOf<String, WorkflowStep>()
     private val blockLabels = mutableMapOf<String, String>()
@@ -66,10 +78,20 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
 
         is RunEvent.StepStarted -> "${stepDescription(event.stepId)} started"
 
-        is RunEvent.ConditionEvaluated -> conditionResult(event)
+        is RunEvent.ConditionEvaluated -> {
+            val decision = if (event.path == "${event.stepId}/condition") {
+                when (stepsById[event.stepId]) {
+                    is IfElse -> if (event.result) "Following If true" else "Following If false"
+                    is WhileStep -> if (event.result) "Continuing loop" else "Leaving loop"
+                    else -> null
+                }
+            } else {
+                null
+            }
+            listOfNotNull(conditionResult(event), decision).joinToString("\n")
+        }
 
-        is RunEvent.StepFinished ->
-            "${stepName(event.stepId)} ${event.outcome.name.lowercase(Locale.ROOT)}"
+        is RunEvent.StepFinished -> completionResult(event)
 
         is RunEvent.Paused -> "Run paused"
 
@@ -78,10 +100,41 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
         is RunEvent.Finished -> "Run finished: ${event.outcome.name.lowercase(Locale.ROOT)}"
     }
 
+    private fun completionResult(event: RunEvent.StepFinished): String {
+        val step = stepsById[event.stepId]
+        when (val detail = event.details) {
+            is StepCompletionDetails.VariableChange -> if (step is SetVariable) {
+                val before = detail.before?.let(::scalarText) ?: "Not set"
+                return "${step.name.value} updated\n$before → ${scalarText(detail.after)}"
+            }
+
+            is StepCompletionDetails.WaitDuration -> if (step is Wait) {
+                return "Wait completed\n${step.durationVariable?.value}: ${detail.durationMs} ms"
+            }
+
+            is StepCompletionDetails.LoopResult -> {
+                val count = "${detail.iterations} ${if (detail.iterations == 1) "repeat" else "repeats"}"
+                if (step is WhileStep) return "Loop finished · $count\n${if (detail.limitReached) "Repeat limit reached" else "Condition not met"}"
+                if (step is Repeat) return "Repeat finished · $count" + step.countVariable?.let { "\n${it.value} was ${detail.iterations} when the loop started" }.orEmpty()
+            }
+
+            null -> Unit
+        }
+        if (step is CaptureImage && event.outcome == com.veyarc.model.StepOutcome.COMPLETED) {
+            return "${step.name.value} captured\n${if (step.isFullScreenCapture()) "Full screen" else "Cropped area"} · Available for this run"
+        }
+        return "${stepName(event.stepId)} ${event.outcome.name.lowercase(Locale.ROOT)}"
+    }
+
     private fun conditionResult(event: RunEvent.ConditionEvaluated): String {
         val condition = conditionsByPath[event.path]
+        if (condition is VariableComparisonCondition) {
+            val values = event.comparison
+            val expression = "${operandText(condition.left, values?.left)} ${operatorText(condition.operator)} ${operandText(condition.right, values?.right)}"
+            return "Condition ${if (event.result) "met" else "not met"}\n$expression"
+        }
         (stepsById[event.stepId] as? com.veyarc.model.FindImage)?.let { search ->
-            return "${search.name.value}: ${if (event.result) "Found" else "Not found"} / Score ${event.matchScore?.let(::formatPercent) ?: "unavailable"} / Threshold ${formatPercent(search.image.matchThreshold)}" + event.matchedArea?.let { " / Center ${formatPoint(com.veyarc.model.NormalizedCoordinate(it.x + it.width / 2, it.y + it.height / 2))}" }.orEmpty()
+            return "${search.name.value} · ${if (event.result) "Found" else "Not found"}\nScore ${event.matchScore?.let(::formatPercent) ?: "unavailable"} · Threshold ${formatPercent(search.image.matchThreshold)}" + event.matchedArea?.let { "\nCenter ${formatPoint(com.veyarc.model.NormalizedCoordinate(it.x + it.width / 2, it.y + it.height / 2))}" }.orEmpty()
         }
         event.colorMatch?.let { match ->
             val location = (condition as? PixelColorCondition)?.let { if (it.region == null) " at ${formatPoint(it.point)}" else " in the search area" }.orEmpty()
@@ -110,6 +163,32 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
             else -> "score not reported"
         }
         return "$base: ${event.result} · $match · threshold ${formatPercent(threshold)}"
+    }
+
+    private fun operandText(operand: Operand, value: ScalarValue?): String = when (operand) {
+        is LiteralOperand -> scalarText(value ?: operand.value)
+        is VariableOperand -> operand.name.value + value?.let { " (${scalarText(it)})" }.orEmpty()
+        is ImageResultOperand -> "${operand.name.value} ${if (operand.field == ImageResultField.FOUND) "found" else "score"}" + value?.let { " (${scalarText(it)})" }.orEmpty()
+    }
+
+    private fun scalarText(value: ScalarValue): String = when (value) {
+        is BooleanValue -> if (value.value) "True" else "False"
+
+        is NumberValue -> java.math.BigDecimal.valueOf(value.value).stripTrailingZeros().toPlainString()
+
+        is StringValue -> {
+            val text = value.value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
+            "\"${if (text.length > 160) text.take(159) + "…" else text}\""
+        }
+    }
+
+    private fun operatorText(operator: ComparisonOperator): String = when (operator) {
+        ComparisonOperator.EQUALS -> "="
+        ComparisonOperator.NOT_EQUALS -> "≠"
+        ComparisonOperator.LESS_THAN -> "<"
+        ComparisonOperator.LESS_THAN_OR_EQUAL -> "≤"
+        ComparisonOperator.GREATER_THAN -> ">"
+        ComparisonOperator.GREATER_THAN_OR_EQUAL -> "≥"
     }
 
     private fun stepDescription(stepId: String): String = when (val step = stepsById[stepId]) {
