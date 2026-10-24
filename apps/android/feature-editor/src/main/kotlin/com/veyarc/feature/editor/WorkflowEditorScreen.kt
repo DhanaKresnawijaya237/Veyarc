@@ -710,6 +710,7 @@ fun WorkflowEditorScreen(
                     onDismiss = { geometryTarget = null },
                     onAddImage = { templatePicker.launch("image/*") },
                     imageSearches = remember(draft.steps, targetStep.id) { draft.steps.imageSearchesByStep()[targetStep.id].orEmpty() },
+                    variables = draft.variables,
                     onApply = { updatedStep ->
                         session.update(draft.updateStep(target.path, target.index) { updatedStep })
                         geometryTarget = null
@@ -2636,7 +2637,7 @@ private fun EditableStepSummary(
         }
 
         is LongPress -> {
-            Text(step.imagePosition?.let { "Hold ${it.name.value} at its center for ${step.durationMs.value} ms" } ?: step.summary(draft.assetNames, appNames), style = MaterialTheme.typography.bodyMedium)
+            Text(step.imagePosition?.let { "Hold ${it.name.value} at its center for ${step.durationVariable?.value ?: step.durationMs.value} ms" } ?: step.summary(draft.assetNames, appNames), style = MaterialTheme.typography.bodyMedium)
             return
         }
 
@@ -2794,11 +2795,13 @@ private fun JumpTargetPicker(
 }
 
 @Composable
-private fun InlineLongField(
+internal fun InlineLongField(
     value: Long,
     minimum: Long,
     maximum: Long = Long.MAX_VALUE,
     resetKey: Int?,
+    label: String? = null,
+    onValidityChange: (Boolean) -> Unit = {},
     onValueChange: (Long) -> Unit,
 ) {
     var text by rememberNumericEditorText(value.toString(), resetKey)
@@ -2811,16 +2814,18 @@ private fun InlineLongField(
         BasicTextField(
             value = text,
             onValueChange = { candidate ->
-                if (candidate.all(Char::isDigit)) {
+                if ((if (minimum < 0) candidate.removePrefix("-") else candidate).all(Char::isDigit)) {
                     text = candidate
-                    candidate.toLongOrNull()?.takeIf { it in minimum..maximum }?.let(onValueChange)
+                    val parsed = candidate.toLongOrNull()?.takeIf { it in minimum..maximum }
+                    onValidityChange(parsed != null)
+                    parsed?.let(onValueChange)
                 }
             },
-            modifier = Modifier.matchParentSize(),
+            modifier = Modifier.matchParentSize().semantics { label?.let { contentDescription = it } },
             textStyle = MaterialTheme.typography.bodyMedium.copy(
                 color = MaterialTheme.colorScheme.primary,
             ),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            keyboardOptions = KeyboardOptions(keyboardType = if (minimum < 0) KeyboardType.Decimal else KeyboardType.Number),
             singleLine = true,
         )
     }

@@ -94,6 +94,13 @@ internal fun WorkflowDraft.usedVariableNames(): Set<String> = buildSet {
     }
     fun visit(items: List<WorkflowStep>) {
         items.forEach { step ->
+            val position = when (step) {
+                is com.veyarc.model.TapPoint -> step.imagePosition
+                is com.veyarc.model.LongPress -> step.imagePosition
+                else -> null
+            }
+            position?.offsetXVariable?.let { add(it.value) }
+            position?.offsetYVariable?.let { add(it.value) }
             when (step) {
                 is SetVariable -> {
                     add(step.name.value)
@@ -102,6 +109,8 @@ internal fun WorkflowDraft.usedVariableNames(): Set<String> = buildSet {
                 }
 
                 is Wait -> step.durationVariable?.let { add(it.value) }
+
+                is com.veyarc.model.LongPress -> step.durationVariable?.let { add(it.value) }
 
                 is WaitUntil -> condition(step.condition)
 
@@ -150,6 +159,7 @@ internal fun WorkflowDraft.removeVariable(name: String): WorkflowDraft {
 }
 
 private fun List<WorkflowStep>.mapVariableNames(transform: (VariableName) -> VariableName): List<WorkflowStep> {
+    fun position(value: com.veyarc.model.ImagePositionBinding?) = value?.copy(offsetXVariable = value.offsetXVariable?.let(transform), offsetYVariable = value.offsetYVariable?.let(transform))
     fun operand(value: Operand): Operand = when (value) {
         is VariableOperand -> value.copy(name = transform(value.name))
         is com.veyarc.model.ImageResultOperand -> value
@@ -164,6 +174,8 @@ private fun List<WorkflowStep>.mapVariableNames(transform: (VariableName) -> Var
     }
     return map { step ->
         when (step) {
+            is com.veyarc.model.TapPoint -> step.copy(imagePosition = position(step.imagePosition))
+            is com.veyarc.model.LongPress -> step.copy(durationVariable = step.durationVariable?.let(transform), imagePosition = position(step.imagePosition))
             is SetVariable -> step.copy(name = transform(step.name), source = step.source?.let(::operand), calculation = step.calculation?.let { it.copy(operand = operand(it.operand)) })
             is Wait -> step.copy(durationVariable = step.durationVariable?.let(transform))
             is com.veyarc.model.FindImage -> step.copy(condition = condition(step.condition) as com.veyarc.model.ImagePresentCondition)

@@ -7,6 +7,9 @@ import com.veyarc.model.StepOutcome
 import com.veyarc.model.StopReason
 import java.util.Collections
 
+// Keep dynamic holds within the Android gesture adapter's existing duration limit.
+internal const val MAX_GESTURE_DURATION_MS = 60_000L
+
 /** Sends platform-neutral touch actions to the active device adapter. */
 interface GestureDispatcher {
     fun tap(point: DisplayCoordinate)
@@ -167,6 +170,8 @@ data class RunFailure(
 data class ComparisonValues(val left: ScalarValue, val right: ScalarValue)
 
 sealed interface StepCompletionDetails {
+    data class GestureResult(val point: DisplayCoordinate, val durationMs: Long? = null) : StepCompletionDetails
+
     data class VariableChange(val before: ScalarValue?, val after: ScalarValue) : StepCompletionDetails
 
     data class WaitDuration(val durationMs: Long) : StepCompletionDetails

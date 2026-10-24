@@ -1063,7 +1063,7 @@ fun WorkflowStep.displayName(): String = when (this) {
 fun WorkflowStep.summary(assetNames: Map<String, String> = emptyMap(), appNames: Map<String, String> = emptyMap()): String = when (this) {
     is TapPoint -> "Tap at ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}% of the screen"
     is TapRegion -> "Tap inside a ${(region.width * 100).toInt()}% × ${(region.height * 100).toInt()}% area"
-    is LongPress -> "Hold for ${durationMs.value} ms at ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}%"
+    is LongPress -> "Hold for ${durationVariable?.value ?: durationMs.value} ms at ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}%"
     is SwipePath -> "Swipe through ${points.size} points in ${durationMs.value} ms"
     is Wait -> "Wait ${durationVariable?.value ?: durationMs.value} ms"
     is StageBoundary -> "Separate this stage from the next"

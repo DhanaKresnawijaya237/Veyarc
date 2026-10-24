@@ -88,7 +88,7 @@ object WorkflowCompiler {
                     resolvedPoint = step.resolvePoint(),
                 )
 
-                is LongPress -> ExecutionStep.LongPress(step.id, step.point, step.durationMs, step.imagePosition)
+                is LongPress -> ExecutionStep.LongPress(step.id, step.point, step.durationMs, step.imagePosition, step.durationVariable)
 
                 is com.veyarc.model.SwipePath -> ExecutionStep.SwipePath(
                     step.id,
@@ -345,7 +345,7 @@ object WorkflowCompiler {
 
     private fun analyzeStep(step: WorkflowStep, depth: Int, followJumps: Boolean): StepCost {
         val ownRuntime = when (step) {
-            is LongPress -> step.durationMs.value
+            is LongPress -> if (step.durationVariable == null) step.durationMs.value else MAX_GESTURE_DURATION_MS
             is com.veyarc.model.SwipePath -> step.durationMs.value
             is Wait -> if (step.durationVariable == null) step.durationMs.value else Long.MAX_VALUE
             is WaitUntil -> step.timeoutMs.value

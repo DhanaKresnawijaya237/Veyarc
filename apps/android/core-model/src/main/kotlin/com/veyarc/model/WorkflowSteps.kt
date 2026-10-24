@@ -62,6 +62,7 @@ data class LongPress(
     val durationMs: DurationMillis,
     val backgroundAssetId: AssetId? = null,
     val imagePosition: ImagePositionBinding? = null,
+    val durationVariable: VariableName? = null,
 ) : WorkflowStep {
     init {
         ContractChecks.requireStableId(id, "Step id")

@@ -195,6 +195,7 @@ sealed interface ExecutionStep {
         val point: NormalizedCoordinate,
         val durationMs: DurationMillis,
         val imagePosition: com.veyarc.model.ImagePositionBinding? = null,
+        val durationVariable: com.veyarc.model.VariableName? = null,
     ) : ExecutionStep
 
     data class SwipePath(

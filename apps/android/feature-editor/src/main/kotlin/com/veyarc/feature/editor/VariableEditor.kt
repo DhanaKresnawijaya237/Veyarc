@@ -220,10 +220,10 @@ internal fun SetVariableFields(step: SetVariable, variables: Map<String, Variabl
 }
 
 @Composable
-internal fun NumberValueControl(title: String, selected: VariableName?, variables: Map<String, VariableDeclaration>, onChange: (VariableName?) -> Unit, fixedValue: @Composable () -> Unit) {
+internal fun NumberValueControl(title: String, selected: VariableName?, variables: Map<String, VariableDeclaration>, onChange: (VariableName?) -> Unit, modifier: Modifier = Modifier, fixedValue: @Composable () -> Unit) {
     val options = numberValueChoices(variables)
     var choosing by rememberSaveable { mutableStateOf(false) }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
         if (selected == null) {
             fixedValue()
             if (options.size > 1) {
@@ -371,33 +371,50 @@ private fun OperandField(title: String, operand: Operand, variables: Map<String,
 }
 
 @Composable
-internal fun ImagePositionFields(binding: com.veyarc.model.ImagePositionBinding?, searches: Map<String, List<com.veyarc.model.FindImage>>, onChange: (com.veyarc.model.ImagePositionBinding?) -> Unit) {
+internal fun ImagePositionFields(binding: com.veyarc.model.ImagePositionBinding?, searches: Map<String, List<com.veyarc.model.FindImage>>, variables: Map<String, VariableDeclaration> = emptyMap(), onValidityChange: (Boolean) -> Unit = {}, onChange: (com.veyarc.model.ImagePositionBinding?) -> Unit) {
     val live = searches.filterValues { definitions -> definitions.all { it.image.capturedBackground == null } }
+    var validX by rememberSaveable(binding?.name?.value) { mutableStateOf(true) }
+    var validY by rememberSaveable(binding?.name?.value) { mutableStateOf(true) }
     if (live.isEmpty() && binding == null) return
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Text("Position", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             VariableChoice("Tap position", binding?.name?.value ?: "Fixed point", listOf(VeyarcChoice("fixed", "Fixed point")) + live.keys.map { VeyarcChoice("result:$it", it) }, binding?.let { "result:${it.name.value}" } ?: "fixed") { selected ->
+                validX = true
+                validY = true
+                onValidityChange(true)
                 onChange(if (selected == "fixed") null else com.veyarc.model.ImagePositionBinding(VariableName(selected.removePrefix("result:"))))
             }
         }
         binding?.let { value ->
             Text("Center of the matched image", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ImageOffsetField("X offset (px)", value.offsetXPx, Modifier.weight(1f)) { onChange(value.copy(offsetXPx = it)) }
-                ImageOffsetField("Y offset (px)", value.offsetYPx, Modifier.weight(1f)) { onChange(value.copy(offsetYPx = it)) }
+                ImageOffsetField("X offset", value.offsetXPx, value.offsetXVariable, variables, Modifier.weight(1f), {
+                    validX = it
+                    onValidityChange(validX && validY)
+                }, { onChange(value.copy(offsetXVariable = it)) }) { onChange(value.copy(offsetXPx = it)) }
+                ImageOffsetField("Y offset", value.offsetYPx, value.offsetYVariable, variables, Modifier.weight(1f), {
+                    validY = it
+                    onValidityChange(validX && validY)
+                }, { onChange(value.copy(offsetYVariable = it)) }) { onChange(value.copy(offsetYPx = it)) }
             }
+            if (!validX || !validY) Text("Enter a whole number of pixels.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
 
 @Composable
-private fun ImageOffsetField(label: String, value: Int, modifier: Modifier, onChange: (Int) -> Unit) {
-    var text by rememberNumericEditorText(value.toString())
-    OutlinedTextField(text, { candidate ->
-        if (candidate.removePrefix("-").all(Char::isDigit)) {
-            text = candidate
-            candidate.toIntOrNull()?.let(onChange)
+private fun ImageOffsetField(label: String, value: Int, selected: VariableName?, variables: Map<String, VariableDeclaration>, modifier: Modifier, onValidityChange: (Boolean) -> Unit, onVariableChange: (VariableName?) -> Unit, onChange: (Int) -> Unit) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            NumberValueControl(label, selected, variables, {
+                onValidityChange(true)
+                onVariableChange(it)
+            }, Modifier.weight(1f, fill = false)) {
+                InlineLongField(value.toLong(), Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong(), resetKey = null, label = label, onValidityChange = onValidityChange) { onChange(it.toInt()) }
+            }
+            Text("px", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-    }, modifier, label = { Text(label) }, singleLine = true, shape = RoundedCornerShape(12.dp), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+    }
 }

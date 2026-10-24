@@ -91,6 +91,7 @@ import com.veyarc.model.RegionAnchor
 import com.veyarc.model.SwipePath
 import com.veyarc.model.TapPoint
 import com.veyarc.model.TapRegion
+import com.veyarc.model.VariableDeclaration
 import com.veyarc.model.VariableName
 import com.veyarc.model.ViewportSpec
 import com.veyarc.model.WorkflowStep
@@ -111,6 +112,7 @@ internal fun GeometryEditorDialog(
     onAddImage: () -> Unit,
     onApply: (WorkflowStep) -> Unit,
     imageSearches: Map<String, List<FindImage>> = emptyMap(),
+    variables: Map<String, VariableDeclaration> = emptyMap(),
 ) {
     var pickerOpen by rememberSaveable { mutableStateOf(false) }
     var selectedAssetId by rememberSaveable(step.id) { mutableStateOf(step.backgroundAssetId()?.value) }
@@ -122,12 +124,17 @@ internal fun GeometryEditorDialog(
     var resultName by rememberSaveable(step.id) { mutableStateOf(originalBinding?.name?.value) }
     var offsetX by rememberSaveable(step.id) { mutableStateOf(originalBinding?.offsetXPx ?: 0) }
     var offsetY by rememberSaveable(step.id) { mutableStateOf(originalBinding?.offsetYPx ?: 0) }
-    val binding = resultName?.let { ImagePositionBinding(VariableName(it), offsetX, offsetY) }
+    var offsetXVariable by rememberSaveable(step.id) { mutableStateOf(originalBinding?.offsetXVariable?.value) }
+    var offsetYVariable by rememberSaveable(step.id) { mutableStateOf(originalBinding?.offsetYVariable?.value) }
+    var positionValid by rememberSaveable(step.id) { mutableStateOf(true) }
+    val binding = resultName?.let { ImagePositionBinding(VariableName(it), offsetX, offsetY, offsetXVariable?.let(::VariableName), offsetYVariable?.let(::VariableName)) }
     val positionControls: @Composable () -> Unit = {
-        ImagePositionFields(binding, imageSearches) {
+        ImagePositionFields(binding, imageSearches, variables, onValidityChange = { positionValid = it }) {
             resultName = it?.name?.value
             offsetX = it?.offsetXPx ?: 0
             offsetY = it?.offsetYPx ?: 0
+            offsetXVariable = it?.offsetXVariable?.value
+            offsetYVariable = it?.offsetYVariable?.value
         }
     }
     fun apply(value: WorkflowStep) {
@@ -160,6 +167,7 @@ internal fun GeometryEditorDialog(
                     point = step.point,
                     positionControls = positionControls,
                     dynamicPosition = binding != null,
+                    positionValid = positionValid,
                     viewport = viewport,
                     compact = compact,
                     background = referenceImage,
@@ -172,6 +180,8 @@ internal fun GeometryEditorDialog(
                     step = step,
                     positionControls = positionControls,
                     dynamicPosition = binding != null,
+                    positionValid = positionValid,
+                    variables = variables,
                     viewport = viewport,
                     compact = compact,
                     background = referenceImage,
@@ -491,6 +501,7 @@ private fun PointGeometryEditor(
     point: NormalizedCoordinate,
     positionControls: @Composable () -> Unit,
     dynamicPosition: Boolean,
+    positionValid: Boolean,
     viewport: ViewportSpec,
     compact: Boolean,
     background: ImageBitmap?,
@@ -504,6 +515,7 @@ private fun PointGeometryEditor(
         compact = compact,
         onToggleReference = onToggleReference,
         onAddImage = onAddImage,
+        applyEnabled = positionValid,
         onApply = { onApply(selectedPoint) },
     ) {
         positionControls()
@@ -540,6 +552,8 @@ private fun LongPressGeometryEditor(
     step: LongPress,
     positionControls: @Composable () -> Unit,
     dynamicPosition: Boolean,
+    positionValid: Boolean,
+    variables: Map<String, VariableDeclaration>,
     viewport: ViewportSpec,
     compact: Boolean,
     background: ImageBitmap?,
@@ -548,19 +562,17 @@ private fun LongPressGeometryEditor(
     onApply: (WorkflowStep) -> Unit,
 ) {
     var selectedPoint by remember(step) { mutableStateOf(step.point) }
-    var durationText by remember(step) { mutableStateOf(step.durationMs.value.toString()) }
-    val duration = durationText.toLongOrNull()
-    val validDuration = duration != null && duration > 0
+    var duration by rememberSaveable(step.id) { mutableStateOf(step.durationMs.value) }
+    var durationVariable by rememberSaveable(step.id) { mutableStateOf(step.durationVariable?.value) }
+    var validDuration by rememberSaveable(step.id) { mutableStateOf(true) }
     GeometryEditorLayout(
         title = "Edit long press",
         compact = compact,
         onToggleReference = onToggleReference,
         onAddImage = onAddImage,
-        applyEnabled = validDuration,
+        applyEnabled = validDuration && positionValid,
         onApply = {
-            if (duration != null && duration > 0) {
-                onApply(step.copy(point = selectedPoint, durationMs = com.veyarc.model.DurationMillis(duration)))
-            }
+            onApply(step.copy(point = selectedPoint, durationMs = com.veyarc.model.DurationMillis(duration), durationVariable = durationVariable?.let(::VariableName)))
         },
     ) {
         positionControls()
@@ -589,11 +601,16 @@ private fun LongPressGeometryEditor(
             }
             Text(selectedPoint.displayText())
         }
-        LongEditorField(
-            label = "Hold duration (ms)",
-            value = durationText,
-            onValueChange = { durationText = it },
-        )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Hold duration", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            NumberValueControl("Hold duration", durationVariable?.let(::VariableName), variables, {
+                durationVariable = it?.value
+                validDuration = true
+            }) {
+                InlineLongField(duration, 1, resetKey = null, label = "Hold duration", onValidityChange = { validDuration = it }) { duration = it }
+            }
+            Text("ms", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         if (!validDuration) {
             Text(
                 "Hold duration must be greater than zero.",

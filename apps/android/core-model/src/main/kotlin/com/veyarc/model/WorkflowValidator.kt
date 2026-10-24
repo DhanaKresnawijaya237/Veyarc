@@ -190,6 +190,13 @@ object WorkflowValidator {
         steps.forEachIndexed { index, step ->
             val stepPath = "$path/$index"
             step.backgroundAssetId()?.let { validateImageAsset(it, "$stepPath/backgroundAssetId", AssetKind.IMAGE_TEMPLATE, declaredAssets, referencedAssets, errors) }
+            val imagePosition = when (step) {
+                is TapPoint -> step.imagePosition
+                is LongPress -> step.imagePosition
+                else -> null
+            }
+            imagePosition?.offsetXVariable?.let { validateNumberVariable(it, "$stepPath/imagePosition/offsetXVariable", document, errors) }
+            imagePosition?.offsetYVariable?.let { validateNumberVariable(it, "$stepPath/imagePosition/offsetYVariable", document, errors) }
             when (step) {
                 is FindImage -> validateCondition(step.condition, "$stepPath/condition", document, runtimeCaptures, allStepIds, seenStepIds, declaredAssets, referencedAssets, errors)
 
@@ -286,7 +293,9 @@ object WorkflowValidator {
 
                 is Wait -> step.durationVariable?.let { validateNumberVariable(it, "$stepPath/durationVariable", document, errors) }
 
-                is CaptureImage, is LongPress, is StageBoundary, is Stop, is TapPoint, is TapRegion -> Unit
+                is LongPress -> step.durationVariable?.let { validateNumberVariable(it, "$stepPath/durationVariable", document, errors) }
+
+                is CaptureImage, is StageBoundary, is Stop, is TapPoint, is TapRegion -> Unit
             }
 
             seenStepIds += step.id

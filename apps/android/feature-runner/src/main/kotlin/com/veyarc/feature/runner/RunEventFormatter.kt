@@ -103,6 +103,11 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
     private fun completionResult(event: RunEvent.StepFinished): String {
         val step = stepsById[event.stepId]
         when (val detail = event.details) {
+            is StepCompletionDetails.GestureResult -> {
+                val point = "At (${detail.point.x.roundToInt()}, ${detail.point.y.roundToInt()} px on screen)"
+                return if (step is LongPress) "Hold completed\n${detail.durationMs} ms · $point" else "Tap completed\n$point"
+            }
+
             is StepCompletionDetails.VariableChange -> if (step is SetVariable) {
                 val before = detail.before?.let(::scalarText) ?: "Not set"
                 return "${step.name.value} updated\n$before → ${scalarText(detail.after)}"
@@ -192,11 +197,11 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
     }
 
     private fun stepDescription(stepId: String): String = when (val step = stepsById[stepId]) {
-        is TapPoint -> step.imagePosition?.let { "Tap ${it.name.value} / Offset ${it.offsetXPx}, ${it.offsetYPx} px" } ?: "Tap at ${formatPoint(step.point)}"
+        is TapPoint -> step.imagePosition?.let { "Tap ${it.name.value} / Offset ${it.offsetXVariable?.value ?: it.offsetXPx}, ${it.offsetYVariable?.value ?: it.offsetYPx} px" } ?: "Tap at ${formatPoint(step.point)}"
 
         is TapRegion -> "Tap region at ${formatPoint(step.resolvePoint())}"
 
-        is LongPress -> step.imagePosition?.let { "Hold ${it.name.value} for ${step.durationMs.value} ms / Offset ${it.offsetXPx}, ${it.offsetYPx} px" } ?: "Long press at ${formatPoint(step.point)} for ${step.durationMs.value} ms"
+        is LongPress -> step.imagePosition?.let { "Hold ${it.name.value} for ${step.durationVariable?.value ?: step.durationMs.value} ms / Offset ${it.offsetXVariable?.value ?: it.offsetXPx}, ${it.offsetYVariable?.value ?: it.offsetYPx} px" } ?: "Long press at ${formatPoint(step.point)} for ${step.durationVariable?.value ?: step.durationMs.value} ms"
 
         is SwipePath ->
             "Swipe from ${formatPoint(step.points.first().point)} to ${formatPoint(step.points.last().point)} " +

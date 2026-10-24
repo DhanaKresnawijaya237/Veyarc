@@ -193,12 +193,12 @@ class WorkflowRunner {
         }
 
         is ExecutionStep.TapPoint -> {
-            dispatchAtViewport(
+            val point = dispatchAtViewport(
                 state = state,
                 map = { viewport -> resolvePoint(step.point, step.imagePosition, viewport, state) },
                 dispatch = { point -> state.driver.tap(point) },
             )
-            StepExecution(StepOutcome.COMPLETED)
+            StepExecution(StepOutcome.COMPLETED, details = step.imagePosition?.let { StepCompletionDetails.GestureResult(point) })
         }
 
         is ExecutionStep.TapRegion -> {
@@ -211,12 +211,13 @@ class WorkflowRunner {
         }
 
         is ExecutionStep.LongPress -> {
-            dispatchAtViewport(
+            val duration = step.durationVariable?.let { wholeNumberVariable(it, MAX_GESTURE_DURATION_MS, "Hold duration", state, minimum = 1) } ?: step.durationMs.value
+            val point = dispatchAtViewport(
                 state = state,
                 map = { viewport -> resolvePoint(step.point, step.imagePosition, viewport, state) },
-                dispatch = { point -> state.driver.longPress(point, step.durationMs.value) },
+                dispatch = { point -> state.driver.longPress(point, duration) },
             )
-            StepExecution(StepOutcome.COMPLETED)
+            StepExecution(StepOutcome.COMPLETED, details = if (step.imagePosition != null || step.durationVariable != null) StepCompletionDetails.GestureResult(point, duration) else null)
         }
 
         is ExecutionStep.SwipePath -> {
@@ -485,19 +486,21 @@ class WorkflowRunner {
         if (!saved.liveScreen) invalidVariableValue("A captured background result cannot control a tap. Find ${binding.name.value} on the current screen.", state)
         if (saved.viewport != viewport || saved.foreground != state.driver.currentForegroundPackage() || saved.positionEpoch != state.positionEpoch) invalidVariableValue("The screen changed or the run was paused. Find ${binding.name.value} again before tapping.", state)
         // Match rectangles use pixel boundaries; touch coordinates use pixel centers.
-        val x = (area.x + area.width / 2) * viewport.widthPx - 0.5 + binding.offsetXPx
-        val y = (area.y + area.height / 2) * viewport.heightPx - 0.5 + binding.offsetYPx
+        val offsetX = binding.offsetXVariable?.let { wholeNumberVariable(it, Int.MAX_VALUE.toLong(), "X offset", state, Int.MIN_VALUE.toLong()) } ?: binding.offsetXPx.toLong()
+        val offsetY = binding.offsetYVariable?.let { wholeNumberVariable(it, Int.MAX_VALUE.toLong(), "Y offset", state, Int.MIN_VALUE.toLong()) } ?: binding.offsetYPx.toLong()
+        val x = (area.x + area.width / 2) * viewport.widthPx - 0.5 + offsetX
+        val y = (area.y + area.height / 2) * viewport.heightPx - 0.5 + offsetY
         if (x !in 0.0..(viewport.widthPx - 1).toDouble() || y !in 0.0..(viewport.heightPx - 1).toDouble()) invalidVariableValue("The image position and offset fall outside the screen. Reduce the offset.", state)
         return DisplayCoordinate(x, y)
     }
 
-    private fun wholeNumberVariable(name: com.veyarc.model.VariableName, maximum: Long, label: String, state: RunState): Long {
+    private fun wholeNumberVariable(name: com.veyarc.model.VariableName, maximum: Long, label: String, state: RunState, minimum: Long = 0): Long {
         val value = (resolveOperand(VariableOperand(name), state) as? NumberValue)?.value
             ?: invalidVariableValue("$label requires a number variable", state)
         // Long.MAX_VALUE rounds up as a Double; reject that boundary before conversion.
         val withinMaximum = if (maximum == Long.MAX_VALUE) value < maximum.toDouble() else value <= maximum.toDouble()
-        if (value < 0.0 || value % 1.0 != 0.0 || !withinMaximum) {
-            invalidVariableValue("$label uses ${name.value}, which must be a whole number from 0 to $maximum", state)
+        if (value < minimum.toDouble() || value % 1.0 != 0.0 || !withinMaximum) {
+            invalidVariableValue("$label uses ${name.value}, which must be a whole number from $minimum to $maximum", state)
         }
         return value.toLong()
     }
@@ -581,9 +584,12 @@ class WorkflowRunner {
         state: RunState,
         map: (ActiveViewport) -> T,
         dispatch: (T) -> Unit,
-    ) {
+    ): T {
+        ensureBoundary(state)
         val before = currentViewportOrAbort(state)
-        dispatch(map(before))
+        val mapped = map(before)
+        ensureNotCancelled(state)
+        dispatch(mapped)
         val after = state.driver.currentViewport()
             ?: throw viewportAbort(
                 state = state,
@@ -597,6 +603,7 @@ class WorkflowRunner {
                 message = "Active viewport changed during a gesture",
             )
         }
+        return mapped
     }
 
     private fun currentViewportOrAbort(state: RunState): ActiveViewport {
