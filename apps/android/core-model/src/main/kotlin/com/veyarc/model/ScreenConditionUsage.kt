@@ -7,7 +7,7 @@ fun WorkflowDocument.usesVisualConditions(): Boolean {
     fun uses(items: List<WorkflowStep>): Boolean = items.any { step ->
         when (step) {
             is ReusableSection -> false
-            is RunSection -> visited.add(step.sectionId) && sections[step.sectionId]?.let { uses(it.bodySteps) } == true
+            is RunSection -> visited.add(step.sectionId) && sections[step.sectionId]?.resolveBody(steps)?.let(::uses) == true
             is CaptureImage, is FindImage -> true
             is WaitUntil -> step.condition.usesVisualCondition()
             is IfElse -> step.condition.usesVisualCondition() || uses(step.thenSteps) || uses(step.elseSteps)

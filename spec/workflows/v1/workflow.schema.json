@@ -385,13 +385,17 @@
         {
           "type": "object", "additionalProperties": false,
           "required": ["type", "id", "name", "bodySteps"],
-          "description": "A workflow-local reusable section. Declare only in the root steps list. A declaration does not run on its own; runSection calls it. Its body cannot contain section or runSection. Scalar variables are shared with callers. Captures and Find image results are private to each call and cleared afterward. Go to and stepResult references cannot cross section boundaries.",
-          "properties": { "type": { "const": "section" }, "id": { "$ref": "#/$defs/uuid" }, "name": { "type": "string", "minLength": 1, "maxLength": 80, "description": "Unique within this workflow, ignoring case and surrounding whitespace." }, "bodySteps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/step" } } }
+          "description": "Workflow-local saved blocks, stored as top-level metadata and hidden from execution numbering. A declaration does not execute; runSection calls it. Copies own their bodySteps. Linked ranges use startStepId/endStepId UUIDs and empty bodySteps; endpoints must remain on one source list in forward order, include complete blocks/nests, and follow edits and insertions between the endpoints. Missing endpoints require reselection. Original source blocks still execute normally. Calls may use other sections but cycles are forbidden. Scalar variables are shared; captured images and Find results are private per call. Go to and stepResult references cannot escape the saved sequence.",
+          "oneOf": [
+            { "required": ["startStepId", "endStepId"], "properties": { "bodySteps": { "maxItems": 0 } } },
+            { "not": { "anyOf": [{ "required": ["startStepId"] }, { "required": ["endStepId"] }] }, "properties": { "bodySteps": { "minItems": 1 } } }
+          ],
+          "properties": { "type": { "const": "section" }, "id": { "$ref": "#/$defs/uuid" }, "name": { "type": "string", "minLength": 1, "maxLength": 80, "description": "Unique within this workflow, ignoring case and surrounding whitespace." }, "startStepId": { "$ref": "#/$defs/uuid" }, "endStepId": { "$ref": "#/$defs/uuid" }, "bodySteps": { "type": "array", "items": { "$ref": "#/$defs/step" } } }
         },
         {
           "type": "object", "additionalProperties": false,
           "required": ["type", "id", "sectionId"],
-          "description": "Run a top-level section by its id. May appear in the main workflow and its conditions/loops, never inside a reusable section body. A stop or failure inside the section stops the whole run.",
+          "description": "Run saved blocks by their top-level section id. Calls may appear inside ordinary branches/loops or other saved copies/ranges, provided the section call graph has no cycles. Return to the caller after completion; a stop or failure stops the whole run.",
           "properties": { "type": { "const": "runSection" }, "id": { "$ref": "#/$defs/uuid" }, "sectionId": { "$ref": "#/$defs/uuid" } }
         },
         {

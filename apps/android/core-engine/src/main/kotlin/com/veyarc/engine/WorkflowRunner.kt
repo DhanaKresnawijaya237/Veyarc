@@ -139,26 +139,26 @@ class WorkflowRunner {
         state.currentStepId = step.id
         state.currentPath = "/steps/${step.id}"
         ensureBoundary(state)
-        state.emit(RunEvent.StepStarted(state.nowMs(), step.id, state.sectionCallId))
+        state.emit(RunEvent.StepStarted(state.nowMs(), step.id, state.sectionCallId, state.sectionCallPath))
         var finished = false
         return try {
             val execution = executeStepBody(step, state)
             state.stepOutcomes[step.id] = execution.outcome
-            state.emit(RunEvent.StepFinished(state.nowMs(), step.id, execution.outcome, execution.details, state.sectionCallId))
+            state.emit(RunEvent.StepFinished(state.nowMs(), step.id, execution.outcome, execution.details, state.sectionCallId, state.sectionCallPath))
             finished = true
             if (execution.halt == null) ensureBoundary(state)
             execution
         } catch (abort: RunAbort) {
             if (!finished) {
                 state.stepOutcomes[step.id] = abort.stepOutcome
-                state.emit(RunEvent.StepFinished(state.nowMs(), step.id, abort.stepOutcome, sectionCallId = state.sectionCallId))
+                state.emit(RunEvent.StepFinished(state.nowMs(), step.id, abort.stepOutcome, sectionCallId = state.sectionCallId, sectionCallPath = state.sectionCallPath))
             }
             throw abort
         } catch (error: Exception) {
             if (state.cancellation.isCancellationRequested()) {
                 if (!finished) {
                     state.stepOutcomes[step.id] = StepOutcome.CANCELLED
-                    state.emit(RunEvent.StepFinished(state.nowMs(), step.id, StepOutcome.CANCELLED, sectionCallId = state.sectionCallId))
+                    state.emit(RunEvent.StepFinished(state.nowMs(), step.id, StepOutcome.CANCELLED, sectionCallId = state.sectionCallId, sectionCallPath = state.sectionCallPath))
                 }
                 ensureNotCancelled(state)
             }
@@ -169,18 +169,24 @@ class WorkflowRunner {
                 message = state.visibleError(error.message ?: "Execution dependency failed"),
             )
             state.stepOutcomes[step.id] = StepOutcome.FAILED
-            state.emit(RunEvent.StepFinished(state.nowMs(), step.id, StepOutcome.FAILED, sectionCallId = state.sectionCallId))
+            state.emit(RunEvent.StepFinished(state.nowMs(), step.id, StepOutcome.FAILED, sectionCallId = state.sectionCallId, sectionCallPath = state.sectionCallPath))
             throw RunAbort(RunOutcome.FAILED, StepOutcome.FAILED, failure, null)
         }
     }
 
     private fun executeStepBody(step: ExecutionStep, state: RunState): StepExecution = when (step) {
         is ExecutionStep.RunSection -> {
-            check(state.sectionCallId == null) { "A section cannot run another section" }
+            check(step.sectionId !in state.activeSections) { "Saved blocks cannot call themselves" }
             val section = state.plan.sections.getValue(step.sectionId)
             val previousResults = state.imageResults
             val captures = section.captureAliases.values.toSet()
-            state.sectionCallId = step.id
+            val previousAliases = state.captureAliases
+            val previousPath = state.sectionCallPath
+            val previousActive = state.activeSections
+            val previousOutcomes = section.stepIds.associateWith { state.stepOutcomes.getValue(it) }
+            val previousJumps = section.stepIds.mapNotNull { id -> state.jumpVisits[id]?.let { id to it } }.toMap()
+            state.sectionCallPath = immutableList(previousPath + step.id)
+            state.activeSections = previousActive + step.sectionId
             state.captureAliases = section.captureAliases
             state.imageResults = mutableMapOf()
             section.stepIds.forEach {
@@ -197,8 +203,14 @@ class WorkflowRunner {
                     state.driver.releaseCapturedImages(captures)
                 } finally {
                     state.imageResults = previousResults
-                    state.captureAliases = emptyMap()
-                    state.sectionCallId = null
+                    state.captureAliases = previousAliases
+                    state.sectionCallPath = previousPath
+                    state.activeSections = previousActive
+                    state.stepOutcomes.putAll(previousOutcomes)
+                    section.stepIds.forEach(state.jumpVisits::remove)
+                    state.jumpVisits.putAll(previousJumps)
+                    state.currentStepId = step.id
+                    state.currentPath = "/steps/${step.id}"
                 }
             }
         }
@@ -213,7 +225,7 @@ class WorkflowRunner {
             check(currentViewportOrAbort(state) == viewport && state.driver.currentForegroundPackage() == foreground) { "The screen changed during image search. Find the image again." }
             require(observation.matchScore != null && (!observation.result || observation.matchedArea != null)) { "Image search returned an incomplete result" }
             state.imageResults[step.name.value] = SavedImageResult(observation.copy(matchedArea = observation.matchedArea.takeIf { observation.result }), viewport, foreground, step.condition.capturedBackground == null, positionEpoch)
-            state.emit(RunEvent.ConditionEvaluated(state.nowMs(), step.id, "${step.id}/condition", observation.result, observation.matchScore, step.condition.matchThreshold, matchedArea = observation.matchedArea.takeIf { observation.result }, sectionCallId = state.sectionCallId))
+            state.emit(RunEvent.ConditionEvaluated(state.nowMs(), step.id, "${step.id}/condition", observation.result, observation.matchScore, step.condition.matchThreshold, matchedArea = observation.matchedArea.takeIf { observation.result }, sectionCallId = state.sectionCallId, sectionCallPath = state.sectionCallPath))
             StepExecution(StepOutcome.COMPLETED)
         }
 
@@ -458,6 +470,7 @@ class WorkflowRunner {
                 colorMatch = observation?.colorMatch,
                 comparison = comparison,
                 sectionCallId = state.sectionCallId,
+                sectionCallPath = state.sectionCallPath,
             ),
         )
         return result
@@ -751,7 +764,9 @@ class WorkflowRunner {
         val variables = LinkedHashMap(plan.variables.mapValues { it.value.initialValue })
         val jumpVisits = mutableMapOf<String, Int>()
         var imageResults = mutableMapOf<String, SavedImageResult>()
-        var sectionCallId: String? = null
+        var sectionCallPath: List<String> = emptyList()
+        val sectionCallId: String? get() = sectionCallPath.lastOrNull()
+        var activeSections: Set<String> = emptySet()
         var captureAliases: Map<VariableName, VariableName> = emptyMap()
         fun visibleError(message: String): String = captureAliases.entries.fold(message) { text, (original, alias) -> text.replace(alias.value, original.value) }
         var positionEpoch = 0L

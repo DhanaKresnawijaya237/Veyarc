@@ -196,6 +196,7 @@ sealed interface RunEvent {
         override val atMs: Long,
         val stepId: String,
         val sectionCallId: String? = null,
+        val sectionCallPath: List<String> = emptyList(),
     ) : RunEvent
 
     data class ConditionEvaluated(
@@ -209,6 +210,7 @@ sealed interface RunEvent {
         val matchedArea: com.veyarc.model.NormalizedRect? = null,
         val comparison: ComparisonValues? = null,
         val sectionCallId: String? = null,
+        val sectionCallPath: List<String> = emptyList(),
     ) : RunEvent
 
     data class StepFinished(
@@ -217,6 +219,7 @@ sealed interface RunEvent {
         val outcome: StepOutcome,
         val details: StepCompletionDetails? = null,
         val sectionCallId: String? = null,
+        val sectionCallPath: List<String> = emptyList(),
     ) : RunEvent
 
     data class Paused(

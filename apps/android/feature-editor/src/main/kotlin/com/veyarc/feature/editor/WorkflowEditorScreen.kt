@@ -65,6 +65,7 @@ import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Apps
+import androidx.compose.material.icons.outlined.BookmarkAdd
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ContentCopy
@@ -180,6 +181,7 @@ import com.veyarc.model.WorkflowIds
 import com.veyarc.model.WorkflowStep
 import com.veyarc.model.bundle.WorkflowBundle
 import com.veyarc.model.capturedImagesByStep
+import com.veyarc.model.cyclicSections
 import com.veyarc.model.imageSearchesByStep
 import com.veyarc.model.reusableSections
 import com.veyarc.model.walkSteps
@@ -996,6 +998,18 @@ private fun WorkflowDraftScreen(
         selectionMode = selectionMode,
         selectedIds = selectedIds,
         canCopy = !EditorBlockClipboard.isBusy && (if (selectionMode) selectedIds.isNotEmpty() else selection != null),
+        canSaveRange = draft.savedBlockSources().isNotEmpty(),
+        onCreateSaved = { path -> session.pendingSavedBlocks = draft.pendingSavedBlocks(path) },
+        onSaveSelected = {
+            val path = if (selectionMode) selectedPath else selection?.path
+            val ids = if (selectionMode) selectedIds else setOfNotNull(selection?.stepId)
+            if (path != null && ids.isNotEmpty()) session.pendingSavedBlocks = draft.pendingSavedBlocks(path, ids)
+        },
+        onEditSaved = { id, caller ->
+            session.savedBlockEditorId = id
+            session.savedBlockCaller = caller
+        },
+        onChooseSaved = { path, index -> session.savedBlockInsertion = RecordingInsertion(path, index).anchored(draft) },
         rangeSelection = session.blockRangeSelection,
         onToggleSelectionMode = session::cycleBlockSelectionMode,
         onCopy = {
@@ -1089,6 +1103,25 @@ private fun WorkflowDraftScreen(
                 }
             }
         }
+        SaveBlocksDialog(session, draft, onDraftChange)
+        SavedBlocksEditor(session, draft, validation, onDraftChange, onEditGeometry, onEditCondition)
+        session.savedBlockInsertion?.resolve(draft)?.let { destination ->
+            val callId = remember(session.savedBlockInsertion) { WorkflowIds.newUuid() }
+            val options = draft.steps.reusableSections().values.filter { section ->
+                section.id !in draft.insertSteps(destination.path, destination.index, listOf(RunSection(callId, section.id))).steps.cyclicSections()
+            }
+            if (options.isEmpty()) {
+                AlertDialog(onDismissRequest = { session.savedBlockInsertion = null }, title = { Text("Saved blocks") }, text = { Text("No saved sequence can run here without a circular reference.") }, confirmButton = { TextButton(onClick = { session.savedBlockInsertion = null }) { Text("Close") } })
+            } else {
+                VeyarcChoicePicker("Run saved blocks", options.map { VeyarcChoice(it.id, it.name, detail = if (it.isLinked) "Linked" else "Copy") }, onDismiss = { session.savedBlockInsertion = null }, onSelect = { choice ->
+                    onDraftChange(draft.insertSteps(destination.path, destination.index, listOf(RunSection(callId, choice.id))))
+                    session.savedBlockInsertion = null
+                })
+            }
+        }
+        session.savedBlockError?.let { message ->
+            AlertDialog(onDismissRequest = { session.savedBlockError = null }, title = { Text("Could not save blocks") }, text = { Text(message) }, confirmButton = { TextButton(onClick = { session.savedBlockError = null }) { Text("Close") } })
+        }
     }
     if (session.validationDetailsVisible) {
         AlertDialog(
@@ -1160,6 +1193,11 @@ private data class BlockClipboardActions(
     val rangeSelection: Boolean,
     val selectedIds: Set<String>,
     val canCopy: Boolean,
+    val canSaveRange: Boolean,
+    val onCreateSaved: (StepListPath) -> Unit,
+    val onSaveSelected: () -> Unit,
+    val onEditSaved: (String, BlockSelection?) -> Unit,
+    val onChooseSaved: (StepListPath, Int) -> Unit,
     val onToggleSelectionMode: () -> Unit,
     val onCopy: () -> Unit,
     val onSelect: (BlockSelection) -> Unit,
@@ -1248,13 +1286,11 @@ internal class StepDragCoordinator {
         val active = source ?: return
         val pointer = Offset(pointerWindowX, pointerWindowY)
         val heldStep = draft.stepsAt(active.path).firstOrNull { it.id == active.stepId }
-        val containsCalls = heldStep?.let { listOf(it).walkSteps().any { child -> child is RunSection } } == true
         val destinationPath = pipelineBounds.entries
             .asSequence()
             .filter { (_, bounds) -> bounds.contains(pointer) }
             .filterNot { (path, _) -> path.segments.any { it.parentId == active.stepId } }
             .filterNot { (path, _) -> heldStep is ReusableSection && path.segments.isNotEmpty() }
-            .filterNot { (path, _) -> containsCalls && path.sectionId != null }
             .sortedWith(
                 compareByDescending<Map.Entry<StepListPath, Rect>> { it.key.segments.size }
                     .thenBy { it.value.height },
@@ -1392,6 +1428,7 @@ private fun WorkflowDraftCanvas(
                         },
                     )
                     VariableSection(session, draft, onDraftChange)
+                    SavedBlocksSection(session, draft, validation, onDraftChange) { session.pendingSavedBlocks = draft.pendingSavedBlocks() }
                     TemplateAssetSection(
                         session = session,
                         assets = draft.assetDescriptors,
@@ -1418,14 +1455,15 @@ private fun WorkflowDraftCanvas(
                     }
                     Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("Execution", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-                        Text("${draft.steps.size} blocks", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${draft.steps.count { it !is ReusableSection && it !is StageBoundary }} blocks", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
-            if (draft.steps.isEmpty()) {
+            if (draft.steps.none { it !is ReusableSection }) {
                 item(key = "empty-blocks") { Text("No blocks yet.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
-            itemsIndexed(draft.steps, key = { _, step -> step.id }, contentType = { _, step -> step::class }) { index, step ->
+            itemsIndexed(draft.steps.mapIndexed { index, step -> index to step }.filterNot { it.second is ReusableSection }, key = { _, item -> item.second.id }, contentType = { _, item -> item.second::class }) { _, item ->
+                val (index, step) = item
                 StepEditorItem(
                     draft = draft,
                     path = root,
@@ -1648,8 +1686,12 @@ private fun EditorToolbar(
                     IconButton(onClick = session::undo, enabled = session.canUndo && !isBusy) {
                         Icon(Icons.AutoMirrored.Outlined.Undo, contentDescription = "Undo")
                     }
-                    IconButton(onClick = session::redo, enabled = session.canRedo && !isBusy) {
-                        Icon(Icons.AutoMirrored.Outlined.Redo, contentDescription = "Redo")
+                    if (clipboard?.selectionMode == true) {
+                        IconButton(onClick = clipboard.onSaveSelected, enabled = clipboard.canCopy && !isBusy) { Icon(Icons.Outlined.BookmarkAdd, "Save selected blocks") }
+                    } else {
+                        IconButton(onClick = session::redo, enabled = session.canRedo && !isBusy) {
+                            Icon(Icons.AutoMirrored.Outlined.Redo, contentDescription = "Redo")
+                        }
                     }
                     IconButton(
                         onClick = { clipboard?.onToggleSelectionMode?.invoke() },
@@ -1902,7 +1944,7 @@ internal fun EditorSetupSection(
 }
 
 @Composable
-private fun StepListEditor(
+internal fun StepListEditor(
     draft: WorkflowDraft,
     path: StepListPath,
     heading: String,
@@ -1955,6 +1997,7 @@ private fun StepEditorItem(
     dragCoordinator: StepDragCoordinator,
 ) {
     val steps = draft.stepsAt(path)
+    val savedActions = LocalBlockClipboardActions.current
     val liveRecording = LocalRecordingEditorControls.current?.onClose != null
     val activeDrag = dragCoordinator.source
     val dropTarget = dragCoordinator.target
@@ -2036,8 +2079,16 @@ private fun StepEditorItem(
                     dragCoordinator.end()
                 },
                 onInsertAfter = { kind ->
-                    val added = draft.insertStep(path, index + 1, kind, draft.allowedPackagesText.firstPackageOrDefault())
-                    onDraftChange(if (liveRecording) added.updateStep(path, index + 1) { it.emptyRecordingBody() } else added)
+                    when (kind) {
+                        WorkflowStepKind.SECTION -> savedActions?.onCreateSaved?.invoke(path)
+
+                        WorkflowStepKind.RUN_SECTION -> savedActions?.onChooseSaved?.invoke(path, index + 1)
+
+                        else -> {
+                            val added = draft.insertStep(path, index + 1, kind, draft.allowedPackagesText.firstPackageOrDefault())
+                            onDraftChange(if (liveRecording) added.updateStep(path, index + 1) { it.emptyRecordingBody() } else added)
+                        }
+                    }
                 },
             )
         }
@@ -2080,15 +2131,23 @@ private fun StepListFooter(
         Row(Modifier.align(Alignment.CenterHorizontally), horizontalArrangement = Arrangement.spacedBy(32.dp), verticalAlignment = Alignment.CenterVertically) {
             AddBlockMenu(
                 canAddVariable = draft.variables.isNotEmpty(),
-                canAddSection = path.segments.isEmpty(),
-                canRunSection = path.sectionId == null && draft.steps.reusableSections().isNotEmpty(),
+                canAddSection = clipboard?.canSaveRange == true,
+                canRunSection = draft.steps.reusableSections().isNotEmpty(),
                 compact = true,
-                canAddJump = steps.isNotEmpty() || path.segments.isNotEmpty(),
+                canAddJump = steps.any { it !is ReusableSection } || path.segments.isNotEmpty(),
                 modifier = Modifier,
                 onRecord = recording?.let { { it.onRecord(path, steps.size) } },
                 onAdd = { kind ->
-                    val added = draft.addStep(path, kind, draft.allowedPackagesText.firstPackageOrDefault())
-                    onDraftChange(if (liveRecording) added.updateStep(path, steps.size) { it.emptyRecordingBody() } else added)
+                    when (kind) {
+                        WorkflowStepKind.SECTION -> clipboard?.onCreateSaved?.invoke(path)
+
+                        WorkflowStepKind.RUN_SECTION -> clipboard?.onChooseSaved?.invoke(path, steps.size)
+
+                        else -> {
+                            val added = draft.addStep(path, kind, draft.allowedPackagesText.firstPackageOrDefault())
+                            onDraftChange(if (liveRecording) added.updateStep(path, steps.size) { it.emptyRecordingBody() } else added)
+                        }
+                    }
                 },
                 onPaste = { clipboard?.onPaste?.invoke(path, steps.size) },
             )
@@ -2137,7 +2196,7 @@ private fun StepCard(
     var overDelete by remember(step.id) { mutableStateOf(false) }
     val currentOverDelete by rememberUpdatedState(overDelete)
     val currentDelete by rememberUpdatedState { onDraftChange(draft.removeStep(path, index)) }
-    val expanded = step.id !in draft.collapsedStepIds
+    val expanded = step !is RunSection && step.id !in draft.collapsedStepIds
     val category = step.blockCategory()
     val accent = category.accent()
     val selected = if (clipboard?.selectionMode == true) step.id in clipboard.selectedIds else selection?.stepId == step.id
@@ -2180,7 +2239,13 @@ private fun StepCard(
                 .background(category.containerColor(selected), category.shape())
                 .clickable {
                     onSelectionChange(BlockSelection(path, step.id))
-                    if (clipboard?.selectionMode != true) onDraftChange(draft.toggleCollapsed(step.id))
+                    if (clipboard?.selectionMode != true) {
+                        if (step is RunSection) {
+                            clipboard?.onEditSaved?.invoke(step.sectionId, BlockSelection(path, step.id))
+                        } else {
+                            onDraftChange(draft.toggleCollapsed(step.id))
+                        }
+                    }
                 },
         ) {
             Column(
@@ -2222,17 +2287,14 @@ private fun StepCard(
                     Icon(category.icon, contentDescription = null, tint = accent)
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            "${executionNumberAt(draft.stepsAt(path), index)}. ${step.displayName()}",
+                            "${executionNumberAt(draft.stepsAt(path), index)}. ${if (step is RunSection) draft.steps.reusableSections()[step.sectionId]?.name ?: "Choose saved blocks" else step.displayName()}",
                             style = MaterialTheme.typography.titleSmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        if (!expanded && (step is ReusableSection || step is RunSection)) {
-                            val name = if (step is ReusableSection) step.name else draft.steps.reusableSections()[(step as RunSection).sectionId]?.name ?: "Choose a section"
-                            Text(name, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
                         if (issues.isNotEmpty()) Text("Needs attention", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
                     }
+                    if (step is RunSection) draft.steps.reusableSections()[step.sectionId]?.let { SavedBlockMode(it) }
                     if (step.hasEditableGeometry()) {
                         IconButton(onClick = { onEditGeometry(path, index) }) {
                             Icon(Icons.Outlined.Edit, contentDescription = if (step is com.veyarc.model.CaptureImage) "Edit capture area" else "Edit touch geometry")
@@ -2299,11 +2361,11 @@ private fun StepCard(
                 terminal = step is Stop,
                 modifier = Modifier.align(Alignment.TopStart).width(22.dp).fillMaxHeight(),
             )
-            if (index < draft.stepsAt(path).lastIndex && !dragging) {
+            if (draft.stepsAt(path).drop(index + 1).any { it !is ReusableSection } && !dragging) {
                 AddBlockMenu(
                     canAddVariable = draft.variables.isNotEmpty(),
-                    canAddSection = path.segments.isEmpty(),
-                    canRunSection = path.sectionId == null && draft.steps.reusableSections().isNotEmpty(),
+                    canAddSection = clipboard?.canSaveRange == true,
+                    canRunSection = draft.steps.reusableSections().isNotEmpty(),
                     compact = true,
                     subdued = true,
                     canAddJump = draft.stepsAt(path).size > 1 || path.segments.isNotEmpty() || step !is Jump,
@@ -2419,11 +2481,11 @@ private fun StageBoundaryRow(
                 }
             }
         }
-        if (index < draft.stepsAt(path).lastIndex && !dragging) {
+        if (draft.stepsAt(path).drop(index + 1).any { it !is ReusableSection } && !dragging) {
             AddBlockMenu(
                 canAddVariable = draft.variables.isNotEmpty(),
-                canAddSection = path.segments.isEmpty(),
-                canRunSection = path.sectionId == null && draft.steps.reusableSections().isNotEmpty(),
+                canAddSection = clipboard?.canSaveRange == true,
+                canRunSection = draft.steps.reusableSections().isNotEmpty(),
                 compact = true,
                 subdued = true,
                 canAddJump = true,
@@ -2436,7 +2498,7 @@ private fun StageBoundaryRow(
     }
 }
 
-internal fun executionNumberAt(steps: List<WorkflowStep>, index: Int): Int = steps.take(index + 1).count { it !is StageBoundary }
+internal fun executionNumberAt(steps: List<WorkflowStep>, index: Int): Int = steps.take(index + 1).count { it !is StageBoundary && it !is ReusableSection }
 
 internal fun isOverDeleteTarget(pointerX: Float, widthPx: Int, targetWidthPx: Float): Boolean = pointerX >= widthPx - targetWidthPx
 
@@ -2673,7 +2735,7 @@ private fun EditableStepSummary(
         }
 
         is RunSection -> {
-            SectionCallPicker(draft.steps.reusableSections().values.toList(), step.sectionId) { sectionId ->
+            SectionCallPicker(draft.steps.reusableSections().values.filter { target -> target.id !in draft.updateStep(path, index) { step.copy(sectionId = target.id) }.steps.cyclicSections() }, step.sectionId) { sectionId ->
                 onDraftChange(draft.updateStep(path, index) { step.copy(sectionId = sectionId) })
             }
             return
@@ -2972,7 +3034,8 @@ private fun AddBlockMenu(
                 options = buildList {
                     if (onRecord != null) add(VeyarcChoice("record", "Record here", highlighted = true, groupTitle = "Quick actions", icon = Icons.Outlined.FiberManualRecord))
                     if (clipboard?.clipboardAvailable == true) add(VeyarcChoice("paste", "Paste blocks", highlighted = true, groupTitle = "Quick actions", icon = Icons.Outlined.ContentPaste))
-                    WorkflowStepKind.entries.filter { (it != WorkflowStepKind.JUMP || canAddJump) && (it != WorkflowStepKind.SET_VARIABLE || canAddVariable) && (it != WorkflowStepKind.SECTION || canAddSection) && (it != WorkflowStepKind.RUN_SECTION || canRunSection) }.sortedBy { it.optionGroup() }.forEach { add(VeyarcChoice(it.name, it.displayName(), group = it.optionGroup(), groupTitle = it.optionGroupTitle(), icon = it.optionIcon())) }
+                    if (canAddSection) add(VeyarcChoice(WorkflowStepKind.SECTION.name, "Save block range", highlighted = true, groupTitle = "Quick actions", icon = Icons.Outlined.BookmarkAdd))
+                    WorkflowStepKind.entries.filter { it != WorkflowStepKind.SECTION && (it != WorkflowStepKind.JUMP || canAddJump) && (it != WorkflowStepKind.SET_VARIABLE || canAddVariable) && (it != WorkflowStepKind.SECTION || canAddSection) && (it != WorkflowStepKind.RUN_SECTION || canRunSection) }.sortedBy { it.optionGroup() }.forEach { add(VeyarcChoice(it.name, it.displayName(), group = it.optionGroup(), groupTitle = it.optionGroupTitle(), icon = it.optionIcon())) }
                 },
                 onDismiss = { expanded = false },
                 onSelect = { choice ->

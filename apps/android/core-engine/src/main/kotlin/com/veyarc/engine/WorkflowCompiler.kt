@@ -35,6 +35,7 @@ import com.veyarc.model.WorkflowValidator
 import com.veyarc.model.capturedBackgroundName
 import com.veyarc.model.capturedImageName
 import com.veyarc.model.capturedImages
+import com.veyarc.model.resolveBody
 import com.veyarc.model.resolvePoint
 import com.veyarc.model.reusableSections
 import com.veyarc.model.walkSteps
@@ -49,16 +50,31 @@ object WorkflowCompiler {
         errors += WorkflowValidator.validate(document).map(::invalidWorkflowError)
         if (errors.isNotEmpty()) return failure(errors)
         val definitions = document.steps.reusableSections()
-        val called = document.steps.walkSteps().filterIsInstance<RunSection>().map { it.sectionId }.toSet()
+        val used = linkedMapOf<String, Pair<ReusableSection, List<WorkflowStep>>>()
+        val sectionCosts = mutableMapOf<String, ControlFlowAnalysis>()
+        val pending = java.util.ArrayDeque<Pair<String, Boolean>>()
+        document.steps.filterNot { it is ReusableSection }.walkSteps().filterIsInstance<RunSection>().forEach { pending.addLast(it.sectionId to false) }
         validateCapabilities(document.steps, "/steps", capabilities, errors)
-        val used = definitions.filterKeys { it in called }
-        used.values.forEach { section -> validateCapabilities(section.bodySteps, "/steps/${document.steps.indexOf(section)}/bodySteps", capabilities, errors) }
-        val sectionCosts = used.mapValues { analyzeWorkflow(it.value.bodySteps) }
+        while (pending.isNotEmpty()) {
+            val (id, finished) = pending.removeLast()
+            if (finished) {
+                sectionCosts[id] = analyzeWorkflow(used.getValue(id).second, sectionCosts)
+                continue
+            }
+            if (id in used) continue
+            val section = definitions.getValue(id)
+            val body = requireNotNull(section.resolveBody(document.steps))
+            used[id] = section to body
+            validateCapabilities(body, "/steps/${document.steps.indexOf(section)}/bodySteps", capabilities, errors)
+            pending.addLast(id to true)
+            body.walkSteps().filterIsInstance<RunSection>().forEach { pending.addLast(it.sectionId to false) }
+        }
         val analysis = analyzeWorkflow(document.steps.filterNot { it is ReusableSection }, sectionCosts)
         validateAnalysis(document, analysis, errors)
 
         if (errors.isNotEmpty()) return failure(errors)
 
+        val occupiedCaptureNames = document.steps.capturedImages().keys.toMutableSet()
         val plan = ExecutionPlan(
             workflowId = document.id,
             workflowRevision = document.revision,
@@ -72,17 +88,17 @@ object WorkflowCompiler {
             steps = compileSteps(document.steps),
             analysis = analysis,
             sections = immutableMap(
-                used.mapValues { (_, section) ->
-                    val occupied = document.steps.capturedImages().keys.toMutableSet()
-                    val aliases = section.bodySteps.capturedImages().keys.associate { name ->
+                used.mapValues { (_, entry) ->
+                    val (section, body) = entry
+                    val aliases = body.capturedImages().keys.associate { name ->
                         var suffix = 0
                         var alias: String
                         do {
                             alias = "section_" + java.util.UUID.nameUUIDFromBytes("${section.id}:$name:${suffix++}".toByteArray(Charsets.UTF_8)).toString().replace("-", "")
-                        } while (!occupied.add(alias))
+                        } while (!occupiedCaptureNames.add(alias))
                         com.veyarc.model.VariableName(name) to com.veyarc.model.VariableName(alias)
                     }
-                    ExecutionSection(section.name, compileSteps(section.bodySteps), immutableMap(aliases), immutableSet(section.bodySteps.walkSteps().map { it.id }.toSet()))
+                    ExecutionSection(section.name, compileSteps(body), immutableMap(aliases), immutableSet(body.walkSteps().map { it.id }.toSet()))
                 },
             ),
         )

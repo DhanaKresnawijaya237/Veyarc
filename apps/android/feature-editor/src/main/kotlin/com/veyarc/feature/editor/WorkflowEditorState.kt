@@ -178,6 +178,12 @@ class WorkflowEditorSession {
     internal var allowedAppsExpanded by mutableStateOf(true)
     internal var templatesExpanded by mutableStateOf(true)
     internal var variablesExpanded by mutableStateOf(false)
+    internal var savedBlocksExpanded by mutableStateOf(false)
+    internal var savedBlockEditorId by mutableStateOf<String?>(null)
+    internal var savedBlockCaller by mutableStateOf<BlockSelection?>(null)
+    internal var pendingSavedBlocks by mutableStateOf<PendingSavedBlocks?>(null)
+    internal var savedBlockInsertion by mutableStateOf<RecordingInsertion?>(null)
+    internal var savedBlockError by mutableStateOf<String?>(null)
     internal var revisionPickerExpanded by mutableStateOf(false)
     internal var validationDetailsVisible by mutableStateOf(false)
     internal var renameTemplateTarget by mutableStateOf<com.veyarc.model.AssetId?>(null)
@@ -378,7 +384,7 @@ class WorkflowEditorSession {
             blockSelection = chosen
             return
         }
-        val steps = draft?.stepsAt(chosen.path).orEmpty()
+        val steps = draft?.stepsAt(chosen.path).orEmpty().filterNot { it is ReusableSection }
         val end = steps.indexOfFirst { it.id == chosen.stepId }
         if (end < 0) return
         if (selectedBlockPath != chosen.path) {
@@ -410,6 +416,12 @@ class WorkflowEditorSession {
         allowedAppsExpanded = true
         templatesExpanded = true
         variablesExpanded = false
+        savedBlocksExpanded = false
+        savedBlockEditorId = null
+        savedBlockCaller = null
+        pendingSavedBlocks = null
+        savedBlockInsertion = null
+        savedBlockError = null
         revisionPickerExpanded = false
         validationDetailsVisible = false
         renameTemplateTarget = null
@@ -551,9 +563,9 @@ data class WorkflowDraft(
 
     fun insertStep(path: StepListPath, index: Int, kind: WorkflowStepKind, defaultPackage: String): WorkflowDraft {
         require(kind != WorkflowStepKind.SECTION || path.segments.isEmpty()) { "Sections belong at the workflow level" }
-        require(kind != WorkflowStepKind.RUN_SECTION || path.sectionId == null) { "Sections cannot call other sections" }
         val current = stepsAt(path)
-        val jumpTargetId = current.getOrNull((index - 1).coerceAtLeast(0))?.id
+        val jumpTargetId = current.take(index).lastOrNull { it !is ReusableSection }?.id
+            ?: current.firstOrNull { it !is ReusableSection }?.id
             ?: jumpTargetLists(path).drop(1).firstOrNull()?.firstOrNull()?.id
         val step = newStep(kind, defaultPackage, jumpTargetId, variables.entries.firstOrNull()?.toPair(), steps.reusableSections().keys.firstOrNull()).let { created ->
             if (created is com.veyarc.model.CaptureImage) {
@@ -566,7 +578,7 @@ data class WorkflowDraft(
                 created.copy(name = com.veyarc.model.VariableName(name))
             } else if (created is ReusableSection) {
                 val names = steps.reusableSections().values.map { it.name.lowercase() }.toSet()
-                created.copy(name = generateSequence(1) { it + 1 }.map { "Section $it" }.first { it.lowercase() !in names })
+                created.copy(name = generateSequence(1) { it + 1 }.map { "Sequence $it" }.first { it.lowercase() !in names })
             } else {
                 created
             }
@@ -579,7 +591,6 @@ data class WorkflowDraft(
 
     fun insertSteps(path: StepListPath, index: Int, inserted: List<WorkflowStep>): WorkflowDraft {
         require(path.segments.isEmpty() || inserted.none { it is ReusableSection }) { "Sections belong at the workflow level" }
-        require(path.sectionId == null || inserted.walkSteps().none { it is RunSection }) { "Sections cannot call other sections" }
         return updateList(path) { current ->
             current.toMutableList().apply { addAll(index.coerceIn(0, size), inserted) }
         }.copy(collapsedStepIds = collapsedStepIds + inserted.map { it.id })
@@ -610,7 +621,6 @@ data class WorkflowDraft(
         val step = stepsAt(sourcePath).getOrNull(sourceIndex) ?: return this
         if (destinationPath.segments.any { it.parentId == step.id }) return this
         if (step is ReusableSection && destinationPath.segments.isNotEmpty()) return this
-        if (destinationPath.sectionId != null && (step is ReusableSection || listOf(step).walkSteps().any { it is RunSection })) return this
         if (sourcePath == destinationPath) return moveStepTo(sourcePath, sourceIndex, destinationIndex)
         val withoutSource = updateList(sourcePath) { current ->
             current.toMutableList().apply { removeAt(sourceIndex) }
@@ -671,6 +681,10 @@ data class WorkflowDraft(
             var number = 0
             items.forEach { step ->
                 if (step is StageBoundary) return@forEach
+                if (step is ReusableSection) {
+                    visit(step.bodySteps, "${step.name} · ")
+                    return@forEach
+                }
                 number++
                 val label = "$prefix$number"
                 step.backgroundAssetId()?.let { backgrounds.getOrPut(it.value) { linkedSetOf() }.add(label) }
@@ -1013,7 +1027,7 @@ fun newStep(kind: WorkflowStepKind, defaultPackage: String, jumpTargetId: String
 
         WorkflowStepKind.CAPTURE_IMAGE -> com.veyarc.model.CaptureImage(id, com.veyarc.model.VariableName("image"), NormalizedRect(0.25, 0.25, 0.5, 0.5))
 
-        WorkflowStepKind.SECTION -> ReusableSection(id, "Section 1", listOf(Wait(WorkflowIds.newUuid(), DurationMillis(500))))
+        WorkflowStepKind.SECTION -> ReusableSection(id, "Sequence 1", listOf(Wait(WorkflowIds.newUuid(), DurationMillis(500))))
 
         WorkflowStepKind.RUN_SECTION -> RunSection(id, requireNotNull(sectionId) { "Add a reusable section first" })
 
@@ -1075,8 +1089,8 @@ fun WorkflowStepKind.displayName(): String = when (this) {
     WorkflowStepKind.SET_VARIABLE -> "Set variable"
     WorkflowStepKind.FIND_IMAGE -> "Find image"
     WorkflowStepKind.CAPTURE_IMAGE -> "Capture image"
-    WorkflowStepKind.SECTION -> "Reusable section"
-    WorkflowStepKind.RUN_SECTION -> "Run section"
+    WorkflowStepKind.SECTION -> "Save block range"
+    WorkflowStepKind.RUN_SECTION -> "Run saved blocks"
     WorkflowStepKind.STOP -> "Stop"
 }
 
@@ -1096,8 +1110,8 @@ fun WorkflowStep.displayName(): String = when (this) {
     is com.veyarc.model.FindImage -> "Find image"
     is com.veyarc.model.CaptureImage -> "Capture image"
     is com.veyarc.model.SetVariable -> "Set variable"
-    is ReusableSection -> "Reusable section"
-    is RunSection -> "Run section"
+    is ReusableSection -> "Saved blocks"
+    is RunSection -> "Run saved blocks"
     is Stop -> "Stop"
     else -> "Step"
 }

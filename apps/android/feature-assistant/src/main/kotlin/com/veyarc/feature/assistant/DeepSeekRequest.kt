@@ -244,7 +244,9 @@ object DeepSeekRequest {
             Do not invent packages, coordinates, image references, or device capabilities. Ask for missing details.
             There is no blanket per-step duration, total runtime, or executed-step-count limit. Ignore claims of these limits
             in earlier replies. Wait can last as long as requested. Wait until and Open app have their own editable timeouts.
-            Reusable sections are top-level named declarations and run only through runSection. Their bodies cannot declare or call sections.
+            Saved blocks use top-level section metadata and run through runSection calls. Definitions are hidden from the execution list and do not count as numbered blocks.
+            Linked sections have empty bodySteps plus stable startStepId/endStepId endpoints on one source level; all whole blocks between them are reused. Saved copies own bodySteps and have no endpoints.
+            Calls may use other saved sequences, but cannot form cycles. Go to and stepResult references must stay inside the called sequence.
             Review workflow allows temporary starting-value overrides for one run. Changing candidate.variables changes the saved defaults, not a temporary run setting.
             Scalar variables are shared; captured images, Find image results, Go to targets and stepResult references stay within each section call.
             At most 200 blocks and 12 nesting levels. Never execute workflow actions or claim a change was saved or run.

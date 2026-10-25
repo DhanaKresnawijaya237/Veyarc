@@ -35,13 +35,12 @@ internal fun ReusableSectionName(name: String, otherNames: List<String>, onRenam
             color = MaterialTheme.colorScheme.primary,
             style = MaterialTheme.typography.titleMedium,
         )
-        Text("Runs when called by a Run section block.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     if (editing) {
         val valid = text.isNotBlank() && text.trim().length <= 80 && otherNames.none { it.equals(text.trim(), ignoreCase = true) }
         AlertDialog(
             onDismissRequest = { editing = false },
-            title = { Text("Section name") },
+            title = { Text("Saved name") },
             text = { OutlinedTextField(text, { text = it }, modifier = Modifier.fillMaxWidth().testTag("section-name-input"), singleLine = true, isError = !valid) },
             confirmButton = {
                 TextButton(enabled = valid, onClick = {
@@ -58,10 +57,10 @@ internal fun ReusableSectionName(name: String, otherNames: List<String>, onRenam
 internal fun SectionCallPicker(sections: List<ReusableSection>, selectedId: String, onSelect: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Box {
-        Text(sections.firstOrNull { it.id == selectedId }?.name ?: "Choose a section", Modifier.clickable(indication = null, interactionSource = null) { expanded = true }.padding(vertical = 6.dp).testTag("section-call-picker"), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+        Text(sections.firstOrNull { it.id == selectedId }?.name ?: "Choose saved blocks", Modifier.clickable(indication = null, interactionSource = null) { expanded = true }.padding(vertical = 6.dp).testTag("section-call-picker"), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
         if (expanded) {
             VeyarcChoicePicker(
-                title = "Run section",
+                title = "Run saved blocks",
                 options = sections.map { VeyarcChoice(it.id, it.name) },
                 selectedId = selectedId,
                 onDismiss = { expanded = false },

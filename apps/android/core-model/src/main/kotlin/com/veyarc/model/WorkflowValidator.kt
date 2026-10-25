@@ -8,26 +8,32 @@ object WorkflowValidator {
         sections.values.groupBy { it.name.trim().lowercase() }.values.filter { it.size > 1 }.flatten().forEach { section ->
             errors += error(ValidationErrorCode.INVALID_SECTION, "/steps/${document.steps.indexOf(section)}/name", "Choose a different section name")
         }
+        document.steps.cyclicSections().forEach { id ->
+            errors += error(ValidationErrorCode.INVALID_SECTION, "/steps/${document.steps.indexOfFirst { it.id == id }}", "Saved blocks cannot call themselves or form a circular reference")
+        }
         val runtimeCaptures = document.steps.capturedImages()
         val imageSearchScopes = document.steps.imageSearchesByStep()
         val imageSearchNames = document.steps.imageSearches().keys
-        fun validateImageResultOrder(items: List<WorkflowStep>, path: String) {
+        fun validateImageResultOrder(items: List<WorkflowStep>, path: String, scopes: Map<String, Map<String, List<FindImage>>> = imageSearchScopes) {
             items.forEachIndexed { index, step ->
                 val stepPath = "$path/$index"
-                step.imageResultNames().filter { it.value !in imageSearchScopes[step.id].orEmpty() }.forEach { name ->
+                step.imageResultNames().filter { it.value !in scopes[step.id].orEmpty() }.forEach { name ->
                     errors += error(if (name.value in imageSearchNames) ValidationErrorCode.FORWARD_STEP_REFERENCE else ValidationErrorCode.MISSING_VARIABLE, stepPath, "Find image for ${name.value} must appear before this block on the same execution path.")
                 }
                 when (step) {
-                    is ReusableSection -> validateImageResultOrder(step.bodySteps, "$stepPath/bodySteps")
-
-                    is IfElse -> {
-                        validateImageResultOrder(step.thenSteps, "$stepPath/thenSteps")
-                        validateImageResultOrder(step.elseSteps, "$stepPath/elseSteps")
+                    is ReusableSection -> {
+                        val body = step.resolveBody(document.steps).orEmpty()
+                        validateImageResultOrder(body, "$stepPath/bodySteps", body.imageSearchesByStep())
                     }
 
-                    is Repeat -> validateImageResultOrder(step.bodySteps, "$stepPath/bodySteps")
+                    is IfElse -> {
+                        validateImageResultOrder(step.thenSteps, "$stepPath/thenSteps", scopes)
+                        validateImageResultOrder(step.elseSteps, "$stepPath/elseSteps", scopes)
+                    }
 
-                    is WhileStep -> validateImageResultOrder(step.bodySteps, "$stepPath/bodySteps")
+                    is Repeat -> validateImageResultOrder(step.bodySteps, "$stepPath/bodySteps", scopes)
+
+                    is WhileStep -> validateImageResultOrder(step.bodySteps, "$stepPath/bodySteps", scopes)
 
                     else -> Unit
                 }
@@ -209,11 +215,15 @@ object WorkflowValidator {
             when (step) {
                 is ReusableSection -> {
                     if (depth != 1 || insideSection) errors += error(ValidationErrorCode.INVALID_SECTION, stepPath, "Keep reusable sections at the workflow's top level")
-                    if (step.bodySteps.isEmpty()) errors += error(ValidationErrorCode.INVALID_SECTION, "$stepPath/bodySteps", "Add blocks to this section")
+                    val body = step.resolveBody(document.steps)
+                    if (body == null) {
+                        errors += error(ValidationErrorCode.INVALID_SECTION, stepPath, "Choose existing start and end blocks in order, on the same level")
+                    } else if (body.none { it !is StageBoundary }) {
+                        errors += error(ValidationErrorCode.INVALID_SECTION, "$stepPath/bodySteps", "Choose at least one action to save")
+                    }
                 }
 
                 is RunSection -> {
-                    if (insideSection) errors += error(ValidationErrorCode.INVALID_SECTION, stepPath, "A section cannot run another section")
                     if (step.sectionId !in document.steps.reusableSections()) errors += error(ValidationErrorCode.UNKNOWN_STEP_REFERENCE, "$stepPath/sectionId", "Choose a reusable section from this workflow")
                 }
 
@@ -320,8 +330,8 @@ object WorkflowValidator {
             seenStepIds += step.id
             when (step) {
                 is ReusableSection -> validateSteps(
-                    step.bodySteps, "$stepPath/bodySteps", if (depth == 1) 1 else depth + 1, document,
-                    step.bodySteps.capturedImages(), visibleStepIds(step.bodySteps), linkedSetOf(), declaredAssets, referencedAssets, errors,
+                    step.resolveBody(document.steps).orEmpty(), "$stepPath/bodySteps", if (depth == 1) 1 else depth + 1, document,
+                    step.resolveBody(document.steps).orEmpty().capturedImages(), visibleStepIds(step.resolveBody(document.steps).orEmpty()), linkedSetOf(), declaredAssets, referencedAssets, errors,
                     insideSection = true,
                 )
 

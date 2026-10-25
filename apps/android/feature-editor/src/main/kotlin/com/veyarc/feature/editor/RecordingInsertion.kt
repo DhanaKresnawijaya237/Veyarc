@@ -15,6 +15,8 @@ import com.veyarc.model.StageBoundary
 import com.veyarc.model.WhileStep
 import com.veyarc.model.WorkflowStep
 import com.veyarc.model.bundle.WorkflowBundle
+import com.veyarc.model.cyclicSections
+import com.veyarc.model.resolveBody
 import com.veyarc.model.reusableSections
 
 data class RecordingInsertion(val path: StepListPath = StepListPath(), val index: Int = 0, val afterStepId: String? = null) {
@@ -56,7 +58,7 @@ data class RecordingInsertion(val path: StepListPath = StepListPath(), val index
         var steps = draft.steps
         val labels = path.segments.map { segment ->
             val position = steps.indexOfFirst { it.id == segment.parentId }
-            val blockNumber = steps.take(position + 1).count { it !is StageBoundary }
+            val blockNumber = steps.take(position + 1).count { it !is StageBoundary && it !is ReusableSection }
             val parent = steps.getOrNull(position)
             val section = when (segment.branch) {
                 NestedBranch.IF_THEN -> "If · then"
@@ -74,7 +76,7 @@ data class RecordingInsertion(val path: StepListPath = StepListPath(), val index
             }
             "$blockNumber. $section"
         }
-        val blockNumber = steps.take(target.index).count { it !is StageBoundary }
+        val blockNumber = steps.take(target.index).count { it !is StageBoundary && it !is ReusableSection }
         return (labels + if (target.index == 0) "Start here" else "After block $blockNumber").joinToString(" / ")
     }
 }
@@ -90,10 +92,11 @@ internal val LocalRecordingEditorControls = staticCompositionLocalOf<RecordingEd
 /** Infer the foreground app at this position without running any workflow actions. */
 fun RecordingInsertion.appCandidates(draft: WorkflowDraft): Set<PackageName> {
     val target = requireNotNull(resolve(draft)) { "Choose a recording section first." }
+    require(draft.steps.cyclicSections().isEmpty()) { "Fix circular saved blocks before recording" }
     val sections = draft.steps.reusableSections()
     fun launches(steps: List<WorkflowStep>): Set<PackageName> = steps.flatMapTo(linkedSetOf()) { step ->
         when (step) {
-            is RunSection -> launches(sections[step.sectionId]?.bodySteps.orEmpty())
+            is RunSection -> launches(sections[step.sectionId]?.resolveBody(draft.steps).orEmpty())
             is LaunchApp -> setOf(step.packageName)
             is IfElse -> launches(step.thenSteps) + launches(step.elseSteps)
             is Repeat -> launches(step.bodySteps)
@@ -105,7 +108,7 @@ fun RecordingInsertion.appCandidates(draft: WorkflowDraft): Set<PackageName> {
     if (all.size <= 1) return all
     fun after(steps: List<WorkflowStep>, initial: Set<PackageName?>): Set<PackageName?> = steps.fold(initial) { apps, step ->
         when (step) {
-            is RunSection -> after(sections[step.sectionId]?.bodySteps.orEmpty(), apps)
+            is RunSection -> after(sections[step.sectionId]?.resolveBody(draft.steps).orEmpty(), apps)
             is LaunchApp -> setOf(step.packageName)
             is IfElse -> after(step.thenSteps, apps) + after(step.elseSteps, apps)
             is Repeat -> if (step.count == 0) apps else after(step.bodySteps, apps)
@@ -122,8 +125,8 @@ fun RecordingInsertion.appCandidates(draft: WorkflowDraft): Set<PackageName> {
         steps = draft.stepsAt(StepListPath(target.path.segments.take(depth + 1)))
     }
     apps = after(steps.take(target.index), apps)
-    if (apps == setOf<PackageName?>(null) && target.path.segments.isEmpty() && steps.take(target.index).all { it is StageBoundary }) {
-        (steps.drop(target.index).firstOrNull { it !is StageBoundary } as? LaunchApp)?.let { return setOf(it.packageName) }
+    if (apps == setOf<PackageName?>(null) && target.path.segments.isEmpty() && steps.take(target.index).all { it is StageBoundary || it is ReusableSection }) {
+        (steps.drop(target.index).firstOrNull { it !is StageBoundary && it !is ReusableSection } as? LaunchApp)?.let { return setOf(it.packageName) }
     }
     return if (null in apps) all else apps.filterNotNull().toSet()
 }

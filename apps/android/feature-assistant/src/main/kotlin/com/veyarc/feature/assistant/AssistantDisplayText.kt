@@ -63,6 +63,12 @@ internal fun assistantStepNames(steps: JsonArray?): Map<String, String> = buildM
         items?.forEach { item ->
             val block = item.jsonObject
             val type = block.getValue("type").jsonPrimitive.content
+            if (type == "section") {
+                val name = block["name"]?.jsonPrimitive?.content ?: "Saved blocks"
+                put(block.getValue("id").jsonPrimitive.content, "Saved blocks: $name")
+                visit(block["bodySteps"] as? JsonArray, "$name / ")
+                return@forEach
+            }
             val label = if (type == "stageBoundary") "Stage ${++stageNumber}" else "Step ${++blockNumber}: ${friendlyField(type)}"
             put(block.getValue("id").jsonPrimitive.content, prefix + label)
             listOf(
@@ -93,7 +99,7 @@ private fun friendlyField(value: String): String = when (value) {
     "timeoutMs" -> "Timeout"
     "pollIntervalMs" -> "Check interval"
     "foregroundTimeoutMs" -> "App wait limit"
-    "bodySteps" -> "Repeat steps"
+    "bodySteps" -> "Actions"
     "thenSteps" -> "If true"
     "elseSteps" -> "If false"
     "tapPoint" -> "Tap"
@@ -109,8 +115,10 @@ private fun friendlyField(value: String): String = when (value) {
     "jump" -> "Go to"
     "stop" -> "Stop"
     "stageBoundary" -> "Stage boundary"
-    "section" -> "Reusable section"
-    "runSection" -> "Run section"
-    "sectionId" -> "Section"
+    "section" -> "Saved blocks"
+    "runSection" -> "Run saved blocks"
+    "sectionId" -> "Saved blocks"
+    "startStepId" -> "From"
+    "endStepId" -> "To"
     else -> value.replace(Regex("([a-z])([A-Z])"), "$1 $2").replaceFirstChar(Char::uppercaseChar)
 }

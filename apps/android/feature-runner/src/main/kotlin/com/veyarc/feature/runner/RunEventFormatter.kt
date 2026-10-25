@@ -83,7 +83,17 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
             is RunEvent.ConditionEvaluated -> event.sectionCallId
             else -> null
         }
-        val context = listOfNotNull(callId?.let(blockContexts::get), callId?.let(blockLabels::get), stepId?.let(blockContexts::get), conditionLocation?.takeIf(String::isNotBlank)).joinToString(" › ").ifBlank { null }
+        val callPath = when (event) {
+            is RunEvent.StepStarted -> event.sectionCallPath
+            is RunEvent.StepFinished -> event.sectionCallPath
+            is RunEvent.ConditionEvaluated -> event.sectionCallPath
+            else -> emptyList()
+        }.ifEmpty { listOfNotNull(callId) }
+        val bodyContext = stepId?.let(blockContexts::get)?.let { if (callPath.isEmpty()) it else it.removePrefix("Workflow").removePrefix(" › ").takeIf(String::isNotBlank) }
+        val context = (
+            listOfNotNull(callPath.firstOrNull()?.let(blockContexts::get)) + callPath.mapNotNull(blockLabels::get) +
+                listOfNotNull(bodyContext, conditionLocation?.takeIf(String::isNotBlank))
+            ).joinToString(" › ").ifBlank { null }
         return RedactedRunEvent(event.atMs, format(event), stepId?.let(blockLabels::get), context)
     }
 
@@ -255,7 +265,7 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
 
     private fun stepName(stepId: String): String = when (stepsById[stepId]) {
         is ReusableSection -> "Reusable section"
-        is RunSection -> "Run section"
+        is RunSection -> "Run saved blocks"
         is TapPoint -> "Tap"
         is TapRegion -> "Tap region"
         is LongPress -> "Long press"
@@ -320,6 +330,12 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
         var stage = 0
         steps.forEach { step ->
             stepsById[step.id] = step
+            if (step is ReusableSection) {
+                blockLabels[step.id] = "Saved blocks · ${step.name}"
+                blockContexts[step.id] = parent
+                indexSteps(step.bodySteps, "Saved blocks · ${step.name}")
+                return@forEach
+            }
             val label = if (step is StageBoundary) "Stage ${++stage}" else "Block ${++number} · ${stepName(step.id)}"
             val context = if (stage > 0 && step !is StageBoundary) "$parent › Stage $stage" else parent
             blockLabels[step.id] = label
