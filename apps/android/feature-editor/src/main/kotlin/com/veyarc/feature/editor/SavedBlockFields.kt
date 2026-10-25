@@ -46,22 +46,23 @@ internal fun SavedBlocksSection(session: WorkflowEditorSession, draft: WorkflowD
     val sections = draft.steps.reusableSections()
     if (sections.isEmpty()) return
     EditorSetupSection("Saved blocks", Icons.AutoMirrored.Outlined.CallSplit, session.savedBlocksExpanded, { session.savedBlocksExpanded = !session.savedBlocksExpanded }, onCreate, "Save a block range") {
-        sections.values.forEach { section ->
-            Row(
-                Modifier.fillMaxWidth().clickable(indication = null, interactionSource = null) {
-                    session.savedBlockEditorId = section.id
-                    session.savedBlockCaller = null
-                }.padding(start = 8.dp, top = 4.dp, bottom = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(section.name, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.primary)
-                    val index = draft.steps.indexOfFirst { it.id == section.id }
-                    if (validation.issues.any { it.path == "/steps/$index" || it.path.startsWith("/steps/$index/") }) Text("Needs attention", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            sections.values.forEach { section ->
+                Row(
+                    Modifier.fillMaxWidth().clickable(indication = null, interactionSource = null) {
+                        session.openSavedBlocks(section.id)
+                    }.padding(start = 8.dp, top = 4.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(section.name, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.primary)
+                        val index = draft.steps.indexOfFirst { it.id == section.id }
+                        if (validation.issues.any { it.path == "/steps/$index" || it.path.startsWith("/steps/$index/") }) Text("Needs attention", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                    }
+                    SavedBlockMode(section)
+                    IconButton(onClick = { onChange(draft.copy(steps = draft.steps.filterNot { it.id == section.id })) }) { Icon(Icons.Outlined.Delete, "Delete saved blocks ${section.name}") }
                 }
-                SavedBlockMode(section)
-                IconButton(onClick = { onChange(draft.copy(steps = draft.steps.filterNot { it.id == section.id })) }) { Icon(Icons.Outlined.Delete, "Delete saved blocks ${section.name}") }
             }
         }
     }
@@ -148,7 +149,7 @@ internal fun SavedBlocksEditor(session: WorkflowEditorSession, draft: WorkflowDr
             session.savedBlockCaller = null
         }, onSelect = { choice ->
             onChange(draft.updateStep(caller.path, index) { (it as RunSection).copy(sectionId = choice.id) })
-            session.savedBlockEditorId = choice.id
+            session.openSavedBlocks(choice.id, session.savedBlockCaller)
         })
         return
     }
@@ -187,7 +188,7 @@ internal fun SavedBlocksEditor(session: WorkflowEditorSession, draft: WorkflowDr
         VeyarcChoicePicker("Run saved blocks", options.map { VeyarcChoice(it.id, it.name, detail = if (it.isLinked) "Linked" else "Copy") }, selectedId = id, onDismiss = { choosing = false }, onSelect = { choice ->
             if (caller != null && callIndex >= 0) {
                 onChange(draft.updateStep(caller.path, callIndex) { (it as RunSection).copy(sectionId = choice.id) })
-                session.savedBlockEditorId = choice.id
+                session.openSavedBlocks(choice.id, session.savedBlockCaller)
             }
             choosing = false
         })

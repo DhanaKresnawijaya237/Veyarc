@@ -1006,8 +1006,7 @@ private fun WorkflowDraftScreen(
             if (path != null && ids.isNotEmpty()) session.pendingSavedBlocks = draft.pendingSavedBlocks(path, ids)
         },
         onEditSaved = { id, caller ->
-            session.savedBlockEditorId = id
-            session.savedBlockCaller = caller
+            session.openSavedBlocks(id, caller)
         },
         onChooseSaved = { path, index -> session.savedBlockInsertion = RecordingInsertion(path, index).anchored(draft) },
         rangeSelection = session.blockRangeSelection,
@@ -1373,7 +1372,9 @@ private fun WorkflowDraftCanvas(
     val density = LocalDensity.current
     var toolbarHeight by remember(density) { mutableIntStateOf(with(density) { 140.dp.roundToPx() }) }
     var canvasHeight by remember { mutableIntStateOf(0) }
-    Box(modifier = modifier.onSizeChanged { canvasHeight = it.height }) {
+    var canvasTop by remember { mutableFloatStateOf(0f) }
+    var toolbarBottom by remember { mutableFloatStateOf(0f) }
+    Box(modifier = modifier.onSizeChanged { canvasHeight = it.height }.onGloballyPositioned { canvasTop = it.positionInWindow().y }) {
         LazyColumn(
             state = scrollState,
             modifier = Modifier.fillMaxSize().onGloballyPositioned {
@@ -1393,6 +1394,7 @@ private fun WorkflowDraftCanvas(
             item(key = "editor-header", contentType = "header") {
                 Column(verticalArrangement = Arrangement.spacedBy(itemSpacing)) {
                     if (scrollHeader) {
+                        DisposableEffect(Unit) { onDispose { toolbarBottom = 0f } }
                         WorkflowTitleEditor(
                             draft = draft,
                             onDraftChange = onDraftChange,
@@ -1410,6 +1412,7 @@ private fun WorkflowDraftCanvas(
                             onValidate = onValidate,
                             revisions = revisions,
                             onOpenRevision = onOpenRevision,
+                            modifier = Modifier.onGloballyPositioned { toolbarBottom = it.boundsInWindow().bottom },
                         )
                     }
                     AllowedApplications(
@@ -1499,26 +1502,34 @@ private fun WorkflowDraftCanvas(
                 onValidate = onValidate,
                 revisions = revisions,
                 onOpenRevision = onOpenRevision,
-                modifier = Modifier.align(Alignment.TopCenter).onSizeChanged { toolbarHeight = it.height }
+                modifier = Modifier.align(Alignment.TopCenter).onSizeChanged { toolbarHeight = it.height }.onGloballyPositioned { toolbarBottom = it.boundsInWindow().bottom }
                     .padding(horizontal = horizontalPadding, vertical = verticalPadding),
             )
         }
-        if (onAskAi != null) {
-            val topInset by animateDpAsState(if (canScrollUp) 0.dp else 48.dp, tween(160), label = "scroll-control-top")
-            val bottomInset by animateDpAsState(if (canScrollDown) 0.dp else 48.dp, tween(160), label = "scroll-control-bottom")
-            // Fixed slots keep the chat button centered while either arrow appears or disappears.
-            val travel = (canvasHeight - with(density) { 148.dp.toPx() }).coerceAtLeast(0f)
+        val controlGap = with(density) { 8.dp.toPx() }
+        val fullControlHeight = with(density) { 148.dp.toPx() }
+        val chatHeight = with(density) { 52.dp.toPx() }
+        val controlsFit by remember(chatHeight, controlGap) { derivedStateOf { canvasHeight - (toolbarBottom - canvasTop + controlGap).coerceAtLeast(0f) >= chatHeight } }
+        val showScrollArrows by remember(fullControlHeight, controlGap) { derivedStateOf { canvasHeight - (toolbarBottom - canvasTop + controlGap).coerceAtLeast(0f) >= fullControlHeight } }
+        if (onAskAi != null && controlsFit) {
+            val topInset by animateDpAsState(if (showScrollArrows && !canScrollUp) 48.dp else 0.dp, tween(160), label = "scroll-control-top")
+            val bottomInset by animateDpAsState(if (showScrollArrows && !canScrollDown) 48.dp else 0.dp, tween(160), label = "scroll-control-bottom")
+            val controlHeight = if (showScrollArrows) 148.dp else 52.dp
+            val controlHeightPx = if (showScrollArrows) fullControlHeight else chatHeight
+            val travel = (canvasHeight - controlHeightPx).coerceAtLeast(0f)
             Box(
-                Modifier.align(Alignment.CenterEnd).padding(end = horizontalPadding).size(52.dp, 148.dp)
-                    .offset { androidx.compose.ui.unit.IntOffset(0, ((session.chatVerticalPosition - 0.5f) * travel).roundToInt()) }
+                Modifier.align(Alignment.CenterEnd).padding(end = horizontalPadding).size(52.dp, controlHeight)
+                    .offset { androidx.compose.ui.unit.IntOffset(0, editorControlOffset(canvasHeight, toolbarBottom - canvasTop + controlGap, controlHeightPx, session.chatVerticalPosition)) }
                     .testTag("workflow-scroll-controls"),
             ) {
                 Surface(Modifier.fillMaxSize().padding(top = topInset, bottom = bottomInset), shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, shadowElevation = 4.dp) { }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(Modifier.size(52.dp, 48.dp), contentAlignment = Alignment.BottomCenter) {
-                        androidx.compose.animation.AnimatedVisibility(canScrollUp, enter = expandVertically(tween(160), expandFrom = Alignment.Bottom) + fadeIn(tween(110)), exit = shrinkVertically(tween(140), shrinkTowards = Alignment.Bottom) + fadeOut(tween(90))) {
-                            IconButton(onClick = { scope.launch { scrollState.animateScrollToBoundary(towardTop = true) } }, modifier = Modifier.size(48.dp)) {
-                                Icon(Icons.Outlined.KeyboardArrowUp, "Scroll to top")
+                    if (showScrollArrows) {
+                        Box(Modifier.size(52.dp, 48.dp), contentAlignment = Alignment.BottomCenter) {
+                            androidx.compose.animation.AnimatedVisibility(canScrollUp, enter = expandVertically(tween(160), expandFrom = Alignment.Bottom) + fadeIn(tween(110)), exit = shrinkVertically(tween(140), shrinkTowards = Alignment.Bottom) + fadeOut(tween(90))) {
+                                IconButton(onClick = { scope.launch { scrollState.animateScrollToBoundary(towardTop = true) } }, modifier = Modifier.size(48.dp)) {
+                                    Icon(Icons.Outlined.KeyboardArrowUp, "Scroll to top")
+                                }
                             }
                         }
                     }
@@ -1540,16 +1551,22 @@ private fun WorkflowDraftCanvas(
                             .pointerInput(travel) {
                                 detectDragGesturesAfterLongPress { change, drag ->
                                     change.consume()
-                                    if (travel > 0f) session.chatVerticalPosition = (session.chatVerticalPosition + drag.y / travel).coerceIn(0f, 1f)
+                                    if (travel > 0f) {
+                                        val top = (toolbarBottom - canvasTop + controlGap).coerceIn(0f, travel)
+                                        val current = (session.chatVerticalPosition * travel).coerceAtLeast(top)
+                                        session.chatVerticalPosition = ((current + drag.y).coerceIn(top, travel) / travel)
+                                    }
                                 }
                             },
                     ) {
                         Icon(Icons.Outlined.ChatBubbleOutline, "Ask AI", tint = MaterialTheme.colorScheme.primary)
                     }
-                    Box(Modifier.size(52.dp, 48.dp), contentAlignment = Alignment.TopCenter) {
-                        androidx.compose.animation.AnimatedVisibility(canScrollDown, enter = expandVertically(tween(160), expandFrom = Alignment.Top) + fadeIn(tween(110)), exit = shrinkVertically(tween(140), shrinkTowards = Alignment.Top) + fadeOut(tween(90))) {
-                            IconButton(onClick = { scope.launch { scrollState.animateScrollToBoundary(towardTop = false) } }, modifier = Modifier.size(48.dp)) {
-                                Icon(Icons.Outlined.KeyboardArrowDown, "Scroll to bottom")
+                    if (showScrollArrows) {
+                        Box(Modifier.size(52.dp, 48.dp), contentAlignment = Alignment.TopCenter) {
+                            androidx.compose.animation.AnimatedVisibility(canScrollDown, enter = expandVertically(tween(160), expandFrom = Alignment.Top) + fadeIn(tween(110)), exit = shrinkVertically(tween(140), shrinkTowards = Alignment.Top) + fadeOut(tween(90))) {
+                                IconButton(onClick = { scope.launch { scrollState.animateScrollToBoundary(towardTop = false) } }, modifier = Modifier.size(48.dp)) {
+                                    Icon(Icons.Outlined.KeyboardArrowDown, "Scroll to bottom")
+                                }
                             }
                         }
                     }
@@ -1557,6 +1574,12 @@ private fun WorkflowDraftCanvas(
             }
         }
     }
+}
+
+internal fun editorControlOffset(canvasHeight: Int, toolbarBottom: Float, controlHeight: Float, position: Float): Int {
+    val travel = (canvasHeight - controlHeight).coerceAtLeast(0f)
+    val top = toolbarBottom.coerceIn(0f, travel)
+    return ((position.coerceIn(0f, 1f) * travel).coerceAtLeast(top) - travel / 2f).roundToInt()
 }
 
 // Scroll measured pixels each frame so distant items never trigger lazy-list seeking jumps.

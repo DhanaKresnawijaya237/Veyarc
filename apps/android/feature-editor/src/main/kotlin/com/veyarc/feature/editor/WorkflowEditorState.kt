@@ -371,6 +371,15 @@ class WorkflowEditorSession {
         blockRangeAnchor = null
     }
 
+    internal fun openSavedBlocks(id: String, caller: BlockSelection? = null) {
+        if (isBusy) return
+        val current = draft ?: return
+        val body = current.steps.reusableSections()[id]?.bodySteps.orEmpty()
+        draft = current.copy(collapsedStepIds = current.collapsedStepIds + body.walkSteps().map { it.id })
+        savedBlockEditorId = id
+        savedBlockCaller = caller
+    }
+
     internal fun clearBlockSelection() {
         blockSelectionMode = false
         blockRangeSelection = false
