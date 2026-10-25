@@ -28,7 +28,7 @@ import com.veyarc.model.WaitUntil
 import com.veyarc.model.WhileStep
 import com.veyarc.model.WorkflowStep
 
-internal fun VariableType.displayName(): String = when (this) {
+fun VariableType.displayName(): String = when (this) {
     VariableType.NUMBER -> "Number"
     VariableType.STRING -> "Text"
     VariableType.BOOLEAN -> "Boolean"
@@ -40,13 +40,13 @@ internal fun VariableType.defaultValue(): ScalarValue = when (this) {
     VariableType.BOOLEAN -> BooleanValue(false)
 }
 
-internal fun ScalarValue.editorText(): String = when (this) {
+fun ScalarValue.editorText(): String = when (this) {
     is BooleanValue -> value.toString()
     is NumberValue -> value.toString().removeSuffix(".0")
     is StringValue -> value
 }
 
-internal fun parseVariableValue(type: VariableType, text: String): ScalarValue? = when (type) {
+fun parseVariableValue(type: VariableType, text: String): ScalarValue? = when (type) {
     VariableType.NUMBER -> text.toDoubleOrNull()?.takeIf(Double::isFinite)?.let(::NumberValue)
     VariableType.STRING -> text.takeIf { it.length <= 4096 }?.let(::StringValue)
     VariableType.BOOLEAN -> text.toBooleanStrictOrNull()?.let(::BooleanValue)

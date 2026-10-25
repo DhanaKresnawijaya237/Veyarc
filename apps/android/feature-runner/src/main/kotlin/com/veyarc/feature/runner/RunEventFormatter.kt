@@ -65,6 +65,10 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
         indexSteps(document.steps)
     }
 
+    fun startingValues(values: Map<String, ScalarValue>, atMs: Long): List<RedactedRunEvent> = values.mapNotNull { (name, value) ->
+        if (value == document.variables[name]?.initialValue) null else RedactedRunEvent(atMs, "$name: ${scalarText(value)}", "Starting values", "Workflow")
+    }
+
     fun event(event: RunEvent): RedactedRunEvent {
         val stepId = when (event) {
             is RunEvent.StepStarted -> event.stepId

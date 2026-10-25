@@ -101,7 +101,7 @@ fun WorkflowRunScreen(
     }
 
     requestStart = startRequest@{
-        if (!canStart) return@startRequest
+        if (!canStart || !state.startingValuesValid) return@startRequest
         if (!state.notificationReady) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                 context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -135,6 +135,8 @@ fun WorkflowRunScreen(
             state = state,
             onStart = requestStart,
             onRefresh = controller::refreshReview,
+            onStartingValueChange = controller::updateStartingValue,
+            onResetStartingValues = controller::resetStartingValues,
             onBack = onBack,
             onOpenConnectionSettings = onOpenConnectionSettings,
             onOpenLatchSettings = onOpenLatchSettings,
@@ -196,6 +198,8 @@ private fun ReviewContent(
     state: WorkflowRunUiState,
     onStart: () -> Unit,
     onRefresh: () -> Unit,
+    onStartingValueChange: (String, String) -> Unit,
+    onResetStartingValues: () -> Unit,
     onBack: () -> Unit,
     onOpenConnectionSettings: () -> Unit,
     onOpenLatchSettings: () -> Unit,
@@ -228,6 +232,9 @@ private fun ReviewContent(
                     WorkflowReviewSummary(bundle, state, requiresMediaProjectionConsent, Modifier.fillMaxWidth())
                     WorkflowReviewChecks(state, onOpenConnectionSettings, onOpenLatchSettings, startBlockMessage, Modifier.fillMaxWidth())
                 }
+                if (bundle.document.variables.isNotEmpty()) {
+                    RunStartingValuesCard(bundle.document, state.startingValues, onStartingValueChange, onResetStartingValues)
+                }
                 val compilationErrors = state.review.visibleCompilationErrors
                 if (compilationErrors.isNotEmpty()) {
                     Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.errorContainer) {
@@ -249,7 +256,7 @@ private fun ReviewContent(
             ) {
                 IconButton(onClick = onRefresh) { Icon(Icons.Outlined.Refresh, contentDescription = "Refresh checks") }
                 Button(
-                    enabled = state.review.isRunnable && canStart,
+                    enabled = state.review.isRunnable && canStart && state.startingValuesValid && pendingMessage == null,
                     onClick = onStart,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(16.dp),

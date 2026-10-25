@@ -143,9 +143,9 @@ internal fun VariableChoice(title: String, label: String, options: List<VeyarcCh
 }
 
 @Composable
-private fun ScalarValueField(type: VariableType, text: String, onChange: (String) -> Unit, label: String?) {
+fun ScalarValueField(type: VariableType, text: String, onChange: (String) -> Unit, label: String?, modifier: Modifier = Modifier) {
     if (type == VariableType.BOOLEAN) {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
             label?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             InlineVariableOptions(listOf("true" to "True", "false" to "False"), text, onChange)
         }
@@ -153,7 +153,7 @@ private fun ScalarValueField(type: VariableType, text: String, onChange: (String
         TextField(
             shape = RoundedCornerShape(14.dp),
             colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
-            value = text, onValueChange = onChange, modifier = Modifier.fillMaxWidth(), label = label?.let { { Text(it) } },
+            value = text, onValueChange = onChange, modifier = modifier.fillMaxWidth(), label = label?.let { { Text(it) } },
             keyboardOptions = KeyboardOptions(keyboardType = if (type == VariableType.NUMBER) KeyboardType.Decimal else KeyboardType.Text),
             singleLine = type == VariableType.NUMBER, maxLines = if (type == VariableType.NUMBER) 1 else 4,
             isError = parseVariableValue(type, text) == null,

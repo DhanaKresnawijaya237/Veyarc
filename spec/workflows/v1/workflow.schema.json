@@ -31,6 +31,7 @@
     "runLimits": { "$ref": "#/$defs/runLimits" },
     "variables": {
       "type": "object",
+      "description": "Saved starting values, reset for each run. Users can override these temporarily in Review workflow without changing the saved revision. Set initialValue here only when changing the workflow's saved defaults.",
       "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,63}$" },
       "additionalProperties": { "$ref": "#/$defs/variableDeclaration" }
     },

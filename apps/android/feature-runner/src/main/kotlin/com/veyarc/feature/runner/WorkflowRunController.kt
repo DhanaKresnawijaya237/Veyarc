@@ -114,6 +114,8 @@ data class WorkflowRunUiState(
     val notificationReady: Boolean,
     val startedAtMs: Long = System.currentTimeMillis(),
     val finishedAtMs: Long? = null,
+    val startingValues: Map<String, String> = emptyMap(),
+    val startingValuesValid: Boolean = true,
 )
 
 /** Coordinates review, deterministic execution, safety controls, notification, and run metadata. */
@@ -157,6 +159,22 @@ class WorkflowRunController(
 
     fun refreshNotificationState() {
         _state.update { it.copy(notificationReady = notifications.isReady()) }
+    }
+
+    fun updateStartingValue(name: String, text: String) {
+        if (closed || name !in document.variables) return
+        _state.update { current ->
+            if (current.phase != WorkflowRunPhase.REVIEW) return@update current
+            val values = current.startingValues + (name to text)
+            current.copy(startingValues = values, startingValuesValid = document.withStartingValues(values) != null)
+        }
+    }
+
+    fun resetStartingValues() {
+        if (closed) return
+        _state.update { current ->
+            if (current.phase != WorkflowRunPhase.REVIEW) current else current.copy(startingValues = document.startingValues(), startingValuesValid = true)
+        }
     }
 
     fun refreshReview() {
@@ -233,6 +251,7 @@ class WorkflowRunController(
 
     fun start() {
         if (!isStartReady()) return
+        val runDocument = document.withStartingValues(_state.value.startingValues) ?: return
         val currentOrientation = currentRecordingViewport(appContext)?.recordedOrientation
         val orientationBlockReason = workflowOrientationBlockReason(
             required = document.viewport.recordedOrientation,
@@ -282,7 +301,7 @@ class WorkflowRunController(
             )
         }
         runJob = scope.launch {
-            execute(executionControl)
+            execute(executionControl, runDocument)
         }
     }
 
@@ -292,6 +311,7 @@ class WorkflowRunController(
         val current = _state.value
         return current.phase == WorkflowRunPhase.REVIEW &&
             current.review.isRunnable &&
+            current.startingValuesValid &&
             current.notificationReady
     }
 
@@ -343,7 +363,7 @@ class WorkflowRunController(
         scope.cancel()
     }
 
-    private suspend fun execute(executionControl: MutableExecutionControl) {
+    private suspend fun execute(executionControl: MutableExecutionControl, runDocument: WorkflowDocument) {
         var runId: String? = null
         var templateSource: BundleImageTemplateSource? = null
         var terminalStatus = StoredRunStatus.FAILED
@@ -351,7 +371,7 @@ class WorkflowRunController(
         try {
             val preparationStartedAtMs = SystemClock.elapsedRealtime()
             val capabilities = AndroidAutomationCapabilities.snapshot(appContext)
-            val compilation = WorkflowCompiler.compile(document, capabilities.engineCapabilities)
+            val compilation = WorkflowCompiler.compile(runDocument, capabilities.engineCapabilities)
             val plan = compilation.plan ?: error(
                 compilation.errors.joinToString(separator = "; ") { "${it.path}: ${it.message}" },
             )
@@ -393,11 +413,13 @@ class WorkflowRunController(
                 "Preparation completed in $preparationDurationMs ms",
             )
             rememberEvent(preparationEvent)
+            val startingEvents = eventFormatter.startingValues(runDocument.variables.mapValues { it.value.initialValue }, SystemClock.elapsedRealtime())
+            startingEvents.forEach(::rememberEvent)
             _state.update {
                 it.copy(
                     review = it.review.copy(capabilities = capabilities, compilation = compilation),
                     preparationDurationMs = preparationDurationMs,
-                    eventHistory = listOf(preparationEvent),
+                    eventHistory = (listOf(preparationEvent) + startingEvents).takeLast(MAX_EVENT_HISTORY),
                 )
             }
             runId = withContext(Dispatchers.IO) {
@@ -409,7 +431,7 @@ class WorkflowRunController(
 
             val execution = withContext(Dispatchers.Default) {
                 executor.execute(
-                    document = document,
+                    document = runDocument,
                     preparedCompilation = compilation,
                     templateSource = templateSource,
                     cancellation = executionControl,
@@ -628,6 +650,7 @@ class WorkflowRunController(
             ),
             message = reviewMessage(capabilities, compilation, orientationBlockReason, latchEnabled),
             notificationReady = notifications.isReady(),
+            startingValues = document.startingValues(),
         )
     }
 
