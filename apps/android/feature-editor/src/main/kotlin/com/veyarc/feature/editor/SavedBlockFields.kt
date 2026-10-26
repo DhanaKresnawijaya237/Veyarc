@@ -202,17 +202,15 @@ internal fun SavedBlocksEditor(session: WorkflowEditorSession, draft: WorkflowDr
     }
     EditorSheetDialog(compact = false, onDismiss = dismiss) {
         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Column(Modifier.weight(1f)) {
-                        ReusableSectionName(section.name, draft.steps.reusableSections().values.filterNot { it.id == id }.map { it.name.trim() }) { name -> onChange(draft.updateStep(StepListPath(), index) { section.copy(name = name) }) }
-                    }
-                    SavedBlockMode(section)
-                    IconButton(onClick = dismiss) { Icon(Icons.Outlined.Close, "Close saved blocks") }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.weight(1f)) {
+                    ReusableSectionName(section.name, draft.steps.reusableSections().values.filterNot { it.id == id }.map { it.name.trim() }) { name -> onChange(draft.updateStep(StepListPath(), index) { section.copy(name = name) }) }
+                    SavedBlockUsage(session, draft, id)
                 }
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) { SavedBlockUsage(session, draft, id) }
+                SavedBlockMode(section)
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     if (session.savedBlockCaller != null) {
+                        IconButton(onClick = { choosing = true }) { Icon(Icons.Outlined.SwapHoriz, "Choose saved blocks") }
                         IconButton(onClick = {
                             val caller = session.savedBlockCaller ?: return@IconButton
                             runCatching { draft.makeCallIndependent(caller) }.onSuccess { (updated, copyId) ->
@@ -220,13 +218,13 @@ internal fun SavedBlocksEditor(session: WorkflowEditorSession, draft: WorkflowDr
                                 session.openSavedBlocks(copyId, caller)
                             }.onFailure { session.savedBlockError = it.message ?: "Could not copy saved blocks" }
                         }) { Icon(Icons.Outlined.ContentCopy, "Make independent") }
-                        IconButton(onClick = { choosing = true }) { Icon(Icons.Outlined.SwapHoriz, "Choose saved blocks") }
                     }
                     if (onRun != null) {
                         IconButton(onClick = { onRun(id) }, enabled = !session.isBusy) {
                             Icon(Icons.Outlined.PlayArrow, "Try sequence", tint = if (session.isBusy) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f) else MaterialTheme.colorScheme.primary)
                         }
                     }
+                    IconButton(onClick = dismiss) { Icon(Icons.Outlined.Close, "Close saved blocks") }
                 }
             }
             validation.issues.filter { it.path == "/steps/$index" || it.path.startsWith("/steps/$index/") }.forEach { issue -> EditorIssueRow(draft, issue) { session.revealIssue(issue) } }
