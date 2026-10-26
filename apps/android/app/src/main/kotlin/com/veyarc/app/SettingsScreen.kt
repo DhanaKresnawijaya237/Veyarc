@@ -466,26 +466,30 @@ fun SettingsScreen(
                     },
                 ) {
                     Text("Play button", style = MaterialTheme.typography.titleMedium)
-                    Row(Modifier.fillMaxWidth().selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        EdgeLatchPlayTarget.entries.forEach { option ->
-                            SettingsChoiceTile(
-                                label = when (option) {
-                                    EdgeLatchPlayTarget.MOST_RECENTLY_PLAYED -> "Last played"
-                                    EdgeLatchPlayTarget.LAST_SAVED -> "Last saved"
-                                    EdgeLatchPlayTarget.LATEST_FAVORITED -> "Favorite"
-                                },
-                                icon = when (option) {
-                                    EdgeLatchPlayTarget.MOST_RECENTLY_PLAYED -> Icons.Outlined.History
-                                    EdgeLatchPlayTarget.LAST_SAVED -> Icons.Outlined.Save
-                                    EdgeLatchPlayTarget.LATEST_FAVORITED -> Icons.Outlined.StarOutline
-                                },
-                                selected = latchPlayTarget == option,
-                                onClick = {
-                                    latchPlayTarget = option
-                                    ReplayFloatingController.setPlayTarget(context, option)
-                                },
-                                modifier = Modifier.weight(1f),
-                            )
+                    EdgeLatchPlayTarget.entries.chunked(2).forEach { row ->
+                        Row(Modifier.fillMaxWidth().selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            row.forEach { option ->
+                                SettingsChoiceTile(
+                                    label = when (option) {
+                                        EdgeLatchPlayTarget.MOST_RECENTLY_PLAYED -> "Last played"
+                                        EdgeLatchPlayTarget.LAST_SAVED -> "Last saved"
+                                        EdgeLatchPlayTarget.LATEST_FAVORITED -> "Favorite"
+                                        EdgeLatchPlayTarget.PICK_DIRECTLY -> "Pick directly"
+                                    },
+                                    icon = when (option) {
+                                        EdgeLatchPlayTarget.MOST_RECENTLY_PLAYED -> Icons.Outlined.History
+                                        EdgeLatchPlayTarget.LAST_SAVED -> Icons.Outlined.Save
+                                        EdgeLatchPlayTarget.LATEST_FAVORITED -> Icons.Outlined.StarOutline
+                                        EdgeLatchPlayTarget.PICK_DIRECTLY -> Icons.Outlined.AccountTree
+                                    },
+                                    selected = latchPlayTarget == option,
+                                    onClick = {
+                                        latchPlayTarget = option
+                                        ReplayFloatingController.setPlayTarget(context, option)
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
                         }
                     }
                 }

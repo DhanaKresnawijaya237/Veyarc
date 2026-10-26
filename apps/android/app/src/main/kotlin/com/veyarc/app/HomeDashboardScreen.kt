@@ -99,6 +99,7 @@ fun HomeDashboardScreen(
 
     val pageActive = LocalMainPageActive.current
     val context = LocalContext.current
+    var pickDirectly by remember(context) { mutableStateOf(ReplayFloatingController.playTarget(context) == com.veyarc.automation.android.EdgeLatchPlayTarget.PICK_DIRECTLY) }
     var latchEnabled by remember(context) { mutableStateOf(ReplayFloatingController.isEnabled(context)) }
     var needsLatch by rememberSaveable { mutableStateOf(false) }
     var aiUsage by pageState.aiUsage
@@ -123,7 +124,9 @@ fun HomeDashboardScreen(
         val preferences = context.getSharedPreferences("replay_controller", Context.MODE_PRIVATE)
         fun refreshPlayTarget() {
             ReplayWorkflowCatalog.load(context)
-            val target = ReplayWorkflowCatalog.selected(ReplayFloatingController.playTarget(context))
+            val mode = ReplayFloatingController.playTarget(context)
+            pickDirectly = mode == com.veyarc.automation.android.EdgeLatchPlayTarget.PICK_DIRECTLY
+            val target = ReplayWorkflowCatalog.selected(mode)
             quickPlayWorkflow = target?.let { selected ->
                 workflows.firstOrNull { it.workflowId == selected.workflowId }?.copy(latestRevision = selected.revision)
             }
@@ -179,7 +182,7 @@ fun HomeDashboardScreen(
         item(key = "quick-start") {
             HomeQuickStart(quickPlayWorkflow, {
                 if (ReplayFloatingController.isEnabled(context)) onRecord() else needsLatch = true
-            }, onPlayWorkflow)
+            }, onPlayWorkflow, pickDirectly) { context.startActivity(android.content.Intent(context, WorkflowPlayPickerActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
             androidx.compose.animation.AnimatedVisibility(needsLatch && !latchEnabled) {
                 Column(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("Turn on the edge latch to pause or stop recording.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
@@ -250,7 +253,7 @@ fun HomeDashboardScreen(
 }
 
 @Composable
-private fun HomeQuickStart(target: WorkflowSummary?, onRecord: () -> Unit, onPlay: (WorkflowSummary) -> Unit) {
+private fun HomeQuickStart(target: WorkflowSummary?, onRecord: () -> Unit, onPlay: (WorkflowSummary) -> Unit, pickDirectly: Boolean, onPick: () -> Unit) {
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.colorScheme.surfaceContainerLow))).padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -264,11 +267,11 @@ private fun HomeQuickStart(target: WorkflowSummary?, onRecord: () -> Unit, onPla
                     Text("Capture a workflow", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            Surface(onClick = { target?.let(onPlay) }, enabled = target != null, modifier = Modifier.weight(1f).fillMaxHeight(), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f)) {
+            Surface(onClick = { if (pickDirectly) onPick() else target?.let(onPlay) }, enabled = pickDirectly || target != null, modifier = Modifier.weight(1f).fillMaxHeight(), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(Icons.Filled.PlayArrow, null, Modifier.size(28.dp), tint = if (target == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary)
-                    Text("Play", style = MaterialTheme.typography.titleLarge, color = if (target == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
-                    Text(target?.name ?: "No matching workflow", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Icon(Icons.Filled.PlayArrow, null, Modifier.size(28.dp), tint = if (target == null && !pickDirectly) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary)
+                    Text("Play", style = MaterialTheme.typography.titleLarge, color = if (target == null && !pickDirectly) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
+                    Text(if (pickDirectly) "Choose a workflow" else target?.name ?: "No matching workflow", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }

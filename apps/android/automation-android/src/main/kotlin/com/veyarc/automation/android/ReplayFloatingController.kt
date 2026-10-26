@@ -52,6 +52,7 @@ enum class EdgeLatchPlayTarget(val label: String) {
     MOST_RECENTLY_PLAYED("Most recently played"),
     LAST_SAVED("Last saved"),
     LATEST_FAVORITED("Latest favorited"),
+    PICK_DIRECTLY("Pick directly"),
 }
 
 internal fun selectReplayWorkflow(
@@ -60,6 +61,7 @@ internal fun selectReplayWorkflow(
     mostRecentlyPlayed: ReplayControllerWorkflow?,
     mostRecentlyFavorited: ReplayControllerWorkflow?,
 ): ReplayControllerWorkflow? = when (target) {
+    EdgeLatchPlayTarget.PICK_DIRECTLY -> null
     EdgeLatchPlayTarget.MOST_RECENTLY_PLAYED -> mostRecentlyPlayed
     EdgeLatchPlayTarget.LAST_SAVED -> workflows.maxByOrNull(ReplayControllerWorkflow::updatedAtMs)
     EdgeLatchPlayTarget.LATEST_FAVORITED -> mostRecentlyFavorited
@@ -1045,7 +1047,9 @@ object ReplayFloatingController {
                     val currentTarget = playTarget(activeService)
                     ReplayWorkflowCatalog.load(activeService)
                     val selectedWorkflow = ReplayWorkflowCatalog.selected(currentTarget)
-                    if (selectedWorkflow == null) {
+                    if (currentTarget == EdgeLatchPlayTarget.PICK_DIRECTLY) {
+                        openWorkflow(activeService, null, pickDirectly = true)
+                    } else if (selectedWorkflow == null) {
                         Toast.makeText(
                             activeService,
                             "No ${currentTarget.label.lowercase()} workflow to replay",
@@ -1255,12 +1259,13 @@ object ReplayFloatingController {
         activeService: AccessibilityService,
         workflow: ReplayControllerWorkflow?,
         autoStart: Boolean = false,
+        pickDirectly: Boolean = false,
     ) {
         expanded = false
         removeOverlayOrMakePassThrough()
         val intent = Intent(ACTION_OPEN_WORKFLOW)
             .setPackage(activeService.packageName)
-            .setClassName(activeService.packageName, "${activeService.packageName}.MainActivity")
+            .setClassName(activeService.packageName, "${activeService.packageName}.${if (pickDirectly) "WorkflowPlayPickerActivity" else "MainActivity"}")
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         if (workflow != null) {
             intent.putExtra(EXTRA_WORKFLOW_ID, workflow.workflowId)
