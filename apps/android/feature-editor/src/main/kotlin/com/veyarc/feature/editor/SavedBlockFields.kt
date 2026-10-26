@@ -202,28 +202,31 @@ internal fun SavedBlocksEditor(session: WorkflowEditorSession, draft: WorkflowDr
     }
     EditorSheetDialog(compact = false, onDismiss = dismiss) {
         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Column(Modifier.weight(1f)) {
-                    ReusableSectionName(section.name, draft.steps.reusableSections().values.filterNot { it.id == id }.map { it.name.trim() }) { name -> onChange(draft.updateStep(StepListPath(), index) { section.copy(name = name) }) }
-                    SavedBlockUsage(session, draft, id)
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        ReusableSectionName(section.name, draft.steps.reusableSections().values.filterNot { it.id == id }.map { it.name.trim() }) { name -> onChange(draft.updateStep(StepListPath(), index) { section.copy(name = name) }) }
+                    }
+                    SavedBlockMode(section)
+                    IconButton(onClick = dismiss) { Icon(Icons.Outlined.Close, "Close saved blocks") }
                 }
-                SavedBlockMode(section)
-                if (session.savedBlockCaller != null) {
-                    IconButton(onClick = {
-                        val caller = session.savedBlockCaller ?: return@IconButton
-                        runCatching { draft.makeCallIndependent(caller) }.onSuccess { (updated, copyId) ->
-                            onChange(updated)
-                            session.openSavedBlocks(copyId, caller)
-                        }.onFailure { session.savedBlockError = it.message ?: "Could not copy saved blocks" }
-                    }) { Icon(Icons.Outlined.ContentCopy, "Make independent") }
-                }
-                if (session.savedBlockCaller != null) IconButton(onClick = { choosing = true }) { Icon(Icons.Outlined.SwapHoriz, "Choose saved blocks") }
-                IconButton(onClick = dismiss) { Icon(Icons.Outlined.Close, "Close saved blocks") }
-            }
-            if (onRun != null) {
-                TextButton(onClick = { onRun(id) }, enabled = !session.isBusy, modifier = Modifier.align(Alignment.End)) {
-                    Icon(Icons.Outlined.PlayArrow, null)
-                    Text("Try sequence")
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) { SavedBlockUsage(session, draft, id) }
+                    if (session.savedBlockCaller != null) {
+                        IconButton(onClick = {
+                            val caller = session.savedBlockCaller ?: return@IconButton
+                            runCatching { draft.makeCallIndependent(caller) }.onSuccess { (updated, copyId) ->
+                                onChange(updated)
+                                session.openSavedBlocks(copyId, caller)
+                            }.onFailure { session.savedBlockError = it.message ?: "Could not copy saved blocks" }
+                        }) { Icon(Icons.Outlined.ContentCopy, "Make independent") }
+                        IconButton(onClick = { choosing = true }) { Icon(Icons.Outlined.SwapHoriz, "Choose saved blocks") }
+                    }
+                    if (onRun != null) {
+                        IconButton(onClick = { onRun(id) }, enabled = !session.isBusy) {
+                            Icon(Icons.Outlined.PlayArrow, "Try sequence", tint = if (session.isBusy) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f) else MaterialTheme.colorScheme.primary)
+                        }
+                    }
                 }
             }
             validation.issues.filter { it.path == "/steps/$index" || it.path.startsWith("/steps/$index/") }.forEach { issue -> EditorIssueRow(draft, issue) { session.revealIssue(issue) } }
