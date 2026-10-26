@@ -57,7 +57,10 @@ import com.veyarc.automation.android.ReplayFloatingController
 import com.veyarc.data.storage.StoredRunEvent
 import com.veyarc.data.storage.StoredRunRecord
 import com.veyarc.data.storage.StoredRunStatus
+import com.veyarc.feature.editor.DraftIssue
 import com.veyarc.feature.editor.StoredRunDetailScreen
+import com.veyarc.feature.editor.WorkflowDraft
+import com.veyarc.feature.editor.issueDisplay
 import com.veyarc.model.bundle.WorkflowBundle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -73,6 +76,7 @@ fun WorkflowRunScreen(
     modifier: Modifier = Modifier,
     onOpenConnectionSettings: () -> Unit = {},
     onOpenLatchSettings: () -> Unit = {},
+    onOpenEditor: ((String?, DraftIssue?) -> Unit)? = null,
 ) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
@@ -137,6 +141,7 @@ fun WorkflowRunScreen(
             onRefresh = controller::refreshReview,
             onStartingValueChange = controller::updateStartingValue,
             onResetStartingValues = controller::resetStartingValues,
+            onOpenIssue = onOpenEditor?.let { open -> { issue -> open(null, issue) } },
             onBack = onBack,
             onOpenConnectionSettings = onOpenConnectionSettings,
             onOpenLatchSettings = onOpenLatchSettings,
@@ -170,11 +175,13 @@ fun WorkflowRunScreen(
             interruptionReason = state.failureMessage ?: state.message?.takeUnless { it == state.eventHistory.lastOrNull()?.message || it == "Running" || it == "Workflow completed" },
             completedSteps = state.completedSteps,
             totalSteps = state.review.plan?.analysis?.estimatedStepCount,
-            eventHistory = state.eventHistory.map { StoredRunEvent(it.atMs, it.message, it.blockLabel, it.contextLabel) },
+            eventHistory = state.eventHistory.map { StoredRunEvent(it.atMs, it.message, it.blockLabel, it.contextLabel, it.stepId) },
             hasStoredDetails = true,
             folderId = null,
         ),
         onBack = onBack,
+        onOpenBlock = onOpenEditor?.takeIf { state.phase in setOf(WorkflowRunPhase.COMPLETED, WorkflowRunPhase.FAILED, WorkflowRunPhase.CANCELLED, WorkflowRunPhase.STOPPED) }?.let { open -> { id -> open(id, null) } },
+        onOpenWorkflowRevision = onOpenEditor?.takeIf { state.phase in setOf(WorkflowRunPhase.COMPLETED, WorkflowRunPhase.FAILED, WorkflowRunPhase.CANCELLED, WorkflowRunPhase.STOPPED) }?.let { open -> { open(null, null) } },
         modifier = modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
         workflowName = state.workflowName,
         statusLabel = phaseTitle(state.phase),
@@ -200,6 +207,7 @@ private fun ReviewContent(
     onRefresh: () -> Unit,
     onStartingValueChange: (String, String) -> Unit,
     onResetStartingValues: () -> Unit,
+    onOpenIssue: ((DraftIssue) -> Unit)?,
     onBack: () -> Unit,
     onOpenConnectionSettings: () -> Unit,
     onOpenLatchSettings: () -> Unit,
@@ -209,6 +217,7 @@ private fun ReviewContent(
     pendingMessage: String?,
     modifier: Modifier,
 ) {
+    val reviewDraft = remember(bundle.document) { WorkflowDraft.fromBundle(bundle) }
     BoxWithConstraints(modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
         val wide = maxWidth >= 600.dp
         Column(Modifier.fillMaxSize()) {
@@ -241,8 +250,12 @@ private fun ReviewContent(
                         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Fix these before running", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onErrorContainer)
                             compilationErrors.forEach { error ->
-                                Text(error.message, color = MaterialTheme.colorScheme.onErrorContainer)
-                                Text(error.path, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                                val issue = DraftIssue(error.path, error.message)
+                                val display = reviewDraft.issueDisplay(issue)
+                                Column(Modifier.fillMaxWidth().clickable(enabled = onOpenIssue != null, indication = null, interactionSource = null) { onOpenIssue?.invoke(issue) }.padding(vertical = 6.dp)) {
+                                    Text(display.title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                                    Text(display.message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer)
+                                }
                             }
                         }
                     }

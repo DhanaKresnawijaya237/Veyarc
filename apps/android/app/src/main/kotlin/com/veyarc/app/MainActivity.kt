@@ -33,6 +33,7 @@ import com.veyarc.data.storage.WorkflowRevisionDocument
 import com.veyarc.data.storage.WorkflowSummary
 import com.veyarc.feature.assistant.AssistantPreviewHost
 import com.veyarc.feature.assistant.AssistantPreviewState
+import com.veyarc.feature.editor.DraftIssue
 import com.veyarc.feature.editor.WorkflowEditorScreen
 import com.veyarc.feature.editor.WorkflowEditorSession
 import com.veyarc.feature.editor.saveRevision
@@ -201,6 +202,10 @@ class MainActivity : ComponentActivity() {
                                             onBack = ::leaveRunScreen,
                                             onOpenConnectionSettings = { openRunSettings("connections") },
                                             onOpenLatchSettings = { openRunSettings("latch") },
+                                            onOpenEditor = { stepId, issue ->
+                                                leaveRunScreen()
+                                                editRunDocument(bundle.document.id, bundle.document.revision, stepId, issue)
+                                            },
                                         )
                                     }
                                 } else {
@@ -290,6 +295,7 @@ class MainActivity : ComponentActivity() {
                                                 repository = workflowRepository,
                                                 refreshGeneration = resumeGeneration,
                                                 onOpenWorkflowRevision = ::editRunWorkflowRevision,
+                                                onOpenBlock = { record, stepId -> editRunDocument(record.workflowId, record.revision, stepId) },
                                                 onSelectionBarChange = { if (selectedDestination == VeyarcDestination.RUNS) managerSelectionBar = it },
                                             )
 
@@ -426,10 +432,13 @@ class MainActivity : ComponentActivity() {
         selectedDestination = VeyarcDestination.EDITOR
     }
 
-    private fun editRunWorkflowRevision(run: StoredRunRecord) {
+    private fun editRunWorkflowRevision(run: StoredRunRecord) = editRunDocument(run.workflowId, run.revision)
+
+    private fun editRunDocument(workflowId: String, revision: Int, stepId: String? = null, issue: DraftIssue? = null) {
+        editorSession.state.requestNavigation(workflowId, revision, stepId, issue)
         editorReturnToManager = false
         workflowToEdit = null
-        storedWorkflowToEdit = run.workflowId to run.revision
+        storedWorkflowToEdit = workflowId to revision
         recordedJournalFileName = null
         selectedDestination = VeyarcDestination.EDITOR
     }

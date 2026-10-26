@@ -94,7 +94,7 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
             listOfNotNull(callPath.firstOrNull()?.let(blockContexts::get)) + callPath.mapNotNull(blockLabels::get) +
                 listOfNotNull(bodyContext, conditionLocation?.takeIf(String::isNotBlank))
             ).joinToString(" › ").ifBlank { null }
-        return RedactedRunEvent(event.atMs, format(event), stepId?.let(blockLabels::get), context)
+        return RedactedRunEvent(event.atMs, format(event), stepId?.let(blockLabels::get), context, stepId)
     }
 
     fun format(event: RunEvent): String = when (event) {

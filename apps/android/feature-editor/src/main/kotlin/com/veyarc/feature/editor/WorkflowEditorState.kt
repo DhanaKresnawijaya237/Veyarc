@@ -186,6 +186,10 @@ class WorkflowEditorSession {
     internal var savedBlockError by mutableStateOf<String?>(null)
     internal var revisionPickerExpanded by mutableStateOf(false)
     internal var validationDetailsVisible by mutableStateOf(false)
+    internal var pendingBlockReveal by mutableStateOf<String?>(null)
+    internal var pendingSetupReveal by mutableStateOf<String?>(null)
+    internal var navigationMessage by mutableStateOf<String?>(null)
+    internal var requestedNavigation by mutableStateOf<EditorNavigationRequest?>(null)
     internal var renameTemplateTarget by mutableStateOf<com.veyarc.model.AssetId?>(null)
     internal var renameTemplateName by mutableStateOf("")
     internal var blockSelection by mutableStateOf<BlockSelection?>(null)
@@ -309,6 +313,7 @@ class WorkflowEditorSession {
     }
 
     fun close() {
+        requestedNavigation = null
         draft = null
         destinationFolderId = null
         savedDraft = null
@@ -380,6 +385,70 @@ class WorkflowEditorSession {
         savedBlockCaller = caller
     }
 
+    fun requestNavigation(workflowId: String, revision: Int, stepId: String? = null, issue: DraftIssue? = null) {
+        requestedNavigation = EditorNavigationRequest(workflowId, revision, stepId, issue)
+    }
+
+    internal fun applyRequestedNavigation() {
+        val request = requestedNavigation ?: return
+        val current = draft ?: return
+        if (isBusy || isDirty || current.workflowId != request.workflowId || current.lastSavedRevision != request.revision) return
+        requestedNavigation = null
+        if (request.issue != null) revealIssue(request.issue) else request.stepId?.let(::revealBlock)
+    }
+
+    internal fun revealBlock(id: String) {
+        if (isBusy) return
+        val current = draft ?: return
+        val location = current.blockLocations().firstOrNull { it.step.id == id } ?: run {
+            navigationMessage = "This block is not available in this revision."
+            return
+        }
+        clearBlockSelection()
+        pendingSetupReveal = null
+        savedBlockEditorId = null
+        savedBlockCaller = null
+        geometryTarget = null
+        conditionTarget = null
+        validationDetailsVisible = false
+        if (location.step is ReusableSection) {
+            openSavedBlocks(id)
+            pendingBlockReveal = null
+            return
+        }
+        location.path.sectionId?.let { openSavedBlocks(it) }
+        val opened = draft ?: return
+        draft = opened.copy(collapsedStepIds = opened.collapsedStepIds - location.path.segments.map { it.parentId }.toSet() - id)
+        blockSelection = BlockSelection(location.path, id)
+        pendingBlockReveal = id
+    }
+
+    internal fun revealIssue(issue: DraftIssue) {
+        if (isBusy) return
+        val current = draft ?: return
+        val location = current.issueLocation(issue)
+        validationDetailsVisible = false
+        if (location != null) {
+            revealBlock(location.step.id)
+            val suffix = issue.path.removePrefix(location.modelPath)
+            if (location.step is RunSection) {
+                openSavedBlocks(location.step.sectionId, BlockSelection(location.path, location.step.id))
+            } else if ("condition" in suffix.lowercase() && location.step.conditionOrNull() != null) {
+                conditionTarget = ConditionTarget(location.path, location.index)
+            } else if (location.step.hasEditableGeometry() && listOf("/point", "/region", "/points", "/imagePosition", "/duration").any { suffix.startsWith(it) }) {
+                geometryTarget = GeometryTarget(location.path, location.index)
+            }
+        } else {
+            pendingBlockReveal = null
+            pendingSetupReveal = current.issueDisplay(issue).title
+            when (pendingSetupReveal) {
+                "Allowed apps" -> allowedAppsExpanded = true
+                "Image templates" -> templatesExpanded = true
+                "Variables" -> variablesExpanded = true
+            }
+        }
+    }
+
     internal fun clearBlockSelection() {
         blockSelectionMode = false
         blockRangeSelection = false
@@ -417,6 +486,9 @@ class WorkflowEditorSession {
     }
 
     private fun dismissEditors() {
+        pendingBlockReveal = null
+        pendingSetupReveal = null
+        navigationMessage = null
         colorPickerImages.clear()
         geometryTarget = null
         conditionTarget = null

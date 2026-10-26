@@ -64,6 +64,7 @@ fun StoredRunDetailScreen(
     workflowName: String = "Workflow run",
     statusLabel: String? = null,
     controls: (@Composable () -> Unit)? = null,
+    onOpenBlock: ((String) -> Unit)? = null,
 ) {
     BackHandler(onBack = onBack)
     val listState = rememberLazyListState()
@@ -166,7 +167,7 @@ fun StoredRunDetailScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         first.blockLabel?.let { label ->
-                            Text(label, style = MaterialTheme.typography.titleSmall)
+                            Text(label, Modifier.clickable(enabled = first.stepId != null && onOpenBlock != null, indication = null, interactionSource = null, onClickLabel = "Open block in editor") { first.stepId?.let { onOpenBlock?.invoke(it) } }, style = MaterialTheme.typography.titleSmall, color = if (first.stepId != null && onOpenBlock != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
                             first.contextLabel?.removePrefix(section.context)?.removePrefix(" › ")?.takeIf { it.isNotBlank() }?.let {
                                 Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
@@ -243,7 +244,7 @@ internal fun runActivityGroups(events: List<StoredRunEvent>, firstEvent: Int): L
     val groups = mutableListOf<MutableList<IndexedValue<StoredRunEvent>>>()
     events.withIndex().drop(firstEvent).forEach { indexed ->
         val previous = groups.lastOrNull()?.lastOrNull()?.value
-        if (indexed.value.blockLabel != null && previous?.blockLabel == indexed.value.blockLabel && previous?.contextLabel == indexed.value.contextLabel && !indexed.value.message.endsWith(" started")) {
+        if (indexed.value.blockLabel != null && previous?.blockLabel == indexed.value.blockLabel && previous?.contextLabel == indexed.value.contextLabel && previous?.stepId == indexed.value.stepId && !indexed.value.message.endsWith(" started")) {
             groups.last().add(indexed)
         } else {
             groups.add(mutableListOf(indexed))

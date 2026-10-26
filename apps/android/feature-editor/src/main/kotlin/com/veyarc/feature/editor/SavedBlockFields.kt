@@ -11,13 +11,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.CallSplit
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.SwapHoriz
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -45,6 +48,7 @@ internal fun SavedBlockMode(section: ReusableSection) {
 internal fun SavedBlocksSection(session: WorkflowEditorSession, draft: WorkflowDraft, validation: DraftBuildResult, onChange: (WorkflowDraft) -> Unit, onCreate: () -> Unit) {
     val sections = draft.steps.reusableSections()
     if (sections.isEmpty()) return
+    var deleting by remember { mutableStateOf<String?>(null) }
     EditorSetupSection("Saved blocks", Icons.AutoMirrored.Outlined.CallSplit, session.savedBlocksExpanded, { session.savedBlocksExpanded = !session.savedBlocksExpanded }, onCreate, "Save a block range") {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             sections.values.forEach { section ->
@@ -57,14 +61,48 @@ internal fun SavedBlocksSection(session: WorkflowEditorSession, draft: WorkflowD
                 ) {
                     Column(Modifier.weight(1f)) {
                         Text(section.name, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.primary)
+                        SavedBlockUsage(session, draft, section.id)
                         val index = draft.steps.indexOfFirst { it.id == section.id }
                         if (validation.issues.any { it.path == "/steps/$index" || it.path.startsWith("/steps/$index/") }) Text("Needs attention", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
                     }
                     SavedBlockMode(section)
-                    IconButton(onClick = { onChange(draft.copy(steps = draft.steps.filterNot { it.id == section.id })) }) { Icon(Icons.Outlined.Delete, "Delete saved blocks ${section.name}") }
+                    IconButton(onClick = { deleting = section.id }) { Icon(Icons.Outlined.Delete, "Delete saved blocks ${section.name}") }
                 }
             }
         }
+    }
+    deleting?.let { id ->
+        val section = sections[id] ?: return@let
+        val callers = draft.sequenceCallers(id)
+        AlertDialog(onDismissRequest = { deleting = null }, title = { Text("Delete ${section.name}?") }, text = {
+            Column {
+                if (callers.isEmpty()) {
+                    Text("This sequence is not used.")
+                } else {
+                    Text("These run blocks will need another sequence:")
+                    callers.take(4).forEach { Text(it.title, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp)) }
+                    if (callers.size > 4) Text("And ${callers.size - 4} more")
+                }
+            }
+        }, confirmButton = {
+            TextButton(onClick = {
+                onChange(draft.copy(steps = draft.steps.filterNot { it.id == id }))
+                deleting = null
+            }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+        }, dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } })
+    }
+}
+
+@Composable
+private fun SavedBlockUsage(session: WorkflowEditorSession, draft: WorkflowDraft, id: String) {
+    val callers = remember(draft.steps, id) { draft.sequenceCallers(id) }
+    var showing by remember(id) { mutableStateOf(false) }
+    Text(if (callers.isEmpty()) "Not used" else "Used in ${callers.size} ${if (callers.size == 1) "place" else "places"}", Modifier.clickable(enabled = callers.isNotEmpty(), indication = null, interactionSource = null) { showing = true }.padding(vertical = 4.dp), style = MaterialTheme.typography.bodySmall, color = if (callers.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary)
+    if (showing) {
+        VeyarcChoicePicker("Used in", callers.map { VeyarcChoice(it.step.id, it.label, detail = it.context) }, onDismiss = { showing = false }, onSelect = { choice ->
+            showing = false
+            session.revealBlock(choice.id)
+        })
     }
 }
 
@@ -166,12 +204,22 @@ internal fun SavedBlocksEditor(session: WorkflowEditorSession, draft: WorkflowDr
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Column(Modifier.weight(1f)) {
                     ReusableSectionName(section.name, draft.steps.reusableSections().values.filterNot { it.id == id }.map { it.name.trim() }) { name -> onChange(draft.updateStep(StepListPath(), index) { section.copy(name = name) }) }
+                    SavedBlockUsage(session, draft, id)
                 }
                 SavedBlockMode(section)
+                if (session.savedBlockCaller != null) {
+                    IconButton(onClick = {
+                        val caller = session.savedBlockCaller ?: return@IconButton
+                        runCatching { draft.makeCallIndependent(caller) }.onSuccess { (updated, copyId) ->
+                            onChange(updated)
+                            session.openSavedBlocks(copyId, caller)
+                        }.onFailure { session.savedBlockError = it.message ?: "Could not copy saved blocks" }
+                    }) { Icon(Icons.Outlined.ContentCopy, "Make independent") }
+                }
                 if (session.savedBlockCaller != null) IconButton(onClick = { choosing = true }) { Icon(Icons.Outlined.SwapHoriz, "Choose saved blocks") }
                 IconButton(onClick = dismiss) { Icon(Icons.Outlined.Close, "Close saved blocks") }
             }
-            validation.issues.filter { it.path == "/steps/$index" || it.path.startsWith("/steps/$index/") }.forEach { Text(it.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            validation.issues.filter { it.path == "/steps/$index" || it.path.startsWith("/steps/$index/") }.forEach { issue -> EditorIssueRow(draft, issue) { session.revealIssue(issue) } }
             if (section.isLinked) {
                 SavedRangeFields(draft, requireNotNull(section.startStepId), requireNotNull(section.endStepId)) { start, end -> onChange(draft.updateStep(StepListPath(), index) { section.copy(startStepId = start, endStepId = end) }) }
             } else {

@@ -51,6 +51,8 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CutCornerShape
@@ -302,6 +304,7 @@ fun WorkflowEditorScreen(
     }
 
     fun cancelReplacement(request: DraftReplacement) {
+        session.requestedNavigation = null
         when (request) {
             is DraftReplacement.Revision -> if (request.consumeInitialBundle) onInitialBundleConsumed()
             is DraftReplacement.New -> onNewWorkflowRequestConsumed()
@@ -371,7 +374,7 @@ fun WorkflowEditorScreen(
         val workflowId = initialStoredWorkflowId ?: return@LaunchedEffect
         val revision = initialStoredRevision?.takeIf { it > 0 } ?: return@LaunchedEffect
         val current = session.draft
-        if (current?.workflowId == workflowId && current.lastSavedRevision == revision) {
+        if (current?.workflowId == workflowId && current.lastSavedRevision == revision && (session.requestedNavigation == null || !session.isDirty)) {
             initialLoadFinished = true
             onInitialBundleConsumed()
             return@LaunchedEffect
@@ -621,6 +624,15 @@ fun WorkflowEditorScreen(
             (initialBundle != null && (draft?.workflowId != initialBundle.document.id || draft.lastSavedRevision != initialBundle.document.revision))
         )
     val loading = isOpening || awaitingInitial
+    LaunchedEffect(session.requestedNavigation, draft, loading, session.isBusy) {
+        if (!loading) session.applyRequestedNavigation()
+    }
+    LaunchedEffect(session.navigationMessage) {
+        session.navigationMessage?.let {
+            statusMessage = it
+            session.navigationMessage = null
+        }
+    }
     val validation = draft?.takeUnless { loading }?.let(session::validationFor)
     if (loading) {
         Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -661,7 +673,7 @@ fun WorkflowEditorScreen(
                 onSave = { saveWorkflow(draft) },
                 onRun = { saveAndRun(draft) },
                 onValidate = {
-                    statusMessage = validation.issues.firstOrNull()?.displayMessage()
+                    statusMessage = validation.issues.firstOrNull()?.displayMessage(draft)
                         ?: "Workflow is valid."
                 },
                 onEditGeometry = { path, index -> geometryTarget = GeometryTarget(path, index) },
@@ -995,6 +1007,10 @@ private fun WorkflowDraftScreen(
     BackHandler(enabled = selectionMode) { session.clearBlockSelection() }
     val clipboardActions = BlockClipboardActions(
         clipboardAvailable = clipboardAvailable && !EditorBlockClipboard.isBusy,
+        revealStepId = session.pendingBlockReveal,
+        revealSetupTitle = session.pendingSetupReveal,
+        onRevealConsumed = { session.pendingBlockReveal = null; session.pendingSetupReveal = null },
+        onIssue = session::revealIssue,
         selectionMode = selectionMode,
         selectedIds = selectedIds,
         canCopy = !EditorBlockClipboard.isBusy && (if (selectionMode) selectedIds.isNotEmpty() else selection != null),
@@ -1125,19 +1141,19 @@ private fun WorkflowDraftScreen(
     if (session.validationDetailsVisible) {
         AlertDialog(
             onDismissRequest = { session.validationDetailsVisible = false },
-            title = { Text("Validation issues") },
+            title = { Text("Fix before saving") },
             text = {
                 Column(
                     modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     validation.issues.forEach { issue ->
-                        Text(issue.displayMessage())
+                        EditorIssueRow(draft, issue) { session.revealIssue(issue) }
                     }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { session.validationDetailsVisible = false }) { Text("Done") }
+                TextButton(onClick = { session.validationDetailsVisible = false }) { Text("Close") }
             },
         )
     }
@@ -1188,6 +1204,10 @@ private data class PendingBlockPaste(val path: StepListPath, val index: Int, val
 
 private data class BlockClipboardActions(
     val clipboardAvailable: Boolean,
+    val revealStepId: String?,
+    val revealSetupTitle: String?,
+    val onRevealConsumed: () -> Unit,
+    val onIssue: (DraftIssue) -> Unit,
     val selectionMode: Boolean,
     val rangeSelection: Boolean,
     val selectedIds: Set<String>,
@@ -1345,7 +1365,24 @@ private fun WorkflowDraftCanvas(
     val scope = rememberCoroutineScope()
     val canScrollUp by remember(scrollState) { derivedStateOf { scrollState.canScrollBackward } }
     val canScrollDown by remember(scrollState) { derivedStateOf { scrollState.canScrollForward } }
+    val density = LocalDensity.current
+    var toolbarHeight by remember(density) { mutableIntStateOf(with(density) { 140.dp.roundToPx() }) }
     val stepDragCoordinator = remember(draft.workflowId) { StepDragCoordinator() }
+    LaunchedEffect(session.pendingBlockReveal, draft.workflowId) {
+        val id = session.pendingBlockReveal ?: return@LaunchedEffect
+        val location = draft.blockLocations().firstOrNull { it.step.id == id } ?: return@LaunchedEffect
+        if (location.path.sectionId == null) {
+            val rootId = location.path.segments.firstOrNull()?.parentId ?: id
+            val index = draft.steps.filterNot { it is ReusableSection }.indexOfFirst { it.id == rootId }
+            if (index >= 0) scrollState.scrollToItem(index + 1, if (scrollHeader) 0 else -toolbarHeight)
+        }
+    }
+    LaunchedEffect(session.pendingSetupReveal) {
+        if (session.pendingSetupReveal != null) {
+            scrollState.scrollToItem(0)
+            if (session.pendingSetupReveal !in setOf("Allowed apps", "Variables", "Image templates", "Saved blocks")) session.pendingSetupReveal = null
+        }
+    }
     val root = remember { StepListPath() }
     DisposableEffect(stepDragCoordinator) {
         onDispose {
@@ -1369,8 +1406,6 @@ private fun WorkflowDraftCanvas(
     val horizontalPadding = 20.dp
     val verticalPadding = 12.dp
     val itemSpacing = 12.dp
-    val density = LocalDensity.current
-    var toolbarHeight by remember(density) { mutableIntStateOf(with(density) { 140.dp.roundToPx() }) }
     var canvasHeight by remember { mutableIntStateOf(0) }
     var canvasTop by remember { mutableFloatStateOf(0f) }
     var toolbarBottom by remember { mutableFloatStateOf(0f) }
@@ -1780,11 +1815,7 @@ private fun EditorToolbar(
     }
 }
 
-private fun DraftIssue.displayMessage(): String = if (path == "/assets" && " is still used" in message) {
-    message
-} else {
-    "$path: $message"
-}
+private fun DraftIssue.displayMessage(draft: WorkflowDraft): String = draft.issueDisplay(this).let { "${it.title}: ${it.message}" }
 
 @Composable
 private fun RevisionSelector(
@@ -1949,9 +1980,18 @@ internal fun EditorSetupSection(
     addDescription: String,
     content: @Composable () -> Unit,
 ) {
+    val navigation = LocalBlockClipboardActions.current
+    val revealRequester = remember(title) { BringIntoViewRequester() }
+    LaunchedEffect(navigation?.revealSetupTitle) {
+        if (navigation?.revealSetupTitle == title) {
+            withFrameNanos { }
+            revealRequester.bringIntoView()
+            navigation.onRevealConsumed()
+        }
+    }
     Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.bringIntoViewRequester(revealRequester), verticalAlignment = Alignment.CenterVertically) {
                 Row(Modifier.weight(1f).heightIn(min = 48.dp).clickable(interactionSource = null, indication = null, onClick = onToggle), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Icon(icon, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
@@ -2021,6 +2061,14 @@ private fun StepEditorItem(
 ) {
     val steps = draft.stepsAt(path)
     val savedActions = LocalBlockClipboardActions.current
+    val revealRequester = remember(step.id) { BringIntoViewRequester() }
+    LaunchedEffect(savedActions?.revealStepId) {
+        if (savedActions?.revealStepId == step.id) {
+            withFrameNanos { }
+            revealRequester.bringIntoView()
+            savedActions.onRevealConsumed()
+        }
+    }
     val liveRecording = LocalRecordingEditorControls.current?.onClose != null
     val activeDrag = dragCoordinator.source
     val dropTarget = dragCoordinator.target
@@ -2055,7 +2103,7 @@ private fun StepEditorItem(
     }
     val animatedShift by animateFloatAsState(neighborShift, tween(100), label = "block insertion")
     CompositionLocalProvider(LocalRippleConfiguration provides null) {
-        Box(Modifier.testTag("workflow-block-${step.id}")) {
+        Box(Modifier.bringIntoViewRequester(revealRequester).testTag("workflow-block-${step.id}")) {
             StepCard(
                 draft = draft,
                 path = path,
@@ -2347,7 +2395,7 @@ private fun StepCard(
                     Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         EditableStepSummary(draft, path, index, step, onDraftChange)
                         issues.forEach { issue ->
-                            Text(issue.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                            EditorIssueRow(draft, issue, showTitle = false) { clipboard?.onIssue?.invoke(issue) }
                         }
                         if (showInlineInspector) {
                             StepEditorFields(
@@ -2714,7 +2762,7 @@ private fun BlockCategory.shape(): Shape = when (this) {
     else -> RoundedCornerShape(14.dp)
 }
 
-private fun WorkflowDraft.modelPath(path: StepListPath, index: Int): String {
+internal fun WorkflowDraft.modelPath(path: StepListPath, index: Int): String {
     var current = steps
     var prefix = "/steps"
     path.segments.forEach { segment ->
@@ -3084,7 +3132,7 @@ private fun String.packageNames(): List<String> = split(',', ' ', '\n', '\t')
     .filter(String::isNotEmpty)
     .distinct()
 
-private fun WorkflowStep.conditionOrNull(): Condition? = when (this) {
+internal fun WorkflowStep.conditionOrNull(): Condition? = when (this) {
     is com.veyarc.model.FindImage -> condition
     is WaitUntil -> condition
     is IfElse -> condition
@@ -3092,7 +3140,7 @@ private fun WorkflowStep.conditionOrNull(): Condition? = when (this) {
     else -> null
 }
 
-private fun WorkflowStep.hasEditableGeometry(): Boolean = this is com.veyarc.model.CaptureImage || this is TapPoint || this is TapRegion || this is LongPress || this is SwipePath
+internal fun WorkflowStep.hasEditableGeometry(): Boolean = this is com.veyarc.model.CaptureImage || this is TapPoint || this is TapRegion || this is LongPress || this is SwipePath
 
 private fun viewportFor(context: Context): com.veyarc.model.ViewportSpec {
     val metrics = context.resources.displayMetrics
