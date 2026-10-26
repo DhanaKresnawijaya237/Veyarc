@@ -325,7 +325,7 @@ private fun ComparisonOperandPanel(modifier: Modifier = Modifier, content: @Comp
 }
 
 @Composable
-private fun OperandField(title: String, operand: Operand, variables: Map<String, VariableDeclaration>, type: VariableType?, emphasized: Boolean = false, onChange: (Operand) -> Unit) {
+internal fun OperandField(title: String, operand: Operand, variables: Map<String, VariableDeclaration>, type: VariableType?, emphasized: Boolean = false, onChange: (Operand) -> Unit) {
     val available = variables.filterValues { type == null || it.type == type }
     val types = type?.let(::listOf) ?: VariableType.entries
     val resultFields = imageResultFields(type)

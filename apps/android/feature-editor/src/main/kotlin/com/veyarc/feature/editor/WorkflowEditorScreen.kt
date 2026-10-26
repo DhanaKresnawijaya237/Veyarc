@@ -207,6 +207,7 @@ fun WorkflowEditorScreen(
     session: WorkflowEditorSession,
     onRunWorkflow: (WorkflowRevisionDocument) -> Unit,
     onOpenWorkflowManager: () -> Unit,
+    onRunSequence: ((WorkflowRevisionDocument, String) -> Unit)? = null,
     onAskAi: (() -> Unit)? = null,
     initialBundle: WorkflowBundle? = null,
     initialStoredWorkflowId: String? = null,
@@ -487,7 +488,16 @@ fun WorkflowEditorScreen(
         }
     }
 
-    fun saveAndRun(draft: WorkflowDraft) {
+    fun saveAndRun(draft: WorkflowDraft, sectionId: String? = null) {
+        if (isWorking || session.isBusy) return
+        val onReady: (WorkflowRevisionDocument) -> Unit = { revision ->
+            if (sectionId == null) {
+                onRunWorkflow(revision)
+            } else {
+                session.savedBlockEditorId = null
+                onRunSequence?.invoke(revision, sectionId)
+            }
+        }
         val revision = draft.lastSavedRevision
         if (!session.isDirty && revision != null) {
             scope.launch {
@@ -497,13 +507,13 @@ fun WorkflowEditorScreen(
                     withContext(Dispatchers.IO) {
                         repository.loadRevisionDocument(draft.workflowId, revision)
                     }
-                }.onSuccess(onRunWorkflow).onFailure { error ->
+                }.onSuccess(onReady).onFailure { error ->
                     statusMessage = "Could not open workflow: ${error.userMessage()}"
                 }
                 isWorking = false
             }
         } else {
-            saveWorkflow(draft, afterSave = onRunWorkflow)
+            saveWorkflow(draft, afterSave = onReady)
         }
     }
 
@@ -675,6 +685,7 @@ fun WorkflowEditorScreen(
                 onAskAi = onAskAi?.takeUnless { isBusy },
                 onSave = { saveWorkflow(draft) },
                 onRun = { saveAndRun(draft) },
+                onRunSequence = onRunSequence?.let { { id -> saveAndRun(draft, id) } },
                 onValidate = {
                     statusMessage = validation.issues.firstOrNull()?.displayMessage(draft)
                         ?: "Workflow is valid."
@@ -990,6 +1001,7 @@ private fun WorkflowDraftScreen(
     onAskAi: (() -> Unit)?,
     onSave: () -> Unit,
     onRun: () -> Unit,
+    onRunSequence: ((String) -> Unit)?,
     onValidate: () -> Unit,
     onEditGeometry: (StepListPath, Int) -> Unit,
     onEditCondition: (StepListPath, Int) -> Unit,
@@ -1125,7 +1137,7 @@ private fun WorkflowDraftScreen(
             }
         }
         SaveBlocksDialog(session, draft, onDraftChange)
-        SavedBlocksEditor(session, draft, validation, onDraftChange, onEditGeometry, onEditCondition)
+        SavedBlocksEditor(session, draft, validation, onDraftChange, onEditGeometry, onEditCondition, onRunSequence)
         session.savedBlockInsertion?.resolve(draft)?.let { destination ->
             val callId = remember(session.savedBlockInsertion) { WorkflowIds.newUuid() }
             val options = draft.steps.reusableSections().values.filter { section ->

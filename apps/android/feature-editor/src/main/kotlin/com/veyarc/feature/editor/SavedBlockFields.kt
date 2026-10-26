@@ -13,6 +13,7 @@ import androidx.compose.material.icons.automirrored.outlined.CallSplit
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -175,7 +176,7 @@ internal fun SaveBlocksDialog(session: WorkflowEditorSession, draft: WorkflowDra
 }
 
 @Composable
-internal fun SavedBlocksEditor(session: WorkflowEditorSession, draft: WorkflowDraft, validation: DraftBuildResult, onChange: (WorkflowDraft) -> Unit, onGeometry: (StepListPath, Int) -> Unit, onCondition: (StepListPath, Int) -> Unit) {
+internal fun SavedBlocksEditor(session: WorkflowEditorSession, draft: WorkflowDraft, validation: DraftBuildResult, onChange: (WorkflowDraft) -> Unit, onGeometry: (StepListPath, Int) -> Unit, onCondition: (StepListPath, Int) -> Unit, onRun: ((String) -> Unit)? = null) {
     val id = session.savedBlockEditorId ?: return
     val section = draft.steps.reusableSections()[id]
     if (section == null) {
@@ -186,7 +187,7 @@ internal fun SavedBlocksEditor(session: WorkflowEditorSession, draft: WorkflowDr
             session.savedBlockEditorId = null
             session.savedBlockCaller = null
         }, onSelect = { choice ->
-            onChange(draft.updateStep(caller.path, index) { (it as RunSection).copy(sectionId = choice.id) })
+            onChange(draft.updateStep(caller.path, index) { (it as RunSection).copy(sectionId = choice.id, inputs = emptyMap(), outputs = emptyMap()) })
             session.openSavedBlocks(choice.id, session.savedBlockCaller)
         })
         return
@@ -219,7 +220,18 @@ internal fun SavedBlocksEditor(session: WorkflowEditorSession, draft: WorkflowDr
                 if (session.savedBlockCaller != null) IconButton(onClick = { choosing = true }) { Icon(Icons.Outlined.SwapHoriz, "Choose saved blocks") }
                 IconButton(onClick = dismiss) { Icon(Icons.Outlined.Close, "Close saved blocks") }
             }
+            if (onRun != null) {
+                TextButton(onClick = { onRun(id) }, enabled = !session.isBusy, modifier = Modifier.align(Alignment.End)) {
+                    Icon(Icons.Outlined.PlayArrow, null)
+                    Text("Try sequence")
+                }
+            }
             validation.issues.filter { it.path == "/steps/$index" || it.path.startsWith("/steps/$index/") }.forEach { issue -> EditorIssueRow(draft, issue) { session.revealIssue(issue) } }
+            val caller = session.savedBlockCaller
+            val callIndex = caller?.let { draft.stepsAt(it.path).indexOfFirst { item -> item.id == it.stepId } } ?: -1
+            val call = caller?.let { draft.stepsAt(it.path).getOrNull(callIndex) as? RunSection }
+            if (caller != null && call != null) SequenceCallFields(section, call, draft) { updated -> onChange(draft.updateStep(caller.path, callIndex) { updated }) }
+            SequenceParameters(section, draft) { inputs, outputs -> onChange(draft.updateSequenceParameters(section.id, inputs, outputs)) }
             if (section.isLinked) {
                 SavedRangeFields(draft, requireNotNull(section.startStepId), requireNotNull(section.endStepId)) { start, end -> onChange(draft.updateStep(StepListPath(), index) { section.copy(startStepId = start, endStepId = end) }) }
             } else {
@@ -235,7 +247,7 @@ internal fun SavedBlocksEditor(session: WorkflowEditorSession, draft: WorkflowDr
         }
         VeyarcChoicePicker("Run saved blocks", options.map { VeyarcChoice(it.id, it.name, detail = if (it.isLinked) "Linked" else "Copy") }, selectedId = id, onDismiss = { choosing = false }, onSelect = { choice ->
             if (caller != null && callIndex >= 0) {
-                onChange(draft.updateStep(caller.path, callIndex) { (it as RunSection).copy(sectionId = choice.id) })
+                onChange(draft.updateStep(caller.path, callIndex) { (it as RunSection).copy(sectionId = choice.id, inputs = emptyMap(), outputs = emptyMap()) })
                 session.openSavedBlocks(choice.id, session.savedBlockCaller)
             }
             choosing = false

@@ -126,7 +126,15 @@ internal fun WorkflowDraft.usedVariableNames(): Set<String> = buildSet {
                     visit(step.bodySteps)
                 }
 
-                is ReusableSection -> visit(step.bodySteps)
+                is ReusableSection -> {
+                    addAll(step.inputs + step.outputs)
+                    visit(step.bodySteps)
+                }
+
+                is com.veyarc.model.RunSection -> {
+                    addAll(step.inputs.keys + step.outputs.keys + step.outputs.values)
+                    step.inputs.values.forEach(::operand)
+                }
 
                 is WhileStep -> {
                     condition(step.condition)
@@ -184,7 +192,8 @@ private fun List<WorkflowStep>.mapVariableNames(transform: (VariableName) -> Var
             is com.veyarc.model.FindImage -> step.copy(condition = condition(step.condition) as com.veyarc.model.ImagePresentCondition)
             is WaitUntil -> step.copy(condition = condition(step.condition))
             is IfElse -> step.copy(condition = condition(step.condition), thenSteps = step.thenSteps.mapVariableNames(transform), elseSteps = step.elseSteps.mapVariableNames(transform))
-            is ReusableSection -> step.copy(bodySteps = step.bodySteps.mapVariableNames(transform))
+            is ReusableSection -> step.copy(bodySteps = step.bodySteps.mapVariableNames(transform), inputs = step.inputs.map { transform(VariableName(it)).value }.toSet(), outputs = step.outputs.map { transform(VariableName(it)).value }.toSet())
+            is com.veyarc.model.RunSection -> step.copy(inputs = step.inputs.entries.associate { (key, value) -> transform(VariableName(key)).value to operand(value) }, outputs = step.outputs.entries.associate { (key, value) -> transform(VariableName(key)).value to transform(VariableName(value)).value })
             is Repeat -> step.copy(bodySteps = step.bodySteps.mapVariableNames(transform), countVariable = step.countVariable?.let(transform))
             is WhileStep -> step.copy(condition = condition(step.condition), bodySteps = step.bodySteps.mapVariableNames(transform))
             else -> step
@@ -231,6 +240,7 @@ internal fun WorkflowDraft.renameImageSearch(previous: VariableName, name: Varia
             is com.veyarc.model.FindImage -> if (step.name == previous) step.copy(name = name) else step
             is com.veyarc.model.TapPoint -> step.copy(imagePosition = step.imagePosition?.let { if (it.name == previous) it.copy(name = name) else it })
             is com.veyarc.model.LongPress -> step.copy(imagePosition = step.imagePosition?.let { if (it.name == previous) it.copy(name = name) else it })
+            is com.veyarc.model.RunSection -> step.copy(inputs = step.inputs.mapValues { operand(it.value) })
             is SetVariable -> step.copy(source = step.source?.let(::operand), calculation = step.calculation?.let { it.copy(operand = operand(it.operand)) })
             is WaitUntil -> step.copy(condition = condition(step.condition))
             is IfElse -> step.copy(condition = condition(step.condition), thenSteps = update(step.thenSteps), elseSteps = update(step.elseSteps))

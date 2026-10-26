@@ -117,6 +117,7 @@ data class WorkflowRunUiState(
     val finishedAtMs: Long? = null,
     val startingValues: Map<String, String> = emptyMap(),
     val startingValuesValid: Boolean = true,
+    val sequenceName: String? = null,
 )
 
 /** Coordinates review, deterministic execution, safety controls, notification, and run metadata. */
@@ -125,6 +126,7 @@ class WorkflowRunController(
     private val repository: WorkflowRepository,
     private val document: WorkflowDocument,
     private val assets: List<BundleAsset>? = null,
+    val entrySectionId: String? = null,
 ) {
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -151,7 +153,7 @@ class WorkflowRunController(
     )
 
     init {
-        if (document.usesVisualConditions()) {
+        if (document.usesVisualConditions(entrySectionId)) {
             mediaProjectionListener = MediaProjectionCaptureRuntime.registerTerminationListener(::onMediaProjectionTerminated)
         }
     }
@@ -183,7 +185,7 @@ class WorkflowRunController(
         val capabilities = AndroidAutomationCapabilities.snapshot(appContext)
         val latchEnabled = ReplayFloatingController.isEnabled(appContext)
         val previousReview = _state.value.review
-        val compilation = if (capabilities.engineCapabilities == previousReview.capabilities.engineCapabilities) previousReview.compilation else WorkflowCompiler.compile(document, capabilities.engineCapabilities)
+        val compilation = if (capabilities.engineCapabilities == previousReview.capabilities.engineCapabilities) previousReview.compilation else WorkflowCompiler.compile(document, capabilities.engineCapabilities, entrySectionId)
         val currentOrientation = currentRecordingViewport(appContext)?.recordedOrientation
         val orientationBlockReason = workflowOrientationBlockReason(
             required = document.viewport.recordedOrientation,
@@ -204,7 +206,7 @@ class WorkflowRunController(
         }
     }
 
-    fun requiresMediaProjectionConsent(): Boolean = document.usesVisualConditions()
+    fun requiresMediaProjectionConsent(): Boolean = document.usesVisualConditions(entrySectionId)
 
     /** Handles the one-shot ActivityResult returned by Android's screen-capture consent dialog. */
     fun startAfterMediaProjectionConsent(resultCode: Int, data: Intent?) {
@@ -372,7 +374,7 @@ class WorkflowRunController(
         try {
             val preparationStartedAtMs = SystemClock.elapsedRealtime()
             val capabilities = AndroidAutomationCapabilities.snapshot(appContext)
-            val compilation = WorkflowCompiler.compile(runDocument, capabilities.engineCapabilities)
+            val compilation = WorkflowCompiler.compile(runDocument, capabilities.engineCapabilities, entrySectionId)
             val plan = compilation.plan ?: error(
                 compilation.errors.joinToString(separator = "; ") { "${it.path}: ${it.message}" },
             )
@@ -424,7 +426,9 @@ class WorkflowRunController(
                 )
             }
             runId = withContext(Dispatchers.IO) {
-                repository.beginRun(document.id, document.revision)
+                repository.beginRun(document.id, document.revision).also { id ->
+                    _state.value.sequenceName?.let { repository.renameRun(id, "Sequence: $it") }
+                }
             }
             _state.update { it.copy(runId = runId, phase = WorkflowRunPhase.RUNNING, message = "Running") }
             AccessibilityEmergencyOverlay.show(::stop)
@@ -632,7 +636,7 @@ class WorkflowRunController(
     private fun initialState(): WorkflowRunUiState {
         val capabilities = AndroidAutomationCapabilities.snapshot(appContext)
         val latchEnabled = ReplayFloatingController.isEnabled(appContext)
-        val compilation = WorkflowCompiler.compile(document, capabilities.engineCapabilities)
+        val compilation = WorkflowCompiler.compile(document, capabilities.engineCapabilities, entrySectionId)
         val currentOrientation = currentRecordingViewport(appContext)?.recordedOrientation
         val orientationBlockReason = workflowOrientationBlockReason(
             required = document.viewport.recordedOrientation,
@@ -641,6 +645,7 @@ class WorkflowRunController(
         return WorkflowRunUiState(
             phase = WorkflowRunPhase.REVIEW,
             workflowName = document.name,
+            sequenceName = document.steps.filterIsInstance<com.veyarc.model.ReusableSection>().firstOrNull { it.id == entrySectionId }?.name,
             revision = document.revision,
             review = WorkflowRunReview(
                 capabilities,

@@ -93,3 +93,16 @@ internal fun WorkflowDraft.saveBlocks(pending: PendingSavedBlocks): Pair<Workflo
     }
     return copy(steps = steps + dependencies + ReusableSection(id, name, snapshots.filterNot { it is ReusableSection })) to id
 }
+
+internal fun WorkflowDraft.updateSequenceParameters(id: String, inputs: Set<String>, outputs: Set<String>): WorkflowDraft {
+    require((inputs + outputs).all { it in variables }) { "Choose existing workflow variables" }
+    val index = steps.indexOfFirst { it.id == id && it is ReusableSection }
+    require(index >= 0) { "Choose existing saved blocks" }
+    var updated = updateStep(StepListPath(), index) { (it as ReusableSection).copy(inputs = inputs, outputs = outputs) }
+    for (caller in updated.sequenceCallers(id)) {
+        updated = updated.updateStep(caller.path, caller.index) {
+            (it as com.veyarc.model.RunSection).copy(inputs = it.inputs.filterKeys { name -> name in inputs }, outputs = it.outputs.filterKeys { name -> name in outputs })
+        }
+    }
+    return updated
+}

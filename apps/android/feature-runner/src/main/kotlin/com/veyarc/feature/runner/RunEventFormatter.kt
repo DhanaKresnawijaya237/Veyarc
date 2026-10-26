@@ -129,6 +129,7 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
 
     private fun completionResult(event: RunEvent.StepFinished): String {
         val step = stepsById[event.stepId]
+        if (step is ReusableSection) return "${step.name} ${event.outcome.name.lowercase(Locale.ROOT)}"
         if (step is RunSection) return "${sections[step.sectionId]?.name ?: "Section"} ${event.outcome.name.lowercase(Locale.ROOT)}"
         when (val detail = event.details) {
             is StepCompletionDetails.GestureResult -> {

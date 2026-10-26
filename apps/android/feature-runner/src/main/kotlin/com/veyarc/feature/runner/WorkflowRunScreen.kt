@@ -225,7 +225,7 @@ private fun ReviewContent(
                 Modifier.fillMaxWidth().padding(start = 20.dp, top = 12.dp, end = 12.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("Review workflow", Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
+                Text(if (state.sequenceName == null) "Review workflow" else "Review sequence", Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
                 IconButton(onClick = onBack) { Icon(Icons.Outlined.Close, contentDescription = "Close workflow review") }
             }
             Column(
@@ -299,7 +299,8 @@ private fun WorkflowReviewSummary(bundle: WorkflowBundle, state: WorkflowRunUiSt
     }
     Surface(modifier, shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(state.workflowName, style = MaterialTheme.typography.titleLarge)
+            Text(state.sequenceName ?: state.workflowName, style = MaterialTheme.typography.titleLarge)
+            if (state.sequenceName != null) Text(state.workflowName, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             val orientation = bundle.document.viewport.recordedOrientation.name.lowercase().replaceFirstChar { it.titlecase() }
             Text("Revision ${state.revision} · $orientation", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
