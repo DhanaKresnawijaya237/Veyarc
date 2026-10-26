@@ -9,7 +9,9 @@ import com.veyarc.data.storage.WorkflowAssetDescriptor
 import com.veyarc.data.storage.WorkflowRevisionEditorData
 import com.veyarc.model.AndCondition
 import com.veyarc.model.AssetReference
+import com.veyarc.model.BreakLoop
 import com.veyarc.model.Condition
+import com.veyarc.model.ContinueLoop
 import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.DurationMillis
 import com.veyarc.model.ForegroundPackageCondition
@@ -28,6 +30,7 @@ import com.veyarc.model.PackageName
 import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.RegionAnchor
 import com.veyarc.model.Repeat
+import com.veyarc.model.ReturnSection
 import com.veyarc.model.ReusableSection
 import com.veyarc.model.RunLimits
 import com.veyarc.model.RunSection
@@ -77,6 +80,9 @@ enum class WorkflowStepKind {
     STOP,
     SECTION,
     RUN_SECTION,
+    BREAK_LOOP,
+    CONTINUE_LOOP,
+    RETURN_SECTION,
 }
 
 enum class NestedBranch {
@@ -95,6 +101,8 @@ data class StepListSegment(
 data class StepListPath(
     val segments: List<StepListSegment> = emptyList(),
 ) {
+    val canExitLoop: Boolean get() = segments.drop((segments.indexOfLast { it.branch == NestedBranch.SECTION_BODY } + 1)).any { it.branch == NestedBranch.REPEAT_BODY || it.branch == NestedBranch.WHILE_BODY }
+
     val sectionId: String? get() = segments.firstOrNull { it.branch == NestedBranch.SECTION_BODY }?.parentId
 
     fun child(parentId: String, branch: NestedBranch): StepListPath = copy(segments = segments + StepListSegment(parentId, branch))
@@ -1112,6 +1120,12 @@ fun newStep(kind: WorkflowStepKind, defaultPackage: String, jumpTargetId: String
 
         WorkflowStepKind.RUN_SECTION -> RunSection(id, requireNotNull(sectionId) { "Add a reusable section first" })
 
+        WorkflowStepKind.BREAK_LOOP -> BreakLoop(id)
+
+        WorkflowStepKind.CONTINUE_LOOP -> ContinueLoop(id)
+
+        WorkflowStepKind.RETURN_SECTION -> ReturnSection(id)
+
         WorkflowStepKind.STOP -> Stop(id, StopReason.USER_REQUESTED, "Stopped by workflow")
     }
 }
@@ -1172,6 +1186,9 @@ fun WorkflowStepKind.displayName(): String = when (this) {
     WorkflowStepKind.CAPTURE_IMAGE -> "Capture image"
     WorkflowStepKind.SECTION -> "Save block range"
     WorkflowStepKind.RUN_SECTION -> "Run saved blocks"
+    WorkflowStepKind.BREAK_LOOP -> "Leave loop"
+    WorkflowStepKind.CONTINUE_LOOP -> "Next repeat"
+    WorkflowStepKind.RETURN_SECTION -> "Finish sequence"
     WorkflowStepKind.STOP -> "Stop"
 }
 
@@ -1193,6 +1210,9 @@ fun WorkflowStep.displayName(): String = when (this) {
     is com.veyarc.model.SetVariable -> "Set variable"
     is ReusableSection -> "Saved blocks"
     is RunSection -> "Run saved blocks"
+    is BreakLoop -> "Leave loop"
+    is ContinueLoop -> "Next repeat"
+    is ReturnSection -> "Finish sequence"
     is Stop -> "Stop"
     else -> "Step"
 }
@@ -1215,6 +1235,9 @@ fun WorkflowStep.summary(assetNames: Map<String, String> = emptyMap(), appNames:
     is com.veyarc.model.SetVariable -> assignmentSummary()
     is ReusableSection -> "$name · ${bodySteps.size} blocks"
     is RunSection -> "Run the selected section"
+    is BreakLoop -> "Continue after the nearest Repeat or While"
+    is ContinueLoop -> "Skip to the next repeat of the nearest loop"
+    is ReturnSection -> "Finish these saved blocks and continue after the call"
     is Stop -> message ?: reason.name.lowercase().replace('_', ' ')
     else -> "Configured workflow step"
 }
@@ -1251,7 +1274,7 @@ internal fun WorkflowStepKind.optionGroup(): Int = when (this) {
     WorkflowStepKind.WAIT, WorkflowStepKind.WAIT_UNTIL -> 2
     WorkflowStepKind.IF_ELSE, WorkflowStepKind.WHILE, WorkflowStepKind.REPEAT -> 3
     WorkflowStepKind.CAPTURE_IMAGE, WorkflowStepKind.FIND_IMAGE, WorkflowStepKind.SET_VARIABLE -> 4
-    WorkflowStepKind.SECTION, WorkflowStepKind.RUN_SECTION, WorkflowStepKind.STAGE_BOUNDARY, WorkflowStepKind.JUMP, WorkflowStepKind.STOP -> 5
+    WorkflowStepKind.BREAK_LOOP, WorkflowStepKind.CONTINUE_LOOP, WorkflowStepKind.RETURN_SECTION, WorkflowStepKind.SECTION, WorkflowStepKind.RUN_SECTION, WorkflowStepKind.STAGE_BOUNDARY, WorkflowStepKind.JUMP, WorkflowStepKind.STOP -> 5
 }
 
 internal fun WorkflowStepKind.optionGroupTitle(): String = when (optionGroup()) {

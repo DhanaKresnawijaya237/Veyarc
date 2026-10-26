@@ -79,6 +79,7 @@ class WorkflowRunner {
         return try {
             ensureBoundary(state)
             val execution = executeSteps(plan.steps, state)
+            check(execution.control == null) { "A loop or sequence exit is outside its scope" }
             check(execution.jumpTargetId == null) { "Go to destination is not available" }
             if (execution.halt == null) {
                 finish(state, RunOutcome.COMPLETED, null, null)
@@ -112,7 +113,7 @@ class WorkflowRunner {
                 continue
             }
             var execution = executeStep(step, state)
-            if (execution.halt != null) return execution
+            if (execution.halt != null || execution.control != null) return execution
 
             if (step is ExecutionStep.Jump) {
                 val previousVisits = state.jumpVisits.getOrDefault(step.id, 0)
@@ -197,7 +198,8 @@ class WorkflowRunner {
                 state.driver.releaseCapturedImages(captures)
                 val result = executeSteps(section.steps, state)
                 check(result.jumpTargetId == null) { "A section cannot jump outside its body" }
-                result
+                check(result.control == null || result.control == ControlExit.RETURN_SECTION) { "A saved sequence cannot exit its caller's loop" }
+                result.copy(control = null)
             } finally {
                 try {
                     state.driver.releaseCapturedImages(captures)
@@ -306,25 +308,33 @@ class WorkflowRunner {
 
         is ExecutionStep.Repeat -> {
             val count = step.countVariable?.let { wholeNumberVariable(it, state.plan.runLimits.maxLoopIterations.toLong(), "Repeat count", state).toInt() } ?: step.count
-            repeat(count) {
+            var iterations = 0
+            while (iterations < count) {
                 ensureBoundary(state)
                 val execution = executeSteps(step.bodySteps, state)
-                if (execution.halt != null || execution.jumpTargetId != null) return execution
+                iterations++
+                if (execution.halt != null || execution.jumpTargetId != null || execution.control == ControlExit.RETURN_SECTION) return execution
+                if (execution.control == ControlExit.BREAK_LOOP) break
             }
-            StepExecution(StepOutcome.COMPLETED, details = StepCompletionDetails.LoopResult(count))
+            StepExecution(StepOutcome.COMPLETED, details = StepCompletionDetails.LoopResult(iterations))
         }
 
         is ExecutionStep.While -> {
             var iterations = 0
+            var leftLoop = false
             while (iterations < step.maxIterations) {
                 ensureBoundary(state)
                 val condition = evaluateCondition(step.condition, step.id, "${step.id}/condition", state)
                 if (!condition) break
                 val execution = executeSteps(step.bodySteps, state)
-                if (execution.halt != null || execution.jumpTargetId != null) return execution
                 iterations++
+                if (execution.halt != null || execution.jumpTargetId != null || execution.control == ControlExit.RETURN_SECTION) return execution
+                if (execution.control == ControlExit.BREAK_LOOP) {
+                    leftLoop = true
+                    break
+                }
             }
-            StepExecution(StepOutcome.COMPLETED, details = StepCompletionDetails.LoopResult(iterations, iterations == step.maxIterations))
+            StepExecution(StepOutcome.COMPLETED, details = StepCompletionDetails.LoopResult(iterations, !leftLoop && iterations == step.maxIterations))
         }
 
         is ExecutionStep.LaunchApp -> {
@@ -334,6 +344,12 @@ class WorkflowRunner {
             state.startupHandoffPending = false
             StepExecution(StepOutcome.COMPLETED)
         }
+
+        is ExecutionStep.BreakLoop -> StepExecution(StepOutcome.COMPLETED, control = ControlExit.BREAK_LOOP)
+
+        is ExecutionStep.ContinueLoop -> StepExecution(StepOutcome.COMPLETED, control = ControlExit.CONTINUE_LOOP)
+
+        is ExecutionStep.ReturnSection -> StepExecution(StepOutcome.COMPLETED, control = ControlExit.RETURN_SECTION)
 
         is ExecutionStep.Stop -> StepExecution(
             outcome = StepOutcome.STOPPED,
@@ -784,10 +800,13 @@ class WorkflowRunner {
         }
     }
 
+    private enum class ControlExit { BREAK_LOOP, CONTINUE_LOOP, RETURN_SECTION }
+
     private data class StepExecution(
         val outcome: StepOutcome,
         val halt: RunHalt? = null,
         val jumpTargetId: String? = null,
+        val control: ControlExit? = null,
         val details: StepCompletionDetails? = null,
     )
 

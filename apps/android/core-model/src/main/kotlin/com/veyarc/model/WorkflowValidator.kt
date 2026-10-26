@@ -193,6 +193,7 @@ object WorkflowValidator {
         errors: MutableList<ValidationError>,
         enclosingStepIds: Set<String> = emptySet(),
         insideSection: Boolean = false,
+        loopDepth: Int = 0,
     ) {
         if (depth > document.runLimits.maxNestingDepth) {
             errors += error(
@@ -225,6 +226,14 @@ object WorkflowValidator {
 
                 is RunSection -> {
                     if (step.sectionId !in document.steps.reusableSections()) errors += error(ValidationErrorCode.UNKNOWN_STEP_REFERENCE, "$stepPath/sectionId", "Choose a reusable section from this workflow")
+                }
+
+                is BreakLoop, is ContinueLoop -> if (loopDepth == 0) {
+                    errors += error(ValidationErrorCode.INVALID_CONTROL_FLOW, stepPath, "Put this block inside a Repeat or While in the same sequence")
+                }
+
+                is ReturnSection -> if (!insideSection) {
+                    errors += error(ValidationErrorCode.INVALID_CONTROL_FLOW, stepPath, "Put Finish sequence inside saved blocks. Use Stop to end the workflow.")
                 }
 
                 is FindImage -> validateCondition(step.condition, "$stepPath/condition", document, runtimeCaptures, allStepIds, seenStepIds, declaredAssets, referencedAssets, errors)
@@ -349,6 +358,7 @@ object WorkflowValidator {
                         errors,
                         availableJumpTargets,
                         insideSection,
+                        loopDepth,
                     )
                     validateSteps(
                         step.elseSteps,
@@ -363,6 +373,7 @@ object WorkflowValidator {
                         errors,
                         availableJumpTargets,
                         insideSection,
+                        loopDepth,
                     )
                 }
 
@@ -379,6 +390,7 @@ object WorkflowValidator {
                     errors,
                     availableJumpTargets,
                     insideSection,
+                    loopDepth + 1,
                 )
 
                 is WhileStep -> validateSteps(
@@ -394,6 +406,7 @@ object WorkflowValidator {
                     errors,
                     availableJumpTargets,
                     insideSection,
+                    loopDepth + 1,
                 )
 
                 else -> Unit

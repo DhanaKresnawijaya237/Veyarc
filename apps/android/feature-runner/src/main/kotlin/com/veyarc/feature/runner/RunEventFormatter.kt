@@ -4,10 +4,12 @@ import com.veyarc.engine.RunEvent
 import com.veyarc.engine.StepCompletionDetails
 import com.veyarc.model.AndCondition
 import com.veyarc.model.BooleanValue
+import com.veyarc.model.BreakLoop
 import com.veyarc.model.CaptureImage
 import com.veyarc.model.CapturedImageCondition
 import com.veyarc.model.ComparisonOperator
 import com.veyarc.model.Condition
+import com.veyarc.model.ContinueLoop
 import com.veyarc.model.ForegroundPackageCondition
 import com.veyarc.model.IfElse
 import com.veyarc.model.ImageAbsentCondition
@@ -27,6 +29,7 @@ import com.veyarc.model.OrCondition
 import com.veyarc.model.OrientationCondition
 import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.Repeat
+import com.veyarc.model.ReturnSection
 import com.veyarc.model.ReusableSection
 import com.veyarc.model.RunSection
 import com.veyarc.model.ScalarValue
@@ -252,6 +255,12 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
 
         is LaunchApp -> "Launch ${step.packageName.value}"
 
+        is BreakLoop -> "Leave loop"
+
+        is ContinueLoop -> "Next repeat"
+
+        is ReturnSection -> "Finish sequence"
+
         is Stop -> "Stop workflow"
 
         is com.veyarc.model.FindImage -> "Find image / ${step.name.value}"
@@ -278,6 +287,9 @@ internal class RunEventFormatter(private val document: WorkflowDocument) {
         is Repeat -> "Repeat"
         is WhileStep -> "While loop"
         is LaunchApp -> "Launch app"
+        is BreakLoop -> "Leave loop"
+        is ContinueLoop -> "Next repeat"
+        is ReturnSection -> "Finish sequence"
         is Stop -> "Stop workflow"
         is com.veyarc.model.FindImage -> "Find image"
         is CaptureImage -> "Capture image"

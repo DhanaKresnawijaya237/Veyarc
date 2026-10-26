@@ -197,6 +197,30 @@ data class LaunchApp(
 }
 
 @Serializable
+@SerialName("breakLoop")
+data class BreakLoop(override val id: String) : WorkflowStep {
+    init {
+        ContractChecks.requireStableId(id, "Step id")
+    }
+}
+
+@Serializable
+@SerialName("continueLoop")
+data class ContinueLoop(override val id: String) : WorkflowStep {
+    init {
+        ContractChecks.requireStableId(id, "Step id")
+    }
+}
+
+@Serializable
+@SerialName("returnSection")
+data class ReturnSection(override val id: String) : WorkflowStep {
+    init {
+        ContractChecks.requireStableId(id, "Step id")
+    }
+}
+
+@Serializable
 @SerialName("stop")
 data class Stop(
     override val id: String,

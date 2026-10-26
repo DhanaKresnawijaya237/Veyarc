@@ -25,6 +25,7 @@ import java.util.Collections
 /** A platform-neutral feature that a runner or driver must support. */
 enum class EngineCapability {
     RUN_SECTION,
+    FLOW_CONTROL,
     TAP_POINT,
     TAP_REGION,
     LONG_PRESS,
@@ -266,6 +267,12 @@ sealed interface ExecutionStep {
         val packageName: PackageName,
         val foregroundTimeoutMs: DurationMillis,
     ) : ExecutionStep
+
+    data class BreakLoop(override val id: String) : ExecutionStep
+
+    data class ContinueLoop(override val id: String) : ExecutionStep
+
+    data class ReturnSection(override val id: String) : ExecutionStep
 
     data class Stop(
         override val id: String,

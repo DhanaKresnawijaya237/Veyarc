@@ -1,9 +1,11 @@
 package com.veyarc.engine
 
 import com.veyarc.model.AndCondition
+import com.veyarc.model.BreakLoop
 import com.veyarc.model.CaptureImage
 import com.veyarc.model.CapturedImageCondition
 import com.veyarc.model.Condition
+import com.veyarc.model.ContinueLoop
 import com.veyarc.model.FindImage
 import com.veyarc.model.ForegroundPackageCondition
 import com.veyarc.model.IfElse
@@ -16,6 +18,7 @@ import com.veyarc.model.NotCondition
 import com.veyarc.model.OrientationCondition
 import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.Repeat
+import com.veyarc.model.ReturnSection
 import com.veyarc.model.ReusableSection
 import com.veyarc.model.RunSection
 import com.veyarc.model.SetVariable
@@ -175,6 +178,12 @@ object WorkflowCompiler {
                     step.foregroundTimeoutMs,
                 )
 
+                is BreakLoop -> ExecutionStep.BreakLoop(step.id)
+
+                is ContinueLoop -> ExecutionStep.ContinueLoop(step.id)
+
+                is ReturnSection -> ExecutionStep.ReturnSection(step.id)
+
                 is Stop -> ExecutionStep.Stop(step.id, step.reason, step.message)
 
                 is SetVariable -> ExecutionStep.SetVariable(step.id, step.name, step.value, step.source, step.calculation)
@@ -270,6 +279,7 @@ object WorkflowCompiler {
         is Repeat -> EngineCapability.REPEAT
         is WhileStep -> EngineCapability.WHILE
         is LaunchApp -> EngineCapability.LAUNCH_APP
+        is BreakLoop, is ContinueLoop, is ReturnSection -> EngineCapability.FLOW_CONTROL
         is Stop -> EngineCapability.STOP
         is SetVariable -> EngineCapability.SET_VARIABLE
     }
@@ -322,6 +332,7 @@ object WorkflowCompiler {
 
     private fun hasDynamicStepCount(steps: List<WorkflowStep>, sections: Map<String, ControlFlowAnalysis>): Boolean = steps.any { step ->
         when (step) {
+            is BreakLoop, is ContinueLoop, is ReturnSection -> true
             is RunSection -> sections.getValue(step.sectionId).hasDynamicStepCount
             is Repeat -> step.countVariable != null || hasDynamicStepCount(step.bodySteps, sections)
             is IfElse -> hasDynamicStepCount(step.thenSteps, sections) || hasDynamicStepCount(step.elseSteps, sections)

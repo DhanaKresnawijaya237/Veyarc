@@ -79,6 +79,7 @@ object AndroidAutomationCapabilities {
 
     private val CORE_CAPABILITIES = setOf(
         EngineCapability.RUN_SECTION,
+        EngineCapability.FLOW_CONTROL,
         EngineCapability.WAIT,
         EngineCapability.STAGE_BOUNDARY,
         EngineCapability.JUMP,

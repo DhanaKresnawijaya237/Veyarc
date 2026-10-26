@@ -162,13 +162,16 @@ import com.veyarc.data.storage.WorkflowRevisionDocument
 import com.veyarc.data.storage.WorkflowRevisionEditorData
 import com.veyarc.data.storage.WorkflowStorageException
 import com.veyarc.model.AssetId
+import com.veyarc.model.BreakLoop
 import com.veyarc.model.Condition
+import com.veyarc.model.ContinueLoop
 import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.IfElse
 import com.veyarc.model.Jump
 import com.veyarc.model.LaunchApp
 import com.veyarc.model.LongPress
 import com.veyarc.model.Repeat
+import com.veyarc.model.ReturnSection
 import com.veyarc.model.ReusableSection
 import com.veyarc.model.RunSection
 import com.veyarc.model.StageBoundary
@@ -1009,7 +1012,10 @@ private fun WorkflowDraftScreen(
         clipboardAvailable = clipboardAvailable && !EditorBlockClipboard.isBusy,
         revealStepId = session.pendingBlockReveal,
         revealSetupTitle = session.pendingSetupReveal,
-        onRevealConsumed = { session.pendingBlockReveal = null; session.pendingSetupReveal = null },
+        onRevealConsumed = {
+            session.pendingBlockReveal = null
+            session.pendingSetupReveal = null
+        },
         onIssue = session::revealIssue,
         selectionMode = selectionMode,
         selectedIds = selectedIds,
@@ -2204,6 +2210,8 @@ private fun StepListFooter(
                 canAddVariable = draft.variables.isNotEmpty(),
                 canAddSection = clipboard?.canSaveRange == true,
                 canRunSection = draft.steps.reusableSections().isNotEmpty(),
+                canExitLoop = path.canExitLoop,
+                canFinishSequence = path.sectionId != null,
                 compact = true,
                 canAddJump = steps.any { it !is ReusableSection } || path.segments.isNotEmpty(),
                 modifier = Modifier,
@@ -2437,6 +2445,8 @@ private fun StepCard(
                     canAddVariable = draft.variables.isNotEmpty(),
                     canAddSection = clipboard?.canSaveRange == true,
                     canRunSection = draft.steps.reusableSections().isNotEmpty(),
+                    canExitLoop = path.canExitLoop,
+                    canFinishSequence = path.sectionId != null,
                     compact = true,
                     subdued = true,
                     canAddJump = draft.stepsAt(path).size > 1 || path.segments.isNotEmpty() || step !is Jump,
@@ -2557,6 +2567,8 @@ private fun StageBoundaryRow(
                 canAddVariable = draft.variables.isNotEmpty(),
                 canAddSection = clipboard?.canSaveRange == true,
                 canRunSection = draft.steps.reusableSections().isNotEmpty(),
+                canExitLoop = path.canExitLoop,
+                canFinishSequence = path.sectionId != null,
                 compact = true,
                 subdued = true,
                 canAddJump = true,
@@ -2736,7 +2748,7 @@ private fun WorkflowStep.blockCategory(): BlockCategory = when (this) {
     is com.veyarc.model.FindImage, is com.veyarc.model.CaptureImage -> BlockCategory.CONDITION
     is com.veyarc.model.SetVariable -> BlockCategory.VARIABLE
     is LaunchApp -> BlockCategory.APP
-    is Stop -> BlockCategory.STOP
+    is BreakLoop, is ContinueLoop, is ReturnSection, is Stop -> BlockCategory.STOP
     else -> BlockCategory.ACTION
 }
 
@@ -3037,7 +3049,7 @@ private fun StepEditorFields(
         is SwipePath,
         is WaitUntil,
         is LaunchApp,
-        is Stop,
+        is BreakLoop, is ContinueLoop, is ReturnSection, is Stop,
         -> Unit
 
         else -> {
@@ -3077,6 +3089,8 @@ private fun AddBlockMenu(
     canAddVariable: Boolean = true,
     canAddSection: Boolean = true,
     canRunSection: Boolean = false,
+    canExitLoop: Boolean = false,
+    canFinishSequence: Boolean = false,
     modifier: Modifier = Modifier,
     onRecord: (() -> Unit)? = null,
 ) {
@@ -3106,7 +3120,7 @@ private fun AddBlockMenu(
                     if (onRecord != null) add(VeyarcChoice("record", "Record here", highlighted = true, groupTitle = "Quick actions", icon = Icons.Outlined.FiberManualRecord))
                     if (clipboard?.clipboardAvailable == true) add(VeyarcChoice("paste", "Paste blocks", highlighted = true, groupTitle = "Quick actions", icon = Icons.Outlined.ContentPaste))
                     if (canAddSection) add(VeyarcChoice(WorkflowStepKind.SECTION.name, "Save block range", highlighted = true, groupTitle = "Quick actions", icon = Icons.Outlined.BookmarkAdd))
-                    WorkflowStepKind.entries.filter { it != WorkflowStepKind.SECTION && (it != WorkflowStepKind.JUMP || canAddJump) && (it != WorkflowStepKind.SET_VARIABLE || canAddVariable) && (it != WorkflowStepKind.SECTION || canAddSection) && (it != WorkflowStepKind.RUN_SECTION || canRunSection) }.sortedBy { it.optionGroup() }.forEach { add(VeyarcChoice(it.name, it.displayName(), group = it.optionGroup(), groupTitle = it.optionGroupTitle(), icon = it.optionIcon())) }
+                    WorkflowStepKind.entries.filter { it != WorkflowStepKind.SECTION && (it !in setOf(WorkflowStepKind.BREAK_LOOP, WorkflowStepKind.CONTINUE_LOOP) || canExitLoop) && (it != WorkflowStepKind.RETURN_SECTION || canFinishSequence) && (it != WorkflowStepKind.JUMP || canAddJump) && (it != WorkflowStepKind.SET_VARIABLE || canAddVariable) && (it != WorkflowStepKind.SECTION || canAddSection) && (it != WorkflowStepKind.RUN_SECTION || canRunSection) }.sortedBy { it.optionGroup() }.forEach { add(VeyarcChoice(it.name, it.displayName(), group = it.optionGroup(), groupTitle = it.optionGroupTitle(), icon = it.optionIcon())) }
                 },
                 onDismiss = { expanded = false },
                 onSelect = { choice ->
@@ -3249,6 +3263,7 @@ private fun WorkflowStepKind.optionIcon(): ImageVector? = when (this) {
     WorkflowStepKind.CAPTURE_IMAGE, WorkflowStepKind.FIND_IMAGE -> Icons.Outlined.Image
     WorkflowStepKind.SET_VARIABLE -> Icons.Outlined.DataObject
     WorkflowStepKind.JUMP -> Icons.AutoMirrored.Outlined.Redo
-    WorkflowStepKind.STOP -> Icons.Outlined.StopCircle
+    WorkflowStepKind.BREAK_LOOP, WorkflowStepKind.RETURN_SECTION, WorkflowStepKind.STOP -> Icons.Outlined.StopCircle
+    WorkflowStepKind.CONTINUE_LOOP -> Icons.AutoMirrored.Outlined.Redo
     WorkflowStepKind.STAGE_BOUNDARY -> null
 }

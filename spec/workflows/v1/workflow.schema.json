@@ -531,6 +531,27 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["type", "id"],
+          "description": "Leave the nearest enclosing Repeat or While in this execution frame. Invalid outside a loop or across saved-sequence calls.",
+          "properties": { "type": { "const": "breakLoop" }, "id": { "$ref": "#/$defs/uuid" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "id"],
+          "description": "Skip the rest of this iteration of the nearest Repeat or While. While rechecks its condition. Invalid outside a local loop.",
+          "properties": { "type": { "const": "continueLoop" }, "id": { "$ref": "#/$defs/uuid" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "id"],
+          "description": "Finish the current saved sequence and resume after its call. Invalid outside saved blocks; does not stop the workflow.",
+          "properties": { "type": { "const": "returnSection" }, "id": { "$ref": "#/$defs/uuid" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["type", "id", "reason"],
           "properties": { "type": { "const": "stop" }, "id": { "$ref": "#/$defs/uuid" }, "reason": { "enum": ["userRequested", "safety", "workflow", "condition"] }, "message": { "type": "string", "maxLength": 512 } }
         },

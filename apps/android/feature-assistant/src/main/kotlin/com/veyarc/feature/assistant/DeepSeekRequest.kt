@@ -248,6 +248,8 @@ object DeepSeekRequest {
             Linked sections have empty bodySteps plus stable startStepId/endStepId endpoints on one source level; all whole blocks between them are reused. Saved copies own bodySteps and have no endpoints.
             Calls may use other saved sequences, but cannot form cycles. Go to and stepResult references must stay inside the called sequence.
             Review workflow allows temporary starting-value overrides for one run. Changing candidate.variables changes the saved defaults, not a temporary run setting.
+            breakLoop (Leave loop) and continueLoop (Next repeat) affect only the nearest enclosing Repeat or While in the same sequence.
+            returnSection (Finish sequence) returns from the current saved sequence to its caller. These exits need no target and cannot affect a caller's loop.
             Scalar variables are shared; captured images, Find image results, Go to targets and stepResult references stay within each section call.
             At most 200 blocks and 12 nesting levels. Never execute workflow actions or claim a change was saved or run.
             A proposal is subject to local validation and explicit user review before saving.

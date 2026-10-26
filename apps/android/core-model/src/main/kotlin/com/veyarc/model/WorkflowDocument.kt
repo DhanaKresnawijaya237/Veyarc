@@ -32,6 +32,9 @@ data class WorkflowDocument(
 
 @Serializable
 enum class ValidationErrorCode {
+    @SerialName("invalidControlFlow")
+    INVALID_CONTROL_FLOW,
+
     @SerialName("invalidSection")
     INVALID_SECTION,
 
