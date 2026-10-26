@@ -216,6 +216,9 @@ object WorkflowValidator {
             when (step) {
                 is ReusableSection -> {
                     if (depth != 1 || insideSection) errors += error(ValidationErrorCode.INVALID_SECTION, stepPath, "Keep reusable sections at the workflow's top level")
+                    (step.inputs + step.outputs).forEach { name ->
+                        if (name !in document.variables) errors += error(ValidationErrorCode.MISSING_VARIABLE, "$stepPath/inputs", "Add $name to Variables or remove it from this sequence's inputs and outputs")
+                    }
                     val body = step.resolveBody(document.steps)
                     if (body == null) {
                         errors += error(ValidationErrorCode.INVALID_SECTION, stepPath, "Choose existing start and end blocks in order, on the same level")
@@ -225,7 +228,26 @@ object WorkflowValidator {
                 }
 
                 is RunSection -> {
-                    if (step.sectionId !in document.steps.reusableSections()) errors += error(ValidationErrorCode.UNKNOWN_STEP_REFERENCE, "$stepPath/sectionId", "Choose a reusable section from this workflow")
+                    val section = document.steps.reusableSections()[step.sectionId]
+                    if (section == null) {
+                        errors += error(ValidationErrorCode.UNKNOWN_STEP_REFERENCE, "$stepPath/sectionId", "Choose a reusable section from this workflow")
+                    } else {
+                        step.inputs.forEach { (name, source) ->
+                            val type = operandType(source, "$stepPath/inputs/$name", document, errors)
+                            if (name !in section.inputs) errors += error(ValidationErrorCode.INVALID_SECTION, "$stepPath/inputs/$name", "Remove $name from this call; it is not an input of ${section.name}")
+                            if (type != null && type != document.variables[name]?.type) errors += error(ValidationErrorCode.VARIABLE_TYPE_MISMATCH, "$stepPath/inputs/$name", "Choose a value with the same type as $name")
+                        }
+                        step.outputs.forEach { (name, target) ->
+                            val type = document.variables[target]?.type
+                            if (name !in section.outputs) errors += error(ValidationErrorCode.INVALID_SECTION, "$stepPath/outputs/$name", "Remove $name from this call; it is not an output of ${section.name}")
+                            if (type == null) {
+                                errors += error(ValidationErrorCode.MISSING_VARIABLE, "$stepPath/outputs/$name", "Choose an existing variable to receive $name")
+                            } else if (type != document.variables[name]?.type) {
+                                errors += error(ValidationErrorCode.VARIABLE_TYPE_MISMATCH, "$stepPath/outputs/$name", "Choose a variable with the same type as $name")
+                            }
+                        }
+                        if (step.outputs.values.toSet().size != step.outputs.size) errors += error(ValidationErrorCode.INVALID_SECTION, "$stepPath/outputs", "Save each output to a different variable")
+                    }
                 }
 
                 is BreakLoop, is ContinueLoop -> if (loopDepth == 0) {

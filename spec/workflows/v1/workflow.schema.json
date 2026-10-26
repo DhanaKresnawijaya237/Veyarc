@@ -390,13 +390,13 @@
             { "required": ["startStepId", "endStepId"], "properties": { "bodySteps": { "maxItems": 0 } } },
             { "not": { "anyOf": [{ "required": ["startStepId"] }, { "required": ["endStepId"] }] }, "properties": { "bodySteps": { "minItems": 1 } } }
           ],
-          "properties": { "type": { "const": "section" }, "id": { "$ref": "#/$defs/uuid" }, "name": { "type": "string", "minLength": 1, "maxLength": 80, "description": "Unique within this workflow, ignoring case and surrounding whitespace." }, "startStepId": { "$ref": "#/$defs/uuid" }, "endStepId": { "$ref": "#/$defs/uuid" }, "bodySteps": { "type": "array", "items": { "$ref": "#/$defs/step" } } }
+          "properties": { "inputs": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}, "description": "Declared scalar variable names passed in. Omitted call bindings use saved defaults. A sequence with inputs or outputs has private scalar variables for each call."}, "outputs": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}, "description": "Declared scalar variable names this sequence can return. Only explicitly bound outputs leave the call after success or returnSection. Stop, cancellation and failure return nothing."},  "type": { "const": "section" }, "id": { "$ref": "#/$defs/uuid" }, "name": { "type": "string", "minLength": 1, "maxLength": 80, "description": "Unique within this workflow, ignoring case and surrounding whitespace." }, "startStepId": { "$ref": "#/$defs/uuid" }, "endStepId": { "$ref": "#/$defs/uuid" }, "bodySteps": { "type": "array", "items": { "$ref": "#/$defs/step" } } }
         },
         {
           "type": "object", "additionalProperties": false,
           "required": ["type", "id", "sectionId"],
           "description": "Run saved blocks by their top-level section id. Calls may appear inside ordinary branches/loops or other saved copies/ranges, provided the section call graph has no cycles. Return to the caller after completion; a stop or failure stops the whole run.",
-          "properties": { "type": { "const": "runSection" }, "id": { "$ref": "#/$defs/uuid" }, "sectionId": { "$ref": "#/$defs/uuid" } }
+          "properties": { "inputs": {"type": "object", "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,63}$"}, "additionalProperties": {"$ref": "#/$defs/operand"}, "description": "Input name to caller operand. Names and types must match the saved sequence. Caller variables and earlier Find image found/score results are evaluated before entering the sequence."}, "outputs": {"type": "object", "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,63}$"}, "additionalProperties": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}, "description": "Output name to existing destination scalar variable of the same type. Each destination must be unique. Omitted outputs are discarded."},  "type": { "const": "runSection" }, "id": { "$ref": "#/$defs/uuid" }, "sectionId": { "$ref": "#/$defs/uuid" } }
         },
         {
           "type": "object",

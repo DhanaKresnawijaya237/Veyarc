@@ -48,16 +48,24 @@ object WorkflowCompiler {
     fun compile(
         document: WorkflowDocument,
         capabilities: EngineCapabilities = EngineCapabilities.all(),
+        entrySectionId: String? = null,
     ): WorkflowCompilationResult {
         val errors = mutableListOf<CompilationError>()
         errors += WorkflowValidator.validate(document).map(::invalidWorkflowError)
         if (errors.isNotEmpty()) return failure(errors)
         val definitions = document.steps.reusableSections()
+        if (entrySectionId != null && entrySectionId !in definitions) return failure(listOf(CompilationError(CompilationErrorCode.INVALID_WORKFLOW, "/steps", "Choose an existing saved sequence")))
+        val entrySteps = if (entrySectionId == null) {
+            document.steps
+        } else {
+            val section = definitions.getValue(entrySectionId)
+            listOf(RunSection(section.id, section.id, section.inputs.associateWith { com.veyarc.model.VariableOperand(com.veyarc.model.VariableName(it)) }, section.outputs.associateWith { it }))
+        }
         val used = linkedMapOf<String, Pair<ReusableSection, List<WorkflowStep>>>()
         val sectionCosts = mutableMapOf<String, ControlFlowAnalysis>()
         val pending = java.util.ArrayDeque<Pair<String, Boolean>>()
-        document.steps.filterNot { it is ReusableSection }.walkSteps().filterIsInstance<RunSection>().forEach { pending.addLast(it.sectionId to false) }
-        validateCapabilities(document.steps, "/steps", capabilities, errors)
+        entrySteps.filterNot { it is ReusableSection }.walkSteps().filterIsInstance<RunSection>().forEach { pending.addLast(it.sectionId to false) }
+        validateCapabilities(entrySteps, "/steps", capabilities, errors)
         while (pending.isNotEmpty()) {
             val (id, finished) = pending.removeLast()
             if (finished) {
@@ -72,7 +80,7 @@ object WorkflowCompiler {
             pending.addLast(id to true)
             body.walkSteps().filterIsInstance<RunSection>().forEach { pending.addLast(it.sectionId to false) }
         }
-        val analysis = analyzeWorkflow(document.steps.filterNot { it is ReusableSection }, sectionCosts)
+        val analysis = analyzeWorkflow(entrySteps.filterNot { it is ReusableSection }, sectionCosts)
         validateAnalysis(document, analysis, errors)
 
         if (errors.isNotEmpty()) return failure(errors)
@@ -88,7 +96,8 @@ object WorkflowCompiler {
             runLimits = document.runLimits,
             variables = immutableMap(document.variables),
             assets = immutableList(document.assets),
-            steps = compileSteps(document.steps),
+            steps = compileSteps(entrySteps),
+            entrySectionId = entrySectionId,
             analysis = analysis,
             sections = immutableMap(
                 used.mapValues { (_, entry) ->
@@ -101,7 +110,7 @@ object WorkflowCompiler {
                         } while (!occupiedCaptureNames.add(alias))
                         com.veyarc.model.VariableName(name) to com.veyarc.model.VariableName(alias)
                     }
-                    ExecutionSection(section.name, compileSteps(body), immutableMap(aliases), immutableSet(body.walkSteps().map { it.id }.toSet()))
+                    ExecutionSection(section.name, compileSteps(body), immutableMap(aliases), immutableSet(body.walkSteps().map { it.id }.toSet()), immutableSet(section.inputs), immutableSet(section.outputs))
                 },
             ),
         )
@@ -120,7 +129,7 @@ object WorkflowCompiler {
             when (step) {
                 is ReusableSection -> error("Section declarations are not executable")
 
-                is RunSection -> ExecutionStep.RunSection(step.id, step.sectionId)
+                is RunSection -> ExecutionStep.RunSection(step.id, step.sectionId, immutableMap(step.inputs), immutableMap(step.outputs))
 
                 is FindImage -> ExecutionStep.FindImage(step.id, step.name, step.image)
 

@@ -1,7 +1,7 @@
 package com.veyarc.model
 
 /** Returns whether a workflow needs a temporary MediaProjection frame during execution. */
-fun WorkflowDocument.usesVisualConditions(): Boolean {
+fun WorkflowDocument.usesVisualConditions(entrySectionId: String? = null): Boolean {
     val sections = steps.reusableSections()
     val visited = mutableSetOf<String>()
     fun uses(items: List<WorkflowStep>): Boolean = items.any { step ->
@@ -16,7 +16,7 @@ fun WorkflowDocument.usesVisualConditions(): Boolean {
             else -> false
         }
     }
-    return uses(steps)
+    return uses(if (entrySectionId == null) steps else listOf(RunSection(entrySectionId, entrySectionId)))
 }
 
 private fun Condition.usesVisualCondition(): Boolean = when (this) {

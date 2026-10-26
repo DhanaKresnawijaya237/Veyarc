@@ -111,6 +111,8 @@ fun WorkflowStep.imageResultNames(): Set<VariableName> = buildSet {
 
         is LongPress -> step.imagePosition?.let { add(it.name) }
 
+        is RunSection -> step.inputs.values.forEach(::operand)
+
         is SetVariable -> {
             operand(step.source)
             operand(step.calculation?.operand)

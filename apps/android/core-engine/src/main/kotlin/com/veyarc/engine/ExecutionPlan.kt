@@ -104,6 +104,7 @@ data class ExecutionPlan(
     val steps: List<ExecutionStep>,
     val analysis: ControlFlowAnalysis,
     val sections: Map<String, ExecutionSection> = emptyMap(),
+    val entrySectionId: String? = null,
 )
 
 data class ExecutionSection(
@@ -111,6 +112,8 @@ data class ExecutionSection(
     val steps: List<ExecutionStep>,
     val captureAliases: Map<com.veyarc.model.VariableName, com.veyarc.model.VariableName>,
     val stepIds: Set<String>,
+    val inputs: Set<String> = emptySet(),
+    val outputs: Set<String> = emptySet(),
 )
 
 enum class ImageAssetUse {
@@ -185,7 +188,12 @@ fun ExecutionPlan.referencedImageAssets(): Map<AssetId, Set<ImageAssetUse>> {
 sealed interface ExecutionStep {
     val id: String
 
-    data class RunSection(override val id: String, val sectionId: String) : ExecutionStep
+    data class RunSection(
+        override val id: String,
+        val sectionId: String,
+        val inputs: Map<String, com.veyarc.model.Operand> = emptyMap(),
+        val outputs: Map<String, String> = emptyMap(),
+    ) : ExecutionStep
 
     data class FindImage(override val id: String, val name: com.veyarc.model.VariableName, val condition: ImagePresentCondition) : ExecutionStep
 

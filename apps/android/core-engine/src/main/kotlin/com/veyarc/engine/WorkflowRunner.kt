@@ -23,6 +23,7 @@ import com.veyarc.model.StopReason
 import com.veyarc.model.VariableComparisonCondition
 import com.veyarc.model.VariableName
 import com.veyarc.model.VariableOperand
+import com.veyarc.model.variableType
 import com.veyarc.model.withCaptureNames
 import java.util.LinkedHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -179,6 +180,17 @@ class WorkflowRunner {
         is ExecutionStep.RunSection -> {
             check(step.sectionId !in state.activeSections) { "Saved blocks cannot call themselves" }
             val section = state.plan.sections.getValue(step.sectionId)
+            check(step.inputs.keys.all { it in section.inputs } && step.outputs.keys.all { it in section.outputs }) { "The sequence's inputs or outputs changed. Review this call." }
+            check(step.outputs.values.toSet().size == step.outputs.size) { "Save each output to a different variable" }
+            val arguments = section.inputs.associateWith { name ->
+                val declaration = state.plan.variables.getValue(name)
+                val value = step.inputs[name]?.let { resolveOperand(it, state) } ?: declaration.initialValue
+                check(value.variableType() == declaration.type) { "Choose a value with the same type as $name" }
+                value
+            }
+            step.outputs.forEach { (name, target) -> check(state.plan.variables.getValue(name).type == state.plan.variables.getValue(target).type) { "Choose a variable with the same type as $name" } }
+            val callerVariables = if (section.inputs.isNotEmpty() || section.outputs.isNotEmpty()) state.variables.toMap() else null
+            var returnedValues: Map<String, com.veyarc.model.ScalarValue> = emptyMap()
             val previousResults = state.imageResults
             val captures = section.captureAliases.values.toSet()
             val previousAliases = state.captureAliases
@@ -195,15 +207,28 @@ class WorkflowRunner {
                 state.jumpVisits.remove(it)
             }
             try {
+                if (callerVariables != null) {
+                    state.variables.clear()
+                    state.variables.putAll(state.plan.variables.mapValues { it.value.initialValue })
+                    state.variables.putAll(arguments)
+                }
                 state.driver.releaseCapturedImages(captures)
                 val result = executeSteps(section.steps, state)
                 check(result.jumpTargetId == null) { "A section cannot jump outside its body" }
                 check(result.control == null || result.control == ControlExit.RETURN_SECTION) { "A saved sequence cannot exit its caller's loop" }
+                if (result.halt == null) returnedValues = step.outputs.entries.associate { (name, target) -> target to state.variables.getValue(name) }
                 result.copy(control = null)
             } finally {
+                var cleanupSucceeded = false
                 try {
                     state.driver.releaseCapturedImages(captures)
+                    cleanupSucceeded = true
                 } finally {
+                    if (callerVariables != null) {
+                        state.variables.clear()
+                        state.variables.putAll(callerVariables)
+                        if (cleanupSucceeded && !state.cancellation.isCancellationRequested()) state.variables.putAll(returnedValues)
+                    }
                     state.imageResults = previousResults
                     state.captureAliases = previousAliases
                     state.sectionCallPath = previousPath

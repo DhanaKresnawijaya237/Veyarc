@@ -85,7 +85,7 @@ class AndroidWorkflowExecutor private constructor(
                 compilation = compilation,
                 run = null,
             )
-        val visualConditionObserver = if (document.usesVisualConditions()) {
+        val visualConditionObserver = if (document.usesVisualConditions(plan.entrySectionId)) {
             VisualConditionEvaluator(
                 frameSource = MediaProjectionCaptureRuntime::captureLatestFrame,
                 templateSource = templateSource ?: ImageTemplateSource { null },

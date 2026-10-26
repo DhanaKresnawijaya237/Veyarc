@@ -250,7 +250,10 @@ object DeepSeekRequest {
             Review workflow allows temporary starting-value overrides for one run. Changing candidate.variables changes the saved defaults, not a temporary run setting.
             breakLoop (Leave loop) and continueLoop (Next repeat) affect only the nearest enclosing Repeat or While in the same sequence.
             returnSection (Finish sequence) returns from the current saved sequence to its caller. These exits need no target and cannot affect a caller's loop.
-            Scalar variables are shared; captured images, Find image results, Go to targets and stepResult references stay within each section call.
+            A section may list inputs and outputs using declared Number/Text/Boolean variable names. Calls bind inputs to operands and outputs to destination variables of the same type.
+            When inputs or outputs are declared, each call starts with private scalar defaults, evaluates inputs in the caller first, and returns only bound outputs after success or returnSection. Failed/stopped calls return nothing.
+            Sections without inputs/outputs retain shared scalar variables. Images and image-search buffers cannot be passed as scalar parameters.
+            Scalar variables are shared only for sections without parameters; captured images, Find image results, Go to targets and stepResult references stay within each section call.
             At most 200 blocks and 12 nesting levels. Never execute workflow actions or claim a change was saved or run.
             A proposal is subject to local validation and explicit user review before saving.
             Workflow schema (spec/workflows/v1/workflow.schema.json):

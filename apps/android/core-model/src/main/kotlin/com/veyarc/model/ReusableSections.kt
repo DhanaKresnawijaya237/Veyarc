@@ -11,9 +11,12 @@ data class ReusableSection(
     val bodySteps: List<WorkflowStep>,
     val startStepId: String? = null,
     val endStepId: String? = null,
+    val inputs: Set<String> = emptySet(),
+    val outputs: Set<String> = emptySet(),
 ) : WorkflowStep {
     init {
         ContractChecks.requireStableId(id, "Section id")
+        (inputs + outputs).forEach(::VariableName)
         require(name.isNotBlank() && name.length <= 80) { "Section name must be 1 to 80 characters" }
         require((startStepId == null) == (endStepId == null)) { "Choose both ends of the linked range" }
         startStepId?.let { ContractChecks.requireStableId(it, "Start block id") }
@@ -26,10 +29,16 @@ data class ReusableSection(
 
 @Serializable
 @SerialName("runSection")
-data class RunSection(override val id: String, val sectionId: String) : WorkflowStep {
+data class RunSection(
+    override val id: String,
+    val sectionId: String,
+    val inputs: Map<String, Operand> = emptyMap(),
+    val outputs: Map<String, String> = emptyMap(),
+) : WorkflowStep {
     init {
         ContractChecks.requireStableId(id, "Step id")
         ContractChecks.requireStableId(sectionId, "Section id")
+        (inputs.keys + outputs.keys + outputs.values).forEach(::VariableName)
     }
 }
 
