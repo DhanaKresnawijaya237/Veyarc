@@ -135,7 +135,7 @@ class VisualConditionEvaluatorTest {
                 ImageAbsentCondition(ASSET_ID, NormalizedRect(0.0, 0.0, 1.0, 1.0), 1.0),
             )
         } catch (error: VisualConditionEvaluationException) {
-            rejected = error.message?.contains("unavailable") == true
+            rejected = error.message == "Choose a saved or captured target image."
         }
         assertTrue(rejected)
         assertFalse("No frame should be acquired when the template is unavailable", frame.isClosed)
