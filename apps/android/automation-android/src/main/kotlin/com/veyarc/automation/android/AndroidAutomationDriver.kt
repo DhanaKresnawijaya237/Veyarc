@@ -8,13 +8,17 @@ import com.veyarc.engine.ConditionObservation
 import com.veyarc.engine.ConditionObserver
 import com.veyarc.engine.DisplayCoordinate
 import com.veyarc.engine.DisplayTimedPoint
+import com.veyarc.engine.RuntimeImageCapture
+import com.veyarc.model.CapturedImageCondition
 import com.veyarc.model.Condition
 import com.veyarc.model.ForegroundPackageCondition
 import com.veyarc.model.ImageAbsentCondition
 import com.veyarc.model.ImagePresentCondition
+import com.veyarc.model.NormalizedRect
 import com.veyarc.model.OrientationCondition
 import com.veyarc.model.PackageName
 import com.veyarc.model.PixelColorCondition
+import com.veyarc.model.VariableName
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
@@ -131,6 +135,7 @@ private class BlockingAndroidAutomationDriver(
             )
 
             is PixelColorCondition,
+            is CapturedImageCondition,
             is ImagePresentCondition,
             is ImageAbsentCondition,
             -> visualConditionObserver?.observe(condition)
@@ -144,6 +149,37 @@ private class BlockingAndroidAutomationDriver(
         }
         requireSafeDeviceState()
         return observation
+    }
+
+    override fun findImage(condition: ImagePresentCondition): ConditionObservation {
+        requireBackgroundThread()
+        requireSafeDeviceState()
+        val expectedViewport = requireGestureViewport()
+        val expectedPackage = requireGesturePackage()
+        val search = visualConditionObserver as? com.veyarc.engine.ImageSearch ?: throw AndroidAutomationException("Image search is not configured for this run")
+        val result = search.findImage(condition)
+        requireSafeDeviceState()
+        requireGestureViewport(expectedViewport)
+        requireGesturePackage(expectedPackage)
+        return result
+    }
+
+    override fun captureImage(name: VariableName, region: NormalizedRect) {
+        requireBackgroundThread()
+        requireSafeDeviceState()
+        val expectedViewport = requireGestureViewport()
+        val expectedPackage = requireGesturePackage()
+        val capture = visualConditionObserver as? RuntimeImageCapture ?: throw AndroidAutomationException("Runtime image capture is not configured for this run")
+        capture.captureImage(name, region)
+        requireSafeDeviceState()
+        requireGestureViewport(expectedViewport)
+        requireGesturePackage(expectedPackage)
+    }
+
+    override fun releaseCapturedImages(names: Set<VariableName>) {
+        val capture = visualConditionObserver as? RuntimeImageCapture
+        check(capture != null || names.isEmpty()) { "Runtime image cleanup is unavailable" }
+        capture?.releaseCapturedImages(names)
     }
 
     private fun requireBackgroundThread() {

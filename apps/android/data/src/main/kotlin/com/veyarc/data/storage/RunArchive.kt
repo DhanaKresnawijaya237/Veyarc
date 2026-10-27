@@ -30,7 +30,7 @@ internal data class RunArchive(val record: StoredRunRecord, val workflowName: St
                 .put(
                     "events",
                     JSONArray().apply {
-                        record.eventHistory.forEach { put(JSONObject().put("atMs", it.atMs).put("message", it.message).put("blockLabel", it.blockLabel).put("contextLabel", it.contextLabel)) }
+                        record.eventHistory.forEach { put(JSONObject().put("atMs", it.atMs).put("message", it.message).put("blockLabel", it.blockLabel).put("contextLabel", it.contextLabel).put("stepId", it.stepId)) }
                     },
                 )
             val metadata = json.toString().encodeToByteArray()
@@ -106,7 +106,7 @@ internal data class RunArchive(val record: StoredRunRecord, val workflowName: St
                     require(events.length() <= 10_000) { "Run archive contains too much activity." }
                     List(events.length()) { index ->
                         val event = events.getJSONObject(index)
-                        StoredRunEvent(event.longValue("atMs"), event.getString("message"), event.optionalString("blockLabel"), event.optionalString("contextLabel"))
+                        StoredRunEvent(event.longValue("atMs"), event.getString("message"), event.optionalString("blockLabel"), event.optionalString("contextLabel"), event.optionalString("stepId"))
                     }
                 },
             )
@@ -115,6 +115,7 @@ internal data class RunArchive(val record: StoredRunRecord, val workflowName: St
             require(record.completedSteps >= 0 && (record.totalSteps == null || record.totalSteps >= record.completedSteps)) { "Run step counts are invalid." }
             require(record.name == null || (record.name.isNotBlank() && record.name.length <= 128)) { "Run name is invalid." }
             require(record.eventHistory.all { it.atMs >= 0 && (it.blockLabel == null || it.blockLabel.length <= 256) && (it.contextLabel == null || it.contextLabel.length <= 2048) }) { "Run activity times are invalid." }
+            require(record.eventHistory.all { it.stepId == null || uuid.matches(it.stepId) }) { "Run block references are invalid." }
             require(record.hasStoredDetails || record.eventHistory.isEmpty()) { "Run activity metadata is inconsistent." }
             val workflowName = json.getString("workflowName")
             require(workflowName.isNotBlank() && workflowName.length <= 128) { "Workflow name is invalid." }

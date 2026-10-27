@@ -98,6 +98,7 @@ data class RedactedRunEvent(
     val message: String,
     val blockLabel: String? = null,
     val contextLabel: String? = null,
+    val stepId: String? = null,
 )
 
 data class WorkflowRunUiState(
@@ -114,6 +115,9 @@ data class WorkflowRunUiState(
     val notificationReady: Boolean,
     val startedAtMs: Long = System.currentTimeMillis(),
     val finishedAtMs: Long? = null,
+    val startingValues: Map<String, String> = emptyMap(),
+    val startingValuesValid: Boolean = true,
+    val sequenceName: String? = null,
 )
 
 /** Coordinates review, deterministic execution, safety controls, notification, and run metadata. */
@@ -122,6 +126,7 @@ class WorkflowRunController(
     private val repository: WorkflowRepository,
     private val document: WorkflowDocument,
     private val assets: List<BundleAsset>? = null,
+    val entrySectionId: String? = null,
 ) {
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -148,7 +153,7 @@ class WorkflowRunController(
     )
 
     init {
-        if (document.usesVisualConditions()) {
+        if (document.usesVisualConditions(entrySectionId)) {
             mediaProjectionListener = MediaProjectionCaptureRuntime.registerTerminationListener(::onMediaProjectionTerminated)
         }
     }
@@ -159,12 +164,28 @@ class WorkflowRunController(
         _state.update { it.copy(notificationReady = notifications.isReady()) }
     }
 
+    fun updateStartingValue(name: String, text: String) {
+        if (closed || name !in document.variables) return
+        _state.update { current ->
+            if (current.phase != WorkflowRunPhase.REVIEW) return@update current
+            val values = current.startingValues + (name to text)
+            current.copy(startingValues = values, startingValuesValid = document.withStartingValues(values) != null)
+        }
+    }
+
+    fun resetStartingValues() {
+        if (closed) return
+        _state.update { current ->
+            if (current.phase != WorkflowRunPhase.REVIEW) current else current.copy(startingValues = document.startingValues(), startingValuesValid = true)
+        }
+    }
+
     fun refreshReview() {
         if (closed || _state.value.phase != WorkflowRunPhase.REVIEW) return
         val capabilities = AndroidAutomationCapabilities.snapshot(appContext)
         val latchEnabled = ReplayFloatingController.isEnabled(appContext)
         val previousReview = _state.value.review
-        val compilation = if (capabilities.engineCapabilities == previousReview.capabilities.engineCapabilities) previousReview.compilation else WorkflowCompiler.compile(document, capabilities.engineCapabilities)
+        val compilation = if (capabilities.engineCapabilities == previousReview.capabilities.engineCapabilities) previousReview.compilation else WorkflowCompiler.compile(document, capabilities.engineCapabilities, entrySectionId)
         val currentOrientation = currentRecordingViewport(appContext)?.recordedOrientation
         val orientationBlockReason = workflowOrientationBlockReason(
             required = document.viewport.recordedOrientation,
@@ -185,7 +206,7 @@ class WorkflowRunController(
         }
     }
 
-    fun requiresMediaProjectionConsent(): Boolean = document.usesVisualConditions()
+    fun requiresMediaProjectionConsent(): Boolean = document.usesVisualConditions(entrySectionId)
 
     /** Handles the one-shot ActivityResult returned by Android's screen-capture consent dialog. */
     fun startAfterMediaProjectionConsent(resultCode: Int, data: Intent?) {
@@ -233,6 +254,7 @@ class WorkflowRunController(
 
     fun start() {
         if (!isStartReady()) return
+        val runDocument = document.withStartingValues(_state.value.startingValues) ?: return
         val currentOrientation = currentRecordingViewport(appContext)?.recordedOrientation
         val orientationBlockReason = workflowOrientationBlockReason(
             required = document.viewport.recordedOrientation,
@@ -282,7 +304,7 @@ class WorkflowRunController(
             )
         }
         runJob = scope.launch {
-            execute(executionControl)
+            execute(executionControl, runDocument)
         }
     }
 
@@ -292,6 +314,7 @@ class WorkflowRunController(
         val current = _state.value
         return current.phase == WorkflowRunPhase.REVIEW &&
             current.review.isRunnable &&
+            current.startingValuesValid &&
             current.notificationReady
     }
 
@@ -343,7 +366,7 @@ class WorkflowRunController(
         scope.cancel()
     }
 
-    private suspend fun execute(executionControl: MutableExecutionControl) {
+    private suspend fun execute(executionControl: MutableExecutionControl, runDocument: WorkflowDocument) {
         var runId: String? = null
         var templateSource: BundleImageTemplateSource? = null
         var terminalStatus = StoredRunStatus.FAILED
@@ -351,7 +374,7 @@ class WorkflowRunController(
         try {
             val preparationStartedAtMs = SystemClock.elapsedRealtime()
             val capabilities = AndroidAutomationCapabilities.snapshot(appContext)
-            val compilation = WorkflowCompiler.compile(document, capabilities.engineCapabilities)
+            val compilation = WorkflowCompiler.compile(runDocument, capabilities.engineCapabilities, entrySectionId)
             val plan = compilation.plan ?: error(
                 compilation.errors.joinToString(separator = "; ") { "${it.path}: ${it.message}" },
             )
@@ -393,23 +416,27 @@ class WorkflowRunController(
                 "Preparation completed in $preparationDurationMs ms",
             )
             rememberEvent(preparationEvent)
+            val startingEvents = eventFormatter.startingValues(runDocument.variables.mapValues { it.value.initialValue }, SystemClock.elapsedRealtime())
+            startingEvents.forEach(::rememberEvent)
             _state.update {
                 it.copy(
                     review = it.review.copy(capabilities = capabilities, compilation = compilation),
                     preparationDurationMs = preparationDurationMs,
-                    eventHistory = listOf(preparationEvent),
+                    eventHistory = (listOf(preparationEvent) + startingEvents).takeLast(MAX_EVENT_HISTORY),
                 )
             }
             runId = withContext(Dispatchers.IO) {
-                repository.beginRun(document.id, document.revision)
+                repository.beginRun(document.id, document.revision).also { id ->
+                    _state.value.sequenceName?.let { repository.renameRun(id, "Sequence: $it") }
+                }
             }
             _state.update { it.copy(runId = runId, phase = WorkflowRunPhase.RUNNING, message = "Running") }
             AccessibilityEmergencyOverlay.show(::stop)
-            notifications.showRunning(document.name, 0, _state.value.review.plan?.analysis?.worstCaseStepCount)
+            notifications.showRunning(document.name, 0, _state.value.review.plan?.analysis?.estimatedStepCount)
 
             val execution = withContext(Dispatchers.Default) {
                 executor.execute(
-                    document = document,
+                    document = runDocument,
                     preparedCompilation = compilation,
                     templateSource = templateSource,
                     cancellation = executionControl,
@@ -448,6 +475,8 @@ class WorkflowRunController(
                         terminalStatus = StoredRunStatus.FAILED
                         val failureCode = failure?.code?.name ?: "EXECUTION_FAILED"
                         val displayMessage = when (failure?.code) {
+                            RunFailureCode.INVALID_VARIABLE_VALUE -> failure.message
+
                             RunFailureCode.UNEXPECTED_FOREGROUND_PACKAGE ->
                                 "${failure.message}. Add that app's package to Allowed Android packages, or make Launch app the first block."
 
@@ -486,7 +515,7 @@ class WorkflowRunController(
                 val status = terminalStatus
                 val reason = terminalReason
                 val terminalState = _state.value
-                val savedHistory = synchronized(savedEvents) { savedEvents.map { StoredRunEvent(it.atMs, it.message, it.blockLabel, it.contextLabel) } }
+                val savedHistory = synchronized(savedEvents) { savedEvents.map { StoredRunEvent(it.atMs, it.message, it.blockLabel, it.contextLabel, it.stepId) } }
                 withContext(NonCancellable + Dispatchers.IO) {
                     runCatching {
                         repository.finishRun(
@@ -494,7 +523,7 @@ class WorkflowRunController(
                             status = status,
                             interruptionReason = reason,
                             completedSteps = terminalState.completedSteps,
-                            totalSteps = terminalState.review.plan?.analysis?.worstCaseStepCount,
+                            totalSteps = terminalState.review.plan?.analysis?.estimatedStepCount,
                             eventHistory = savedHistory,
                         )
                     }
@@ -577,7 +606,7 @@ class WorkflowRunController(
                 notifications.showRunning(
                     document.name,
                     current.completedSteps,
-                    current.review.plan?.analysis?.worstCaseStepCount,
+                    current.review.plan?.analysis?.estimatedStepCount,
                     paused = true,
                 )
             }
@@ -588,7 +617,7 @@ class WorkflowRunController(
                     notifications.showRunning(
                         document.name,
                         current.completedSteps,
-                        current.review.plan?.analysis?.worstCaseStepCount,
+                        current.review.plan?.analysis?.estimatedStepCount,
                         paused = false,
                     )
                 } else {
@@ -600,14 +629,14 @@ class WorkflowRunController(
         }
         if (event is RunEvent.StepFinished) {
             val current = _state.value
-            notifications.showRunning(document.name, current.completedSteps, current.review.plan?.analysis?.worstCaseStepCount)
+            notifications.showRunning(document.name, current.completedSteps, current.review.plan?.analysis?.estimatedStepCount)
         }
     }
 
     private fun initialState(): WorkflowRunUiState {
         val capabilities = AndroidAutomationCapabilities.snapshot(appContext)
         val latchEnabled = ReplayFloatingController.isEnabled(appContext)
-        val compilation = WorkflowCompiler.compile(document, capabilities.engineCapabilities)
+        val compilation = WorkflowCompiler.compile(document, capabilities.engineCapabilities, entrySectionId)
         val currentOrientation = currentRecordingViewport(appContext)?.recordedOrientation
         val orientationBlockReason = workflowOrientationBlockReason(
             required = document.viewport.recordedOrientation,
@@ -616,6 +645,7 @@ class WorkflowRunController(
         return WorkflowRunUiState(
             phase = WorkflowRunPhase.REVIEW,
             workflowName = document.name,
+            sequenceName = document.steps.filterIsInstance<com.veyarc.model.ReusableSection>().firstOrNull { it.id == entrySectionId }?.name,
             revision = document.revision,
             review = WorkflowRunReview(
                 capabilities,
@@ -626,6 +656,7 @@ class WorkflowRunController(
             ),
             message = reviewMessage(capabilities, compilation, orientationBlockReason, latchEnabled),
             notificationReady = notifications.isReady(),
+            startingValues = document.startingValues(),
         )
     }
 

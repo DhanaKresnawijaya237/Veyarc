@@ -24,6 +24,8 @@ import com.veyarc.model.Jump
 import com.veyarc.model.NotCondition
 import com.veyarc.model.OrCondition
 import com.veyarc.model.Repeat
+import com.veyarc.model.ReusableSection
+import com.veyarc.model.RunSection
 import com.veyarc.model.StepResultCondition
 import com.veyarc.model.WaitUntil
 import com.veyarc.model.WhileStep
@@ -32,6 +34,9 @@ import com.veyarc.model.WorkflowJson
 import com.veyarc.model.WorkflowStep
 import com.veyarc.model.backgroundAssetId
 import com.veyarc.model.bundle.BundleAsset
+import com.veyarc.model.resolveBody
+import com.veyarc.model.reusableSections
+import com.veyarc.model.walkSteps
 import com.veyarc.model.withBackgroundAsset
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -59,6 +64,9 @@ internal data class BlockClipboardEntry(
     val orientation: DisplayOrientation,
     val steps: List<WorkflowStep>,
     val images: List<ClipboardImage>,
+    val sourceWorkflowId: String? = null,
+    val linkedSectionIds: Set<String> = emptySet(),
+    val variables: Map<String, com.veyarc.model.VariableDeclaration> = emptyMap(),
 )
 
 /** One device-private clipboard entry; each referenced image is snapshotted, not tied to its source revision. */
@@ -79,7 +87,7 @@ internal class EditorBlockClipboard(context: Context) {
         }
     }
 
-    fun replace(orientation: DisplayOrientation, steps: List<WorkflowStep>, assets: List<Pair<BundleAsset, String>>) = synchronized(lock) {
+    fun replace(orientation: DisplayOrientation, steps: List<WorkflowStep>, assets: List<Pair<BundleAsset, String>>, sourceWorkflowId: String? = null, linkedSectionIds: Set<String> = emptySet(), variables: Map<String, com.veyarc.model.VariableDeclaration> = emptyMap()) = synchronized(lock) {
         require(steps.isNotEmpty()) { "Select at least one block" }
         val previous = runCatching { read() }.getOrNull()
         val previousFile = prefs.getString("current", null)
@@ -91,7 +99,7 @@ internal class EditorBlockClipboard(context: Context) {
                 written += file
                 ClipboardImage(asset.assetId, name, asset.kind, asset.mimeType, asset.widthPx, asset.heightPx, file)
             }
-            val entry = BlockClipboardEntry(orientation = orientation, steps = steps, images = images)
+            val entry = BlockClipboardEntry(orientation = orientation, steps = steps, images = images, sourceWorkflowId = sourceWorkflowId, linkedSectionIds = linkedSectionIds, variables = variables)
             val file = "entry-${WorkflowIds.newUuid()}.wfenc"
             files.writeNew(file, WorkflowJson.encodeCanonical(BlockClipboardEntry.serializer(), entry).encodeToByteArray(), AAD)
             written += file
@@ -135,13 +143,21 @@ internal class EditorBlockClipboard(context: Context) {
                     withContext(Dispatchers.IO) {
                         val repository = WorkflowRepository(app)
                         try {
-                            val images = steps.clipboardImageIds().map { id ->
+                            val copied = steps.withSectionDependencies(source.steps)
+                            val images = copied.clipboardImageIds().map { id ->
                                 val assetId = AssetId(id)
                                 val asset = source.assets.firstOrNull { it.assetId == assetId }
                                     ?: repository.loadRevisionAsset(source.workflowId, requireNotNull(source.lastSavedRevision), assetId)
                                 asset to (source.assetNames[id] ?: "Image")
                             }
-                            EditorBlockClipboard(app).replace(source.viewport.recordedOrientation, steps, images)
+                            EditorBlockClipboard(app).replace(
+                                source.viewport.recordedOrientation,
+                                copied,
+                                images,
+                                source.workflowId,
+                                source.steps.reusableSections().values.filter { it.isLinked && copied.any { item -> item.id == it.id } }.mapTo(mutableSetOf()) { it.id },
+                                source.variables.filterKeys { it in source.copy(steps = copied).usedVariableNames() },
+                            )
                         } finally {
                             repository.close()
                         }
@@ -171,7 +187,9 @@ internal class EditorBlockClipboard(context: Context) {
                                 expected.assets.firstOrNull { it.assetId == id }
                                     ?: repository.loadRevisionAsset(expected.workflowId, requireNotNull(expected.lastSavedRevision), id)
                             }
-                            var result = expected.insertSteps(path, index, remapClipboardSteps(entry.steps, loaded.assetIds))
+                            require(entry.variables.none { (name, declaration) -> expected.variables[name]?.type?.let { it != declaration.type } == true }) { "A variable has a different type in this workflow" }
+                            val reusedLinks = entry.linkedSectionIds.takeIf { entry.sourceWorkflowId == expected.workflowId }.orEmpty()
+                            var result = expected.pasteSectionSteps(path, index, entry.steps, loaded.assetIds, reusedLinks).copy(variables = entry.variables + expected.variables)
                             loaded.assets.forEach { (image, asset) ->
                                 result = result.addAsset(asset).renameAsset(asset.assetId, uniqueClipboardImageName(result, image.name))
                             }
@@ -181,7 +199,13 @@ internal class EditorBlockClipboard(context: Context) {
                         }
                     }
                     check(session.completePaste(expected, updated)) { "The destination workflow was closed or replaced." }
-                    copyMessage = if (omitted.isEmpty()) "Pasted ${entry.steps.size} blocks." else "Pasted blocks. Add the missing images before saving."
+                    copyMessage = if (omitted.isNotEmpty()) {
+                        "Pasted blocks. Add the missing images before saving."
+                    } else if (entry.linkedSectionIds.isNotEmpty() && entry.sourceWorkflowId != expected.workflowId) {
+                        "Pasted blocks. Linked ranges are saved as copies in this workflow."
+                    } else {
+                        "Pasted ${entry.steps.size} blocks."
+                    }
                 } catch (_: Exception) {
                     copyMessage = "Could not paste blocks. The workflow was not changed."
                 } finally {
@@ -270,8 +294,8 @@ internal fun List<WorkflowStep>.clipboardImageIds(): Set<String> = buildSet {
     fun condition(value: Condition) {
         value.backgroundAssetId()?.let { add(it.value) }
         when (value) {
-            is ImagePresentCondition -> add(value.assetId.value)
-            is ImageAbsentCondition -> add(value.assetId.value)
+            is ImagePresentCondition -> value.assetId?.let { add(it.value) }
+            is ImageAbsentCondition -> value.assetId?.let { add(it.value) }
             is AndCondition -> value.conditions.forEach(::condition)
             is OrCondition -> value.conditions.forEach(::condition)
             is NotCondition -> condition(value.condition)
@@ -281,6 +305,8 @@ internal fun List<WorkflowStep>.clipboardImageIds(): Set<String> = buildSet {
     fun step(value: WorkflowStep) {
         value.backgroundAssetId()?.let { add(it.value) }
         when (value) {
+            is com.veyarc.model.FindImage -> condition(value.condition)
+
             is WaitUntil -> condition(value.condition)
 
             is IfElse -> {
@@ -288,6 +314,8 @@ internal fun List<WorkflowStep>.clipboardImageIds(): Set<String> = buildSet {
                 value.thenSteps.forEach(::step)
                 value.elseSteps.forEach(::step)
             }
+
+            is ReusableSection -> value.bodySteps.forEach(::step)
 
             is Repeat -> value.bodySteps.forEach(::step)
 
@@ -302,8 +330,8 @@ internal fun List<WorkflowStep>.clipboardImageIds(): Set<String> = buildSet {
     forEach(::step)
 }
 
-internal fun remapClipboardSteps(steps: List<WorkflowStep>, assetIds: Map<String, AssetId>): List<WorkflowStep> {
-    val stepIds = mutableMapOf<String, String>()
+internal fun remapClipboardSteps(steps: List<WorkflowStep>, assetIds: Map<String, AssetId>, existingSectionIds: Map<String, String> = emptyMap()): List<WorkflowStep> {
+    val stepIds = existingSectionIds.toMutableMap()
     fun assign(value: WorkflowStep) {
         stepIds[value.id] = WorkflowIds.newUuid()
         when (value) {
@@ -311,6 +339,8 @@ internal fun remapClipboardSteps(steps: List<WorkflowStep>, assetIds: Map<String
                 value.thenSteps.forEach(::assign)
                 value.elseSteps.forEach(::assign)
             }
+
+            is ReusableSection -> value.bodySteps.forEach(::assign)
 
             is Repeat -> value.bodySteps.forEach(::assign)
 
@@ -321,9 +351,10 @@ internal fun remapClipboardSteps(steps: List<WorkflowStep>, assetIds: Map<String
     }
     steps.forEach(::assign)
     fun condition(value: Condition): Condition = when (value) {
+        is com.veyarc.model.CapturedImageCondition -> value.copy(backgroundAssetId = value.backgroundAssetId?.let { assetIds[it.value] ?: it })
         is com.veyarc.model.PixelColorCondition -> value.copy(backgroundAssetId = value.backgroundAssetId?.let { assetIds[it.value] ?: it })
-        is ImagePresentCondition -> value.copy(assetId = assetIds[value.assetId.value] ?: value.assetId, backgroundAssetId = value.backgroundAssetId?.let { assetIds[it.value] ?: it })
-        is ImageAbsentCondition -> value.copy(assetId = assetIds[value.assetId.value] ?: value.assetId, backgroundAssetId = value.backgroundAssetId?.let { assetIds[it.value] ?: it })
+        is ImagePresentCondition -> value.copy(assetId = value.assetId?.let { assetIds[it.value] ?: it }, backgroundAssetId = value.backgroundAssetId?.let { assetIds[it.value] ?: it })
+        is ImageAbsentCondition -> value.copy(assetId = value.assetId?.let { assetIds[it.value] ?: it }, backgroundAssetId = value.backgroundAssetId?.let { assetIds[it.value] ?: it })
         is StepResultCondition -> value.copy(stepId = stepIds[value.stepId] ?: value.stepId)
         is AndCondition -> value.copy(conditions = value.conditions.map(::condition))
         is OrCondition -> value.copy(conditions = value.conditions.map(::condition))
@@ -333,6 +364,10 @@ internal fun remapClipboardSteps(steps: List<WorkflowStep>, assetIds: Map<String
     fun step(value: WorkflowStep): WorkflowStep {
         val id = requireNotNull(stepIds[value.id])
         return when (value) {
+            is ReusableSection -> value.copy(id = id, bodySteps = value.bodySteps.map(::step))
+            is RunSection -> value.copy(id = id, sectionId = stepIds[value.sectionId] ?: value.sectionId)
+            is com.veyarc.model.FindImage -> value.copy(id = id, condition = condition(value.condition) as ImagePresentCondition)
+            is com.veyarc.model.CaptureImage -> value.copy(id = id)
             is com.veyarc.model.TapPoint -> value.copy(id = id)
             is com.veyarc.model.TapRegion -> value.copy(id = id)
             is com.veyarc.model.LongPress -> value.copy(id = id)
@@ -345,9 +380,54 @@ internal fun remapClipboardSteps(steps: List<WorkflowStep>, assetIds: Map<String
             is Repeat -> value.copy(id = id, bodySteps = value.bodySteps.map(::step))
             is WhileStep -> value.copy(id = id, condition = condition(value.condition), bodySteps = value.bodySteps.map(::step))
             is com.veyarc.model.LaunchApp -> value.copy(id = id)
+            is com.veyarc.model.BreakLoop -> value.copy(id = id)
+            is com.veyarc.model.ContinueLoop -> value.copy(id = id)
+            is com.veyarc.model.ReturnSection -> value.copy(id = id)
             is com.veyarc.model.Stop -> value.copy(id = id)
             is com.veyarc.model.SetVariable -> value.copy(id = id)
         }.withBackgroundAsset(value.backgroundAssetId()?.let { assetIds[it.value] ?: it })
     }
     return steps.map(::step)
+}
+
+internal fun List<WorkflowStep>.withSectionDependencies(source: List<WorkflowStep>): List<WorkflowStep> {
+    val definitions = source.reusableSections()
+    val included = filterIsInstance<ReusableSection>().mapTo(mutableSetOf()) { it.id }
+    val snapshots = linkedMapOf<String, ReusableSection>()
+    val visiting = mutableSetOf<String>()
+    val pending = java.util.ArrayDeque<Pair<String, Boolean>>()
+    walkSteps().filterIsInstance<RunSection>().forEach { pending.addLast(it.sectionId to false) }
+    filterIsInstance<ReusableSection>().forEach { pending.addLast(it.id to false) }
+    while (pending.isNotEmpty()) {
+        val (id, finished) = pending.removeLast()
+        if (id in snapshots) continue
+        val definition = requireNotNull(definitions[id]) { "This saved sequence was removed" }
+        val body = requireNotNull(definition.resolveBody(source)) { "Choose valid start and end blocks before copying" }
+        if (finished) {
+            val owned = if (definition.isLinked) remapClipboardSteps(body, emptyMap(), definitions.keys.associateWith { it }) else body
+            snapshots[id] = definition.copy(bodySteps = owned, startStepId = null, endStepId = null)
+            visiting.remove(id)
+        } else {
+            require(visiting.add(id)) { "Fix circular saved blocks before copying" }
+            pending.addLast(id to true)
+            body.walkSteps().filterIsInstance<RunSection>().forEach { pending.addLast(it.sectionId to false) }
+        }
+    }
+    return map { if (it is ReusableSection) snapshots.getValue(it.id) else it } + snapshots.values.filterNot { it.id in included }
+}
+
+internal fun WorkflowDraft.pasteSectionSteps(path: StepListPath, index: Int, copied: List<WorkflowStep>, assetIds: Map<String, AssetId>, linkedSectionIds: Set<String> = emptySet()): WorkflowDraft {
+    val existing = steps.reusableSections()
+    val reused = copied.filterIsInstance<ReusableSection>().filter { existing[it.id] == it || (it.id in linkedSectionIds && existing[it.id]?.isLinked == true) }.associate { it.id to it.id }
+    val incoming = remapClipboardSteps(copied.filterNot { it is ReusableSection && it.id in reused }, assetIds, reused)
+    val usedNames = existing.values.mapTo(mutableSetOf()) { it.name.trim().lowercase() }
+    val definitions = incoming.filterIsInstance<ReusableSection>().map { section ->
+        val base = section.name.take(72)
+        val name = generateSequence(1) { it + 1 }.map { if (it == 1) base else "$base $it" }.first { it.lowercase() !in usedNames }
+        usedNames += name.lowercase()
+        section.copy(name = name)
+    }
+    val blocks = incoming.filterNot { it is ReusableSection }
+    val withDefinitions = insertSteps(StepListPath(), steps.size, definitions)
+    return withDefinitions.insertSteps(path, index, blocks)
 }

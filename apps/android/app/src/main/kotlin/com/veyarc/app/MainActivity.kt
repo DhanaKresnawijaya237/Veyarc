@@ -33,6 +33,7 @@ import com.veyarc.data.storage.WorkflowRevisionDocument
 import com.veyarc.data.storage.WorkflowSummary
 import com.veyarc.feature.assistant.AssistantPreviewHost
 import com.veyarc.feature.assistant.AssistantPreviewState
+import com.veyarc.feature.editor.DraftIssue
 import com.veyarc.feature.editor.WorkflowEditorScreen
 import com.veyarc.feature.editor.WorkflowEditorSession
 import com.veyarc.feature.editor.saveRevision
@@ -201,6 +202,10 @@ class MainActivity : ComponentActivity() {
                                             onBack = ::leaveRunScreen,
                                             onOpenConnectionSettings = { openRunSettings("connections") },
                                             onOpenLatchSettings = { openRunSettings("latch") },
+                                            onOpenEditor = { stepId, issue ->
+                                                leaveRunScreen()
+                                                editRunDocument(bundle.document.id, bundle.document.revision, stepId, issue)
+                                            },
                                         )
                                     }
                                 } else {
@@ -254,6 +259,7 @@ class MainActivity : ComponentActivity() {
                                                     recordingControls = com.veyarc.feature.editor.RecordingEditorControls(onRecord = ::recordIntoWorkflow, preparing = preparingRecording),
                                                     onAskAi = onAskAi?.let { { editorSession.assistant.open(editorSession.state.assistantContext()) } },
                                                     onRunWorkflow = ::openStoredRunScreen,
+                                                    onRunSequence = { revision, id -> openStoredRunScreen(revision, sectionId = id) },
                                                     onOpenWorkflowManager = {
                                                         selectedDestination = VeyarcDestination.WORKFLOWS
                                                     },
@@ -290,6 +296,7 @@ class MainActivity : ComponentActivity() {
                                                 repository = workflowRepository,
                                                 refreshGeneration = resumeGeneration,
                                                 onOpenWorkflowRevision = ::editRunWorkflowRevision,
+                                                onOpenBlock = { record, stepId -> editRunDocument(record.workflowId, record.revision, stepId) },
                                                 onSelectionBarChange = { if (selectedDestination == VeyarcDestination.RUNS) managerSelectionBar = it },
                                             )
 
@@ -387,9 +394,9 @@ class MainActivity : ComponentActivity() {
         selectedDestination = VeyarcDestination.SETTINGS
     }
 
-    private fun openStoredRunScreen(revision: WorkflowRevisionDocument, autoStart: Boolean = false) {
+    private fun openStoredRunScreen(revision: WorkflowRevisionDocument, autoStart: Boolean = false, sectionId: String? = null) {
         val metadataOnlyBundle = WorkflowBundle(revision.document, emptyList(), revision.producerVersion)
-        runSession.openStored(metadataOnlyBundle)
+        runSession.openStored(metadataOnlyBundle, sectionId)
         workflowToRun = metadataOnlyBundle
         if (autoStart) startControllerReplayWhenReady()
     }
@@ -426,10 +433,13 @@ class MainActivity : ComponentActivity() {
         selectedDestination = VeyarcDestination.EDITOR
     }
 
-    private fun editRunWorkflowRevision(run: StoredRunRecord) {
+    private fun editRunWorkflowRevision(run: StoredRunRecord) = editRunDocument(run.workflowId, run.revision)
+
+    private fun editRunDocument(workflowId: String, revision: Int, stepId: String? = null, issue: DraftIssue? = null) {
+        editorSession.state.requestNavigation(workflowId, revision, stepId, issue)
         editorReturnToManager = false
         workflowToEdit = null
-        storedWorkflowToEdit = run.workflowId to run.revision
+        storedWorkflowToEdit = workflowId to revision
         recordedJournalFileName = null
         selectedDestination = VeyarcDestination.EDITOR
     }
@@ -450,10 +460,12 @@ class MainActivity : ComponentActivity() {
 
     private fun startRunAndRemember() {
         val document = workflowToRun?.document ?: return
-        ReplayWorkflowCatalog.markPlayed(
-            applicationContext,
-            ReplayControllerWorkflow(document.id, document.revision, document.name),
-        )
+        if (runSession.controller?.entrySectionId == null) {
+            ReplayWorkflowCatalog.markPlayed(
+                applicationContext,
+                ReplayControllerWorkflow(document.id, document.revision, document.name),
+            )
+        }
         runSession.startRun()
     }
 
@@ -625,9 +637,9 @@ class MainRunSession(application: Application) : AndroidViewModel(application) {
         this.bundle = bundle
     }
 
-    fun openStored(bundle: WorkflowBundle) {
+    fun openStored(bundle: WorkflowBundle, sectionId: String? = null) {
         controller?.close("a different workflow was opened")
-        controller = WorkflowRunController(getApplication(), repository, bundle.document)
+        controller = WorkflowRunController(getApplication(), repository, bundle.document, entrySectionId = sectionId)
         this.bundle = bundle
     }
 

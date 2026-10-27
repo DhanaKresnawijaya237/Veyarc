@@ -31,9 +31,9 @@ class ConditionEditorDefaultsTest {
         val present = EditableConditionKind.IMAGE_PRESENT.defaultCondition(DEFAULT_PACKAGE) as ImagePresentCondition
         val absent = EditableConditionKind.IMAGE_ABSENT.defaultCondition(DEFAULT_PACKAGE) as ImageAbsentCondition
 
-        assertEquals("template-missing", screen.assetId.value)
-        assertEquals("template-missing", present.assetId.value)
-        assertEquals("template-missing", absent.assetId.value)
+        assertEquals("template-missing", screen.assetId!!.value)
+        assertEquals("template-missing", present.assetId!!.value)
+        assertEquals("template-missing", absent.assetId!!.value)
     }
 
     @Test

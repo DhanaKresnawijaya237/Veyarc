@@ -9,10 +9,15 @@ import com.veyarc.model.LaunchApp
 import com.veyarc.model.OrCondition
 import com.veyarc.model.PackageName
 import com.veyarc.model.Repeat
+import com.veyarc.model.ReusableSection
+import com.veyarc.model.RunSection
 import com.veyarc.model.StageBoundary
 import com.veyarc.model.WhileStep
 import com.veyarc.model.WorkflowStep
 import com.veyarc.model.bundle.WorkflowBundle
+import com.veyarc.model.cyclicSections
+import com.veyarc.model.resolveBody
+import com.veyarc.model.reusableSections
 
 data class RecordingInsertion(val path: StepListPath = StepListPath(), val index: Int = 0, val afterStepId: String? = null) {
     fun isValid(draft: WorkflowDraft): Boolean = resolve(draft) != null
@@ -34,6 +39,7 @@ data class RecordingInsertion(val path: StepListPath = StepListPath(), val index
                 NestedBranch.IF_THEN -> (parent as? IfElse)?.thenSteps
                 NestedBranch.IF_ELSE -> (parent as? IfElse)?.elseSteps
                 NestedBranch.WHILE_BODY -> (parent as? WhileStep)?.bodySteps
+                NestedBranch.SECTION_BODY -> (parent as? ReusableSection)?.bodySteps
                 NestedBranch.REPEAT_BODY -> (parent as? Repeat)?.bodySteps
             } ?: return null
         }
@@ -52,23 +58,25 @@ data class RecordingInsertion(val path: StepListPath = StepListPath(), val index
         var steps = draft.steps
         val labels = path.segments.map { segment ->
             val position = steps.indexOfFirst { it.id == segment.parentId }
-            val blockNumber = steps.take(position + 1).count { it !is StageBoundary }
+            val blockNumber = steps.take(position + 1).count { it !is StageBoundary && it !is ReusableSection }
             val parent = steps.getOrNull(position)
             val section = when (segment.branch) {
                 NestedBranch.IF_THEN -> "If · then"
                 NestedBranch.IF_ELSE -> "If · otherwise"
                 NestedBranch.WHILE_BODY -> "While · actions"
+                NestedBranch.SECTION_BODY -> (parent as? ReusableSection)?.name ?: "Section"
                 NestedBranch.REPEAT_BODY -> "Repeat · actions"
             }
             steps = when (parent) {
                 is IfElse -> if (segment.branch == NestedBranch.IF_ELSE) parent.elseSteps else parent.thenSteps
                 is WhileStep -> parent.bodySteps
+                is ReusableSection -> parent.bodySteps
                 is Repeat -> parent.bodySteps
                 else -> emptyList()
             }
             "$blockNumber. $section"
         }
-        val blockNumber = steps.take(target.index).count { it !is StageBoundary }
+        val blockNumber = steps.take(target.index).count { it !is StageBoundary && it !is ReusableSection }
         return (labels + if (target.index == 0) "Start here" else "After block $blockNumber").joinToString(" / ")
     }
 }
@@ -84,8 +92,11 @@ internal val LocalRecordingEditorControls = staticCompositionLocalOf<RecordingEd
 /** Infer the foreground app at this position without running any workflow actions. */
 fun RecordingInsertion.appCandidates(draft: WorkflowDraft): Set<PackageName> {
     val target = requireNotNull(resolve(draft)) { "Choose a recording section first." }
+    require(draft.steps.cyclicSections().isEmpty()) { "Fix circular saved blocks before recording" }
+    val sections = draft.steps.reusableSections()
     fun launches(steps: List<WorkflowStep>): Set<PackageName> = steps.flatMapTo(linkedSetOf()) { step ->
         when (step) {
+            is RunSection -> launches(sections[step.sectionId]?.resolveBody(draft.steps).orEmpty())
             is LaunchApp -> setOf(step.packageName)
             is IfElse -> launches(step.thenSteps) + launches(step.elseSteps)
             is Repeat -> launches(step.bodySteps)
@@ -93,10 +104,11 @@ fun RecordingInsertion.appCandidates(draft: WorkflowDraft): Set<PackageName> {
             else -> emptySet()
         }
     }
-    val all = launches(draft.steps)
+    val all = launches(target.path.sectionId?.let { sections[it]?.bodySteps } ?: draft.steps)
     if (all.size <= 1) return all
     fun after(steps: List<WorkflowStep>, initial: Set<PackageName?>): Set<PackageName?> = steps.fold(initial) { apps, step ->
         when (step) {
+            is RunSection -> after(sections[step.sectionId]?.resolveBody(draft.steps).orEmpty(), apps)
             is LaunchApp -> setOf(step.packageName)
             is IfElse -> after(step.thenSteps, apps) + after(step.elseSteps, apps)
             is Repeat -> if (step.count == 0) apps else after(step.bodySteps, apps)
@@ -113,8 +125,8 @@ fun RecordingInsertion.appCandidates(draft: WorkflowDraft): Set<PackageName> {
         steps = draft.stepsAt(StepListPath(target.path.segments.take(depth + 1)))
     }
     apps = after(steps.take(target.index), apps)
-    if (apps == setOf<PackageName?>(null) && target.path.segments.isEmpty() && steps.take(target.index).all { it is StageBoundary }) {
-        (steps.drop(target.index).firstOrNull { it !is StageBoundary } as? LaunchApp)?.let { return setOf(it.packageName) }
+    if (apps == setOf<PackageName?>(null) && target.path.segments.isEmpty() && steps.take(target.index).all { it is StageBoundary || it is ReusableSection }) {
+        (steps.drop(target.index).firstOrNull { it !is StageBoundary && it !is ReusableSection } as? LaunchApp)?.let { return setOf(it.packageName) }
     }
     return if (null in apps) all else apps.filterNotNull().toSet()
 }
@@ -174,6 +186,7 @@ fun WorkflowDraft.insertRecording(segment: WorkflowBundle, destination: Recordin
 private fun countRecordingSteps(steps: List<WorkflowStep>): Int = steps.sumOf { step ->
     1 + when (step) {
         is IfElse -> countRecordingSteps(step.thenSteps) + countRecordingSteps(step.elseSteps)
+        is ReusableSection -> countRecordingSteps(step.bodySteps)
         is Repeat -> countRecordingSteps(step.bodySteps)
         is WhileStep -> countRecordingSteps(step.bodySteps)
         else -> 0
@@ -182,6 +195,7 @@ private fun countRecordingSteps(steps: List<WorkflowStep>): Int = steps.sumOf { 
 
 internal fun WorkflowStep.emptyRecordingBody(): WorkflowStep = when (this) {
     is IfElse -> copy(thenSteps = emptyList(), elseSteps = emptyList())
+    is ReusableSection -> copy(bodySteps = emptyList())
     is Repeat -> copy(bodySteps = emptyList())
     is WhileStep -> copy(bodySteps = emptyList())
     else -> this

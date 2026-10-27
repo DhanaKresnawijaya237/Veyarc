@@ -9,7 +9,9 @@ import com.veyarc.data.storage.WorkflowAssetDescriptor
 import com.veyarc.data.storage.WorkflowRevisionEditorData
 import com.veyarc.model.AndCondition
 import com.veyarc.model.AssetReference
+import com.veyarc.model.BreakLoop
 import com.veyarc.model.Condition
+import com.veyarc.model.ContinueLoop
 import com.veyarc.model.DisplayOrientation
 import com.veyarc.model.DurationMillis
 import com.veyarc.model.ForegroundPackageCondition
@@ -28,7 +30,10 @@ import com.veyarc.model.PackageName
 import com.veyarc.model.PixelColorCondition
 import com.veyarc.model.RegionAnchor
 import com.veyarc.model.Repeat
+import com.veyarc.model.ReturnSection
+import com.veyarc.model.ReusableSection
 import com.veyarc.model.RunLimits
+import com.veyarc.model.RunSection
 import com.veyarc.model.StageBoundary
 import com.veyarc.model.Stop
 import com.veyarc.model.StopReason
@@ -48,6 +53,10 @@ import com.veyarc.model.WorkflowValidator
 import com.veyarc.model.backgroundAssetId
 import com.veyarc.model.bundle.BundleAsset
 import com.veyarc.model.bundle.WorkflowBundle
+import com.veyarc.model.capturedImages
+import com.veyarc.model.imageSearches
+import com.veyarc.model.reusableSections
+import com.veyarc.model.walkSteps
 import com.veyarc.model.withBackgroundAsset
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -65,11 +74,20 @@ enum class WorkflowStepKind {
     REPEAT,
     WHILE,
     LAUNCH_APP,
+    SET_VARIABLE,
+    CAPTURE_IMAGE,
+    FIND_IMAGE,
     STOP,
+    SECTION,
+    RUN_SECTION,
+    BREAK_LOOP,
+    CONTINUE_LOOP,
+    RETURN_SECTION,
 }
 
 enum class NestedBranch {
     REPEAT_BODY,
+    SECTION_BODY,
     WHILE_BODY,
     IF_THEN,
     IF_ELSE,
@@ -83,6 +101,10 @@ data class StepListSegment(
 data class StepListPath(
     val segments: List<StepListSegment> = emptyList(),
 ) {
+    val canExitLoop: Boolean get() = segments.drop((segments.indexOfLast { it.branch == NestedBranch.SECTION_BODY } + 1)).any { it.branch == NestedBranch.REPEAT_BODY || it.branch == NestedBranch.WHILE_BODY }
+
+    val sectionId: String? get() = segments.firstOrNull { it.branch == NestedBranch.SECTION_BODY }?.parentId
+
     fun child(parentId: String, branch: NestedBranch): StepListPath = copy(segments = segments + StepListSegment(parentId, branch))
 }
 
@@ -163,8 +185,19 @@ class WorkflowEditorSession {
     internal val colorPickerImages = ColorPickerImages()
     internal var allowedAppsExpanded by mutableStateOf(true)
     internal var templatesExpanded by mutableStateOf(true)
+    internal var variablesExpanded by mutableStateOf(false)
+    internal var savedBlocksExpanded by mutableStateOf(false)
+    internal var savedBlockEditorId by mutableStateOf<String?>(null)
+    internal var savedBlockCaller by mutableStateOf<BlockSelection?>(null)
+    internal var pendingSavedBlocks by mutableStateOf<PendingSavedBlocks?>(null)
+    internal var savedBlockInsertion by mutableStateOf<RecordingInsertion?>(null)
+    internal var savedBlockError by mutableStateOf<String?>(null)
     internal var revisionPickerExpanded by mutableStateOf(false)
     internal var validationDetailsVisible by mutableStateOf(false)
+    internal var pendingBlockReveal by mutableStateOf<String?>(null)
+    internal var pendingSetupReveal by mutableStateOf<String?>(null)
+    internal var navigationMessage by mutableStateOf<String?>(null)
+    internal var requestedNavigation by mutableStateOf<EditorNavigationRequest?>(null)
     internal var renameTemplateTarget by mutableStateOf<com.veyarc.model.AssetId?>(null)
     internal var renameTemplateName by mutableStateOf("")
     internal var blockSelection by mutableStateOf<BlockSelection?>(null)
@@ -288,6 +321,7 @@ class WorkflowEditorSession {
     }
 
     fun close() {
+        requestedNavigation = null
         draft = null
         destinationFolderId = null
         savedDraft = null
@@ -350,6 +384,79 @@ class WorkflowEditorSession {
         blockRangeAnchor = null
     }
 
+    internal fun openSavedBlocks(id: String, caller: BlockSelection? = null) {
+        if (isBusy) return
+        val current = draft ?: return
+        val body = current.steps.reusableSections()[id]?.bodySteps.orEmpty()
+        draft = current.copy(collapsedStepIds = current.collapsedStepIds + body.walkSteps().map { it.id })
+        savedBlockEditorId = id
+        savedBlockCaller = caller
+    }
+
+    fun requestNavigation(workflowId: String, revision: Int, stepId: String? = null, issue: DraftIssue? = null) {
+        requestedNavigation = EditorNavigationRequest(workflowId, revision, stepId, issue)
+    }
+
+    internal fun applyRequestedNavigation() {
+        val request = requestedNavigation ?: return
+        val current = draft ?: return
+        if (isBusy || isDirty || current.workflowId != request.workflowId || current.lastSavedRevision != request.revision) return
+        requestedNavigation = null
+        if (request.issue != null) revealIssue(request.issue) else request.stepId?.let(::revealBlock)
+    }
+
+    internal fun revealBlock(id: String) {
+        if (isBusy) return
+        val current = draft ?: return
+        val location = current.blockLocations().firstOrNull { it.step.id == id } ?: run {
+            navigationMessage = "This block is not available in this revision."
+            return
+        }
+        clearBlockSelection()
+        pendingSetupReveal = null
+        savedBlockEditorId = null
+        savedBlockCaller = null
+        geometryTarget = null
+        conditionTarget = null
+        validationDetailsVisible = false
+        if (location.step is ReusableSection) {
+            openSavedBlocks(id)
+            pendingBlockReveal = null
+            return
+        }
+        location.path.sectionId?.let { openSavedBlocks(it) }
+        val opened = draft ?: return
+        draft = opened.copy(collapsedStepIds = opened.collapsedStepIds - location.path.segments.map { it.parentId }.toSet() - id)
+        blockSelection = BlockSelection(location.path, id)
+        pendingBlockReveal = id
+    }
+
+    internal fun revealIssue(issue: DraftIssue) {
+        if (isBusy) return
+        val current = draft ?: return
+        val location = current.issueLocation(issue)
+        validationDetailsVisible = false
+        if (location != null) {
+            revealBlock(location.step.id)
+            val suffix = issue.path.removePrefix(location.modelPath)
+            if (location.step is RunSection) {
+                openSavedBlocks(location.step.sectionId, BlockSelection(location.path, location.step.id))
+            } else if ("condition" in suffix.lowercase() && location.step.conditionOrNull() != null) {
+                conditionTarget = ConditionTarget(location.path, location.index)
+            } else if (location.step.hasEditableGeometry() && listOf("/point", "/region", "/points", "/imagePosition", "/duration").any { suffix.startsWith(it) }) {
+                geometryTarget = GeometryTarget(location.path, location.index)
+            }
+        } else {
+            pendingBlockReveal = null
+            pendingSetupReveal = current.issueDisplay(issue).title
+            when (pendingSetupReveal) {
+                "Allowed apps" -> allowedAppsExpanded = true
+                "Image templates" -> templatesExpanded = true
+                "Variables" -> variablesExpanded = true
+            }
+        }
+    }
+
     internal fun clearBlockSelection() {
         blockSelectionMode = false
         blockRangeSelection = false
@@ -363,7 +470,7 @@ class WorkflowEditorSession {
             blockSelection = chosen
             return
         }
-        val steps = draft?.stepsAt(chosen.path).orEmpty()
+        val steps = draft?.stepsAt(chosen.path).orEmpty().filterNot { it is ReusableSection }
         val end = steps.indexOfFirst { it.id == chosen.stepId }
         if (end < 0) return
         if (selectedBlockPath != chosen.path) {
@@ -387,6 +494,9 @@ class WorkflowEditorSession {
     }
 
     private fun dismissEditors() {
+        pendingBlockReveal = null
+        pendingSetupReveal = null
+        navigationMessage = null
         colorPickerImages.clear()
         geometryTarget = null
         conditionTarget = null
@@ -394,6 +504,13 @@ class WorkflowEditorSession {
         editTemplateTarget = null
         allowedAppsExpanded = true
         templatesExpanded = true
+        variablesExpanded = false
+        savedBlocksExpanded = false
+        savedBlockEditorId = null
+        savedBlockCaller = null
+        pendingSavedBlocks = null
+        savedBlockInsertion = null
+        savedBlockError = null
         revisionPickerExpanded = false
         validationDetailsVisible = false
         renameTemplateTarget = null
@@ -524,26 +641,51 @@ data class WorkflowDraft(
 
     fun stepsAt(path: StepListPath): List<WorkflowStep> = readSteps(steps, path.segments)
 
-    fun jumpTargetLists(path: StepListPath): List<List<WorkflowStep>> = (path.segments.size downTo 0).map { depth ->
-        stepsAt(StepListPath(path.segments.take(depth)))
+    fun jumpTargetLists(path: StepListPath): List<List<WorkflowStep>> {
+        val first = path.segments.indexOfFirst { it.branch == NestedBranch.SECTION_BODY }.let { if (it < 0) 0 else it + 1 }
+        return (path.segments.size downTo first).map { depth ->
+            stepsAt(StepListPath(path.segments.take(depth))).filterNot { it is ReusableSection }
+        }
     }
 
     fun addStep(path: StepListPath, kind: WorkflowStepKind, defaultPackage: String): WorkflowDraft = insertStep(path, stepsAt(path).size, kind, defaultPackage)
 
     fun insertStep(path: StepListPath, index: Int, kind: WorkflowStepKind, defaultPackage: String): WorkflowDraft {
+        require(kind != WorkflowStepKind.SECTION || path.segments.isEmpty()) { "Sections belong at the workflow level" }
         val current = stepsAt(path)
-        val jumpTargetId = current.getOrNull((index - 1).coerceAtLeast(0))?.id
+        val jumpTargetId = current.take(index).lastOrNull { it !is ReusableSection }?.id
+            ?: current.firstOrNull { it !is ReusableSection }?.id
             ?: jumpTargetLists(path).drop(1).firstOrNull()?.firstOrNull()?.id
-        val step = newStep(kind, defaultPackage, jumpTargetId)
+        val step = newStep(kind, defaultPackage, jumpTargetId, variables.entries.firstOrNull()?.toPair(), steps.reusableSections().keys.firstOrNull()).let { created ->
+            if (created is com.veyarc.model.CaptureImage) {
+                val names = runtimeScope(path).capturedImages().keys
+                val name = generateSequence(1) { it + 1 }.map { if (it == 1) "image" else "image_$it" }.first { it !in names }
+                created.copy(name = com.veyarc.model.VariableName(name))
+            } else if (created is com.veyarc.model.FindImage) {
+                val names = runtimeScope(path).imageSearches().keys
+                val name = generateSequence(1) { it + 1 }.map { if (it == 1) "match" else "match_$it" }.first { it !in names }
+                created.copy(name = com.veyarc.model.VariableName(name))
+            } else if (created is ReusableSection) {
+                val names = steps.reusableSections().values.map { it.name.lowercase() }.toSet()
+                created.copy(name = generateSequence(1) { it + 1 }.map { "Sequence $it" }.first { it.lowercase() !in names })
+            } else {
+                created
+            }
+        }
         return updateList(path) { current ->
             current.toMutableList().apply { add(index.coerceIn(0, size), step) }
         }
             .copy(collapsedStepIds = collapsedStepIds + step.id)
     }
 
-    fun insertSteps(path: StepListPath, index: Int, inserted: List<WorkflowStep>): WorkflowDraft = updateList(path) { current ->
-        current.toMutableList().apply { addAll(index.coerceIn(0, size), inserted) }
-    }.copy(collapsedStepIds = collapsedStepIds + inserted.map { it.id })
+    fun insertSteps(path: StepListPath, index: Int, inserted: List<WorkflowStep>): WorkflowDraft {
+        require(path.segments.isEmpty() || inserted.none { it is ReusableSection }) { "Sections belong at the workflow level" }
+        return updateList(path) { current ->
+            current.toMutableList().apply { addAll(index.coerceIn(0, size), inserted) }
+        }.copy(collapsedStepIds = collapsedStepIds + inserted.map { it.id })
+    }
+
+    internal fun runtimeScope(path: StepListPath): List<WorkflowStep> = path.sectionId?.let { steps.reusableSections()[it]?.bodySteps } ?: steps
 
     fun removeStep(path: StepListPath, index: Int): WorkflowDraft = updateList(path) { current ->
         current.toMutableList().apply {
@@ -567,6 +709,7 @@ data class WorkflowDraft(
     ): WorkflowDraft {
         val step = stepsAt(sourcePath).getOrNull(sourceIndex) ?: return this
         if (destinationPath.segments.any { it.parentId == step.id }) return this
+        if (step is ReusableSection && destinationPath.segments.isNotEmpty()) return this
         if (sourcePath == destinationPath) return moveStepTo(sourcePath, sourceIndex, destinationIndex)
         val withoutSource = updateList(sourcePath) { current ->
             current.toMutableList().apply { removeAt(sourceIndex) }
@@ -595,6 +738,7 @@ data class WorkflowDraft(
         transform: (Condition) -> Condition,
     ): WorkflowDraft = updateStep(path, index) { step ->
         when (step) {
+            is com.veyarc.model.FindImage -> step.copy(condition = transform(step.condition) as ImagePresentCondition)
             is WaitUntil -> step.copy(condition = transform(step.condition))
             is IfElse -> step.copy(condition = transform(step.condition))
             is WhileStep -> step.copy(condition = transform(step.condition))
@@ -614,8 +758,8 @@ data class WorkflowDraft(
         fun conditionUses(condition: Condition, label: String) {
             condition.backgroundAssetId()?.let { backgrounds.getOrPut(it.value) { linkedSetOf() }.add(label) }
             when (condition) {
-                is ImagePresentCondition -> crops.getOrPut(condition.assetId.value) { linkedSetOf() }.add(label)
-                is ImageAbsentCondition -> crops.getOrPut(condition.assetId.value) { linkedSetOf() }.add(label)
+                is ImagePresentCondition -> condition.assetId?.let { crops.getOrPut(it.value) { linkedSetOf() }.add(label) }
+                is ImageAbsentCondition -> condition.assetId?.let { crops.getOrPut(it.value) { linkedSetOf() }.add(label) }
                 is AndCondition -> condition.conditions.forEach { conditionUses(it, label) }
                 is OrCondition -> condition.conditions.forEach { conditionUses(it, label) }
                 is NotCondition -> conditionUses(condition.condition, label)
@@ -626,10 +770,15 @@ data class WorkflowDraft(
             var number = 0
             items.forEach { step ->
                 if (step is StageBoundary) return@forEach
+                if (step is ReusableSection) {
+                    visit(step.bodySteps, "${step.name} · ")
+                    return@forEach
+                }
                 number++
                 val label = "$prefix$number"
                 step.backgroundAssetId()?.let { backgrounds.getOrPut(it.value) { linkedSetOf() }.add(label) }
                 when (step) {
+                    is com.veyarc.model.FindImage -> conditionUses(step.condition, label)
                     is WaitUntil -> conditionUses(step.condition, label)
                     is IfElse -> conditionUses(step.condition, label)
                     is WhileStep -> conditionUses(step.condition, label)
@@ -640,6 +789,8 @@ data class WorkflowDraft(
                         visit(step.thenSteps, "$label.")
                         visit(step.elseSteps, "$label.")
                     }
+
+                    is ReusableSection -> visit(step.bodySteps, "$label.")
 
                     is Repeat -> visit(step.bodySteps, "$label.")
 
@@ -822,6 +973,7 @@ data class WorkflowDraft(
 
 private fun List<WorkflowStep>.withoutBackground(assetId: com.veyarc.model.AssetId): List<WorkflowStep> {
     fun condition(value: Condition): Condition = when (value) {
+        is com.veyarc.model.CapturedImageCondition -> if (value.backgroundAssetId == assetId) value.copy(backgroundAssetId = null) else value
         is PixelColorCondition -> if (value.backgroundAssetId == assetId) value.copy(backgroundAssetId = null) else value
         is ImagePresentCondition -> if (value.backgroundAssetId == assetId) value.copy(backgroundAssetId = null) else value
         is ImageAbsentCondition -> if (value.backgroundAssetId == assetId) value.copy(backgroundAssetId = null) else value
@@ -833,9 +985,11 @@ private fun List<WorkflowStep>.withoutBackground(assetId: com.veyarc.model.Asset
     return map { original ->
         val step = if (original.backgroundAssetId() == assetId) original.withBackgroundAsset(null) else original
         when (step) {
+            is com.veyarc.model.FindImage -> step.copy(condition = condition(step.condition) as ImagePresentCondition)
             is WaitUntil -> step.copy(condition = condition(step.condition))
             is IfElse -> step.copy(condition = condition(step.condition), thenSteps = step.thenSteps.withoutBackground(assetId), elseSteps = step.elseSteps.withoutBackground(assetId))
             is WhileStep -> step.copy(condition = condition(step.condition), bodySteps = step.bodySteps.withoutBackground(assetId))
+            is ReusableSection -> step.copy(bodySteps = step.bodySteps.withoutBackground(assetId))
             is Repeat -> step.copy(bodySteps = step.bodySteps.withoutBackground(assetId))
             else -> step
         }
@@ -846,6 +1000,8 @@ private fun List<WorkflowStep>.allStepIds(): Set<String> = buildSet {
     fun collect(step: WorkflowStep) {
         add(step.id)
         when (step) {
+            is ReusableSection -> step.bodySteps.forEach(::collect)
+
             is Repeat -> step.bodySteps.forEach(::collect)
 
             is WhileStep -> step.bodySteps.forEach(::collect)
@@ -879,6 +1035,7 @@ private fun BundleAsset.toDescriptor(displayName: String? = null, addedAtMs: Lon
 )
 
 private fun WorkflowStep.childrenFor(branch: NestedBranch): List<WorkflowStep>? = when (branch) {
+    NestedBranch.SECTION_BODY -> (this as? ReusableSection)?.bodySteps
     NestedBranch.REPEAT_BODY -> (this as? Repeat)?.bodySteps
     NestedBranch.WHILE_BODY -> (this as? WhileStep)?.bodySteps
     NestedBranch.IF_THEN -> (this as? IfElse)?.thenSteps
@@ -889,13 +1046,14 @@ private inline fun WorkflowStep.replaceChildren(
     branch: NestedBranch,
     transform: (List<WorkflowStep>) -> List<WorkflowStep>,
 ): WorkflowStep = when (branch) {
+    NestedBranch.SECTION_BODY -> (this as? ReusableSection)?.copy(bodySteps = transform(bodySteps)) ?: this
     NestedBranch.REPEAT_BODY -> (this as? Repeat)?.copy(bodySteps = transform(bodySteps)) ?: this
     NestedBranch.WHILE_BODY -> (this as? WhileStep)?.copy(bodySteps = transform(bodySteps)) ?: this
     NestedBranch.IF_THEN -> (this as? IfElse)?.copy(thenSteps = transform(thenSteps)) ?: this
     NestedBranch.IF_ELSE -> (this as? IfElse)?.copy(elseSteps = transform(elseSteps)) ?: this
 }
 
-fun newStep(kind: WorkflowStepKind, defaultPackage: String, jumpTargetId: String? = null): WorkflowStep {
+fun newStep(kind: WorkflowStepKind, defaultPackage: String, jumpTargetId: String? = null, variable: Pair<String, com.veyarc.model.VariableDeclaration>? = null, sectionId: String? = null): WorkflowStep {
     val id = WorkflowIds.newUuid()
     val packageName = runCatching { PackageName(defaultPackage) }.getOrElse { PackageName("com.veyarc.app") }
     val condition: Condition = ForegroundPackageCondition(packageName)
@@ -949,6 +1107,25 @@ fun newStep(kind: WorkflowStepKind, defaultPackage: String, jumpTargetId: String
 
         WorkflowStepKind.LAUNCH_APP -> LaunchApp(id, packageName, DurationMillis(5_000))
 
+        WorkflowStepKind.SET_VARIABLE -> {
+            val (name, declaration) = requireNotNull(variable) { "Add a variable before adding an assignment block" }
+            com.veyarc.model.SetVariable(id, com.veyarc.model.VariableName(name), declaration.initialValue)
+        }
+
+        WorkflowStepKind.FIND_IMAGE -> com.veyarc.model.FindImage(id, com.veyarc.model.VariableName("match"), ImagePresentCondition(region = NormalizedRect(0.25, 0.25, 0.5, 0.5), matchThreshold = 0.9))
+
+        WorkflowStepKind.CAPTURE_IMAGE -> com.veyarc.model.CaptureImage(id, com.veyarc.model.VariableName("image"), NormalizedRect(0.25, 0.25, 0.5, 0.5))
+
+        WorkflowStepKind.SECTION -> ReusableSection(id, "Sequence 1", listOf(Wait(WorkflowIds.newUuid(), DurationMillis(500))))
+
+        WorkflowStepKind.RUN_SECTION -> RunSection(id, requireNotNull(sectionId) { "Add a reusable section first" })
+
+        WorkflowStepKind.BREAK_LOOP -> BreakLoop(id)
+
+        WorkflowStepKind.CONTINUE_LOOP -> ContinueLoop(id)
+
+        WorkflowStepKind.RETURN_SECTION -> ReturnSection(id)
+
         WorkflowStepKind.STOP -> Stop(id, StopReason.USER_REQUESTED, "Stopped by workflow")
     }
 }
@@ -956,6 +1133,8 @@ fun newStep(kind: WorkflowStepKind, defaultPackage: String, jumpTargetId: String
 private fun MutableSet<String>.addStepAssetReferences(step: WorkflowStep) {
     step.backgroundAssetId()?.let { add(it.value) }
     when (step) {
+        is com.veyarc.model.FindImage -> addConditionAssetReferences(step.condition)
+
         is WaitUntil -> addConditionAssetReferences(step.condition)
 
         is IfElse -> {
@@ -963,6 +1142,8 @@ private fun MutableSet<String>.addStepAssetReferences(step: WorkflowStep) {
             step.thenSteps.forEach(::addStepAssetReferences)
             step.elseSteps.forEach(::addStepAssetReferences)
         }
+
+        is ReusableSection -> step.bodySteps.forEach(::addStepAssetReferences)
 
         is Repeat -> step.bodySteps.forEach(::addStepAssetReferences)
 
@@ -978,8 +1159,8 @@ private fun MutableSet<String>.addStepAssetReferences(step: WorkflowStep) {
 private fun MutableSet<String>.addConditionAssetReferences(condition: Condition) {
     condition.backgroundAssetId()?.let { add(it.value) }
     when (condition) {
-        is ImagePresentCondition -> add(condition.assetId.value)
-        is ImageAbsentCondition -> add(condition.assetId.value)
+        is ImagePresentCondition -> condition.assetId?.let { add(it.value) }
+        is ImageAbsentCondition -> condition.assetId?.let { add(it.value) }
         is AndCondition -> condition.conditions.forEach(::addConditionAssetReferences)
         is OrCondition -> condition.conditions.forEach(::addConditionAssetReferences)
         is NotCondition -> addConditionAssetReferences(condition.condition)
@@ -1000,6 +1181,14 @@ fun WorkflowStepKind.displayName(): String = when (this) {
     WorkflowStepKind.REPEAT -> "Repeat"
     WorkflowStepKind.WHILE -> "While"
     WorkflowStepKind.LAUNCH_APP -> "Launch app"
+    WorkflowStepKind.SET_VARIABLE -> "Set variable"
+    WorkflowStepKind.FIND_IMAGE -> "Find image"
+    WorkflowStepKind.CAPTURE_IMAGE -> "Capture image"
+    WorkflowStepKind.SECTION -> "Save block range"
+    WorkflowStepKind.RUN_SECTION -> "Run saved blocks"
+    WorkflowStepKind.BREAK_LOOP -> "Leave loop"
+    WorkflowStepKind.CONTINUE_LOOP -> "Next repeat"
+    WorkflowStepKind.RETURN_SECTION -> "Finish sequence"
     WorkflowStepKind.STOP -> "Stop"
 }
 
@@ -1016,42 +1205,60 @@ fun WorkflowStep.displayName(): String = when (this) {
     is Repeat -> "Repeat"
     is WhileStep -> "While"
     is LaunchApp -> "Launch app"
+    is com.veyarc.model.FindImage -> "Find image"
+    is com.veyarc.model.CaptureImage -> "Capture image"
+    is com.veyarc.model.SetVariable -> "Set variable"
+    is ReusableSection -> "Saved blocks"
+    is RunSection -> "Run saved blocks"
+    is BreakLoop -> "Leave loop"
+    is ContinueLoop -> "Next repeat"
+    is ReturnSection -> "Finish sequence"
     is Stop -> "Stop"
     else -> "Step"
 }
 
-fun WorkflowStep.summary(assetNames: Map<String, String> = emptyMap()): String = when (this) {
+fun WorkflowStep.summary(assetNames: Map<String, String> = emptyMap(), appNames: Map<String, String> = emptyMap()): String = when (this) {
     is TapPoint -> "Tap at ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}% of the screen"
     is TapRegion -> "Tap inside a ${(region.width * 100).toInt()}% × ${(region.height * 100).toInt()}% area"
-    is LongPress -> "Hold for ${durationMs.value} ms at ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}%"
+    is LongPress -> "Hold for ${durationVariable?.value ?: durationMs.value} ms at ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}%"
     is SwipePath -> "Swipe through ${points.size} points in ${durationMs.value} ms"
-    is Wait -> "Wait ${durationMs.value} ms"
+    is Wait -> "Wait ${durationVariable?.value ?: durationMs.value} ms"
     is StageBoundary -> "Separate this stage from the next"
     is Jump -> "Continue from the selected point until this section has run $maxVisits times"
-    is WaitUntil -> "Wait until ${condition.summary(assetNames)} · timeout ${timeoutMs.value} ms, check every ${pollIntervalMs.value} ms"
-    is IfElse -> "If ${condition.summary(assetNames)} · ${thenSteps.size} then / ${elseSteps.size} else blocks"
-    is Repeat -> "Run ${bodySteps.size} nested blocks $count times"
-    is WhileStep -> "While ${condition.summary(assetNames)} · up to $maxIterations times"
-    is LaunchApp -> "Open ${packageName.value} and wait up to ${foregroundTimeoutMs.value} ms"
+    is WaitUntil -> "Wait until ${condition.summary(assetNames, appNames)} · timeout ${timeoutMs.value} ms, check every ${pollIntervalMs.value} ms"
+    is IfElse -> "If ${condition.summary(assetNames, appNames)} · ${thenSteps.size} then / ${elseSteps.size} else blocks"
+    is Repeat -> "Run ${bodySteps.size} nested blocks ${countVariable?.value ?: count} times"
+    is WhileStep -> "While ${condition.summary(assetNames, appNames)} · up to $maxIterations times"
+    is LaunchApp -> "Open ${appNames[packageName.value] ?: packageName.value.substringAfterLast('.')} and wait up to ${foregroundTimeoutMs.value} ms"
+    is com.veyarc.model.FindImage -> "Find ${condition.summary(assetNames, appNames)} and save as ${name.value}"
+    is com.veyarc.model.CaptureImage -> "Capture ${name.value} for this run"
+    is com.veyarc.model.SetVariable -> assignmentSummary()
+    is ReusableSection -> "$name · ${bodySteps.size} blocks"
+    is RunSection -> "Run the selected section"
+    is BreakLoop -> "Continue after the nearest Repeat or While"
+    is ContinueLoop -> "Skip to the next repeat of the nearest loop"
+    is ReturnSection -> "Finish these saved blocks and continue after the call"
     is Stop -> message ?: reason.name.lowercase().replace('_', ' ')
     else -> "Configured workflow step"
 }
 
-fun Condition.summary(assetNames: Map<String, String> = emptyMap()): String = when (this) {
+fun Condition.summary(assetNames: Map<String, String> = emptyMap(), appNames: Map<String, String> = emptyMap()): String = when (this) {
+    is com.veyarc.model.CapturedImageCondition -> "captured ${name.value} ${if (present) "appears" else "is absent"}"
+
     is PixelColorCondition -> if (region == null) "the pixel at ${(point.x * 100).toInt()}%, ${(point.y * 100).toInt()}% has the selected color" else "the selected color appears in the search area"
 
     is ImagePresentCondition -> when (matchMode) {
-        ImageMatchMode.APPEARS_WITHIN_REGION -> "${assetNames[assetId.value] ?: "the selected image"} appears"
-        ImageMatchMode.SCREEN_STATE -> "the screen matches ${assetNames[assetId.value] ?: "the selected image"}"
+        ImageMatchMode.APPEARS_WITHIN_REGION -> "${capturedImage?.value ?: assetNames[assetId?.value] ?: "the selected image"} appears"
+        ImageMatchMode.SCREEN_STATE -> "the screen matches ${capturedImage?.value ?: assetNames[assetId?.value] ?: "the selected image"}"
     }
 
-    is ImageAbsentCondition -> "${assetNames[assetId.value] ?: "the selected image"} is absent"
+    is ImageAbsentCondition -> "${capturedImage?.value ?: assetNames[assetId?.value] ?: "the selected image"} is absent"
 
-    is ForegroundPackageCondition -> "${packageName.value} is open"
+    is ForegroundPackageCondition -> "${appNames[packageName.value] ?: packageName.value.substringAfterLast('.')} is open"
 
     is com.veyarc.model.OrientationCondition -> "the screen is ${orientation.name.lowercase()}"
 
-    is com.veyarc.model.VariableComparisonCondition -> "Variable comparison"
+    is com.veyarc.model.VariableComparisonCondition -> comparisonText()
 
     is com.veyarc.model.StepResultCondition -> "Step result ${stepId.take(8)}…"
 
@@ -1059,5 +1266,21 @@ fun Condition.summary(assetNames: Map<String, String> = emptyMap()): String = wh
 
     is OrCondition -> "any of ${conditions.size} conditions is true"
 
-    is NotCondition -> "not (${condition.summary(assetNames)})"
+    is NotCondition -> "not (${condition.summary(assetNames, appNames)})"
+}
+
+internal fun WorkflowStepKind.optionGroup(): Int = when (this) {
+    WorkflowStepKind.LAUNCH_APP, WorkflowStepKind.TAP_POINT, WorkflowStepKind.TAP_REGION, WorkflowStepKind.LONG_PRESS, WorkflowStepKind.SWIPE_PATH -> 1
+    WorkflowStepKind.WAIT, WorkflowStepKind.WAIT_UNTIL -> 2
+    WorkflowStepKind.IF_ELSE, WorkflowStepKind.WHILE, WorkflowStepKind.REPEAT -> 3
+    WorkflowStepKind.CAPTURE_IMAGE, WorkflowStepKind.FIND_IMAGE, WorkflowStepKind.SET_VARIABLE -> 4
+    WorkflowStepKind.BREAK_LOOP, WorkflowStepKind.CONTINUE_LOOP, WorkflowStepKind.RETURN_SECTION, WorkflowStepKind.SECTION, WorkflowStepKind.RUN_SECTION, WorkflowStepKind.STAGE_BOUNDARY, WorkflowStepKind.JUMP, WorkflowStepKind.STOP -> 5
+}
+
+internal fun WorkflowStepKind.optionGroupTitle(): String = when (optionGroup()) {
+    1 -> "Actions"
+    2 -> "Timing"
+    3 -> "Conditions & loops"
+    4 -> "Images & variables"
+    else -> "Flow control"
 }

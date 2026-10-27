@@ -47,9 +47,9 @@ class EditorBlockClipboardTest {
         val copiedChildren = (copied[1] as Repeat).bodySteps
         assertNotEquals(boundary.id, copiedBoundary.id)
         assertEquals(copiedBoundary.id, (copied[2] as Jump).targetStepId)
-        assertEquals("destination-image", ((copiedChildren[0] as WaitUntil).condition as ImagePresentCondition).assetId.value)
+        assertEquals("destination-image", ((copiedChildren[0] as WaitUntil).condition as ImagePresentCondition).assetId!!.value)
         assertEquals(copiedChildren[0].id, ((copiedChildren[1] as WaitUntil).condition as StepResultCondition).stepId)
-        assertEquals("source-image", check.condition.let { it as ImagePresentCondition }.assetId.value)
+        assertEquals("source-image", check.condition.let { it as ImagePresentCondition }.assetId!!.value)
     }
 
     @Test

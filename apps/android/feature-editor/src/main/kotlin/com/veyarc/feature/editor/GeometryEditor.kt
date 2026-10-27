@@ -80,7 +80,10 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.veyarc.data.storage.WorkflowAssetDescriptor
 import com.veyarc.model.AssetId
+import com.veyarc.model.CaptureImage
 import com.veyarc.model.DisplayOrientation
+import com.veyarc.model.FindImage
+import com.veyarc.model.ImagePositionBinding
 import com.veyarc.model.LongPress
 import com.veyarc.model.NormalizedCoordinate
 import com.veyarc.model.NormalizedRect
@@ -88,6 +91,8 @@ import com.veyarc.model.RegionAnchor
 import com.veyarc.model.SwipePath
 import com.veyarc.model.TapPoint
 import com.veyarc.model.TapRegion
+import com.veyarc.model.VariableDeclaration
+import com.veyarc.model.VariableName
 import com.veyarc.model.ViewportSpec
 import com.veyarc.model.WorkflowStep
 import com.veyarc.model.backgroundAssetId
@@ -104,11 +109,42 @@ internal fun GeometryEditorDialog(
     assetNames: Map<String, String>,
     loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
     onDismiss: () -> Unit,
+    onAddImage: () -> Unit,
     onApply: (WorkflowStep) -> Unit,
+    imageSearches: Map<String, List<FindImage>> = emptyMap(),
+    variables: Map<String, VariableDeclaration> = emptyMap(),
 ) {
     var pickerOpen by rememberSaveable { mutableStateOf(false) }
     var selectedAssetId by rememberSaveable(step.id) { mutableStateOf(step.backgroundAssetId()?.value) }
-    fun apply(value: WorkflowStep) = onApply(value.withBackgroundAsset(selectedAssetId?.let(::AssetId)))
+    val originalBinding = when (step) {
+        is TapPoint -> step.imagePosition
+        is LongPress -> step.imagePosition
+        else -> null
+    }
+    var resultName by rememberSaveable(step.id) { mutableStateOf(originalBinding?.name?.value) }
+    var offsetX by rememberSaveable(step.id) { mutableStateOf(originalBinding?.offsetXPx ?: 0) }
+    var offsetY by rememberSaveable(step.id) { mutableStateOf(originalBinding?.offsetYPx ?: 0) }
+    var offsetXVariable by rememberSaveable(step.id) { mutableStateOf(originalBinding?.offsetXVariable?.value) }
+    var offsetYVariable by rememberSaveable(step.id) { mutableStateOf(originalBinding?.offsetYVariable?.value) }
+    var positionValid by rememberSaveable(step.id) { mutableStateOf(true) }
+    val binding = resultName?.let { ImagePositionBinding(VariableName(it), offsetX, offsetY, offsetXVariable?.let(::VariableName), offsetYVariable?.let(::VariableName)) }
+    val positionControls: @Composable () -> Unit = {
+        ImagePositionFields(binding, imageSearches, variables, onValidityChange = { positionValid = it }) {
+            resultName = it?.name?.value
+            offsetX = it?.offsetXPx ?: 0
+            offsetY = it?.offsetYPx ?: 0
+            offsetXVariable = it?.offsetXVariable?.value
+            offsetYVariable = it?.offsetYVariable?.value
+        }
+    }
+    fun apply(value: WorkflowStep) {
+        val positioned = when (value) {
+            is TapPoint -> value.copy(imagePosition = binding)
+            is LongPress -> value.copy(imagePosition = binding)
+            else -> value
+        }
+        onApply(positioned.withBackgroundAsset(selectedAssetId?.let(::AssetId)))
+    }
     val referenceImage by produceState(selectedAssetId?.let { cachedTemplatePreview(AssetId(it), PREVIEW_MAX_DIMENSION)?.image }, selectedAssetId) {
         value = selectedAssetId?.let { cachedTemplatePreview(AssetId(it), PREVIEW_MAX_DIMENSION)?.image }
         value = selectedAssetId?.let { (cachedTemplatePreview(AssetId(it), PREVIEW_MAX_DIMENSION) ?: loadPreview(AssetId(it), PREVIEW_MAX_DIMENSION))?.image }
@@ -116,40 +152,62 @@ internal fun GeometryEditorDialog(
     val configuration = LocalConfiguration.current
     val compactLandscape = configuration.screenWidthDp < configuration.screenHeightDp &&
         viewport.recordedOrientation == DisplayOrientation.LANDSCAPE
+    val compact = compactLandscape || binding != null
     EditorSheetDialog(
-        compact = compactLandscape,
+        compact = compact,
         onDismiss = onDismiss,
         compactMaxHeightFraction = 0.86f,
         largeHeightFraction = 1f,
         contentScrollable = false,
     ) {
-        Box(if (compactLandscape) Modifier.fillMaxWidth() else Modifier.fillMaxSize()) {
+        Box(if (compact) Modifier.fillMaxWidth() else Modifier.fillMaxSize()) {
             when (step) {
                 is TapPoint -> PointGeometryEditor(
                     title = "Edit tap point",
                     point = step.point,
+                    positionControls = positionControls,
+                    dynamicPosition = binding != null,
+                    positionValid = positionValid,
                     viewport = viewport,
-                    compact = compactLandscape,
+                    compact = compact,
                     background = referenceImage,
                     onToggleReference = { pickerOpen = !pickerOpen },
+                    onAddImage = onAddImage,
                     onApply = { point -> apply(step.copy(point = point)) },
                 )
 
                 is LongPress -> LongPressGeometryEditor(
                     step = step,
+                    positionControls = positionControls,
+                    dynamicPosition = binding != null,
+                    positionValid = positionValid,
+                    variables = variables,
                     viewport = viewport,
-                    compact = compactLandscape,
+                    compact = compact,
                     background = referenceImage,
                     onToggleReference = { pickerOpen = !pickerOpen },
+                    onAddImage = onAddImage,
                     onApply = ::apply,
+                )
+
+                is CaptureImage -> RegionGeometryEditor(
+                    step = TapRegion(step.id, step.region, RegionAnchor.Center),
+                    viewport = viewport,
+                    compact = compact,
+                    background = referenceImage,
+                    onToggleReference = { pickerOpen = !pickerOpen },
+                    onAddImage = onAddImage,
+                    onApply = { updated -> apply(step.copy(region = (updated as TapRegion).region)) },
+                    capture = true,
                 )
 
                 is TapRegion -> RegionGeometryEditor(
                     step = step,
                     viewport = viewport,
-                    compact = compactLandscape,
+                    compact = compact,
                     background = referenceImage,
                     onToggleReference = { pickerOpen = !pickerOpen },
+                    onAddImage = onAddImage,
                     onApply = ::apply,
                 )
 
@@ -157,9 +215,10 @@ internal fun GeometryEditorDialog(
                     step = step,
                     viewport = viewport,
                     maxPathPoints = maxPathPoints,
-                    compact = compactLandscape,
+                    compact = compact,
                     background = referenceImage,
                     onToggleReference = { pickerOpen = !pickerOpen },
+                    onAddImage = onAddImage,
                     onApply = ::apply,
                 )
 
@@ -202,6 +261,9 @@ internal fun TemplatePickerSheet(
     loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
     allowAnySize: Boolean = false,
     onAddImage: (() -> Unit)? = null,
+    capturedImages: Set<String> = emptySet(),
+    selectedCapture: String? = null,
+    onSelectCapture: ((String) -> Unit)? = null,
 ) {
     if (!visible) return
     val options = assets.filter { asset ->
@@ -240,11 +302,24 @@ internal fun TemplatePickerSheet(
                     IconButton(onClick = add) { Icon(Icons.Outlined.AddPhotoAlternate, contentDescription = "Add image") }
                 }
             }
+            if (capturedImages.isNotEmpty() && onSelectCapture != null) {
+                androidx.compose.foundation.lazy.LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(capturedImages.size) { index ->
+                        val name = capturedImages.elementAt(index)
+                        Surface(onClick = { onSelectCapture(name) }, shape = RoundedCornerShape(12.dp), color = if (name == selectedCapture) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh) {
+                            Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                                Text(name, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
+                }
+            }
             if (allowNone) {
+                if (capturedImages.isNotEmpty()) Spacer(Modifier.height(14.dp))
                 Surface(
                     onClick = { onSelect(null) },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
-                    color = if (selectedAssetId == null) {
+                    color = if (selectedAssetId == null && selectedCapture == null) {
                         MaterialTheme.colorScheme.secondaryContainer
                     } else {
                         Color.Transparent
@@ -424,10 +499,14 @@ private sealed interface TemplatePickerPreviewState {
 private fun PointGeometryEditor(
     title: String,
     point: NormalizedCoordinate,
+    positionControls: @Composable () -> Unit,
+    dynamicPosition: Boolean,
+    positionValid: Boolean,
     viewport: ViewportSpec,
     compact: Boolean,
     background: ImageBitmap?,
     onToggleReference: () -> Unit,
+    onAddImage: () -> Unit,
     onApply: (NormalizedCoordinate) -> Unit,
 ) {
     var selectedPoint by remember(point) { mutableStateOf(point) }
@@ -435,92 +514,109 @@ private fun PointGeometryEditor(
         title = title,
         compact = compact,
         onToggleReference = onToggleReference,
+        onAddImage = onAddImage,
+        applyEnabled = positionValid,
         onApply = { onApply(selectedPoint) },
     ) {
-        Text("Tap the display preview to place the contact point.")
-        GeometryPreview(
-            viewport = viewport,
-            background = background,
-            modifier = geometryPreviewModifier(viewport, compact),
-            gestureModifier = Modifier.pointerInput(Unit) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    down.consume()
-                    selectedPoint = down.position.toNormalized(size)
-                    var pressed = true
-                    while (pressed) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        change.consume()
-                        pressed = change.pressed
+        positionControls()
+        if (!dynamicPosition) {
+            Text("Tap the display preview to place the contact point.")
+            GeometryPreview(
+                viewport = viewport,
+                background = background,
+                modifier = geometryPreviewModifier(viewport, compact),
+                gestureModifier = Modifier.pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        selectedPoint = down.position.toNormalized(size)
+                        var pressed = true
+                        while (pressed) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            change.consume()
+                            pressed = change.pressed
+                        }
                     }
-                }
-            },
-        ) {
-            drawTargetMarker(selectedPoint)
+                },
+            ) {
+                drawTargetMarker(selectedPoint)
+            }
+            Text(selectedPoint.displayText())
         }
-        Text(selectedPoint.displayText())
     }
 }
 
 @Composable
 private fun LongPressGeometryEditor(
     step: LongPress,
+    positionControls: @Composable () -> Unit,
+    dynamicPosition: Boolean,
+    positionValid: Boolean,
+    variables: Map<String, VariableDeclaration>,
     viewport: ViewportSpec,
     compact: Boolean,
     background: ImageBitmap?,
     onToggleReference: () -> Unit,
+    onAddImage: () -> Unit,
     onApply: (WorkflowStep) -> Unit,
 ) {
     var selectedPoint by remember(step) { mutableStateOf(step.point) }
-    var durationText by remember(step) { mutableStateOf(step.durationMs.value.toString()) }
-    val duration = durationText.toLongOrNull()
-    val validDuration = duration != null && duration > 0
+    var duration by rememberSaveable(step.id) { mutableStateOf(step.durationMs.value) }
+    var durationVariable by rememberSaveable(step.id) { mutableStateOf(step.durationVariable?.value) }
+    var validDuration by rememberSaveable(step.id) { mutableStateOf(true) }
     GeometryEditorLayout(
         title = "Edit long press",
         compact = compact,
         onToggleReference = onToggleReference,
-        applyEnabled = validDuration,
+        onAddImage = onAddImage,
+        applyEnabled = validDuration && positionValid,
         onApply = {
-            if (duration != null && duration > 0) {
-                onApply(step.copy(point = selectedPoint, durationMs = com.veyarc.model.DurationMillis(duration)))
-            }
+            onApply(step.copy(point = selectedPoint, durationMs = com.veyarc.model.DurationMillis(duration), durationVariable = durationVariable?.let(::VariableName)))
         },
     ) {
-        Text("Tap the display preview to place the press point.")
-        GeometryPreview(
-            viewport = viewport,
-            background = background,
-            modifier = geometryPreviewModifier(viewport, compact),
-            gestureModifier = Modifier.pointerInput(Unit) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    down.consume()
-                    selectedPoint = down.position.toNormalized(size)
-                    var pressed = true
-                    while (pressed) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        change.consume()
-                        pressed = change.pressed
+        positionControls()
+        if (!dynamicPosition) {
+            Text("Tap the display preview to place the press point.")
+            GeometryPreview(
+                viewport = viewport,
+                background = background,
+                modifier = geometryPreviewModifier(viewport, compact),
+                gestureModifier = Modifier.pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        selectedPoint = down.position.toNormalized(size)
+                        var pressed = true
+                        while (pressed) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            change.consume()
+                            pressed = change.pressed
+                        }
                     }
-                }
-            },
-        ) {
-            drawTargetMarker(selectedPoint)
+                },
+            ) {
+                drawTargetMarker(selectedPoint)
+            }
+            Text(selectedPoint.displayText())
         }
-        LongEditorField(
-            label = "Hold duration (ms)",
-            value = durationText,
-            onValueChange = { durationText = it },
-        )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Hold duration", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            NumberValueControl("Hold duration", durationVariable?.let(::VariableName), variables, {
+                durationVariable = it?.value
+                validDuration = true
+            }) {
+                InlineLongField(duration, 1, resetKey = null, label = "Hold duration", onValidityChange = { validDuration = it }) { duration = it }
+            }
+            Text("ms", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         if (!validDuration) {
             Text(
                 "Hold duration must be greater than zero.",
                 color = MaterialTheme.colorScheme.error,
             )
         }
-        Text(selectedPoint.displayText())
     }
 }
 
@@ -531,7 +627,9 @@ private fun RegionGeometryEditor(
     compact: Boolean,
     background: ImageBitmap?,
     onToggleReference: () -> Unit,
+    onAddImage: () -> Unit,
     onApply: (WorkflowStep) -> Unit,
+    capture: Boolean = false,
 ) {
     var region by remember(step) { mutableStateOf(step.region) }
     var anchorPreset by remember(step) { mutableStateOf(AnchorPreset.from(step.anchor)) }
@@ -543,83 +641,96 @@ private fun RegionGeometryEditor(
     val validAnchor = anchor != null
 
     GeometryEditorLayout(
-        title = "Edit touch region",
+        title = if (capture) "Capture area" else "Edit touch region",
         compact = compact,
         onToggleReference = onToggleReference,
+        onAddImage = onAddImage,
         applyEnabled = validAnchor,
         onApply = { anchor?.let { onApply(step.copy(region = region, anchor = it)) } },
     ) {
-        Text("Drag a corner to resize the region, or drag inside it to move it.")
+        val fullCapture = capture && region == NormalizedRect(0.0, 0.0, 1.0, 1.0)
+        if (capture) {
+            InlineVariableOptions(listOf("crop" to "Crop", "screen" to "Full screen"), if (fullCapture) "screen" else "crop") {
+                region = if (it == "screen") NormalizedRect(0.0, 0.0, 1.0, 1.0) else NormalizedRect(0.25, 0.25, 0.5, 0.5)
+            }
+        }
+        if (!fullCapture) Text("Drag a corner to resize the region, or drag inside it to move it.")
         GeometryPreview(
             viewport = viewport,
             background = background,
             modifier = geometryPreviewModifier(viewport, compact),
-            gestureModifier = Modifier.pointerInput(Unit) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    down.consume()
-                    val start = down.position.toNormalized(size)
-                    activeHandle = selectRegionHandle(region, start, threshold = 0.08)
-                    var previous = down.position
-                    var pressed = true
-                    while (pressed) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        val current = change.position
-                        val handle = activeHandle
-                        if (handle != null) {
-                            val deltaX = (current.x - previous.x) / size.width
-                            val deltaY = (current.y - previous.y) / size.height
-                            region = updateRegion(region, handle, deltaX.toDouble(), deltaY.toDouble())
+            gestureModifier = if (fullCapture) {
+                Modifier
+            } else {
+                Modifier.pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        val start = down.position.toNormalized(size)
+                        activeHandle = selectRegionHandle(region, start, threshold = 0.08)
+                        var previous = down.position
+                        var pressed = true
+                        while (pressed) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            val current = change.position
+                            val handle = activeHandle
+                            if (handle != null) {
+                                val deltaX = (current.x - previous.x) / size.width
+                                val deltaY = (current.y - previous.y) / size.height
+                                region = updateRegion(region, handle, deltaX.toDouble(), deltaY.toDouble())
+                            }
+                            previous = current
+                            change.consume()
+                            pressed = change.pressed
                         }
-                        previous = current
-                        change.consume()
-                        pressed = change.pressed
+                        activeHandle = null
                     }
-                    activeHandle = null
                 }
             },
         ) {
-            drawRegion(region, anchor)
+            drawRegion(region, if (capture) null else anchor)
         }
         Text(region.displayText())
-        Box {
-            OutlinedButton(onClick = { anchorMenuExpanded = true }) {
-                Text("Anchor: ${anchorPreset.label}")
+        if (!capture) {
+            Box {
+                OutlinedButton(onClick = { anchorMenuExpanded = true }) {
+                    Text("Anchor: ${anchorPreset.label}")
+                }
+                if (anchorMenuExpanded) {
+                    VeyarcChoicePicker(
+                        title = "Tap anchor",
+                        options = AnchorPreset.entries.map { VeyarcChoice(it.name, it.label) },
+                        selectedId = anchorPreset.name,
+                        onDismiss = { anchorMenuExpanded = false },
+                        onSelect = { choice ->
+                            anchorPreset = AnchorPreset.entries.first { it.name == choice.id }
+                            anchorMenuExpanded = false
+                        },
+                    )
+                }
             }
-            if (anchorMenuExpanded) {
-                VeyarcChoicePicker(
-                    title = "Tap anchor",
-                    options = AnchorPreset.entries.map { VeyarcChoice(it.name, it.label) },
-                    selectedId = anchorPreset.name,
-                    onDismiss = { anchorMenuExpanded = false },
-                    onSelect = { choice ->
-                        anchorPreset = AnchorPreset.entries.first { it.name == choice.id }
-                        anchorMenuExpanded = false
-                    },
-                )
-            }
-        }
-        if (anchorPreset == AnchorPreset.CUSTOM) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DecimalEditorField(
-                    label = "Anchor X",
-                    value = customAnchorX,
-                    onValueChange = { customAnchorX = it },
-                    modifier = Modifier.weight(1f),
-                )
-                DecimalEditorField(
-                    label = "Anchor Y",
-                    value = customAnchorY,
-                    onValueChange = { customAnchorY = it },
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            if (!validAnchor) {
-                Text(
-                    "Custom anchor coordinates must be between 0 and 1.",
-                    color = MaterialTheme.colorScheme.error,
-                )
+            if (anchorPreset == AnchorPreset.CUSTOM) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DecimalEditorField(
+                        label = "Anchor X",
+                        value = customAnchorX,
+                        onValueChange = { customAnchorX = it },
+                        modifier = Modifier.weight(1f),
+                    )
+                    DecimalEditorField(
+                        label = "Anchor Y",
+                        value = customAnchorY,
+                        onValueChange = { customAnchorY = it },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (!validAnchor) {
+                    Text(
+                        "Custom anchor coordinates must be between 0 and 1.",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
         }
     }
@@ -633,6 +744,7 @@ private fun PathGeometryEditor(
     compact: Boolean,
     background: ImageBitmap?,
     onToggleReference: () -> Unit,
+    onAddImage: () -> Unit,
     onApply: (WorkflowStep) -> Unit,
 ) {
     var points by remember(step) { mutableStateOf(step.points.map { it.point }) }
@@ -649,28 +761,8 @@ private fun PathGeometryEditor(
         title = "Edit swipe path",
         compact = compact,
         onToggleReference = onToggleReference,
+        onAddImage = onAddImage,
         applyEnabled = validPath,
-        headerAction = {
-            IconButton(
-                enabled = validPath && !previewing,
-                onClick = {
-                    previewScope.launch {
-                        previewing = true
-                        previewProgress.snapTo(0f)
-                        previewProgress.animateTo(
-                            targetValue = 1f,
-                            animationSpec = tween(durationMillis = (duration ?: 1L).coerceIn(1L, 10_000L).toInt()),
-                        )
-                        previewing = false
-                    }
-                },
-            ) {
-                Icon(
-                    Icons.Outlined.PlayArrow,
-                    contentDescription = if (previewing) "Previewing swipe path" else "Preview swipe path",
-                )
-            }
-        },
         onApply = {
             if (duration != null && timedPoints != null) {
                 onApply(step.copy(durationMs = com.veyarc.model.DurationMillis(duration), points = timedPoints))
@@ -708,12 +800,28 @@ private fun PathGeometryEditor(
         ) {
             drawSwipePath(points, previewPoint)
         }
-        LongEditorField(
-            label = "Path duration (ms)",
-            value = durationText,
-            onValueChange = { durationText = it },
-            modifier = Modifier.fillMaxWidth(),
-        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LongEditorField(label = "Path duration (ms)", value = durationText, onValueChange = { durationText = it }, modifier = Modifier.weight(1f))
+            IconButton(
+                enabled = validPath && !previewing,
+                onClick = {
+                    previewScope.launch {
+                        previewing = true
+                        previewProgress.snapTo(0f)
+                        previewProgress.animateTo(
+                            targetValue = 1f,
+                            animationSpec = tween(durationMillis = (duration ?: 1L).coerceIn(1L, 10_000L).toInt()),
+                        )
+                        previewing = false
+                    }
+                },
+            ) {
+                Icon(
+                    Icons.Outlined.PlayArrow,
+                    contentDescription = if (previewing) "Previewing swipe path" else "Preview swipe path",
+                )
+            }
+        }
         Text(
             when {
                 points.size < 2 -> "Draw at least two points."
@@ -732,8 +840,8 @@ private fun GeometryEditorLayout(
     title: String,
     compact: Boolean,
     applyEnabled: Boolean = true,
-    headerAction: (@Composable () -> Unit)? = null,
     onToggleReference: (() -> Unit)? = null,
+    onAddImage: (() -> Unit)? = null,
     onApply: () -> Unit,
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -761,7 +869,7 @@ private fun GeometryEditorLayout(
                     Icon(Icons.Outlined.Image, contentDescription = "Choose background template")
                 }
             }
-            headerAction?.invoke()
+            onAddImage?.let { add -> IconButton(onClick = add) { Icon(Icons.Outlined.AddPhotoAlternate, "Add image") } }
             Button(enabled = applyEnabled, onClick = onApply) { Text("Apply") }
         }
         content()

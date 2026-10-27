@@ -64,6 +64,7 @@ fun StoredRunDetailScreen(
     workflowName: String = "Workflow run",
     statusLabel: String? = null,
     controls: (@Composable () -> Unit)? = null,
+    onOpenBlock: ((String) -> Unit)? = null,
 ) {
     BackHandler(onBack = onBack)
     val listState = rememberLazyListState()
@@ -71,6 +72,8 @@ fun StoredRunDetailScreen(
     // ponytail: Reveals saved events only; older discarded events need a separate retention change.
     var visibleEvents by remember(record.runId) { mutableIntStateOf(12) }
     val firstEvent = (record.eventHistory.size - visibleEvents).coerceAtLeast(0)
+    val packages = remember(record.eventHistory) { record.eventHistory.flatMap { event -> runApplicationReference.findAll(event.message).map { it.groupValues[2] }.toList() }.distinct() }
+    val appNames = rememberApplicationNames(packages)
     val sections = remember(record.eventHistory, firstEvent) { runActivitySections(record.eventHistory, firstEvent) }
     var collapsedSections by remember(record.runId) { mutableStateOf(emptySet<Int>()) }
     val timelineColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
@@ -164,14 +167,14 @@ fun StoredRunDetailScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         first.blockLabel?.let { label ->
-                            Text(label, style = MaterialTheme.typography.titleSmall)
+                            Text(label, Modifier.clickable(enabled = first.stepId != null && onOpenBlock != null, indication = null, interactionSource = null, onClickLabel = "Open block in editor") { first.stepId?.let { onOpenBlock?.invoke(it) } }, style = MaterialTheme.typography.titleSmall, color = if (first.stepId != null && onOpenBlock != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
                             first.contextLabel?.removePrefix(section.context)?.removePrefix(" › ")?.takeIf { it.isNotBlank() }?.let {
                                 Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                         group.forEach { (index, event) ->
                             Row(Modifier.fillMaxWidth().testTag("run-event-$index"), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.Top) {
-                                Text(readableRunMessage(event.message).replace(": true", ": met").replace(": false", ": not met"), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                                RunActivityMessage(event.message, appNames, Modifier.weight(1f))
                                 if (index > 0) Text("+${formatEventGap(event.atMs - record.eventHistory[index - 1].atMs)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
@@ -182,6 +185,22 @@ fun StoredRunDetailScreen(
         if (record.eventHistory.isEmpty()) {
             item {
                 Text(if (record.hasStoredDetails) "No activity recorded." else "Activity wasn't saved for this older run.", Modifier.padding(horizontal = 4.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RunActivityMessage(message: String, appNames: Map<String, String>, modifier: Modifier = Modifier) {
+    val title = readableRunMessage(message.substringBefore('\n'), appNames).replace(": true", ": met").replace(": false", ": not met")
+    val detail = message.substringAfter('\n', "")
+    if (detail.isEmpty()) {
+        Text(title, modifier, style = MaterialTheme.typography.bodyMedium)
+    } else {
+        Surface(modifier, shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary)
+                Text(detail, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -205,7 +224,12 @@ private fun runTitle(status: StoredRunStatus): String = when (status) {
 }
 
 // Historical messages remain intact in storage; technical identifiers aren't useful in this view.
-internal fun readableRunMessage(message: String): String = message.replace(runIdentifier, "").replace(Regex(" {2,}"), " ").trim()
+internal fun readableRunMessage(message: String, appNames: Map<String, String> = emptyMap()): String = message.replace(runIdentifier, "").replace(runApplicationReference) {
+    val name = it.groupValues[2]
+    val label = appNames[name] ?: name.substringAfterLast('.')
+    if (it.groupValues[1] == "Launch") "Open $label" else "$label is open"
+}.replace(Regex(" {2,}"), " ").trim()
+private val runApplicationReference = Regex("(Launch|Foreground package) ([a-zA-Z][a-zA-Z0-9_]*(?:\\.[a-zA-Z][a-zA-Z0-9_]*)+)")
 private val runIdentifier = Regex("(?i)\\b(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{64})\\b")
 
 internal fun formatEventGap(durationMs: Long): String = String.format(Locale.getDefault(), "%.1fs", durationMs.coerceAtLeast(0L) / 1000.0)
@@ -220,7 +244,7 @@ internal fun runActivityGroups(events: List<StoredRunEvent>, firstEvent: Int): L
     val groups = mutableListOf<MutableList<IndexedValue<StoredRunEvent>>>()
     events.withIndex().drop(firstEvent).forEach { indexed ->
         val previous = groups.lastOrNull()?.lastOrNull()?.value
-        if (indexed.value.blockLabel != null && previous?.blockLabel == indexed.value.blockLabel && previous?.contextLabel == indexed.value.contextLabel && !indexed.value.message.endsWith(" started")) {
+        if (indexed.value.blockLabel != null && previous?.blockLabel == indexed.value.blockLabel && previous?.contextLabel == indexed.value.contextLabel && previous?.stepId == indexed.value.stepId && !indexed.value.message.endsWith(" started")) {
             groups.last().add(indexed)
         } else {
             groups.add(mutableListOf(indexed))

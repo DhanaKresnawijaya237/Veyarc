@@ -96,6 +96,8 @@ data class AssistantContextSnapshot(val workflowId: String, val snapshotId: Stri
                 values.forEach { step ->
                     require(++steps <= MAX_STEPS) { "Workflow context supports at most 200 blocks. No blocks were omitted." }
                     when (step) {
+                        is com.veyarc.model.ReusableSection -> visit(step.bodySteps, depth + 1)
+
                         is Repeat -> visit(step.bodySteps, depth + 1)
 
                         is WhileStep -> {

@@ -42,6 +42,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.veyarc.data.storage.AndroidKeystoreKeySource
 import com.veyarc.data.storage.DecodedTemplate
@@ -71,6 +72,10 @@ internal fun ImageConditionPreview(
     loadPreview: suspend (AssetId, Int) -> TemplatePreviewData?,
     screenStateMode: Boolean = false,
     colorSearch: Boolean = false,
+    runtimeImage: Boolean = false,
+    capturedTargetName: String? = null,
+    capturedTargetRegion: NormalizedRect? = null,
+    resultPreview: Boolean = false,
     onRegionChange: ((NormalizedRect) -> Unit)?,
 ) {
     val safeDisplayWidth = displayWidthPx.coerceAtLeast(1)
@@ -96,7 +101,9 @@ internal fun ImageConditionPreview(
     }
     val configuration = LocalConfiguration.current
     val portrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
-    val previewHeight = if (portrait && safeDisplayWidth > safeDisplayHeight) {
+    val previewHeight = if (resultPreview) {
+        180f
+    } else if (portrait && safeDisplayWidth > safeDisplayHeight) {
         max(180f, configuration.screenWidthDp * safeDisplayHeight.toFloat() / safeDisplayWidth + 28f)
     } else if (portrait) {
         460f
@@ -109,18 +116,33 @@ internal fun ImageConditionPreview(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Text(if (colorSearch) "Colour search area" else "Current-device comparison", style = MaterialTheme.typography.titleSmall)
             Text(
-                if (screenStateMode) "Compare with the whole screen." else "Drag the area or its corners to choose where Veyarc searches.",
-                modifier = Modifier.padding(top = 4.dp),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                if (resultPreview) {
+                    "Match location"
+                } else if (runtimeImage) {
+                    "Captured image search area"
+                } else if (colorSearch) {
+                    "Colour search area"
+                } else {
+                    "Current-device comparison"
+                },
+                style = MaterialTheme.typography.titleSmall,
             )
+            if (!resultPreview) {
+                Text(
+                    if (screenStateMode) "Compare with the whole screen." else "Drag the area or its corners to choose where Veyarc searches.",
+                    modifier = Modifier.padding(top = 4.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             DeviceComparisonPreview(
                 region = region,
                 displayWidthPx = safeDisplayWidth,
                 displayHeightPx = safeDisplayHeight,
                 template = (preview as? TemplatePreviewState.Ready)?.data,
+                capturedTargetName = capturedTargetName,
+                capturedTargetRegion = capturedTargetRegion,
                 backgroundTemplate = backgroundPreview,
                 onRegionChange = onRegionChange,
                 screenStateMode = screenStateMode,
@@ -142,7 +164,7 @@ internal fun ImageConditionPreview(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (!colorSearch) {
+            if (!colorSearch && !runtimeImage && !resultPreview) {
                 TemplateScaleDetails(
                     preview = preview,
                     displayWidthPx = safeDisplayWidth,
@@ -162,6 +184,8 @@ private fun DeviceComparisonPreview(
     displayWidthPx: Int,
     displayHeightPx: Int,
     template: TemplatePreviewData?,
+    capturedTargetName: String?,
+    capturedTargetRegion: NormalizedRect?,
     backgroundTemplate: TemplatePreviewData?,
     onRegionChange: ((NormalizedRect) -> Unit)?,
     screenStateMode: Boolean,
@@ -213,6 +237,26 @@ private fun DeviceComparisonPreview(
                         .border(2.dp, templateBorderColor, RoundedCornerShape(3.dp)),
                     contentScale = ContentScale.FillBounds,
                 )
+            }
+            if (capturedTargetName != null && capturedTargetRegion != null) {
+                val bounds = PreviewPixelBounds.from(capturedTargetRegion, displayWidthPx, displayHeightPx)
+                val width = screenWidth * bounds.width.toFloat() / displayWidthPx
+                val height = screenHeight * bounds.height.toFloat() / displayHeightPx
+                Box(
+                    Modifier
+                        .offset(
+                            x = screenWidth * displayedRegion.x.toFloat() + (screenWidth * displayedRegion.width.toFloat() - width) / 2,
+                            y = screenHeight * displayedRegion.y.toFloat() + (screenHeight * displayedRegion.height.toFloat() - height) / 2,
+                        )
+                        .size(width, height)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(templateBorderColor.copy(alpha = 0.3f))
+                        .border(2.dp, templateBorderColor, RoundedCornerShape(3.dp))
+                        .testTag("captured-target-preview"),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(capturedTargetName, Modifier.padding(4.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface, textAlign = TextAlign.Center, maxLines = 2)
+                }
             }
             var activeHandle by remember { mutableStateOf<RegionDragHandle?>(null) }
             val currentRegion by rememberUpdatedState(region)

@@ -78,6 +78,8 @@ object AndroidAutomationCapabilities {
     }
 
     private val CORE_CAPABILITIES = setOf(
+        EngineCapability.RUN_SECTION,
+        EngineCapability.FLOW_CONTROL,
         EngineCapability.WAIT,
         EngineCapability.STAGE_BOUNDARY,
         EngineCapability.JUMP,
@@ -104,6 +106,8 @@ object AndroidAutomationCapabilities {
     )
 
     private val VISUAL_CONDITION_CAPABILITIES = setOf(
+        EngineCapability.CAPTURE_IMAGE,
+        EngineCapability.FIND_IMAGE,
         EngineCapability.PIXEL_COLOR_CONDITION,
         EngineCapability.IMAGE_TEMPLATE_CONDITION,
     )

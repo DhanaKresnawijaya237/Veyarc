@@ -108,6 +108,7 @@ internal fun RunManagerScreen(
     onOpenWorkflowRevision: (StoredRunRecord) -> Unit,
     onSelectionBarChange: (ManagerSelectionBarState?) -> Unit = {},
     pageState: RunManagerState = remember { RunManagerState() },
+    onOpenBlock: ((StoredRunRecord, String) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -243,6 +244,7 @@ internal fun RunManagerScreen(
                 selectedRunId = null
                 selectedRunDetails = null
             },
+            onOpenBlock = onOpenBlock?.takeIf { managedRun.revisionAvailable }?.let { open -> { id -> open(run, id) } },
             onOpenWorkflowRevision = managedRun.takeIf(ManagedRun::revisionAvailable)?.let {
                 { onOpenWorkflowRevision(run) }
             },

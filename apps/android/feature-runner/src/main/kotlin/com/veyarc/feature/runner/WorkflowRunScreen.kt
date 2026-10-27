@@ -57,7 +57,10 @@ import com.veyarc.automation.android.ReplayFloatingController
 import com.veyarc.data.storage.StoredRunEvent
 import com.veyarc.data.storage.StoredRunRecord
 import com.veyarc.data.storage.StoredRunStatus
+import com.veyarc.feature.editor.DraftIssue
 import com.veyarc.feature.editor.StoredRunDetailScreen
+import com.veyarc.feature.editor.WorkflowDraft
+import com.veyarc.feature.editor.issueDisplay
 import com.veyarc.model.bundle.WorkflowBundle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -73,6 +76,7 @@ fun WorkflowRunScreen(
     modifier: Modifier = Modifier,
     onOpenConnectionSettings: () -> Unit = {},
     onOpenLatchSettings: () -> Unit = {},
+    onOpenEditor: ((String?, DraftIssue?) -> Unit)? = null,
 ) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
@@ -101,7 +105,7 @@ fun WorkflowRunScreen(
     }
 
     requestStart = startRequest@{
-        if (!canStart) return@startRequest
+        if (!canStart || !state.startingValuesValid) return@startRequest
         if (!state.notificationReady) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                 context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -135,6 +139,9 @@ fun WorkflowRunScreen(
             state = state,
             onStart = requestStart,
             onRefresh = controller::refreshReview,
+            onStartingValueChange = controller::updateStartingValue,
+            onResetStartingValues = controller::resetStartingValues,
+            onOpenIssue = onOpenEditor?.let { open -> { issue -> open(null, issue) } },
             onBack = onBack,
             onOpenConnectionSettings = onOpenConnectionSettings,
             onOpenLatchSettings = onOpenLatchSettings,
@@ -167,12 +174,14 @@ fun WorkflowRunScreen(
             finishedAtMs = state.finishedAtMs,
             interruptionReason = state.failureMessage ?: state.message?.takeUnless { it == state.eventHistory.lastOrNull()?.message || it == "Running" || it == "Workflow completed" },
             completedSteps = state.completedSteps,
-            totalSteps = state.review.plan?.analysis?.worstCaseStepCount,
-            eventHistory = state.eventHistory.map { StoredRunEvent(it.atMs, it.message, it.blockLabel, it.contextLabel) },
+            totalSteps = state.review.plan?.analysis?.estimatedStepCount,
+            eventHistory = state.eventHistory.map { StoredRunEvent(it.atMs, it.message, it.blockLabel, it.contextLabel, it.stepId) },
             hasStoredDetails = true,
             folderId = null,
         ),
         onBack = onBack,
+        onOpenBlock = onOpenEditor?.takeIf { state.phase in setOf(WorkflowRunPhase.COMPLETED, WorkflowRunPhase.FAILED, WorkflowRunPhase.CANCELLED, WorkflowRunPhase.STOPPED) }?.let { open -> { id -> open(id, null) } },
+        onOpenWorkflowRevision = onOpenEditor?.takeIf { state.phase in setOf(WorkflowRunPhase.COMPLETED, WorkflowRunPhase.FAILED, WorkflowRunPhase.CANCELLED, WorkflowRunPhase.STOPPED) }?.let { open -> { open(null, null) } },
         modifier = modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
         workflowName = state.workflowName,
         statusLabel = phaseTitle(state.phase),
@@ -196,6 +205,9 @@ private fun ReviewContent(
     state: WorkflowRunUiState,
     onStart: () -> Unit,
     onRefresh: () -> Unit,
+    onStartingValueChange: (String, String) -> Unit,
+    onResetStartingValues: () -> Unit,
+    onOpenIssue: ((DraftIssue) -> Unit)?,
     onBack: () -> Unit,
     onOpenConnectionSettings: () -> Unit,
     onOpenLatchSettings: () -> Unit,
@@ -205,6 +217,7 @@ private fun ReviewContent(
     pendingMessage: String?,
     modifier: Modifier,
 ) {
+    val reviewDraft = remember(bundle.document) { WorkflowDraft.fromBundle(bundle) }
     BoxWithConstraints(modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
         val wide = maxWidth >= 600.dp
         Column(Modifier.fillMaxSize()) {
@@ -212,7 +225,7 @@ private fun ReviewContent(
                 Modifier.fillMaxWidth().padding(start = 20.dp, top = 12.dp, end = 12.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("Review workflow", Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
+                Text(if (state.sequenceName == null) "Review workflow" else "Review sequence", Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
                 IconButton(onClick = onBack) { Icon(Icons.Outlined.Close, contentDescription = "Close workflow review") }
             }
             Column(
@@ -228,14 +241,21 @@ private fun ReviewContent(
                     WorkflowReviewSummary(bundle, state, requiresMediaProjectionConsent, Modifier.fillMaxWidth())
                     WorkflowReviewChecks(state, onOpenConnectionSettings, onOpenLatchSettings, startBlockMessage, Modifier.fillMaxWidth())
                 }
+                if (bundle.document.variables.isNotEmpty()) {
+                    RunStartingValuesCard(bundle.document, state.startingValues, onStartingValueChange, onResetStartingValues)
+                }
                 val compilationErrors = state.review.visibleCompilationErrors
                 if (compilationErrors.isNotEmpty()) {
                     Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.errorContainer) {
                         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Fix these before running", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onErrorContainer)
                             compilationErrors.forEach { error ->
-                                Text(error.message, color = MaterialTheme.colorScheme.onErrorContainer)
-                                Text(error.path, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                                val issue = DraftIssue(error.path, error.message)
+                                val display = reviewDraft.issueDisplay(issue)
+                                Column(Modifier.fillMaxWidth().clickable(enabled = onOpenIssue != null, indication = null, interactionSource = null) { onOpenIssue?.invoke(issue) }.padding(vertical = 6.dp)) {
+                                    Text(display.title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                                    Text(display.message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer)
+                                }
                             }
                         }
                     }
@@ -249,7 +269,7 @@ private fun ReviewContent(
             ) {
                 IconButton(onClick = onRefresh) { Icon(Icons.Outlined.Refresh, contentDescription = "Refresh checks") }
                 Button(
-                    enabled = state.review.isRunnable && canStart,
+                    enabled = state.review.isRunnable && canStart && state.startingValuesValid && pendingMessage == null,
                     onClick = onStart,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(16.dp),
@@ -279,13 +299,14 @@ private fun WorkflowReviewSummary(bundle: WorkflowBundle, state: WorkflowRunUiSt
     }
     Surface(modifier, shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(state.workflowName, style = MaterialTheme.typography.titleLarge)
+            Text(state.sequenceName ?: state.workflowName, style = MaterialTheme.typography.titleLarge)
+            if (state.sequenceName != null) Text(state.workflowName, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             val orientation = bundle.document.viewport.recordedOrientation.name.lowercase().replaceFirstChar { it.titlecase() }
             Text("Revision ${state.revision} · $orientation", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
             Text("Allowed apps", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
             Text(appNames.joinToString(" · "), style = MaterialTheme.typography.bodyMedium)
-            state.review.plan?.analysis?.worstCaseStepCount?.let { count ->
+            state.review.plan?.analysis?.estimatedStepCount?.let { count ->
                 Text("Up to $count ${if (count == 1L) "step" else "steps"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (requiresMediaProjectionConsent) {

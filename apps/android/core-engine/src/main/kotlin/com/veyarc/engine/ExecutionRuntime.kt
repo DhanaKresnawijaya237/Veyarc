@@ -7,6 +7,9 @@ import com.veyarc.model.StepOutcome
 import com.veyarc.model.StopReason
 import java.util.Collections
 
+// Keep dynamic holds within the Android gesture adapter's existing duration limit.
+internal const val MAX_GESTURE_DURATION_MS = 60_000L
+
 /** Sends platform-neutral touch actions to the active device adapter. */
 interface GestureDispatcher {
     fun tap(point: DisplayCoordinate)
@@ -36,6 +39,18 @@ interface ConditionObserver {
     fun observe(condition: Condition): ConditionObservation
 }
 
+interface ImageSearch {
+    fun findImage(condition: com.veyarc.model.ImagePresentCondition): ConditionObservation = throw UnsupportedOperationException("Image search is unavailable")
+}
+
+interface RuntimeImageCapture {
+    fun captureImage(name: com.veyarc.model.VariableName, region: com.veyarc.model.NormalizedRect): Unit = throw UnsupportedOperationException("Runtime image capture is unavailable")
+
+    fun releaseCapturedImages(names: Set<com.veyarc.model.VariableName>) {
+        check(names.isEmpty()) { "Runtime image cleanup is unavailable" }
+    }
+}
+
 data class ColorMatchObservation(
     val targetArgb: Long,
     val closestArgb: Long,
@@ -53,6 +68,7 @@ data class ConditionObservation(
     val matchScore: Double? = null,
     val threshold: Double? = null,
     val colorMatch: ColorMatchObservation? = null,
+    val matchedArea: com.veyarc.model.NormalizedRect? = null,
 ) {
     init {
         require(matchScore == null || matchScore in 0.0..1.0) {
@@ -70,7 +86,9 @@ interface AutomationDriver :
     AppLauncher,
     ForegroundPackageSource,
     ViewportSource,
-    ConditionObserver
+    ConditionObserver,
+    RuntimeImageCapture,
+    ImageSearch
 
 /** Monotonic time and sleeping are injected so tests do not depend on wall-clock timing. */
 interface ExecutionClock {
@@ -143,6 +161,7 @@ enum class RunFailureCode {
     DISPLAY_ROTATION_CHANGED_DURING_RUN,
     VIEWPORT_CHANGED_DURING_GESTURE,
     DRIVER_ERROR,
+    INVALID_VARIABLE_VALUE,
 }
 
 data class RunFailure(
@@ -151,6 +170,18 @@ data class RunFailure(
     val path: String,
     val message: String,
 )
+
+data class ComparisonValues(val left: ScalarValue, val right: ScalarValue)
+
+sealed interface StepCompletionDetails {
+    data class GestureResult(val point: DisplayCoordinate, val durationMs: Long? = null) : StepCompletionDetails
+
+    data class VariableChange(val before: ScalarValue?, val after: ScalarValue) : StepCompletionDetails
+
+    data class WaitDuration(val durationMs: Long) : StepCompletionDetails
+
+    data class LoopResult(val iterations: Int, val limitReached: Boolean = false) : StepCompletionDetails
+}
 
 sealed interface RunEvent {
     val atMs: Long
@@ -164,6 +195,8 @@ sealed interface RunEvent {
     data class StepStarted(
         override val atMs: Long,
         val stepId: String,
+        val sectionCallId: String? = null,
+        val sectionCallPath: List<String> = emptyList(),
     ) : RunEvent
 
     data class ConditionEvaluated(
@@ -174,12 +207,19 @@ sealed interface RunEvent {
         val matchScore: Double? = null,
         val threshold: Double? = null,
         val colorMatch: ColorMatchObservation? = null,
+        val matchedArea: com.veyarc.model.NormalizedRect? = null,
+        val comparison: ComparisonValues? = null,
+        val sectionCallId: String? = null,
+        val sectionCallPath: List<String> = emptyList(),
     ) : RunEvent
 
     data class StepFinished(
         override val atMs: Long,
         val stepId: String,
         val outcome: StepOutcome,
+        val details: StepCompletionDetails? = null,
+        val sectionCallId: String? = null,
+        val sectionCallPath: List<String> = emptyList(),
     ) : RunEvent
 
     data class Paused(

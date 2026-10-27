@@ -4,6 +4,42 @@ package com.veyarc.model
 object WorkflowValidator {
     fun validate(document: WorkflowDocument): List<ValidationError> {
         val errors = mutableListOf<ValidationError>()
+        val sections = document.steps.reusableSections()
+        sections.values.groupBy { it.name.trim().lowercase() }.values.filter { it.size > 1 }.flatten().forEach { section ->
+            errors += error(ValidationErrorCode.INVALID_SECTION, "/steps/${document.steps.indexOf(section)}/name", "Choose a different section name")
+        }
+        document.steps.cyclicSections().forEach { id ->
+            errors += error(ValidationErrorCode.INVALID_SECTION, "/steps/${document.steps.indexOfFirst { it.id == id }}", "Saved blocks cannot call themselves or form a circular reference")
+        }
+        val runtimeCaptures = document.steps.capturedImages()
+        val imageSearchScopes = document.steps.imageSearchesByStep()
+        val imageSearchNames = document.steps.imageSearches().keys
+        fun validateImageResultOrder(items: List<WorkflowStep>, path: String, scopes: Map<String, Map<String, List<FindImage>>> = imageSearchScopes) {
+            items.forEachIndexed { index, step ->
+                val stepPath = "$path/$index"
+                step.imageResultNames().filter { it.value !in scopes[step.id].orEmpty() }.forEach { name ->
+                    errors += error(if (name.value in imageSearchNames) ValidationErrorCode.FORWARD_STEP_REFERENCE else ValidationErrorCode.MISSING_VARIABLE, stepPath, "Find image for ${name.value} must appear before this block on the same execution path.")
+                }
+                when (step) {
+                    is ReusableSection -> {
+                        val body = step.resolveBody(document.steps).orEmpty()
+                        validateImageResultOrder(body, "$stepPath/bodySteps", body.imageSearchesByStep())
+                    }
+
+                    is IfElse -> {
+                        validateImageResultOrder(step.thenSteps, "$stepPath/thenSteps", scopes)
+                        validateImageResultOrder(step.elseSteps, "$stepPath/elseSteps", scopes)
+                    }
+
+                    is Repeat -> validateImageResultOrder(step.bodySteps, "$stepPath/bodySteps", scopes)
+
+                    is WhileStep -> validateImageResultOrder(step.bodySteps, "$stepPath/bodySteps", scopes)
+
+                    else -> Unit
+                }
+            }
+        }
+        validateImageResultOrder(document.steps, "/steps")
         if (document.schemaVersion != WorkflowDocument.CURRENT_SCHEMA_VERSION) {
             errors += error(
                 ValidationErrorCode.UNSUPPORTED_SCHEMA_VERSION,
@@ -98,7 +134,8 @@ object WorkflowValidator {
             path = "/steps",
             depth = 1,
             document = document,
-            allStepIds = allStepIds,
+            runtimeCaptures = runtimeCaptures,
+            allStepIds = visibleStepIds(document.steps),
             seenStepIds = seenStepIds,
             declaredAssets = declaredAssets,
             referencedAssets = referencedAssets,
@@ -127,6 +164,8 @@ object WorkflowValidator {
                 duplicates += step.id
             }
             when (step) {
+                is ReusableSection -> collectStepIds(step.bodySteps, ids, duplicates)
+
                 is IfElse -> {
                     collectStepIds(step.thenSteps, ids, duplicates)
                     collectStepIds(step.elseSteps, ids, duplicates)
@@ -146,12 +185,15 @@ object WorkflowValidator {
         path: String,
         depth: Int,
         document: WorkflowDocument,
+        runtimeCaptures: Map<String, List<CaptureImage>>,
         allStepIds: Set<String>,
         seenStepIds: MutableSet<String>,
         declaredAssets: Map<String, AssetReference>,
         referencedAssets: MutableSet<String>,
         errors: MutableList<ValidationError>,
         enclosingStepIds: Set<String> = emptySet(),
+        insideSection: Boolean = false,
+        loopDepth: Int = 0,
     ) {
         if (depth > document.runLimits.maxNestingDepth) {
             errors += error(
@@ -160,16 +202,70 @@ object WorkflowValidator {
                 "Workflow nesting depth exceeds maxNestingDepth",
             )
         }
-        val availableJumpTargets = enclosingStepIds + steps.map { it.id }
+        val availableJumpTargets = enclosingStepIds + steps.filterNot { it is ReusableSection }.map { it.id }
         steps.forEachIndexed { index, step ->
             val stepPath = "$path/$index"
             step.backgroundAssetId()?.let { validateImageAsset(it, "$stepPath/backgroundAssetId", AssetKind.IMAGE_TEMPLATE, declaredAssets, referencedAssets, errors) }
+            val imagePosition = when (step) {
+                is TapPoint -> step.imagePosition
+                is LongPress -> step.imagePosition
+                else -> null
+            }
+            imagePosition?.offsetXVariable?.let { validateNumberVariable(it, "$stepPath/imagePosition/offsetXVariable", document, errors) }
+            imagePosition?.offsetYVariable?.let { validateNumberVariable(it, "$stepPath/imagePosition/offsetYVariable", document, errors) }
             when (step) {
+                is ReusableSection -> {
+                    if (depth != 1 || insideSection) errors += error(ValidationErrorCode.INVALID_SECTION, stepPath, "Keep reusable sections at the workflow's top level")
+                    (step.inputs + step.outputs).forEach { name ->
+                        if (name !in document.variables) errors += error(ValidationErrorCode.MISSING_VARIABLE, "$stepPath/inputs", "Add $name to Variables or remove it from this sequence's inputs and outputs")
+                    }
+                    val body = step.resolveBody(document.steps)
+                    if (body == null) {
+                        errors += error(ValidationErrorCode.INVALID_SECTION, stepPath, "Choose existing start and end blocks in order, on the same level")
+                    } else if (body.none { it !is StageBoundary }) {
+                        errors += error(ValidationErrorCode.INVALID_SECTION, "$stepPath/bodySteps", "Choose at least one action to save")
+                    }
+                }
+
+                is RunSection -> {
+                    val section = document.steps.reusableSections()[step.sectionId]
+                    if (section == null) {
+                        errors += error(ValidationErrorCode.UNKNOWN_STEP_REFERENCE, "$stepPath/sectionId", "Choose a reusable section from this workflow")
+                    } else {
+                        step.inputs.forEach { (name, source) ->
+                            val type = operandType(source, "$stepPath/inputs/$name", document, errors)
+                            if (name !in section.inputs) errors += error(ValidationErrorCode.INVALID_SECTION, "$stepPath/inputs/$name", "Remove $name from this call; it is not an input of ${section.name}")
+                            if (type != null && type != document.variables[name]?.type) errors += error(ValidationErrorCode.VARIABLE_TYPE_MISMATCH, "$stepPath/inputs/$name", "Choose a value with the same type as $name")
+                        }
+                        step.outputs.forEach { (name, target) ->
+                            val type = document.variables[target]?.type
+                            if (name !in section.outputs) errors += error(ValidationErrorCode.INVALID_SECTION, "$stepPath/outputs/$name", "Remove $name from this call; it is not an output of ${section.name}")
+                            if (type == null) {
+                                errors += error(ValidationErrorCode.MISSING_VARIABLE, "$stepPath/outputs/$name", "Choose an existing variable to receive $name")
+                            } else if (type != document.variables[name]?.type) {
+                                errors += error(ValidationErrorCode.VARIABLE_TYPE_MISMATCH, "$stepPath/outputs/$name", "Choose a variable with the same type as $name")
+                            }
+                        }
+                        if (step.outputs.values.toSet().size != step.outputs.size) errors += error(ValidationErrorCode.INVALID_SECTION, "$stepPath/outputs", "Save each output to a different variable")
+                    }
+                }
+
+                is BreakLoop, is ContinueLoop -> if (loopDepth == 0) {
+                    errors += error(ValidationErrorCode.INVALID_CONTROL_FLOW, stepPath, "Put this block inside a Repeat or While in the same sequence")
+                }
+
+                is ReturnSection -> if (!insideSection) {
+                    errors += error(ValidationErrorCode.INVALID_CONTROL_FLOW, stepPath, "Put Finish sequence inside saved blocks. Use Stop to end the workflow.")
+                }
+
+                is FindImage -> validateCondition(step.condition, "$stepPath/condition", document, runtimeCaptures, allStepIds, seenStepIds, declaredAssets, referencedAssets, errors)
+
                 is WaitUntil -> {
                     validateCondition(
                         condition = step.condition,
                         path = "$stepPath/condition",
                         document = document,
+                        runtimeCaptures = runtimeCaptures,
                         allStepIds = allStepIds,
                         seenStepIds = seenStepIds,
                         declaredAssets = declaredAssets,
@@ -182,6 +278,7 @@ object WorkflowValidator {
                     condition = step.condition,
                     path = "$stepPath/condition",
                     document = document,
+                    runtimeCaptures = runtimeCaptures,
                     allStepIds = allStepIds,
                     seenStepIds = seenStepIds,
                     declaredAssets = declaredAssets,
@@ -194,6 +291,7 @@ object WorkflowValidator {
                         condition = step.condition,
                         path = "$stepPath/condition",
                         document = document,
+                        runtimeCaptures = runtimeCaptures,
                         allStepIds = allStepIds,
                         seenStepIds = seenStepIds,
                         declaredAssets = declaredAssets,
@@ -210,7 +308,8 @@ object WorkflowValidator {
                 }
 
                 is Repeat -> {
-                    if (step.count > document.runLimits.maxLoopIterations) {
+                    step.countVariable?.let { validateNumberVariable(it, "$stepPath/countVariable", document, errors) }
+                    if (step.countVariable == null && step.count > document.runLimits.maxLoopIterations) {
                         errors += error(
                             ValidationErrorCode.LIMIT_EXCEEDED,
                             "$stepPath/count",
@@ -252,35 +351,51 @@ object WorkflowValidator {
 
                 is SetVariable -> validateSetVariable(step, stepPath, document, errors)
 
-                is LongPress, is Wait, is StageBoundary, is Stop, is TapPoint, is TapRegion -> Unit
+                is Wait -> step.durationVariable?.let { validateNumberVariable(it, "$stepPath/durationVariable", document, errors) }
+
+                is LongPress -> step.durationVariable?.let { validateNumberVariable(it, "$stepPath/durationVariable", document, errors) }
+
+                is CaptureImage, is StageBoundary, is Stop, is TapPoint, is TapRegion -> Unit
             }
 
             seenStepIds += step.id
             when (step) {
+                is ReusableSection -> validateSteps(
+                    step.resolveBody(document.steps).orEmpty(), "$stepPath/bodySteps", if (depth == 1) 1 else depth + 1, document,
+                    step.resolveBody(document.steps).orEmpty().capturedImages(), visibleStepIds(step.resolveBody(document.steps).orEmpty()), linkedSetOf(), declaredAssets, referencedAssets, errors,
+                    insideSection = true,
+                )
+
                 is IfElse -> {
                     validateSteps(
                         step.thenSteps,
                         "$stepPath/thenSteps",
                         depth + 1,
                         document,
+                        runtimeCaptures,
                         allStepIds,
                         seenStepIds,
                         declaredAssets,
                         referencedAssets,
                         errors,
                         availableJumpTargets,
+                        insideSection,
+                        loopDepth,
                     )
                     validateSteps(
                         step.elseSteps,
                         "$stepPath/elseSteps",
                         depth + 1,
                         document,
+                        runtimeCaptures,
                         allStepIds,
                         seenStepIds,
                         declaredAssets,
                         referencedAssets,
                         errors,
                         availableJumpTargets,
+                        insideSection,
+                        loopDepth,
                     )
                 }
 
@@ -289,12 +404,15 @@ object WorkflowValidator {
                     "$stepPath/bodySteps",
                     depth + 1,
                     document,
+                    runtimeCaptures,
                     allStepIds,
                     seenStepIds,
                     declaredAssets,
                     referencedAssets,
                     errors,
                     availableJumpTargets,
+                    insideSection,
+                    loopDepth + 1,
                 )
 
                 is WhileStep -> validateSteps(
@@ -302,12 +420,15 @@ object WorkflowValidator {
                     "$stepPath/bodySteps",
                     depth + 1,
                     document,
+                    runtimeCaptures,
                     allStepIds,
                     seenStepIds,
                     declaredAssets,
                     referencedAssets,
                     errors,
                     availableJumpTargets,
+                    insideSection,
+                    loopDepth + 1,
                 )
 
                 else -> Unit
@@ -315,29 +436,38 @@ object WorkflowValidator {
         }
     }
 
+    private fun visibleStepIds(steps: List<WorkflowStep>): Set<String> = buildSet {
+        fun visit(items: List<WorkflowStep>) {
+            items.filterNot { it is ReusableSection }.forEach {
+                add(it.id)
+                visit(it.childSteps())
+            }
+        }
+        visit(steps)
+    }
+
     private fun validateCondition(
         condition: Condition,
         path: String,
         document: WorkflowDocument,
+        runtimeCaptures: Map<String, List<CaptureImage>>,
         allStepIds: Set<String>,
         seenStepIds: Set<String>,
         declaredAssets: Map<String, AssetReference>,
         referencedAssets: MutableSet<String>,
         errors: MutableList<ValidationError>,
     ) {
+        condition.capturedBackgroundName()?.let { errors += error(ValidationErrorCode.WRONG_ASSET_KIND, "$path/capturedBackground", "Captured images cannot be visual backgrounds. Choose a saved preview; checks use the current screen.") }
+        condition.takeIf { it.capturedImageName() != null }?.capturedTargetIssue(runtimeCaptures, document.viewport.recordedWidthPx, document.viewport.recordedHeightPx)?.let { errors += error(ValidationErrorCode.LIMIT_EXCEEDED, "$path/region", it) }
         condition.backgroundAssetId()?.let { validateImageAsset(it, "$path/backgroundAssetId", AssetKind.IMAGE_TEMPLATE, declaredAssets, referencedAssets, errors) }
         when (condition) {
+            is CapturedImageCondition -> validateCondition(condition.integratedImageCondition(), path, document, runtimeCaptures, allStepIds, seenStepIds, declaredAssets, referencedAssets, errors)
+
             is PixelColorCondition -> Unit
 
-            is ImagePresentCondition -> {
-                validateImageAsset(condition.assetId, path, AssetKind.IMAGE_TEMPLATE, declaredAssets, referencedAssets, errors)
-                validateImageBounds(condition.assetId, condition.region, condition.matchMode == ImageMatchMode.SCREEN_STATE, path, document, declaredAssets, errors)
-            }
+            is ImagePresentCondition -> validateVisualImage(condition.assetId, condition.capturedImage, condition.region, condition.matchMode == ImageMatchMode.SCREEN_STATE, path, document, runtimeCaptures, declaredAssets, referencedAssets, errors)
 
-            is ImageAbsentCondition -> {
-                validateImageAsset(condition.assetId, path, AssetKind.IMAGE_TEMPLATE, declaredAssets, referencedAssets, errors)
-                validateImageBounds(condition.assetId, condition.region, false, path, document, declaredAssets, errors)
-            }
+            is ImageAbsentCondition -> validateVisualImage(condition.assetId, condition.capturedImage, condition.region, false, path, document, runtimeCaptures, declaredAssets, referencedAssets, errors)
 
             is ForegroundPackageCondition -> validatePackage(condition.packageName, "$path/packageName", document, errors)
 
@@ -376,6 +506,7 @@ object WorkflowValidator {
                         child,
                         "$path/conditions/$index",
                         document,
+                        runtimeCaptures,
                         allStepIds,
                         seenStepIds,
                         declaredAssets,
@@ -398,6 +529,7 @@ object WorkflowValidator {
                         child,
                         "$path/conditions/$index",
                         document,
+                        runtimeCaptures,
                         allStepIds,
                         seenStepIds,
                         declaredAssets,
@@ -411,6 +543,7 @@ object WorkflowValidator {
                 condition.condition,
                 "$path/condition",
                 document,
+                runtimeCaptures,
                 allStepIds,
                 seenStepIds,
                 declaredAssets,
@@ -420,15 +553,30 @@ object WorkflowValidator {
         }
     }
 
-    private fun validateImageBounds(assetId: AssetId, region: NormalizedRect, screenState: Boolean, path: String, document: WorkflowDocument, assets: Map<String, AssetReference>, errors: MutableList<ValidationError>) {
-        val asset = assets[assetId.value] ?: return
-        val width = asset.widthPx ?: return
-        val height = asset.heightPx ?: return
-        val viewport = document.viewport
-        val regionWidth = kotlin.math.ceil((region.x + region.width) * viewport.recordedWidthPx).toInt().coerceAtMost(viewport.recordedWidthPx) - kotlin.math.floor(region.x * viewport.recordedWidthPx).toInt()
-        val regionHeight = kotlin.math.ceil((region.y + region.height) * viewport.recordedHeightPx).toInt().coerceAtMost(viewport.recordedHeightPx) - kotlin.math.floor(region.y * viewport.recordedHeightPx).toInt()
-        val invalid = if (screenState) width != viewport.recordedWidthPx || height != viewport.recordedHeightPx else width > regionWidth || height > regionHeight
-        if (invalid) errors += error(ValidationErrorCode.LIMIT_EXCEEDED, "$path/region", if (screenState) "${asset.displayName ?: "Image"} must match the full screen size ${viewport.recordedWidthPx} × ${viewport.recordedHeightPx} px." else "${asset.displayName ?: "Crop"} is $width × $height px and cannot fit the $regionWidth × $regionHeight px search area. Enlarge the area or use a smaller crop.")
+    private fun captureDimensions(name: VariableName, path: String, document: WorkflowDocument, captures: Map<String, List<CaptureImage>>, errors: MutableList<ValidationError>): List<Pair<Int, Int>> {
+        val definitions = captures[name.value]
+        if (definitions.isNullOrEmpty()) errors += error(ValidationErrorCode.MISSING_VARIABLE, path, "Add a Capture image block for ${name.value}")
+        fun span(start: Double, size: Double, pixels: Int) = kotlin.math.ceil((start + size) * pixels).toInt().coerceAtMost(pixels) - kotlin.math.floor(start * pixels).toInt()
+        return definitions.orEmpty().map { span(it.region.x, it.region.width, document.viewport.recordedWidthPx) to span(it.region.y, it.region.height, document.viewport.recordedHeightPx) }.distinct()
+    }
+
+    private fun validateVisualImage(assetId: AssetId?, captured: VariableName?, region: NormalizedRect, screenState: Boolean, path: String, document: WorkflowDocument, captures: Map<String, List<CaptureImage>>, assets: Map<String, AssetReference>, references: MutableSet<String>, errors: MutableList<ValidationError>) {
+        if ((assetId == null) == (captured == null)) errors += error(ValidationErrorCode.MISSING_ASSET, path, "Choose one saved or captured target image.")
+        val sizes = if (captured != null) {
+            captureDimensions(captured, "$path/capturedImage", document, captures, errors)
+        } else {
+            assetId?.let { validateImageAsset(it, path, AssetKind.IMAGE_TEMPLATE, assets, references, errors) }
+            assetId?.let { assets[it.value] }?.let { image -> image.widthPx?.let { w -> image.heightPx?.let { h -> listOf(w to h) } } }.orEmpty()
+        }
+        val backgrounds = listOf(document.viewport.recordedWidthPx to document.viewport.recordedHeightPx)
+        sizes.forEach { (w, h) ->
+            backgrounds.forEach { (bw, bh) ->
+                val rw = kotlin.math.ceil((region.x + region.width) * bw).toInt().coerceAtMost(bw) - kotlin.math.floor(region.x * bw).toInt()
+                val rh = kotlin.math.ceil((region.y + region.height) * bh).toInt().coerceAtMost(bh) - kotlin.math.floor(region.y * bh).toInt()
+                val invalid = if (screenState) w != bw || h != bh else w > rw || h > rh
+                if (invalid) errors += error(ValidationErrorCode.LIMIT_EXCEEDED, "$path/region", if (screenState) "The target image must match the $bw × $bh px background size." else "The $w × $h px image cannot fit the $rw × $rh px search area. Enlarge the area or use a smaller crop.")
+            }
+        }
     }
 
     private fun validateImageAsset(
@@ -472,6 +620,22 @@ object WorkflowValidator {
                 "Assigned value does not match the declared variable type",
             )
         }
+        val sourceType = step.source?.let { operandType(it, "$path/source", document, errors) } ?: step.value.variableType()
+        if (declaration != null && sourceType != declaration.type) {
+            errors += error(ValidationErrorCode.VARIABLE_TYPE_MISMATCH, "$path/source", "Source must match the assigned variable's type")
+        }
+        step.calculation?.let { calculation ->
+            val rightType = operandType(calculation.operand, "$path/calculation/operand", document, errors)
+            if (declaration?.type != VariableType.NUMBER || sourceType != VariableType.NUMBER || rightType != VariableType.NUMBER) {
+                errors += error(ValidationErrorCode.VARIABLE_TYPE_MISMATCH, "$path/calculation", "Calculations require number values and a number variable")
+            }
+        }
+    }
+
+    private fun validateNumberVariable(name: VariableName, path: String, document: WorkflowDocument, errors: MutableList<ValidationError>) {
+        if (operandType(VariableOperand(name), path, document, errors)?.let { it != VariableType.NUMBER } == true) {
+            errors += error(ValidationErrorCode.VARIABLE_TYPE_MISMATCH, path, "Choose a number variable")
+        }
     }
 
     private fun validateComparison(
@@ -511,6 +675,11 @@ object WorkflowValidator {
         document: WorkflowDocument,
         errors: MutableList<ValidationError>,
     ): VariableType? = when (operand) {
+        is ImageResultOperand -> {
+            if (operand.name.value !in document.steps.imageSearches()) errors += error(ValidationErrorCode.MISSING_VARIABLE, path, "Add a Find image block for ${operand.name.value}")
+            if (operand.field == ImageResultField.FOUND) VariableType.BOOLEAN else VariableType.NUMBER
+        }
+
         is LiteralOperand -> operand.value.variableType()
 
         is VariableOperand -> document.variables[operand.name.value]?.type ?: run {

@@ -1,11 +1,15 @@
 package com.veyarc.engine
 
 import com.veyarc.model.AndCondition
+import com.veyarc.model.ArithmeticOperator
+import com.veyarc.model.CapturedImageCondition
 import com.veyarc.model.ComparisonOperator
 import com.veyarc.model.Condition
 import com.veyarc.model.ForegroundPackageCondition
 import com.veyarc.model.ImageAbsentCondition
 import com.veyarc.model.ImagePresentCondition
+import com.veyarc.model.ImageResultField
+import com.veyarc.model.ImageResultOperand
 import com.veyarc.model.LiteralOperand
 import com.veyarc.model.NotCondition
 import com.veyarc.model.NumberValue
@@ -17,7 +21,10 @@ import com.veyarc.model.StepOutcome
 import com.veyarc.model.StepResultCondition
 import com.veyarc.model.StopReason
 import com.veyarc.model.VariableComparisonCondition
+import com.veyarc.model.VariableName
 import com.veyarc.model.VariableOperand
+import com.veyarc.model.variableType
+import com.veyarc.model.withCaptureNames
 import java.util.LinkedHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.min
@@ -73,6 +80,7 @@ class WorkflowRunner {
         return try {
             ensureBoundary(state)
             val execution = executeSteps(plan.steps, state)
+            check(execution.control == null) { "A loop or sequence exit is outside its scope" }
             check(execution.jumpTargetId == null) { "Go to destination is not available" }
             if (execution.halt == null) {
                 finish(state, RunOutcome.COMPLETED, null, null)
@@ -86,7 +94,7 @@ class WorkflowRunner {
                 code = RunFailureCode.DRIVER_ERROR,
                 stepId = state.currentStepId,
                 path = state.currentPath,
-                message = error.message ?: "Execution dependency failed",
+                message = state.visibleError(error.message ?: "Execution dependency failed"),
             )
             finish(state, RunOutcome.FAILED, failure, null)
         } finally {
@@ -106,7 +114,7 @@ class WorkflowRunner {
                 continue
             }
             var execution = executeStep(step, state)
-            if (execution.halt != null) return execution
+            if (execution.halt != null || execution.control != null) return execution
 
             if (step is ExecutionStep.Jump) {
                 val previousVisits = state.jumpVisits.getOrDefault(step.id, 0)
@@ -133,26 +141,26 @@ class WorkflowRunner {
         state.currentStepId = step.id
         state.currentPath = "/steps/${step.id}"
         ensureBoundary(state)
-        state.emit(RunEvent.StepStarted(state.nowMs(), step.id))
+        state.emit(RunEvent.StepStarted(state.nowMs(), step.id, state.sectionCallId, state.sectionCallPath))
         var finished = false
         return try {
             val execution = executeStepBody(step, state)
             state.stepOutcomes[step.id] = execution.outcome
-            state.emit(RunEvent.StepFinished(state.nowMs(), step.id, execution.outcome))
+            state.emit(RunEvent.StepFinished(state.nowMs(), step.id, execution.outcome, execution.details, state.sectionCallId, state.sectionCallPath))
             finished = true
             if (execution.halt == null) ensureBoundary(state)
             execution
         } catch (abort: RunAbort) {
             if (!finished) {
                 state.stepOutcomes[step.id] = abort.stepOutcome
-                state.emit(RunEvent.StepFinished(state.nowMs(), step.id, abort.stepOutcome))
+                state.emit(RunEvent.StepFinished(state.nowMs(), step.id, abort.stepOutcome, sectionCallId = state.sectionCallId, sectionCallPath = state.sectionCallPath))
             }
             throw abort
         } catch (error: Exception) {
             if (state.cancellation.isCancellationRequested()) {
                 if (!finished) {
                     state.stepOutcomes[step.id] = StepOutcome.CANCELLED
-                    state.emit(RunEvent.StepFinished(state.nowMs(), step.id, StepOutcome.CANCELLED))
+                    state.emit(RunEvent.StepFinished(state.nowMs(), step.id, StepOutcome.CANCELLED, sectionCallId = state.sectionCallId, sectionCallPath = state.sectionCallPath))
                 }
                 ensureNotCancelled(state)
             }
@@ -160,22 +168,106 @@ class WorkflowRunner {
                 code = RunFailureCode.DRIVER_ERROR,
                 stepId = step.id,
                 path = state.currentPath,
-                message = error.message ?: "Execution dependency failed",
+                message = state.visibleError(error.message ?: "Execution dependency failed"),
             )
             state.stepOutcomes[step.id] = StepOutcome.FAILED
-            state.emit(RunEvent.StepFinished(state.nowMs(), step.id, StepOutcome.FAILED))
+            state.emit(RunEvent.StepFinished(state.nowMs(), step.id, StepOutcome.FAILED, sectionCallId = state.sectionCallId, sectionCallPath = state.sectionCallPath))
             throw RunAbort(RunOutcome.FAILED, StepOutcome.FAILED, failure, null)
         }
     }
 
     private fun executeStepBody(step: ExecutionStep, state: RunState): StepExecution = when (step) {
+        is ExecutionStep.RunSection -> {
+            check(step.sectionId !in state.activeSections) { "Saved blocks cannot call themselves" }
+            val section = state.plan.sections.getValue(step.sectionId)
+            check(step.inputs.keys.all { it in section.inputs } && step.outputs.keys.all { it in section.outputs }) { "The sequence's inputs or outputs changed. Review this call." }
+            check(step.outputs.values.toSet().size == step.outputs.size) { "Save each output to a different variable" }
+            val arguments = section.inputs.associateWith { name ->
+                val declaration = state.plan.variables.getValue(name)
+                val value = step.inputs[name]?.let { resolveOperand(it, state) } ?: declaration.initialValue
+                check(value.variableType() == declaration.type) { "Choose a value with the same type as $name" }
+                value
+            }
+            step.outputs.forEach { (name, target) -> check(state.plan.variables.getValue(name).type == state.plan.variables.getValue(target).type) { "Choose a variable with the same type as $name" } }
+            val callerVariables = if (section.inputs.isNotEmpty() || section.outputs.isNotEmpty()) state.variables.toMap() else null
+            var returnedValues: Map<String, com.veyarc.model.ScalarValue> = emptyMap()
+            val previousResults = state.imageResults
+            val captures = section.captureAliases.values.toSet()
+            val previousAliases = state.captureAliases
+            val previousPath = state.sectionCallPath
+            val previousActive = state.activeSections
+            val previousOutcomes = section.stepIds.associateWith { state.stepOutcomes.getValue(it) }
+            val previousJumps = section.stepIds.mapNotNull { id -> state.jumpVisits[id]?.let { id to it } }.toMap()
+            state.sectionCallPath = immutableList(previousPath + step.id)
+            state.activeSections = previousActive + step.sectionId
+            state.captureAliases = section.captureAliases
+            state.imageResults = mutableMapOf()
+            section.stepIds.forEach {
+                state.stepOutcomes[it] = StepOutcome.NOT_EXECUTED
+                state.jumpVisits.remove(it)
+            }
+            try {
+                if (callerVariables != null) {
+                    state.variables.clear()
+                    state.variables.putAll(state.plan.variables.mapValues { it.value.initialValue })
+                    state.variables.putAll(arguments)
+                }
+                state.driver.releaseCapturedImages(captures)
+                val result = executeSteps(section.steps, state)
+                check(result.jumpTargetId == null) { "A section cannot jump outside its body" }
+                check(result.control == null || result.control == ControlExit.RETURN_SECTION) { "A saved sequence cannot exit its caller's loop" }
+                if (result.halt == null) returnedValues = step.outputs.entries.associate { (name, target) -> target to state.variables.getValue(name) }
+                result.copy(control = null)
+            } finally {
+                var cleanupSucceeded = false
+                try {
+                    state.driver.releaseCapturedImages(captures)
+                    cleanupSucceeded = true
+                } finally {
+                    if (callerVariables != null) {
+                        state.variables.clear()
+                        state.variables.putAll(callerVariables)
+                        if (cleanupSucceeded && !state.cancellation.isCancellationRequested()) state.variables.putAll(returnedValues)
+                    }
+                    state.imageResults = previousResults
+                    state.captureAliases = previousAliases
+                    state.sectionCallPath = previousPath
+                    state.activeSections = previousActive
+                    state.stepOutcomes.putAll(previousOutcomes)
+                    section.stepIds.forEach(state.jumpVisits::remove)
+                    state.jumpVisits.putAll(previousJumps)
+                    state.currentStepId = step.id
+                    state.currentPath = "/steps/${step.id}"
+                }
+            }
+        }
+
+        is ExecutionStep.FindImage -> {
+            state.imageResults.remove(step.name.value)
+            val viewport = currentViewportOrAbort(state)
+            val foreground = state.driver.currentForegroundPackage()
+            val positionEpoch = state.positionEpoch
+            val observation = state.driver.findImage(step.condition.withCaptureNames(state.captureAliases) as ImagePresentCondition)
+            ensureBoundary(state)
+            check(currentViewportOrAbort(state) == viewport && state.driver.currentForegroundPackage() == foreground) { "The screen changed during image search. Find the image again." }
+            require(observation.matchScore != null && (!observation.result || observation.matchedArea != null)) { "Image search returned an incomplete result" }
+            state.imageResults[step.name.value] = SavedImageResult(observation.copy(matchedArea = observation.matchedArea.takeIf { observation.result }), viewport, foreground, step.condition.capturedBackground == null, positionEpoch)
+            state.emit(RunEvent.ConditionEvaluated(state.nowMs(), step.id, "${step.id}/condition", observation.result, observation.matchScore, step.condition.matchThreshold, matchedArea = observation.matchedArea.takeIf { observation.result }, sectionCallId = state.sectionCallId, sectionCallPath = state.sectionCallPath))
+            StepExecution(StepOutcome.COMPLETED)
+        }
+
+        is ExecutionStep.CaptureImage -> {
+            state.driver.captureImage(state.captureAliases[step.name] ?: step.name, step.region)
+            StepExecution(StepOutcome.COMPLETED)
+        }
+
         is ExecutionStep.TapPoint -> {
-            dispatchAtViewport(
+            val point = dispatchAtViewport(
                 state = state,
-                map = { viewport -> ViewportMapper.map(step.point, viewport) },
+                map = { viewport -> resolvePoint(step.point, step.imagePosition, viewport, state) },
                 dispatch = { point -> state.driver.tap(point) },
             )
-            StepExecution(StepOutcome.COMPLETED)
+            StepExecution(StepOutcome.COMPLETED, details = step.imagePosition?.let { StepCompletionDetails.GestureResult(point) })
         }
 
         is ExecutionStep.TapRegion -> {
@@ -188,12 +280,13 @@ class WorkflowRunner {
         }
 
         is ExecutionStep.LongPress -> {
-            dispatchAtViewport(
+            val duration = step.durationVariable?.let { wholeNumberVariable(it, MAX_GESTURE_DURATION_MS, "Hold duration", state, minimum = 1) } ?: step.durationMs.value
+            val point = dispatchAtViewport(
                 state = state,
-                map = { viewport -> ViewportMapper.map(step.point, viewport) },
-                dispatch = { point -> state.driver.longPress(point, step.durationMs.value) },
+                map = { viewport -> resolvePoint(step.point, step.imagePosition, viewport, state) },
+                dispatch = { point -> state.driver.longPress(point, duration) },
             )
-            StepExecution(StepOutcome.COMPLETED)
+            StepExecution(StepOutcome.COMPLETED, details = if (step.imagePosition != null || step.durationVariable != null) StepCompletionDetails.GestureResult(point, duration) else null)
         }
 
         is ExecutionStep.SwipePath -> {
@@ -206,8 +299,14 @@ class WorkflowRunner {
         }
 
         is ExecutionStep.Wait -> {
-            state.clock.sleep(step.durationMs.value)
-            StepExecution(StepOutcome.COMPLETED)
+            val variable = step.durationVariable
+            val duration = variable?.let { wholeNumberVariable(it, Long.MAX_VALUE, "Wait time", state) } ?: step.durationMs.value
+            if (variable == null) {
+                state.clock.sleep(duration)
+            } else {
+                sleepWithControls(duration, state)
+            }
+            StepExecution(StepOutcome.COMPLETED, details = variable?.let { StepCompletionDetails.WaitDuration(duration) })
         }
 
         is ExecutionStep.StageBoundary -> StepExecution(StepOutcome.COMPLETED)
@@ -233,33 +332,49 @@ class WorkflowRunner {
         }
 
         is ExecutionStep.Repeat -> {
-            repeat(step.count) {
+            val count = step.countVariable?.let { wholeNumberVariable(it, state.plan.runLimits.maxLoopIterations.toLong(), "Repeat count", state).toInt() } ?: step.count
+            var iterations = 0
+            while (iterations < count) {
                 ensureBoundary(state)
                 val execution = executeSteps(step.bodySteps, state)
-                if (execution.halt != null || execution.jumpTargetId != null) return execution
+                iterations++
+                if (execution.halt != null || execution.jumpTargetId != null || execution.control == ControlExit.RETURN_SECTION) return execution
+                if (execution.control == ControlExit.BREAK_LOOP) break
             }
-            StepExecution(StepOutcome.COMPLETED)
+            StepExecution(StepOutcome.COMPLETED, details = StepCompletionDetails.LoopResult(iterations))
         }
 
         is ExecutionStep.While -> {
             var iterations = 0
+            var leftLoop = false
             while (iterations < step.maxIterations) {
                 ensureBoundary(state)
                 val condition = evaluateCondition(step.condition, step.id, "${step.id}/condition", state)
                 if (!condition) break
                 val execution = executeSteps(step.bodySteps, state)
-                if (execution.halt != null || execution.jumpTargetId != null) return execution
                 iterations++
+                if (execution.halt != null || execution.jumpTargetId != null || execution.control == ControlExit.RETURN_SECTION) return execution
+                if (execution.control == ControlExit.BREAK_LOOP) {
+                    leftLoop = true
+                    break
+                }
             }
-            StepExecution(StepOutcome.COMPLETED)
+            StepExecution(StepOutcome.COMPLETED, details = StepCompletionDetails.LoopResult(iterations, !leftLoop && iterations == step.maxIterations))
         }
 
         is ExecutionStep.LaunchApp -> {
+            state.positionEpoch++
             state.driver.launchApp(step.packageName)
             awaitForeground(step.packageName, step.foregroundTimeoutMs.value, state)
             state.startupHandoffPending = false
             StepExecution(StepOutcome.COMPLETED)
         }
+
+        is ExecutionStep.BreakLoop -> StepExecution(StepOutcome.COMPLETED, control = ControlExit.BREAK_LOOP)
+
+        is ExecutionStep.ContinueLoop -> StepExecution(StepOutcome.COMPLETED, control = ControlExit.CONTINUE_LOOP)
+
+        is ExecutionStep.ReturnSection -> StepExecution(StepOutcome.COMPLETED, control = ControlExit.RETURN_SECTION)
 
         is ExecutionStep.Stop -> StepExecution(
             outcome = StepOutcome.STOPPED,
@@ -271,8 +386,25 @@ class WorkflowRunner {
         )
 
         is ExecutionStep.SetVariable -> {
-            state.variables[step.name.value] = step.value
-            StepExecution(StepOutcome.COMPLETED)
+            val source = step.source?.let { resolveOperand(it, state) } ?: step.value
+            val value = step.calculation?.let { calculation ->
+                val left = (source as? NumberValue)?.value ?: invalidVariableValue("Calculations require number values", state)
+                val right = (resolveOperand(calculation.operand, state) as? NumberValue)?.value ?: invalidVariableValue("Calculations require number values", state)
+                if (right == 0.0 && calculation.operator in setOf(ArithmeticOperator.DIVIDE, ArithmeticOperator.REMAINDER)) {
+                    invalidVariableValue("Cannot divide ${step.name.value} by zero", state)
+                }
+                val result = when (calculation.operator) {
+                    ArithmeticOperator.ADD -> left + right
+                    ArithmeticOperator.SUBTRACT -> left - right
+                    ArithmeticOperator.MULTIPLY -> left * right
+                    ArithmeticOperator.DIVIDE -> left / right
+                    ArithmeticOperator.REMAINDER -> left % right
+                }
+                if (!result.isFinite()) invalidVariableValue("Calculation for ${step.name.value} produced a number too large to use", state)
+                NumberValue(result)
+            } ?: source
+            val previous = state.variables.put(step.name.value, value)
+            StepExecution(StepOutcome.COMPLETED, details = StepCompletionDetails.VariableChange(previous, value))
         }
     }
 
@@ -336,19 +468,25 @@ class WorkflowRunner {
         state: RunState,
     ): Boolean {
         var observation: ConditionObservation? = null
+        var comparison: ComparisonValues? = null
         val result = when (condition) {
             is PixelColorCondition,
+            is CapturedImageCondition,
             is ImagePresentCondition,
             is ImageAbsentCondition,
             is OrientationCondition,
-            -> state.driver.observe(condition).also { observation = it }.result
+            -> state.driver.observe(condition.withCaptureNames(state.captureAliases)).also { observation = it }.result
 
             is ForegroundPackageCondition -> {
                 ensureForeground(state)
                 state.driver.currentForegroundPackage() == condition.packageName
             }
 
-            is VariableComparisonCondition -> compare(condition, state)
+            is VariableComparisonCondition -> {
+                val values = ComparisonValues(resolveOperand(condition.left, state), resolveOperand(condition.right, state))
+                comparison = values
+                compare(condition, values)
+            }
 
             is StepResultCondition -> state.stepOutcomes[condition.stepId] == condition.outcome
 
@@ -371,14 +509,16 @@ class WorkflowRunner {
                 matchScore = observation?.matchScore,
                 threshold = observation?.threshold,
                 colorMatch = observation?.colorMatch,
+                comparison = comparison,
+                sectionCallId = state.sectionCallId,
+                sectionCallPath = state.sectionCallPath,
             ),
         )
         return result
     }
 
-    private fun compare(condition: VariableComparisonCondition, state: RunState): Boolean {
-        val left = resolveOperand(condition.left, state)
-        val right = resolveOperand(condition.right, state)
+    private fun compare(condition: VariableComparisonCondition, values: ComparisonValues): Boolean {
+        val (left, right) = values
         return when (condition.operator) {
             ComparisonOperator.EQUALS -> scalarEquals(left, right)
             ComparisonOperator.NOT_EQUALS -> !scalarEquals(left, right)
@@ -398,6 +538,11 @@ class WorkflowRunner {
     }
 
     private fun resolveOperand(operand: Operand, state: RunState) = when (operand) {
+        is ImageResultOperand -> {
+            val result = state.imageResults[operand.name.value]?.observation ?: invalidVariableValue("Run Find image for ${operand.name.value} first", state)
+            if (operand.field == ImageResultField.FOUND) com.veyarc.model.BooleanValue(result.result) else NumberValue(requireNotNull(result.matchScore))
+        }
+
         is LiteralOperand -> operand.value
 
         is VariableOperand -> state.variables[operand.name.value] ?: throw RunAbort(
@@ -417,6 +562,40 @@ class WorkflowRunner {
         is NumberValue -> value.value
         else -> throw IllegalStateException("Ordered comparison requires number values")
     }
+
+    private fun resolvePoint(fixed: com.veyarc.model.NormalizedCoordinate, binding: com.veyarc.model.ImagePositionBinding?, viewport: ActiveViewport, state: RunState): DisplayCoordinate {
+        if (binding == null) return ViewportMapper.map(fixed, viewport)
+        val saved = state.imageResults[binding.name.value] ?: invalidVariableValue("Run Find image for ${binding.name.value} before using its position", state)
+        val area = saved.observation.matchedArea?.takeIf { saved.observation.result }
+            ?: invalidVariableValue("${binding.name.value} was not found. Find it again before using its position.", state)
+        if (!saved.liveScreen) invalidVariableValue("A captured background result cannot control a tap. Find ${binding.name.value} on the current screen.", state)
+        if (saved.viewport != viewport || saved.foreground != state.driver.currentForegroundPackage() || saved.positionEpoch != state.positionEpoch) invalidVariableValue("The screen changed or the run was paused. Find ${binding.name.value} again before tapping.", state)
+        // Match rectangles use pixel boundaries; touch coordinates use pixel centers.
+        val offsetX = binding.offsetXVariable?.let { wholeNumberVariable(it, Int.MAX_VALUE.toLong(), "X offset", state, Int.MIN_VALUE.toLong()) } ?: binding.offsetXPx.toLong()
+        val offsetY = binding.offsetYVariable?.let { wholeNumberVariable(it, Int.MAX_VALUE.toLong(), "Y offset", state, Int.MIN_VALUE.toLong()) } ?: binding.offsetYPx.toLong()
+        val x = (area.x + area.width / 2) * viewport.widthPx - 0.5 + offsetX
+        val y = (area.y + area.height / 2) * viewport.heightPx - 0.5 + offsetY
+        if (x !in 0.0..(viewport.widthPx - 1).toDouble() || y !in 0.0..(viewport.heightPx - 1).toDouble()) invalidVariableValue("The image position and offset fall outside the screen. Reduce the offset.", state)
+        return DisplayCoordinate(x, y)
+    }
+
+    private fun wholeNumberVariable(name: com.veyarc.model.VariableName, maximum: Long, label: String, state: RunState, minimum: Long = 0): Long {
+        val value = (resolveOperand(VariableOperand(name), state) as? NumberValue)?.value
+            ?: invalidVariableValue("$label requires a number variable", state)
+        // Long.MAX_VALUE rounds up as a Double; reject that boundary before conversion.
+        val withinMaximum = if (maximum == Long.MAX_VALUE) value < maximum.toDouble() else value <= maximum.toDouble()
+        if (value < minimum.toDouble() || value % 1.0 != 0.0 || !withinMaximum) {
+            invalidVariableValue("$label uses ${name.value}, which must be a whole number from $minimum to $maximum", state)
+        }
+        return value.toLong()
+    }
+
+    private fun invalidVariableValue(message: String, state: RunState): Nothing = throw RunAbort(
+        RunOutcome.FAILED,
+        StepOutcome.FAILED,
+        RunFailure(RunFailureCode.INVALID_VARIABLE_VALUE, state.currentStepId, state.currentPath, message),
+        null,
+    )
 
     private fun ensureBoundary(state: RunState) {
         ensureNotCancelled(state)
@@ -464,6 +643,7 @@ class WorkflowRunner {
             return
         }
         if (!state.pauseEventPublished) {
+            state.positionEpoch++
             state.emit(RunEvent.Paused(state.nowMs()))
             state.pauseEventPublished = true
         }
@@ -489,9 +669,12 @@ class WorkflowRunner {
         state: RunState,
         map: (ActiveViewport) -> T,
         dispatch: (T) -> Unit,
-    ) {
+    ): T {
+        ensureBoundary(state)
         val before = currentViewportOrAbort(state)
-        dispatch(map(before))
+        val mapped = map(before)
+        ensureNotCancelled(state)
+        dispatch(mapped)
         val after = state.driver.currentViewport()
             ?: throw viewportAbort(
                 state = state,
@@ -505,6 +688,7 @@ class WorkflowRunner {
                 message = "Active viewport changed during a gesture",
             )
         }
+        return mapped
     }
 
     private fun currentViewportOrAbort(state: RunState): ActiveViewport {
@@ -604,6 +788,8 @@ class WorkflowRunner {
 
     private fun deadline(startMs: Long, durationMs: Long): Long = if (durationMs > Long.MAX_VALUE - startMs) Long.MAX_VALUE else startMs + durationMs
 
+    private data class SavedImageResult(val observation: ConditionObservation, val viewport: ActiveViewport, val foreground: PackageName?, val liveScreen: Boolean, val positionEpoch: Long)
+
     private class RunState(
         val plan: ExecutionPlan,
         val driver: AutomationDriver,
@@ -615,9 +801,16 @@ class WorkflowRunner {
         val startedAtMs: Long,
     ) {
         val events = mutableListOf<RunEvent>()
-        val stepOutcomes = collectStepIds(plan.steps).associateWith { StepOutcome.NOT_EXECUTED }.toMutableMap()
+        val stepOutcomes = (collectStepIds(plan.steps) + plan.sections.values.flatMap { it.stepIds }).associateWith { StepOutcome.NOT_EXECUTED }.toMutableMap()
         val variables = LinkedHashMap(plan.variables.mapValues { it.value.initialValue })
         val jumpVisits = mutableMapOf<String, Int>()
+        var imageResults = mutableMapOf<String, SavedImageResult>()
+        var sectionCallPath: List<String> = emptyList()
+        val sectionCallId: String? get() = sectionCallPath.lastOrNull()
+        var activeSections: Set<String> = emptySet()
+        var captureAliases: Map<VariableName, VariableName> = emptyMap()
+        fun visibleError(message: String): String = captureAliases.entries.fold(message) { text, (original, alias) -> text.replace(alias.value, original.value) }
+        var positionEpoch = 0L
         var currentStepId: String? = null
         var currentPath: String = "/"
         var startupHandoffPending: Boolean = startupPackage != null && plan.steps.firstOrNull() is ExecutionStep.LaunchApp
@@ -632,10 +825,14 @@ class WorkflowRunner {
         }
     }
 
+    private enum class ControlExit { BREAK_LOOP, CONTINUE_LOOP, RETURN_SECTION }
+
     private data class StepExecution(
         val outcome: StepOutcome,
         val halt: RunHalt? = null,
         val jumpTargetId: String? = null,
+        val control: ControlExit? = null,
+        val details: StepCompletionDetails? = null,
     )
 
     private data class RunHalt(

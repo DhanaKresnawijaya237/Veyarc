@@ -63,9 +63,23 @@ internal fun assistantStepNames(steps: JsonArray?): Map<String, String> = buildM
         items?.forEach { item ->
             val block = item.jsonObject
             val type = block.getValue("type").jsonPrimitive.content
+            if (type == "section") {
+                val name = block["name"]?.jsonPrimitive?.content ?: "Saved blocks"
+                put(block.getValue("id").jsonPrimitive.content, "Saved blocks: $name")
+                visit(block["bodySteps"] as? JsonArray, "$name / ")
+                return@forEach
+            }
             val label = if (type == "stageBoundary") "Stage ${++stageNumber}" else "Step ${++blockNumber}: ${friendlyField(type)}"
             put(block.getValue("id").jsonPrimitive.content, prefix + label)
-            listOf("bodySteps" to if (type == "while") "while" else "repeat", "thenSteps" to "true", "elseSteps" to "false").forEach { (field, branch) ->
+            listOf(
+                "bodySteps" to when (type) {
+                    "while" -> "while"
+                    "section" -> "section"
+                    else -> "repeat"
+                },
+                "thenSteps" to "true",
+                "elseSteps" to "false",
+            ).forEach { (field, branch) ->
                 visit(block[field] as? JsonArray, "${prefix}Step $blockNumber $branch / ")
             }
         }
@@ -85,7 +99,7 @@ private fun friendlyField(value: String): String = when (value) {
     "timeoutMs" -> "Timeout"
     "pollIntervalMs" -> "Check interval"
     "foregroundTimeoutMs" -> "App wait limit"
-    "bodySteps" -> "Repeat steps"
+    "bodySteps" -> "Actions"
     "thenSteps" -> "If true"
     "elseSteps" -> "If false"
     "tapPoint" -> "Tap"
@@ -99,7 +113,15 @@ private fun friendlyField(value: String): String = when (value) {
     "while" -> "While"
     "waitUntil" -> "Wait until"
     "jump" -> "Go to"
+    "breakLoop" -> "Leave loop"
+    "continueLoop" -> "Next repeat"
+    "returnSection" -> "Finish sequence"
     "stop" -> "Stop"
     "stageBoundary" -> "Stage boundary"
+    "section" -> "Saved blocks"
+    "runSection" -> "Run saved blocks"
+    "sectionId" -> "Saved blocks"
+    "startStepId" -> "From"
+    "endStepId" -> "To"
     else -> value.replace(Regex("([a-z])([A-Z])"), "$1 $2").replaceFirstChar(Char::uppercaseChar)
 }

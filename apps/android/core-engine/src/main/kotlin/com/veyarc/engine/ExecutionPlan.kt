@@ -24,6 +24,8 @@ import java.util.Collections
 
 /** A platform-neutral feature that a runner or driver must support. */
 enum class EngineCapability {
+    RUN_SECTION,
+    FLOW_CONTROL,
     TAP_POINT,
     TAP_REGION,
     LONG_PRESS,
@@ -38,6 +40,8 @@ enum class EngineCapability {
     LAUNCH_APP,
     STOP,
     SET_VARIABLE,
+    CAPTURE_IMAGE,
+    FIND_IMAGE,
     PIXEL_COLOR_CONDITION,
     IMAGE_TEMPLATE_CONDITION,
     FOREGROUND_PACKAGE_CONDITION,
@@ -75,7 +79,9 @@ data class ControlFlowAnalysis(
     val maxNestingDepth: Int,
     val maxLoopBound: Int,
     val arithmeticOverflow: Boolean,
+    val hasDynamicStepCount: Boolean = false,
 ) {
+    val estimatedStepCount: Long? get() = worstCaseStepCount.takeUnless { hasDynamicStepCount || arithmeticOverflow }
     init {
         require(worstCaseStepCount >= 0) { "worstCaseStepCount must be nonnegative" }
         require(worstCaseRuntimeMs >= 0) { "worstCaseRuntimeMs must be nonnegative" }
@@ -97,6 +103,17 @@ data class ExecutionPlan(
     val assets: List<AssetReference>,
     val steps: List<ExecutionStep>,
     val analysis: ControlFlowAnalysis,
+    val sections: Map<String, ExecutionSection> = emptyMap(),
+    val entrySectionId: String? = null,
+)
+
+data class ExecutionSection(
+    val name: String,
+    val steps: List<ExecutionStep>,
+    val captureAliases: Map<com.veyarc.model.VariableName, com.veyarc.model.VariableName>,
+    val stepIds: Set<String>,
+    val inputs: Set<String> = emptySet(),
+    val outputs: Set<String> = emptySet(),
 )
 
 enum class ImageAssetUse {
@@ -107,12 +124,13 @@ enum class ImageAssetUse {
 /** Returns only the image assets that execution can reach, including nested conditions. */
 fun ExecutionPlan.referencedImageAssets(): Map<AssetId, Set<ImageAssetUse>> {
     val referenced = linkedMapOf<AssetId, MutableSet<ImageAssetUse>>()
+    val visitedSections = mutableSetOf<String>()
 
     fun collect(condition: Condition) {
         when (condition) {
-            is ImagePresentCondition ->
+            is ImagePresentCondition -> condition.assetId?.let { assetId ->
                 referenced
-                    .getOrPut(condition.assetId) { linkedSetOf() }
+                    .getOrPut(assetId) { linkedSetOf() }
                     .add(
                         if (condition.matchMode == ImageMatchMode.SCREEN_STATE) {
                             ImageAssetUse.FULL_SCREEN
@@ -120,11 +138,11 @@ fun ExecutionPlan.referencedImageAssets(): Map<AssetId, Set<ImageAssetUse>> {
                             ImageAssetUse.CROPPED_TARGET
                         },
                     )
+            }
 
-            is ImageAbsentCondition ->
-                referenced
-                    .getOrPut(condition.assetId) { linkedSetOf() }
-                    .add(ImageAssetUse.CROPPED_TARGET)
+            is ImageAbsentCondition -> condition.assetId?.let { assetId ->
+                referenced.getOrPut(assetId) { linkedSetOf() }.add(ImageAssetUse.CROPPED_TARGET)
+            }
 
             is AndCondition -> condition.conditions.forEach(::collect)
 
@@ -138,7 +156,10 @@ fun ExecutionPlan.referencedImageAssets(): Map<AssetId, Set<ImageAssetUse>> {
 
     fun collect(steps: List<ExecutionStep>) {
         steps.forEach { step ->
+            if (step is ExecutionStep.RunSection && visitedSections.add(step.sectionId)) collect(sections.getValue(step.sectionId).steps)
             when (step) {
+                is ExecutionStep.FindImage -> collect(step.condition)
+
                 is ExecutionStep.WaitUntil -> collect(step.condition)
 
                 is ExecutionStep.IfElse -> {
@@ -167,9 +188,21 @@ fun ExecutionPlan.referencedImageAssets(): Map<AssetId, Set<ImageAssetUse>> {
 sealed interface ExecutionStep {
     val id: String
 
+    data class RunSection(
+        override val id: String,
+        val sectionId: String,
+        val inputs: Map<String, com.veyarc.model.Operand> = emptyMap(),
+        val outputs: Map<String, String> = emptyMap(),
+    ) : ExecutionStep
+
+    data class FindImage(override val id: String, val name: com.veyarc.model.VariableName, val condition: ImagePresentCondition) : ExecutionStep
+
+    data class CaptureImage(override val id: String, val name: com.veyarc.model.VariableName, val region: NormalizedRect) : ExecutionStep
+
     data class TapPoint(
         override val id: String,
         val point: NormalizedCoordinate,
+        val imagePosition: com.veyarc.model.ImagePositionBinding? = null,
     ) : ExecutionStep
 
     data class TapRegion(
@@ -183,6 +216,8 @@ sealed interface ExecutionStep {
         override val id: String,
         val point: NormalizedCoordinate,
         val durationMs: DurationMillis,
+        val imagePosition: com.veyarc.model.ImagePositionBinding? = null,
+        val durationVariable: com.veyarc.model.VariableName? = null,
     ) : ExecutionStep
 
     data class SwipePath(
@@ -194,6 +229,7 @@ sealed interface ExecutionStep {
     data class Wait(
         override val id: String,
         val durationMs: DurationMillis,
+        val durationVariable: com.veyarc.model.VariableName? = null,
     ) : ExecutionStep
 
     data class StageBoundary(
@@ -224,6 +260,7 @@ sealed interface ExecutionStep {
         override val id: String,
         val count: Int,
         val bodySteps: List<ExecutionStep>,
+        val countVariable: com.veyarc.model.VariableName? = null,
     ) : ExecutionStep
 
     data class While(
@@ -239,6 +276,12 @@ sealed interface ExecutionStep {
         val foregroundTimeoutMs: DurationMillis,
     ) : ExecutionStep
 
+    data class BreakLoop(override val id: String) : ExecutionStep
+
+    data class ContinueLoop(override val id: String) : ExecutionStep
+
+    data class ReturnSection(override val id: String) : ExecutionStep
+
     data class Stop(
         override val id: String,
         val reason: StopReason,
@@ -249,6 +292,8 @@ sealed interface ExecutionStep {
         override val id: String,
         val name: com.veyarc.model.VariableName,
         val value: ScalarValue,
+        val source: com.veyarc.model.Operand? = null,
+        val calculation: com.veyarc.model.VariableCalculation? = null,
     ) : ExecutionStep
 }
 

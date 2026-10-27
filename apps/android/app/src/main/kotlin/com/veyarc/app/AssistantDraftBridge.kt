@@ -29,6 +29,8 @@ import com.veyarc.model.WorkflowJson
 import com.veyarc.model.WorkflowStep
 import com.veyarc.model.backgroundAssetId
 import com.veyarc.model.bundle.BundleAsset
+import com.veyarc.model.capturedBackgroundName
+import com.veyarc.model.capturedImageName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -64,6 +66,7 @@ internal class AssistantDraftBridge(
                     if (step.id == call.stepId) return step
                     val children = when (step) {
                         is IfElse -> step.thenSteps + step.elseSteps
+                        is com.veyarc.model.ReusableSection -> step.bodySteps
                         is Repeat -> step.bodySteps
                         is WhileStep -> step.bodySteps
                         else -> emptyList()
@@ -97,7 +100,8 @@ internal class AssistantDraftBridge(
                     repository.loadRevisionAsset(draft.workflowId, requireNotNull(draft.lastSavedRevision), id)
                 }
             }
-            val target = asset(targetId)
+            require(condition.capturedImageName() == null && condition.capturedBackgroundName() == null) { "Captured images are available only during a workflow run. Use a saved image for a chat image test." }
+            val target = asset(requireNotNull(targetId) { "Choose a target image first." })
             val viewport = draft.viewport
             val result: ConditionObservation
             val name: String

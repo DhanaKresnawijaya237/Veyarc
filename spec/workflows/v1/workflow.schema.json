@@ -31,6 +31,7 @@
     "runLimits": { "$ref": "#/$defs/runLimits" },
     "variables": {
       "type": "object",
+      "description": "Saved starting values, reset for each run. Users can override these temporarily in Review workflow without changing the saved revision. Set initialValue here only when changing the workflow's saved defaults.",
       "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,63}$" },
       "additionalProperties": { "$ref": "#/$defs/variableDeclaration" }
     },
@@ -186,6 +187,7 @@
     },
     "variableDeclaration": {
       "type": "object",
+      "description": "A named number, text or true/false value. Each run starts from initialValue; assignments are shared across that run's branches and loops, never persisted back to the workflow. The initialValue scalar type must match type.",
       "additionalProperties": false,
       "required": ["type", "initialValue"],
       "properties": {
@@ -195,6 +197,31 @@
     },
     "operand": {
       "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "name",
+            "field"
+          ],
+          "description": "Read a named result from an earlier Find image block on the same execution path in this run. Results from a sibling branch or a later block cannot be used. found is Boolean; score is a number from 0 to 1. Before the named Find image block has run, this value is unavailable and stops the run. Reading a result does not repeat the search. Put Find image in a loop to update its result; use ordinary image conditions for live Wait until checks.",
+          "properties": {
+            "type": {
+              "const": "imageResult"
+            },
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{0,63}$"
+            },
+            "field": {
+              "enum": [
+                "found",
+                "score"
+              ]
+            }
+          }
+        },
         {
           "type": "object",
           "additionalProperties": false,
@@ -212,6 +239,16 @@
         }
       ]
     },
+    "variableCalculation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operator", "operand"],
+      "description": "One numeric operation on the assignment's source or value, using a number literal or number variable as the second operand. Division/remainder by zero and non-finite results stop the run. No text formulas or nested expressions.",
+      "properties": {
+        "operator": { "enum": ["add", "subtract", "multiply", "divide", "remainder"] },
+        "operand": { "$ref": "#/$defs/operand" }
+      }
+    },
     "timedPoint": {
       "type": "object",
       "additionalProperties": false,
@@ -226,8 +263,23 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["type", "name", "region", "matchThreshold"],
+          "description": "Legacy runtime image condition, kept for existing revisions. For new workflows use imagePresent or imageAbsent with capturedImage instead.",
+          "properties": {
+            "type": { "const": "capturedImage" },
+            "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+            "region": { "$ref": "#/$defs/rect" },
+            "matchThreshold": { "type": "number", "minimum": 0, "maximum": 1 },
+            "present": { "type": "boolean", "default": true },
+            "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Optional editor-only background, unrelated to the image captured at runtime." }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["type", "point", "expectedArgb", "tolerance"],
           "properties": {
+            "capturedBackground": {"type": "null", "deprecated": true, "description": "Legacy field; omit. Backgrounds are saved editor-only previews. Runtime checks always search the live screen."},
             "type": { "const": "pixelColor" },
             "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor-only background. Cleared when its image is cropped or resized on replacement; saving a copy keeps the original. Does not change replay or color matching. Omit to remove." },
             "point": { "$ref": "#/$defs/coordinate" },
@@ -239,8 +291,11 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["type", "assetId", "region", "matchThreshold"],
+          "required": ["type", "region", "matchThreshold"],
+          "oneOf": [{"required": ["assetId"], "not": {"required": ["capturedImage"]}}, {"required": ["capturedImage"], "not": {"required": ["assetId"]}}],
           "properties": {
+            "capturedImage": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$", "description": "Named image from an earlier captureImage block. Choose exactly one target: assetId or capturedImage. Cropped captures can be used for appears/absent checks and must fit inside the search region at original pixel size. Full-screen captures can only be used with imagePresent matchMode screenState. Missing captures stop the run, including absent checks. Captures cannot be backgrounds."},
+            "capturedBackground": {"type": "null", "deprecated": true, "description": "Legacy field; omit. Backgrounds are saved editor-only previews. Runtime checks always search the live screen."},
             "type": { "const": "imagePresent" },
             "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor-only background. Cleared when its image is cropped or resized on replacement; saving a copy keeps the original. Does not change replay or image matching. Omit to remove." },
             "assetId": { "$ref": "#/$defs/assetId" },
@@ -255,8 +310,11 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["type", "assetId", "region", "matchThreshold"],
+          "required": ["type", "region", "matchThreshold"],
+          "oneOf": [{"required": ["assetId"], "not": {"required": ["capturedImage"]}}, {"required": ["capturedImage"], "not": {"required": ["assetId"]}}],
           "properties": {
+            "capturedImage": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$", "description": "Named image from an earlier captureImage block. Choose exactly one target: assetId or capturedImage. Cropped captures can be used for appears/absent checks and must fit inside the search region at original pixel size. Full-screen captures can only be used with imagePresent matchMode screenState. Missing captures stop the run, including absent checks. Captures cannot be backgrounds."},
+            "capturedBackground": {"type": "null", "deprecated": true, "description": "Legacy field; omit. Backgrounds are saved editor-only previews. Runtime checks always search the live screen."},
             "type": { "const": "imageAbsent" },
             "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor-only background. Cleared when its image is cropped or resized on replacement; saving a copy keeps the original. Does not change replay or image matching. Omit to remove." },
             "assetId": { "$ref": "#/$defs/assetId" },
@@ -281,7 +339,7 @@
           "additionalProperties": false,
           "required": ["type", "left", "operator", "right"],
           "properties": {
-            "type": { "const": "variableComparison" },
+            "type": { "const": "variableComparison", "description": "Compare literals or declared variables of the same type. Only numbers support ordered comparisons; text and true/false support equals and notEquals." },
             "left": { "$ref": "#/$defs/operand" },
             "operator": { "enum": ["equals", "notEquals", "lessThan", "lessThanOrEqual", "greaterThan", "greaterThanOrEqual"] },
             "right": { "$ref": "#/$defs/operand" }
@@ -325,13 +383,80 @@
     "step": {
       "oneOf": [
         {
+          "type": "object", "additionalProperties": false,
+          "required": ["type", "id", "name", "bodySteps"],
+          "description": "Workflow-local saved blocks, stored as top-level metadata and hidden from execution numbering. A declaration does not execute; runSection calls it. Copies own their bodySteps. Linked ranges use startStepId/endStepId UUIDs and empty bodySteps; endpoints must remain on one source list in forward order, include complete blocks/nests, and follow edits and insertions between the endpoints. Missing endpoints require reselection. Original source blocks still execute normally. Calls may use other sections but cycles are forbidden. Scalar variables are shared; captured images and Find results are private per call. Go to and stepResult references cannot escape the saved sequence.",
+          "oneOf": [
+            { "required": ["startStepId", "endStepId"], "properties": { "bodySteps": { "maxItems": 0 } } },
+            { "not": { "anyOf": [{ "required": ["startStepId"] }, { "required": ["endStepId"] }] }, "properties": { "bodySteps": { "minItems": 1 } } }
+          ],
+          "properties": { "inputs": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}, "description": "Declared scalar variable names passed in. Omitted call bindings use saved defaults. A sequence with inputs or outputs has private scalar variables for each call."}, "outputs": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}, "description": "Declared scalar variable names this sequence can return. Only explicitly bound outputs leave the call after success or returnSection. Stop, cancellation and failure return nothing."},  "type": { "const": "section" }, "id": { "$ref": "#/$defs/uuid" }, "name": { "type": "string", "minLength": 1, "maxLength": 80, "description": "Unique within this workflow, ignoring case and surrounding whitespace." }, "startStepId": { "$ref": "#/$defs/uuid" }, "endStepId": { "$ref": "#/$defs/uuid" }, "bodySteps": { "type": "array", "items": { "$ref": "#/$defs/step" } } }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["type", "id", "sectionId"],
+          "description": "Run saved blocks by their top-level section id. Calls may appear inside ordinary branches/loops or other saved copies/ranges, provided the section call graph has no cycles. Return to the caller after completion; a stop or failure stops the whole run.",
+          "properties": { "inputs": {"type": "object", "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,63}$"}, "additionalProperties": {"$ref": "#/$defs/operand"}, "description": "Input name to caller operand. Names and types must match the saved sequence. Caller variables and earlier Find image found/score results are evaluated before entering the sequence."}, "outputs": {"type": "object", "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,63}$"}, "additionalProperties": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}, "description": "Output name to existing destination scalar variable of the same type. Each destination must be unique. Omitted outputs are discarded."},  "type": { "const": "runSection" }, "id": { "$ref": "#/$defs/uuid" }, "sectionId": { "$ref": "#/$defs/uuid" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "id",
+            "name",
+            "condition"
+          ],
+          "description": "Search the entire chosen area for the strongest image match. Save a named temporary result with found, score, and matched area. Reusing a name replaces the previous result. A failed search clears its position but keeps the score. condition must be imagePresent with a saved or captured target, searching the live screen. Only later blocks on the same execution path can use this result; branch-local results do not become available outside that branch. The editor starts with a centered search region. Captured pixels remain on device.",
+          "properties": {
+            "type": {
+              "const": "findImage"
+            },
+            "id": {
+              "$ref": "#/$defs/uuid"
+            },
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{0,63}$"
+            },
+            "condition": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/condition"
+                },
+                {
+                  "properties": {
+                    "type": {
+                      "const": "imagePresent"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "id", "name", "region"],
+          "description": "Capture this normalized screen crop into a named temporary image for this run. Reusing a name replaces and wipes its old capture. Requires Android screen-capture consent at run start. Captures are separate from scalar variables and saved templates, cleared at run end, and never written into revisions, exports, or AI messages. Use cropped captures as targets in later appears/absent conditions, with search boundaries large enough to contain the crop. A region of x=0,y=0,width=1,height=1 is a full-screen capture, usable only for screenState checks. Captures cannot be visual backgrounds. Capturing an image does not tap or change the screen.",
+          "properties": {
+            "type": { "const": "captureImage" },
+            "id": { "$ref": "#/$defs/uuid" },
+            "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+            "region": { "$ref": "#/$defs/rect" },
+            "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Optional editor-only full-screen reference for choosing the capture area." }
+          }
+        },
+        {
           "allOf": [
             { "$ref": "#/$defs/stepBase" },
             {
               "type": "object",
               "additionalProperties": false,
               "required": ["type", "id", "point"],
-              "properties": { "type": { "const": "tapPoint" }, "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor-only background. Cleared when its image is cropped or resized on replacement; saving a copy keeps the original. Does not change replay or image matching. Omit to remove." }, "id": { "$ref": "#/$defs/uuid" }, "point": { "$ref": "#/$defs/coordinate" } }
+              "properties": {
+            "imagePosition": {"type": "object", "additionalProperties": false, "required": ["name"], "description": "Use the center of an earlier named live-screen Find image result on the same execution path instead of the fixed point. Optional offsets are pixels on the current display. The run stops if the image was not found, the search did not run, the result came from a captured background, the screen or app changed, the run was paused, or the offset leaves the display. No fallback to the fixed point. Positions never carry over to another run.", "properties": {"name": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}, "offsetXPx": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647, "default": 0}, "offsetYPx": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647, "default": 0}, "offsetXVariable": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$", "description": "Optional declared number variable replacing offsetXPx, sampled before the gesture. Must contain a signed whole number from -2147483648 to 2147483647. Invalid values or a resulting point outside the screen stop the run; no fallback. Keep offsetXPx for switching back to a fixed offset."}, "offsetYVariable": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$", "description": "Optional declared number variable replacing offsetYPx, sampled before the gesture. Must contain a signed whole number from -2147483648 to 2147483647. Invalid values or a resulting point outside the screen stop the run; no fallback. Keep offsetYPx for switching back to a fixed offset."}}}, "type": { "const": "tapPoint" }, "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor-only background. Cleared when its image is cropped or resized on replacement; saving a copy keeps the original. Does not change replay or image matching. Omit to remove." }, "id": { "$ref": "#/$defs/uuid" }, "point": { "$ref": "#/$defs/coordinate" } }
             }
           ]
         },
@@ -345,7 +470,8 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["type", "id", "point", "durationMs"],
-          "properties": { "type": { "const": "longPress" }, "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor-only background. Cleared when its image is cropped or resized on replacement; saving a copy keeps the original. Does not change replay or image matching. Omit to remove." }, "id": { "$ref": "#/$defs/uuid" }, "point": { "$ref": "#/$defs/coordinate" }, "durationMs": { "type": "integer", "exclusiveMinimum": 0 } }
+          "properties": {
+            "imagePosition": {"type": "object", "additionalProperties": false, "required": ["name"], "description": "Use the center of an earlier named live-screen Find image result on the same execution path instead of the fixed point. Optional offsets are pixels on the current display. The run stops if the image was not found, the search did not run, the result came from a captured background, the screen or app changed, the run was paused, or the offset leaves the display. No fallback to the fixed point. Positions never carry over to another run.", "properties": {"name": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}, "offsetXPx": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647, "default": 0}, "offsetYPx": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647, "default": 0}, "offsetXVariable": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$", "description": "Optional declared number variable replacing offsetXPx, sampled before the gesture. Must contain a signed whole number from -2147483648 to 2147483647. Invalid values or a resulting point outside the screen stop the run; no fallback. Keep offsetXPx for switching back to a fixed offset."}, "offsetYVariable": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$", "description": "Optional declared number variable replacing offsetYPx, sampled before the gesture. Must contain a signed whole number from -2147483648 to 2147483647. Invalid values or a resulting point outside the screen stop the run; no fallback. Keep offsetYPx for switching back to a fixed offset."}}}, "type": { "const": "longPress" }, "backgroundAssetId": { "$ref": "#/$defs/assetId", "description": "Saved editor-only background. Cleared when its image is cropped or resized on replacement; saving a copy keeps the original. Does not change replay or image matching. Omit to remove." }, "id": { "$ref": "#/$defs/uuid" }, "point": { "$ref": "#/$defs/coordinate" }, "durationMs": { "type": "integer", "exclusiveMinimum": 0 }, "durationVariable": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$", "description": "Optional declared number variable replacing durationMs, sampled before the hold. Must contain a whole number from 1 to 60000 milliseconds, within the existing Android gesture limit. Invalid values stop before dispatch; no fallback. Keep durationMs for switching back to a fixed duration."} }
         },
         {
           "type": "object",
@@ -357,7 +483,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["type", "id", "durationMs"],
-          "properties": { "type": { "const": "wait" }, "id": { "$ref": "#/$defs/uuid" }, "durationMs": { "$ref": "#/$defs/durationMs" } }
+          "properties": { "type": { "const": "wait" }, "id": { "$ref": "#/$defs/uuid" }, "durationMs": { "$ref": "#/$defs/durationMs" }, "durationVariable": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$", "description": "Optional declared number variable, read when this block starts, replacing durationMs. Must contain a nonnegative whole number of milliseconds below 2^63; invalid values stop the run. Keep durationMs as the fixed value used when this binding is removed." } }
         },
         {
           "type": "object",
@@ -388,7 +514,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["type", "id", "count", "bodySteps"],
-          "properties": { "type": { "const": "repeat" }, "id": { "$ref": "#/$defs/uuid" }, "count": { "type": "integer", "minimum": 0 }, "bodySteps": { "type": "array", "items": { "$ref": "#/$defs/step" } } }
+          "properties": { "type": { "const": "repeat" }, "id": { "$ref": "#/$defs/uuid" }, "count": { "type": "integer", "minimum": 0 }, "bodySteps": { "type": "array", "items": { "$ref": "#/$defs/step" } }, "countVariable": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$", "description": "Optional declared number variable, read once on entering this repeat, replacing count. Must contain a nonnegative whole number within runLimits.maxLoopIterations; invalid values stop the run. Changing it inside the body affects the next entry, not this repeat. Keep count as the fixed value used when this binding is removed." } }
         },
         {
           "type": "object",
@@ -405,6 +531,27 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["type", "id"],
+          "description": "Leave the nearest enclosing Repeat or While in this execution frame. Invalid outside a loop or across saved-sequence calls.",
+          "properties": { "type": { "const": "breakLoop" }, "id": { "$ref": "#/$defs/uuid" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "id"],
+          "description": "Skip the rest of this iteration of the nearest Repeat or While. While rechecks its condition. Invalid outside a local loop.",
+          "properties": { "type": { "const": "continueLoop" }, "id": { "$ref": "#/$defs/uuid" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "id"],
+          "description": "Finish the current saved sequence and resume after its call. Invalid outside saved blocks; does not stop the workflow.",
+          "properties": { "type": { "const": "returnSection" }, "id": { "$ref": "#/$defs/uuid" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["type", "id", "reason"],
           "properties": { "type": { "const": "stop" }, "id": { "$ref": "#/$defs/uuid" }, "reason": { "enum": ["userRequested", "safety", "workflow", "condition"] }, "message": { "type": "string", "maxLength": 512 } }
         },
@@ -412,7 +559,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["type", "id", "name", "value"],
-          "properties": { "type": { "const": "setVariable" }, "id": { "$ref": "#/$defs/uuid" }, "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" }, "value": { "$ref": "#/$defs/scalarValue" } }
+          "properties": { "type": { "const": "setVariable", "description": "Assign to a declared variable for this run. Use source to copy a same-type variable or literal instead of value. An optional calculation applies one numeric operation before assignment, for example source=count, calculation=add 1 increments count. Both value and source must match the target's declared type; calculations require numbers. Images are not scalar values." }, "id": { "$ref": "#/$defs/uuid" }, "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" }, "value": { "$ref": "#/$defs/scalarValue" }, "source": { "$ref": "#/$defs/operand" }, "calculation": { "$ref": "#/$defs/variableCalculation" } }
         }
       ]
     }

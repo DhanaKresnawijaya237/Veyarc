@@ -24,6 +24,7 @@ data class TapPoint(
     override val id: String,
     val point: NormalizedCoordinate,
     val backgroundAssetId: AssetId? = null,
+    val imagePosition: ImagePositionBinding? = null,
 ) : WorkflowStep {
     init {
         ContractChecks.requireStableId(id, "Step id")
@@ -60,6 +61,8 @@ data class LongPress(
     val point: NormalizedCoordinate,
     val durationMs: DurationMillis,
     val backgroundAssetId: AssetId? = null,
+    val imagePosition: ImagePositionBinding? = null,
+    val durationVariable: VariableName? = null,
 ) : WorkflowStep {
     init {
         ContractChecks.requireStableId(id, "Step id")
@@ -94,6 +97,7 @@ data class SwipePath(
 data class Wait(
     override val id: String,
     val durationMs: DurationMillis,
+    val durationVariable: VariableName? = null,
 ) : WorkflowStep {
     init {
         ContractChecks.requireStableId(id, "Step id")
@@ -157,6 +161,7 @@ data class Repeat(
     override val id: String,
     val count: Int,
     val bodySteps: List<WorkflowStep>,
+    val countVariable: VariableName? = null,
 ) : WorkflowStep {
     init {
         ContractChecks.requireStableId(id, "Step id")
@@ -192,6 +197,30 @@ data class LaunchApp(
 }
 
 @Serializable
+@SerialName("breakLoop")
+data class BreakLoop(override val id: String) : WorkflowStep {
+    init {
+        ContractChecks.requireStableId(id, "Step id")
+    }
+}
+
+@Serializable
+@SerialName("continueLoop")
+data class ContinueLoop(override val id: String) : WorkflowStep {
+    init {
+        ContractChecks.requireStableId(id, "Step id")
+    }
+}
+
+@Serializable
+@SerialName("returnSection")
+data class ReturnSection(override val id: String) : WorkflowStep {
+    init {
+        ContractChecks.requireStableId(id, "Step id")
+    }
+}
+
+@Serializable
 @SerialName("stop")
 data class Stop(
     override val id: String,
@@ -210,6 +239,8 @@ data class SetVariable(
     override val id: String,
     val name: VariableName,
     val value: ScalarValue,
+    val source: Operand? = null,
+    val calculation: VariableCalculation? = null,
 ) : WorkflowStep {
     init {
         ContractChecks.requireStableId(id, "Step id")
@@ -228,6 +259,7 @@ data class PixelColorCondition(
     val tolerance: Int,
     val region: NormalizedRect? = null,
     val backgroundAssetId: AssetId? = null,
+    val capturedBackground: VariableName? = null,
 ) : Condition {
     init {
         require(expectedArgb in 0L..0xFFFF_FFFFL) { "ARGB color must fit an unsigned 32-bit value" }
@@ -238,11 +270,13 @@ data class PixelColorCondition(
 @Serializable
 @SerialName("imagePresent")
 data class ImagePresentCondition(
-    val assetId: AssetId,
+    val assetId: AssetId? = null,
     val region: NormalizedRect,
     val matchThreshold: Double,
     val matchMode: ImageMatchMode = ImageMatchMode.APPEARS_WITHIN_REGION,
     val backgroundAssetId: AssetId? = null,
+    val capturedImage: VariableName? = null,
+    val capturedBackground: VariableName? = null,
 ) : Condition {
     init {
         ContractChecks.requireFinite(matchThreshold, "matchThreshold")
@@ -262,10 +296,12 @@ enum class ImageMatchMode {
 @Serializable
 @SerialName("imageAbsent")
 data class ImageAbsentCondition(
-    val assetId: AssetId,
+    val assetId: AssetId? = null,
     val region: NormalizedRect,
     val matchThreshold: Double,
     val backgroundAssetId: AssetId? = null,
+    val capturedImage: VariableName? = null,
+    val capturedBackground: VariableName? = null,
 ) : Condition {
     init {
         ContractChecks.requireFinite(matchThreshold, "matchThreshold")
@@ -314,6 +350,7 @@ data class NotCondition(val condition: Condition) : Condition
 
 /** Reference images belong to the editor; they never change touch coordinates or image matching. */
 fun WorkflowStep.backgroundAssetId(): AssetId? = when (this) {
+    is CaptureImage -> backgroundAssetId
     is TapPoint -> backgroundAssetId
     is TapRegion -> backgroundAssetId
     is LongPress -> backgroundAssetId
@@ -322,6 +359,7 @@ fun WorkflowStep.backgroundAssetId(): AssetId? = when (this) {
 }
 
 fun WorkflowStep.withBackgroundAsset(id: AssetId?): WorkflowStep = when (this) {
+    is CaptureImage -> copy(backgroundAssetId = id)
     is TapPoint -> copy(backgroundAssetId = id)
     is TapRegion -> copy(backgroundAssetId = id)
     is LongPress -> copy(backgroundAssetId = id)
@@ -330,6 +368,7 @@ fun WorkflowStep.withBackgroundAsset(id: AssetId?): WorkflowStep = when (this) {
 }
 
 fun Condition.backgroundAssetId(): AssetId? = when (this) {
+    is CapturedImageCondition -> backgroundAssetId
     is PixelColorCondition -> backgroundAssetId
     is ImagePresentCondition -> backgroundAssetId
     is ImageAbsentCondition -> backgroundAssetId
