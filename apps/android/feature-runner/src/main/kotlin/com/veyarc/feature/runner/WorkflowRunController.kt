@@ -426,9 +426,7 @@ class WorkflowRunController(
                 )
             }
             runId = withContext(Dispatchers.IO) {
-                repository.beginRun(document.id, document.revision).also { id ->
-                    _state.value.sequenceName?.let { repository.renameRun(id, "Sequence: $it") }
-                }
+                repository.beginRun(document.id, document.revision, name = _state.value.sequenceName?.let { "Sequence: $it" })
             }
             _state.update { it.copy(runId = runId, phase = WorkflowRunPhase.RUNNING, message = "Running") }
             AccessibilityEmergencyOverlay.show(::stop)

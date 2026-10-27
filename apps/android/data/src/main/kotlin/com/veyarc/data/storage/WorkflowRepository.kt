@@ -793,7 +793,11 @@ class WorkflowRepository internal constructor(
         revision: Int,
         runId: String = WorkflowIds.newUuid(),
         startedAtMs: Long = nowMs(),
+        name: String? = null,
     ): String = synchronized(this) {
+        val runName = name?.trim()?.also {
+            require(it.isNotEmpty() && it.length <= 128) { "Run name must be 1 to 128 characters" }
+        }
         require(database.workflowDao().findRevision(workflowId, revision) != null) {
             "Cannot start a run for an unknown workflow revision"
         }
@@ -807,6 +811,7 @@ class WorkflowRepository internal constructor(
                 startedAtMs = startedAtMs,
                 finishedAtMs = null,
                 interruptionReason = null,
+                name = runName,
             ),
         )
         runId

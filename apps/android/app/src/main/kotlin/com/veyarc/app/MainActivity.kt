@@ -198,6 +198,8 @@ class MainActivity : ComponentActivity() {
                                             controller = controller,
                                             canStart = recoveryState == RunRecoveryState.READY,
                                             startBlockMessage = recoveryState.message,
+                                            autoStartRequested = runSession.autoStartRequested,
+                                            onAutoStartConsumed = runSession::consumeAutoStart,
                                             onStart = ::startRunAndRemember,
                                             onBack = ::leaveRunScreen,
                                             onOpenConnectionSettings = { openRunSettings("connections") },
@@ -380,9 +382,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openRunScreen(bundle: WorkflowBundle, autoStart: Boolean = false) {
-        runSession.open(bundle)
+        runSession.open(bundle, autoStart)
         workflowToRun = bundle
-        if (autoStart) startControllerReplayWhenReady()
     }
 
     private fun openGuideSettings() {
@@ -396,9 +397,8 @@ class MainActivity : ComponentActivity() {
 
     private fun openStoredRunScreen(revision: WorkflowRevisionDocument, autoStart: Boolean = false, sectionId: String? = null) {
         val metadataOnlyBundle = WorkflowBundle(revision.document, emptyList(), revision.producerVersion)
-        runSession.openStored(metadataOnlyBundle, sectionId)
+        runSession.openStored(metadataOnlyBundle, sectionId, autoStart)
         workflowToRun = metadataOnlyBundle
-        if (autoStart) startControllerReplayWhenReady()
     }
 
     private fun playWorkflow(workflow: WorkflowSummary) {
@@ -442,20 +442,6 @@ class MainActivity : ComponentActivity() {
         storedWorkflowToEdit = workflowId to revision
         recordedJournalFileName = null
         selectedDestination = VeyarcDestination.EDITOR
-    }
-
-    /** Starts a controller-requested replay only after recovery and the normal safety checks pass. */
-    private fun startControllerReplayWhenReady() {
-        catalogScope.launch {
-            val recovery = runSession.recoveryState.first { it != RunRecoveryState.RECOVERING }
-            if (recovery != RunRecoveryState.READY || workflowToRun == null) return@launch
-            val controller = runSession.controller ?: return@launch
-            controller.refreshNotificationState()
-            val state = controller.state.value
-            // A service-owned emergency notification is mandatory. If it is unavailable, leave
-            // the normal review screen visible rather than starting an unprotected replay.
-            if (state.review.isRunnable && state.notificationReady) startRunAndRemember()
-        }
     }
 
     private fun startRunAndRemember() {
@@ -616,6 +602,8 @@ class MainRunSession(application: Application) : AndroidViewModel(application) {
         private set
     var controller by mutableStateOf<WorkflowRunController?>(null)
         private set
+    var autoStartRequested by mutableStateOf(false)
+        private set
 
     init {
         sessionScope.launch {
@@ -631,19 +619,26 @@ class MainRunSession(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun open(bundle: WorkflowBundle) {
+    fun open(bundle: WorkflowBundle, autoStart: Boolean = false) {
         controller?.close("a different workflow was opened")
         controller = WorkflowRunController(getApplication(), repository, bundle.document, bundle.assets)
         this.bundle = bundle
+        autoStartRequested = autoStart
     }
 
-    fun openStored(bundle: WorkflowBundle, sectionId: String? = null) {
+    fun openStored(bundle: WorkflowBundle, sectionId: String? = null, autoStart: Boolean = false) {
         controller?.close("a different workflow was opened")
         controller = WorkflowRunController(getApplication(), repository, bundle.document, entrySectionId = sectionId)
         this.bundle = bundle
+        autoStartRequested = autoStart
+    }
+
+    fun consumeAutoStart() {
+        autoStartRequested = false
     }
 
     fun leave() {
+        autoStartRequested = false
         controller?.close("you left the run screen")
         controller = null
         bundle = null

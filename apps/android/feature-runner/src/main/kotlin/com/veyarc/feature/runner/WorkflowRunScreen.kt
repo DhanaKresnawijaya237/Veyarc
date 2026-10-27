@@ -42,6 +42,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,6 +53,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.currentStateAsState
 import com.veyarc.automation.android.MediaProjectionConsent
 import com.veyarc.automation.android.ReplayFloatingController
 import com.veyarc.data.storage.StoredRunEvent
@@ -77,10 +81,13 @@ fun WorkflowRunScreen(
     onOpenConnectionSettings: () -> Unit = {},
     onOpenLatchSettings: () -> Unit = {},
     onOpenEditor: ((String?, DraftIssue?) -> Unit)? = null,
+    autoStartRequested: Boolean = false,
+    onAutoStartConsumed: () -> Unit = {},
 ) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
     val state by controller.state.collectAsState()
+    val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
     DisposableEffect(context, controller) {
         val stopObserving = ReplayFloatingController.observeEnabled(context) { enabled ->
             if (controller.state.value.review.latchEnabled != enabled) controller.refreshReview()
@@ -105,8 +112,10 @@ fun WorkflowRunScreen(
     }
 
     requestStart = startRequest@{
-        if (!canStart || !state.startingValuesValid) return@startRequest
-        if (!state.notificationReady) {
+        val current = controller.state.value
+        if (!canStart || !current.startingValuesValid || current.phase != WorkflowRunPhase.REVIEW || permissionRequestPending || projectionRequestPending) return@startRequest
+        onAutoStartConsumed()
+        if (!current.notificationReady) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                 context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
             ) {
@@ -130,6 +139,12 @@ fun WorkflowRunScreen(
                 }
         } else {
             onStart()
+        }
+    }
+
+    LaunchedEffect(controller, autoStartRequested, canStart, state.review.isRunnable, state.startingValuesValid, lifecycleState) {
+        if (autoStartRequested && canStart && state.review.isRunnable && state.startingValuesValid && lifecycleState.isAtLeast(Lifecycle.State.RESUMED) && state.phase == WorkflowRunPhase.REVIEW) {
+            requestStart()
         }
     }
 
