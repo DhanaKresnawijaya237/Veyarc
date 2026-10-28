@@ -13,7 +13,7 @@ Copy `physical-device-result.template.json` for each device and OS build. Fill i
 
 ### Playback short tap
 
-Run the connected instrumentation suite first. On API 24 or 25, test a short tap workflow only. Long presses and swipe paths must be rejected before replay because those versions cannot interrupt a continued gesture safely. On API 26 or newer, run tap, long-press, and path workflows.
+Run the relevant instrumentation tests first. On API 24 or 25, test a short tap workflow only. Long presses and swipe paths must be rejected before replay because those versions cannot interrupt a continued gesture safely. On API 26 or newer, run tap, long-press, and path workflows.
 
 Expected result: the supported gesture completes once, the target receives no extra input, cancellation ends the run, and a second run works without restarting Veyarc.
 

@@ -175,10 +175,10 @@ private val GUIDE_TOPICS = mapOf(
         ),
         "Edge latch" to listOf(
             "Enable in Settings. Tap to open; drag to move.",
-            "Record (+): start recording. Finish (save icon): stop and save.",
-            "Play (▶): run Last saved, Last played, or Favorite, as configured.",
+            "Record: start recording. Stop and save: finish it.",
+            "Play: use Last saved, Last played, Favorite, or Pick directly, as configured.",
             "Library (gear): open workflows. Stop (×): end a paused run.",
-            "Pause / Resume: control recording, or resume a paused run.",
+            "Pause / Continue recording: pause to edit, then carry on. Add recording block uses the current screen.",
             "Hide (×): turn the latch off. Enable it again in Settings.",
             "Opening the latch during a run stops that run.",
         ),
@@ -191,6 +191,8 @@ private val GUIDE_TOPICS = mapOf(
     GuideCategory.FEATURES to listOf(
         "Recording" to listOf(
             "Start from Home or the latch. Use apps normally; Pause skips unwanted actions.",
+            "While paused, Add from screen creates image or color checks, including conditions for the current nest.",
+            "Record here chooses where new actions go. Continue recording returns to the app and starts there.",
             "Finish creates an editable workflow. App switches become Launch app blocks; system screens are skipped.",
         ),
         "Execution blocks" to listOf(
@@ -200,17 +202,37 @@ private val GUIDE_TOPICS = mapOf(
             "Wait / Wait until: delay, or wait for a condition.",
             "If: choose a branch.",
             "Repeat / While: repeat a count, or while a condition holds.",
+            "Leave loop: exit the loop. Next repeat: skip to its next turn.",
             "Stage boundary / Go to: group steps or jump, including outside nests.",
             "Stop: end the run.",
         ),
         "Conditions" to listOf(
-            "Check pixels, images, screen state, current app, or orientation.",
+            "Check colors, images, screen state, variables, current app, or orientation.",
             "All: every check passes. Any: one passes. Not: reverse a check.",
+            "Test image or color checks against a background before running. Results show the score or closest color.",
+        ),
+        "Variables" to listOf(
+            "Store a Number, Text, or Boolean. Set variable changes its value during a run.",
+            "Use values in conditions, repeat counts, or timings.",
+            "For Text, choose Choices to list options and pick a default.",
+            "Review workflow lets you change starting values for one run without changing saved defaults.",
+        ),
+        "Saved blocks" to listOf(
+            "Save a block range as Linked to follow its edits, or Copy for an independent sequence.",
+            "Run saved blocks calls a sequence. Its Play button tests that sequence alone.",
+            "Inputs pass values in; outputs return results to the calling workflow.",
+            "Finish sequence returns to the block after the call.",
+        ),
+        "Image search and captures" to listOf(
+            "Capture image saves a temporary screenshot or crop for this run.",
+            "Use a captured crop as an image target; a full-screen capture is for screen-state checks.",
+            "Find image stores whether it matched, its score, and position for later blocks.",
         ),
         "Image templates" to listOf(
             "Crop a screenshot from the same device and screen size.",
             "Crops are matched; saved backgrounds help you edit blocks. Crop / BG labels show step usage.",
             "Choose a search area. Higher thresholds are stricter.",
+            "Edit an image, then replace it or save a copy. Resizing a background removes it from blocks using it.",
         ),
         "Allowed apps" to listOf(
             "Only listed apps receive workflow touches, keeping other apps safe.",
@@ -235,22 +257,24 @@ private val GUIDE_TOPICS = mapOf(
         ),
         "Review AI changes" to listOf(
             "Open Changes to review edits. Apply and save creates a revision; Dismiss keeps the workflow as it is.",
-            "Undo reverses edits. Review, then Save. Run is separate.",
+            "Check the saved revision before running. AI cannot start a run for you.",
         ),
         "Manage workflows and runs" to listOf(
             "Find items with folders, search, and filters. Favorite workflows for quick access.",
             "Hold for actions; Select manages several together. Name, organize, or delete items.",
         ),
         "Run details" to listOf(
-            "See the outcome, duration, and step activity. Expand earlier activity for more.",
-            "Image checks show scores and thresholds. Open the saved workflow revision to investigate.",
+            "See activity grouped by stage, loop, and sequence. Expand earlier activity for more.",
+            "Checks show image scores or color differences. Variable changes show the values used.",
+            "Tap a step to open its block in the saved workflow revision.",
         ),
         "Saving and validation" to listOf(
             "Save creates a revision. Revision opens earlier versions.",
-            "Fix validation errors before running. Ready to run? links to needed settings.",
+            "Tap a validation issue to find the block. Fix errors before running.",
+            "Ready to run? links to needed settings.",
         ),
         "Copy and paste blocks" to listOf(
-            "Select blocks, Copy, then paste into this workflow or another.",
+            "Select blocks, Copy, then paste into this workflow or another. Tap Select again to pick a range.",
             "Images come too; identical images are reused.",
         ),
         "Import and export" to listOf(
@@ -283,7 +307,7 @@ private val GUIDE_TOPICS = mapOf(
     ),
     GuideCategory.RECOMMENDED to listOf(
         "Record, edit, test" to listOf(
-            "Record a short example. Finish and open the editor.",
+            "Record a short example. Pause to add checks, or finish and edit later.",
             "Trim extra taps/waits. Check Allowed apps and orientation.",
             "Add image checks, If, While, or Repeat as needed.",
             "Save and test a short workflow before making it larger.",
@@ -291,7 +315,7 @@ private val GUIDE_TOPICS = mapOf(
         "Let AI handle the logic" to listOf(
             "Start with a recording; describe the changes you want.",
             "Example: \"Repeat these steps while the image is visible.\"",
-            "Attach screenshots when useful. Review, Apply, Save, then test.",
+            "Attach screenshots when useful. Review Changes, choose Apply and save, then test.",
         ),
     ),
 )

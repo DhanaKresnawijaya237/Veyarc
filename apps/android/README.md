@@ -6,13 +6,12 @@ For app setup and usage, open **Settings → Guide** or read the [project README
 ## Build and check
 
 ```powershell
-.\gradlew.bat verifyLocal
 .\gradlew.bat :app:assembleDebug
 ```
 
-- `verifyLocal`: formatting, Android lint, and JVM tests.
+- For routine changes, run the closest affected tests. Run `verifyLocal` once per release candidate for formatting, Android lint, and JVM tests.
 - `spotlessApply`: apply formatting fixes.
-- `verifyDevice`: run instrumentation tests on an approved emulator or device.
+- Select relevant instrumentation tests on an approved emulator or device. `verifyDevice` runs the full suite.
 - Debug APK: `app/build/outputs/apk/debug/app-debug.apk`.
 
 On macOS/Linux, use `./gradlew` instead of `.\gradlew.bat`.

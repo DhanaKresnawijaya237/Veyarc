@@ -16,8 +16,8 @@
 - Replies and available thinking appear as they stream. **Stop** cancels; an active reply can continue on other pages or outside Veyarc.
 - Tap a reply's actions to copy it, branch into a new chat, or resend. Resending is another paid request.
 - Chats get automatic titles; **Rename chat** lets you choose your own. History supports search, pinning, and deletion.
-- Open the changes preview, review the differences, and **Apply to draft**. Save a revision separately. AI never saves or runs a workflow on its own.
-- AI may misunderstand your request. Check coordinates, timing, images, and allowed apps before saving or running. If the draft has changed since a proposal, request an updated proposal.
+- Open the changes preview, review the differences, and choose **Apply and save** to create a revision. Running is separate.
+- Check coordinates, timing, images, and allowed apps before applying changes or running. If the workflow has changed since a proposal, request an updated proposal.
 
 ## Photos and files
 
