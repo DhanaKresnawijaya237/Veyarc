@@ -5,14 +5,18 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DataObject
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Image
@@ -36,6 +40,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -99,6 +104,11 @@ private fun VariableDeclarationDialog(draft: WorkflowDraft, originalName: String
     var name by rememberSaveable { mutableStateOf(originalName.orEmpty()) }
     var type by rememberSaveable { mutableStateOf(original?.type ?: VariableType.NUMBER) }
     var text by rememberSaveable { mutableStateOf((original?.initialValue ?: type.defaultValue()).editorText()) }
+    var useChoices by rememberSaveable { mutableStateOf(original?.choices?.isNotEmpty() == true) }
+    var choices by rememberSaveable { mutableStateOf(original?.choices.orEmpty()) }
+    var newChoice by rememberSaveable { mutableStateOf("") }
+    val reviewChoices = if (type == VariableType.STRING && useChoices) choices else emptyList()
+    val choicesValid = type != VariableType.STRING || !useChoices || (choices.isNotEmpty() && text in choices)
     val value = parseVariableValue(type, text)
     val nameError = when {
         name.isEmpty() -> null
@@ -110,7 +120,7 @@ private fun VariableDeclarationDialog(draft: WorkflowDraft, originalName: String
         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(if (originalName == null) "Add variable" else "Edit variable", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-                Button(onClick = { onSave(name, VariableDeclaration(type, value!!)) }, enabled = name.isNotEmpty() && nameError == null && value != null) { Text("Save") }
+                Button(onClick = { onSave(name, VariableDeclaration(type, value!!, reviewChoices)) }, enabled = name.isNotEmpty() && nameError == null && value != null && choicesValid) { Text("Save") }
             }
             OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("Name") }, singleLine = true, isError = nameError != null)
             nameError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
@@ -121,15 +131,57 @@ private fun VariableDeclarationDialog(draft: WorkflowDraft, originalName: String
                 InlineVariableOptions(VariableType.entries.map { it.name to it.displayName() }, type.name) {
                     type = VariableType.valueOf(it)
                     text = type.defaultValue().editorText()
+                    useChoices = false
                 }
             }
-            ScalarValueField(type, text, { text = it }, "Starting value")
+            if (type == VariableType.STRING) {
+                InlineVariableOptions(listOf("text" to "Free text", "choices" to "Choices"), if (useChoices) "choices" else "text") {
+                    useChoices = it == "choices"
+                    if (useChoices) {
+                        if (choices.isEmpty() && text.isNotBlank() && text.length <= 4096) choices = listOf(text)
+                        if (text !in choices) text = choices.firstOrNull().orEmpty()
+                    }
+                }
+            }
+            if (type == VariableType.STRING && useChoices) {
+                Text("Options", style = MaterialTheme.typography.titleSmall)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    choices.forEach { option ->
+                        Surface(onClick = { text = option }, shape = RoundedCornerShape(12.dp), color = if (text == option) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh) {
+                            Row(Modifier.padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(option, Modifier.widthIn(max = 180.dp), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
+                                if (text == option) Text("Default", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                                IconButton(onClick = {
+                                    choices = choices - option
+                                    if (text == option) text = choices.firstOrNull().orEmpty()
+                                }, modifier = Modifier.size(32.dp)) { Icon(Icons.Outlined.Close, "Remove option $option", Modifier.size(16.dp)) }
+                            }
+                        }
+                    }
+                }
+                val option = newChoice.trim()
+                val canAdd = option.isNotEmpty() && option.length <= 4096 && option !in choices
+                val addOption = {
+                    if (canAdd) {
+                        choices = choices + option
+                        if (text !in choices) text = option
+                        newChoice = ""
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(newChoice, { newChoice = it }, Modifier.weight(1f), label = { Text("New option") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { addOption() }))
+                    IconButton(onClick = addOption, enabled = canAdd) { Icon(Icons.Outlined.Add, "Add option") }
+                }
+                if (choices.isEmpty()) Text("Add an option, then tap one to set the default.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                ScalarValueField(type, text, { text = it }, "Starting value")
+            }
         }
     }
 }
 
 @Composable
-internal fun VariableChoice(title: String, label: String, options: List<VeyarcChoice>, selectedId: String? = null, modifier: Modifier = Modifier, textStyle: TextStyle = MaterialTheme.typography.bodyMedium, onSelect: (String) -> Unit) {
+fun VariableChoice(title: String, label: String, options: List<VeyarcChoice>, selectedId: String? = null, modifier: Modifier = Modifier, textStyle: TextStyle = MaterialTheme.typography.bodyMedium, onSelect: (String) -> Unit) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     Surface(modifier = modifier, onClick = { expanded = true }, enabled = options.isNotEmpty(), shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.primary) {
         Text(label, Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = textStyle)

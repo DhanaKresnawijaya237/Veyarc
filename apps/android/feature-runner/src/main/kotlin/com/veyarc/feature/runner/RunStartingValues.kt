@@ -10,6 +10,7 @@ internal fun WorkflowDocument.startingValues(): Map<String, String> = variables.
 internal fun WorkflowDocument.withStartingValues(values: Map<String, String>): WorkflowDocument? {
     if (values.keys != variables.keys) return null
     val declarations = variables.mapValues { (name, declaration) ->
+        if (declaration.choices.isNotEmpty() && values.getValue(name) !in declaration.choices) return null
         val value = parseVariableValue(declaration.type, values.getValue(name)) ?: return null
         declaration.copy(initialValue = value)
     }

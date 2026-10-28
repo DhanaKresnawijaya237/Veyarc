@@ -258,9 +258,14 @@ fun ScalarValue.variableType(): VariableType = when (this) {
 data class VariableDeclaration(
     val type: VariableType,
     val initialValue: ScalarValue,
+    val choices: List<String> = emptyList(),
 ) {
     init {
         require(type == initialValue.variableType()) { "Variable type must match its initial value" }
+        require(choices.isEmpty() || type == VariableType.STRING) { "Only text variables can have review choices" }
+        require(choices.all { it.isNotBlank() && it.length <= 4096 }) { "Choices must contain 1 to 4096 characters of text" }
+        require(choices.distinct().size == choices.size) { "Choices must be unique" }
+        require(choices.isEmpty() || (initialValue as StringValue).value in choices) { "Choose a listed option as the starting value" }
     }
 }
 

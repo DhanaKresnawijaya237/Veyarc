@@ -23,6 +23,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.veyarc.feature.editor.ScalarValueField
+import com.veyarc.feature.editor.VariableChoice
+import com.veyarc.feature.editor.VeyarcChoice
 import com.veyarc.feature.editor.displayName
 import com.veyarc.model.WorkflowDocument
 
@@ -49,9 +51,13 @@ internal fun RunStartingValuesCard(document: WorkflowDocument, values: Map<Strin
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                         Text(name, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-                                        Text(declaration.type.displayName(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(if (declaration.choices.isEmpty()) declaration.type.displayName() else "Choice", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
-                                    ScalarValueField(declaration.type, values[name].orEmpty(), { onChange(name, it) }, label = null, modifier = Modifier.testTag("run-input-$name"))
+                                    if (declaration.choices.isEmpty()) {
+                                        ScalarValueField(declaration.type, values[name].orEmpty(), { onChange(name, it) }, label = null, modifier = Modifier.testTag("run-input-$name"))
+                                    } else {
+                                        VariableChoice(name, values[name].orEmpty(), declaration.choices.map { VeyarcChoice(it, it) }, selectedId = values[name], modifier = Modifier.fillMaxWidth().testTag("run-input-$name")) { onChange(name, it) }
+                                    }
                                 }
                             }
                         }

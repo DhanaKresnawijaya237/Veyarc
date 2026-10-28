@@ -192,7 +192,13 @@
       "required": ["type", "initialValue"],
       "properties": {
         "type": { "enum": ["boolean", "number", "string"] },
-        "initialValue": { "$ref": "#/$defs/scalarValue" }
+        "initialValue": { "$ref": "#/$defs/scalarValue" },
+        "choices": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "\\S" },
+          "description": "Optional review choices for string variables only. When nonempty, initialValue.value must be a listed choice. Users pick a temporary starting value in Review workflow; runtime assignments and sequence arguments are not restricted to this list. Omit for a free-text input."
+        }
       }
     },
     "operand": {

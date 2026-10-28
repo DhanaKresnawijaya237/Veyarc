@@ -248,6 +248,7 @@ object DeepSeekRequest {
             Linked sections have empty bodySteps plus stable startStepId/endStepId endpoints on one source level; all whole blocks between them are reused. Saved copies own bodySteps and have no endpoints.
             Calls may use other saved sequences, but cannot form cycles. Go to and stepResult references must stay inside the called sequence.
             Review workflow allows temporary starting-value overrides for one run. Changing candidate.variables changes the saved defaults, not a temporary run setting.
+            Text variables may declare unique, nonblank choices for a review picker. Their initialValue.value must be one of those choices. Choices affect starting-value selection only; runtime text assignments and sequence arguments remain ordinary text.
             breakLoop (Leave loop) and continueLoop (Next repeat) affect only the nearest enclosing Repeat or While in the same sequence.
             returnSection (Finish sequence) returns from the current saved sequence to its caller. These exits need no target and cannot affect a caller's loop.
             A section may list inputs and outputs using declared Number/Text/Boolean variable names. Calls bind inputs to operands and outputs to destination variables of the same type.
