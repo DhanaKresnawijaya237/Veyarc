@@ -2,6 +2,12 @@
 
 Record taps and swipes on Android, turn them into editable workflows, and replay them on your device.
 
+## Problem and solution
+
+**Problem.** Repeating taps is tedious. Replaying a fixed recording isn't enough when a task is not so directly repeatable and needs to wait for something on screen or take different paths.
+
+**Solution.** Record your actions, then add image checks, conditions, and loops in Veyarc. Edit the workflow yourself or ask AI to help, without writing code.
+
 ## Features
 
 - Record actions and app switches. Pause to add screen checks, then continue recording where you choose.
