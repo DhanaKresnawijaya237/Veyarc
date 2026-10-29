@@ -214,7 +214,7 @@ private val GUIDE_TOPICS = mapOf(
         "Variables" to listOf(
             "Store a Number, Text, or Boolean. Set variable changes its value during a run.",
             "Use values in conditions, repeat counts, or timings.",
-            "For Text, choose Choices to list options and pick a default.",
+            "For Text, choose Choices. Use + to add an option, double-tap to edit it, and tap to set the default.",
             "Review workflow lets you change starting values for one run without changing saved defaults.",
         ),
         "Saved blocks" to listOf(
