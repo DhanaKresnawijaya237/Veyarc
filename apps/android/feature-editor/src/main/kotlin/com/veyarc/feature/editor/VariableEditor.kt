@@ -2,6 +2,7 @@ package com.veyarc.feature.editor
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -30,18 +32,29 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -106,10 +119,22 @@ private fun VariableDeclarationDialog(draft: WorkflowDraft, originalName: String
     var text by rememberSaveable { mutableStateOf((original?.initialValue ?: type.defaultValue()).editorText()) }
     var useChoices by rememberSaveable { mutableStateOf(original?.choices?.isNotEmpty() == true) }
     var choices by rememberSaveable { mutableStateOf(original?.choices.orEmpty()) }
-    var newChoice by rememberSaveable { mutableStateOf("") }
-    val reviewChoices = if (type == VariableType.STRING && useChoices) choices else emptyList()
-    val choicesValid = type != VariableType.STRING || !useChoices || (choices.isNotEmpty() && text in choices)
-    val value = parseVariableValue(type, text)
+    var editingChoice by rememberSaveable { mutableStateOf<Int?>(null) }
+    var editingDefault by rememberSaveable { mutableStateOf(false) }
+    var choiceText by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue()) }
+    val reviewChoices = if (type == VariableType.STRING && useChoices) choices.mapIndexed { index, option -> if (index == editingChoice) choiceText.text.trim() else option } else emptyList()
+    val reviewText = if (type == VariableType.STRING && useChoices && editingChoice != null && editingDefault) choiceText.text.trim() else text
+    val choicesValid = type != VariableType.STRING || !useChoices || (reviewChoices.isNotEmpty() && reviewText in reviewChoices && reviewChoices.distinct().size == reviewChoices.size && reviewChoices.all { it.isNotBlank() && it.length <= 4096 })
+    val value = parseVariableValue(type, reviewText)
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    val finishChoice = {
+        choices = reviewChoices
+        text = reviewText
+        editingChoice = null
+        focusManager.clearFocus()
+        keyboard?.hide()
+    }
     val nameError = when {
         name.isEmpty() -> null
         runCatching { VariableName(name) }.isFailure -> "Start with a lowercase letter. Use a–z, 0–9 or _, up to 64 characters."
@@ -132,11 +157,14 @@ private fun VariableDeclarationDialog(draft: WorkflowDraft, originalName: String
                     type = VariableType.valueOf(it)
                     text = type.defaultValue().editorText()
                     useChoices = false
+                    editingChoice = null
                 }
             }
             if (type == VariableType.STRING) {
                 InlineVariableOptions(listOf("text" to "Free text", "choices" to "Choices"), if (useChoices) "choices" else "text") {
+                    if (useChoices && choicesValid) finishChoice()
                     useChoices = it == "choices"
+                    editingChoice = null
                     if (useChoices) {
                         if (choices.isEmpty() && text.isNotBlank() && text.length <= 4096) choices = listOf(text)
                         if (text !in choices) text = choices.firstOrNull().orEmpty()
@@ -146,32 +174,74 @@ private fun VariableDeclarationDialog(draft: WorkflowDraft, originalName: String
             if (type == VariableType.STRING && useChoices) {
                 Text("Options", style = MaterialTheme.typography.titleSmall)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    choices.forEach { option ->
-                        Surface(onClick = { text = option }, shape = RoundedCornerShape(12.dp), color = if (text == option) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh) {
-                            Row(Modifier.padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text(option, Modifier.widthIn(max = 180.dp), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
-                                if (text == option) Text("Default", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    choices.forEachIndexed { index, option ->
+                        val editOption = {
+                            if (choicesValid) {
+                                choices = reviewChoices
+                                text = reviewText
+                                editingDefault = reviewText == reviewChoices[index]
+                                choiceText = TextFieldValue(reviewChoices[index], TextRange(0, reviewChoices[index].length))
+                                editingChoice = index
+                            }
+                        }
+                        Surface(
+                            modifier = Modifier.combinedClickable(
+                                interactionSource = null,
+                                indication = null,
+                                onClick = {
+                                    if (choicesValid) {
+                                        finishChoice()
+                                        text = reviewChoices[index]
+                                    }
+                                },
+                                onDoubleClick = editOption,
+                                onLongClickLabel = "Edit option",
+                                onLongClick = editOption,
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (reviewText == reviewChoices[index]) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                        ) {
+                            Row(Modifier.padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                if (editingChoice == index) {
+                                    val focus = remember { FocusRequester() }
+                                    LaunchedEffect(Unit) {
+                                        focus.requestFocus()
+                                        keyboard?.show()
+                                    }
+                                    BasicTextField(
+                                        choiceText,
+                                        { choiceText = it },
+                                        Modifier.widthIn(min = 64.dp, max = 180.dp).focusRequester(focus).semantics { contentDescription = "Option text" },
+                                        singleLine = true,
+                                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+                                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                        keyboardActions = KeyboardActions(onDone = { if (choicesValid) finishChoice() }),
+                                    )
+                                } else {
+                                    Text(option, Modifier.widthIn(max = 180.dp), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
+                                }
+                                if (reviewText == reviewChoices[index]) Text("Default", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                                 IconButton(onClick = {
-                                    choices = choices - option
-                                    if (text == option) text = choices.firstOrNull().orEmpty()
+                                    choices = reviewChoices.filterIndexed { optionIndex, _ -> optionIndex != index }
+                                    text = reviewText.takeIf { it in choices } ?: choices.firstOrNull().orEmpty()
+                                    editingChoice = null
+                                    focusManager.clearFocus()
+                                    keyboard?.hide()
                                 }, modifier = Modifier.size(32.dp)) { Icon(Icons.Outlined.Close, "Remove option $option", Modifier.size(16.dp)) }
                             }
                         }
                     }
+                    IconButton(onClick = {
+                        val option = generateSequence(choices.size + 1) { it + 1 }.map { "Option $it" }.first { it !in reviewChoices }
+                        choices = reviewChoices + option
+                        text = reviewText.takeIf { it in reviewChoices } ?: option
+                        editingDefault = text == option
+                        choiceText = TextFieldValue(option, TextRange(0, option.length))
+                        editingChoice = choices.lastIndex
+                    }, enabled = editingChoice == null || choicesValid, modifier = Modifier.size(40.dp)) { Icon(Icons.Outlined.Add, "Add option") }
                 }
-                val option = newChoice.trim()
-                val canAdd = option.isNotEmpty() && option.length <= 4096 && option !in choices
-                val addOption = {
-                    if (canAdd) {
-                        choices = choices + option
-                        if (text !in choices) text = option
-                        newChoice = ""
-                    }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(newChoice, { newChoice = it }, Modifier.weight(1f), label = { Text("New option") }, singleLine = true, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { addOption() }))
-                    IconButton(onClick = addOption, enabled = canAdd) { Icon(Icons.Outlined.Add, "Add option") }
-                }
+                if (editingChoice != null && !choicesValid) Text("Use a unique, non-empty option up to 4,096 characters.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 if (choices.isEmpty()) Text("Add an option, then tap one to set the default.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
                 ScalarValueField(type, text, { text = it }, "Starting value")
