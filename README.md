@@ -1,6 +1,15 @@
-# Veyarc
+<p align="center">
+  <img src="apps/android/app/src/main/res/drawable-nodpi/veyarc_logo.png" alt="Veyarc logo" width="112">
+</p>
 
-Record taps and swipes on Android, turn them into editable workflows, and replay them on your device.
+<h1 align="center">Veyarc</h1>
+
+<p align="center">Record, edit, and replay Android workflows.</p>
+
+<p align="center">
+  <a href="https://github.com/DhanaKresnawijaya237/Veyarc/releases/latest"><strong>Download APK</strong></a>
+  · <a href="#get-started">Get started</a>
+</p>
 
 ## Problem and solution
 
@@ -10,13 +19,13 @@ Record taps and swipes on Android, turn them into editable workflows, and replay
 
 ## Features
 
-- Record actions and app switches. Pause to add screen checks, then continue recording where you choose.
-- Add waits, image checks, variables, conditions, and loops. Reuse templates and keep saved revisions.
-- Save block sequences as linked ranges or independent copies. Choose starting values or preset options before a run.
-- Organize workflows and runs with folders and search. Review step activity, errors, and image-match scores.
-- Ask AI to explain, create, or edit workflows. Attach photos or files; crop, rotate, and annotate images.
-- View run statistics and AI usage, including tokens and estimated API costs.
-- Import/export workflows and runs, and export statistics as CSV.
+- **Record.** Capture touches and app switches. Pause to add screen checks, then continue where you choose.
+- **Edit.** Add waits, image checks, variables, and loops. Reuse block sequences and templates, keep revisions, and choose starting values or preset options.
+- **AI.** Explain, create, or edit workflows with your own API key. Attach files and photos; crop, rotate, and annotate images.
+- **Review.** Organize workflows and runs with folders and search. Inspect step activity, errors, match scores, and AI usage costs.
+- **Export.** Share workflows and runs, or export statistics as CSV.
+
+> **Example:** Record a tap sequence → add an image check → repeat while the image is visible.
 
 ## Get started
 
