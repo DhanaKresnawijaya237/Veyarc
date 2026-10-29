@@ -4,8 +4,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.veyarc.feature.editor.ScalarValueField
@@ -30,6 +31,7 @@ import com.veyarc.model.WorkflowDocument
 
 @Composable
 internal fun RunStartingValuesCard(document: WorkflowDocument, values: Map<String, String>, onChange: (String, String) -> Unit, onReset: () -> Unit) {
+    val inputHeight = (with(LocalDensity.current) { MaterialTheme.typography.bodyLarge.lineHeight.toDp() } + 32.dp).coerceAtLeast(56.dp)
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val columns = if (maxWidth >= 600.dp) 2 else 1
         Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
@@ -54,14 +56,13 @@ internal fun RunStartingValuesCard(document: WorkflowDocument, values: Map<Strin
                                         Text(if (declaration.choices.isEmpty()) declaration.type.displayName() else "Choice", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     if (declaration.choices.isEmpty()) {
-                                        ScalarValueField(declaration.type, values[name].orEmpty(), { onChange(name, it) }, label = null, modifier = Modifier.testTag("run-input-$name"))
+                                        ScalarValueField(declaration.type, values[name].orEmpty(), { onChange(name, it) }, label = null, modifier = Modifier.testTag("run-input-$name"), singleLine = true, minimumHeight = inputHeight)
                                     } else {
-                                        VariableChoice(name, values[name].orEmpty(), declaration.choices.map { VeyarcChoice(it, it) }, selectedId = values[name], modifier = Modifier.fillMaxWidth().testTag("run-input-$name")) { onChange(name, it) }
+                                        VariableChoice(name, values[name].orEmpty(), declaration.choices.map { VeyarcChoice(it, it) }, selectedId = values[name], modifier = Modifier.fillMaxWidth().heightIn(min = inputHeight).testTag("run-input-$name"), textStyle = MaterialTheme.typography.bodyLarge, singleLine = true) { onChange(name, it) }
                                     }
                                 }
                             }
                         }
-                        if (entries.size < columns) Spacer(Modifier.weight(1f))
                     }
                 }
             }

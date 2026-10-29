@@ -9,9 +9,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -57,6 +59,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.veyarc.model.ArithmeticOperator
 import com.veyarc.model.CaptureImage
@@ -251,10 +254,10 @@ private fun VariableDeclarationDialog(draft: WorkflowDraft, originalName: String
 }
 
 @Composable
-fun VariableChoice(title: String, label: String, options: List<VeyarcChoice>, selectedId: String? = null, modifier: Modifier = Modifier, textStyle: TextStyle = MaterialTheme.typography.bodyMedium, onSelect: (String) -> Unit) {
+fun VariableChoice(title: String, label: String, options: List<VeyarcChoice>, selectedId: String? = null, modifier: Modifier = Modifier, textStyle: TextStyle = MaterialTheme.typography.bodyMedium, singleLine: Boolean = false, onSelect: (String) -> Unit) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     Surface(modifier = modifier, onClick = { expanded = true }, enabled = options.isNotEmpty(), shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.primary) {
-        Text(label, Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = textStyle)
+        Text(label, Modifier.padding(horizontal = 12.dp, vertical = 8.dp).wrapContentHeight(), style = textStyle, maxLines = if (singleLine) 1 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis)
     }
     if (expanded) {
         VeyarcChoicePicker(title = title, options = options, selectedId = selectedId, onDismiss = { expanded = false }, onSelect = {
@@ -265,19 +268,19 @@ fun VariableChoice(title: String, label: String, options: List<VeyarcChoice>, se
 }
 
 @Composable
-fun ScalarValueField(type: VariableType, text: String, onChange: (String) -> Unit, label: String?, modifier: Modifier = Modifier) {
+fun ScalarValueField(type: VariableType, text: String, onChange: (String) -> Unit, label: String?, modifier: Modifier = Modifier, singleLine: Boolean = type == VariableType.NUMBER, minimumHeight: Dp = Dp.Unspecified) {
     if (type == VariableType.BOOLEAN) {
         Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
             label?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            InlineVariableOptions(listOf("true" to "True", "false" to "False"), text, onChange)
+            InlineVariableOptions(listOf("true" to "True", "false" to "False"), text, minimumHeight, onChange)
         }
     } else {
         TextField(
             shape = RoundedCornerShape(14.dp),
             colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
-            value = text, onValueChange = onChange, modifier = modifier.fillMaxWidth(), label = label?.let { { Text(it) } },
+            value = text, onValueChange = onChange, modifier = modifier.fillMaxWidth().heightIn(min = minimumHeight), label = label?.let { { Text(it) } },
             keyboardOptions = KeyboardOptions(keyboardType = if (type == VariableType.NUMBER) KeyboardType.Decimal else KeyboardType.Text),
-            singleLine = type == VariableType.NUMBER, maxLines = if (type == VariableType.NUMBER) 1 else 4,
+            singleLine = singleLine, maxLines = if (singleLine) 1 else 4,
             isError = parseVariableValue(type, text) == null,
             supportingText = if (parseVariableValue(type, text) == null) {
                 { Text(if (type == VariableType.NUMBER) "Enter a finite number." else "Keep text within 4,096 characters.") }
@@ -298,17 +301,17 @@ private fun ScalarValueButton(value: ScalarValue, showLabel: Boolean = true, onC
 }
 
 @Composable
-internal fun InlineVariableOptions(options: List<Pair<String, String>>, selected: String, onSelect: (String) -> Unit) {
+internal fun InlineVariableOptions(options: List<Pair<String, String>>, selected: String, minimumHeight: Dp = Dp.Unspecified, onSelect: (String) -> Unit) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         options.forEach { (id, label) ->
             Surface(
                 onClick = { onSelect(id) },
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).heightIn(min = minimumHeight),
                 shape = RoundedCornerShape(12.dp),
                 color = if (id == selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
                 contentColor = if (id == selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
             ) {
-                Text(label, Modifier.padding(horizontal = 6.dp, vertical = 12.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center, style = MaterialTheme.typography.labelLarge)
+                Text(label, Modifier.padding(horizontal = 6.dp, vertical = 12.dp).wrapContentHeight(), textAlign = androidx.compose.ui.text.style.TextAlign.Center, style = MaterialTheme.typography.labelLarge)
             }
         }
     }
