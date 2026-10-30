@@ -4,7 +4,6 @@
 
 # Gradle
 .gradle/
-.gradle-user-home/
 **/build/
 **/.kotlin/
 
@@ -25,11 +24,3 @@ secrets.properties
 # Operating system files
 .DS_Store
 Thumbs.db
-
-# Local planning state
-Veyarc Android-First Implementation and Commit Plan.md
-
-# Graphify generated graph is shareable; local cache/runtime metadata is not.
-graphify-out/cache/
-graphify-out/cost.json
-graphify-out/.graphify_*
