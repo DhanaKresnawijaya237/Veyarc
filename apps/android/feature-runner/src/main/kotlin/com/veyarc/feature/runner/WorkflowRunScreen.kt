@@ -143,6 +143,10 @@ fun WorkflowRunScreen(
     }
 
     LaunchedEffect(controller, autoStartRequested, canStart, state.review.isRunnable, state.startingValuesValid, lifecycleState) {
+        if (autoStartRequested && bundle.document.variables.isNotEmpty()) {
+            onAutoStartConsumed()
+            return@LaunchedEffect
+        }
         if (autoStartRequested && canStart && state.review.isRunnable && state.startingValuesValid && lifecycleState.isAtLeast(Lifecycle.State.RESUMED) && state.phase == WorkflowRunPhase.REVIEW) {
             requestStart()
         }
