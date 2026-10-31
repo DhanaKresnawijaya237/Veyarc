@@ -14,8 +14,16 @@
 - Before editing or committing, check `git branch --show-current` and `git status --short`. Keep commits scoped; do not include `My Examples/`, `.codex/`, `graphify-out/`, generated `bin/` directories, or handoff files unless explicitly requested.
 - Commit on the current task branch when a significant, cohesive implementation checkpoint is complete and its required checks pass; no additional user permission is needed. Group related changes rather than committing every small edit. Use Conventional Commits with a concise imperative subject, for example `feat(assistant): add reviewed workflow editing`, `fix(assistant): cancel interrupted requests`, or `docs(repo): clarify checkpoint rules`. Keep unrelated work out of the commit. This authorizes local commits only; pushing, merging, and publishing still require user direction.
 - Do not commit documentation unless the user explicitly requests or names it for inclusion in commits.
+- Do not commit or push tests, test fixtures, benchmarks, or QA artifacts unless the user explicitly authorizes a specific exception. Keep new test files local using `.git/info/exclude`.
 - When changing workflow fields, steps, conditions, or serialized enum values, update `spec/workflows/v1/workflow.schema.json` in the same change so the AI schema matches the app. Maintain it directly without adding synchronization checks.
 - After changes, review the scoped diff and run `git diff --check` for changed files. Choose further checks using the policy below.
+
+## Minimal implementation, minimal fixes, minimal testing
+
+- Default to the smallest complete solution. Reuse existing code and patterns; avoid speculative features, unnecessary abstractions, dependencies, and unrelated refactoring.
+- Fix the confirmed problem at its source and keep the change scoped. Do not expand a small task into a redesign or cleanup campaign.
+- Use the fewest checks needed for the actual risk. Reuse passing results and existing tests. Add a small local regression test only when needed; avoid duplicate coverage, elaborate fixtures, and new QA frameworks.
+- Stop when the requested behavior and necessary checks are complete. Minimal work must still preserve safety, validation, error handling, and protection against data loss.
 
 ## Verification: minimum sufficient checks
 
