@@ -51,7 +51,7 @@ Review AI changes, then choose **Apply and save** to create a revision. Running 
 
 - Playback needs Android 7+ and Accessibility. Android 7.0–7.1 support short taps only.
 - Recording needs Android 13+, Shizuku, and a compatible phone.
-- Image checks require Android screen-sharing approval.
+- Image checks ask for screen sharing on the first visual run. Sharing ends when you turn off the edge latch, lock the phone, or stop capture.
 - Workflows use coordinates and images, with one finger at a time. Split-screen and floating windows are unsupported.
 - Portrait and landscape use separate workflow variants. Rotating between them stops recording or playback.
 - Only allowed apps receive workflow touches. Leave the app untouched during playback to avoid replay complications.
@@ -69,3 +69,7 @@ The Kotlin project is in [`apps/android`](apps/android). With JDK 17 and the And
 APK: `apps/android/app/build/outputs/apk/debug/app-debug.apk`.
 
 See the [Android developer README](apps/android/README.md) for device tests and release signing.
+
+## License
+
+[MIT](LICENSE). Third-party dependencies retain their own licenses.

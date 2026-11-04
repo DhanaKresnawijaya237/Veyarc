@@ -19,7 +19,7 @@ Recent API 37 checks also cover editor/chat layouts, run details, recording-to-e
 | --- | --- | --- | --- |
 | Android 7.0 to 7.1, API 24 to 25 | Short taps up to 100 ms only | Unsupported recording target | Available when Android supplies MediaProjection, but not part of current device acceptance |
 | Android 8.0 to 12, API 26 to 32 | Taps, long presses, and swipe paths | Unsupported recording target | Available when Android supplies MediaProjection, but not part of current device acceptance |
-| Android 13 and newer, API 33+ | Taps, long presses, and swipe paths | Device dependent; requires Shizuku access to a direct touchscreen event node | Supported with fresh consent for each run |
+| Android 13 and newer, API 33+ | Taps, long presses, and swipe paths | Device dependent; requires Shizuku access to a direct touchscreen event node | Screen sharing can be reused between runs while the edge latch stays on |
 
 The APK has `minSdk 24`. The recording support policy begins at API 33 because foreground-service, notification, OEM input, and lifecycle behavior below that level have not passed the acceptance matrix.
 
