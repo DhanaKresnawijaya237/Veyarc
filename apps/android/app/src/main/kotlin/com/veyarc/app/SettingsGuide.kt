@@ -179,13 +179,13 @@ private val GUIDE_TOPICS = mapOf(
             "Play: use Last saved, Last played, Favorite, or Pick directly, as configured.",
             "Library (gear): open workflows. Stop (×): end a paused run.",
             "Pause / Continue recording: pause to edit, then carry on. Add recording block uses the current screen.",
-            "Hide (×): turn the latch off. Enable it again in Settings.",
+            "Hide (×): turn off the latch and screen sharing. Enable the latch again in Settings.",
             "Opening the latch during a run stops that run.",
         ),
         "Before recording or running" to listOf(
             "Enable Accessibility, notifications, and the edge latch.",
             "Recording needs Android 13+ and a supported touch device.",
-            "Match the workflow's orientation. Allow screen sharing for image checks.",
+            "Match the workflow's orientation. The first run that needs images asks for screen sharing.",
         ),
     ),
     GuideCategory.FEATURES to listOf(
@@ -293,6 +293,7 @@ private val GUIDE_TOPICS = mapOf(
             "Accessibility sends gestures and checks the current app.",
             "Shizuku reads touch events for recording.",
             "Screen capture (MediaProjection) provides temporary image-check frames, not a saved video.",
+            "Sharing stays available between runs. Lock the phone, turn off the latch, or use Stop capture to end it.",
         ),
         "From recording to a run" to listOf(
             "Touches, waits, and app switches become blocks.",

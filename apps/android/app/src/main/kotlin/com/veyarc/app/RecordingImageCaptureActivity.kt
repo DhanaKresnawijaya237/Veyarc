@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.veyarc.app.ui.theme.VeyarcTheme
 import com.veyarc.automation.android.MediaProjectionCaptureRuntime
+import com.veyarc.automation.android.MediaProjectionCaptureService
 import com.veyarc.automation.android.MediaProjectionConsent
 import com.veyarc.feature.recorder.CoordinateRecordingController
 import com.veyarc.feature.recorder.CoordinateRecordingRuntime
@@ -83,6 +84,7 @@ class RecordingImageCaptureActivity : ComponentActivity() {
                 if (selected != null && !requested) {
                     requested = true
                     runCatching {
+                        MediaProjectionCaptureService.stopIdleWorkflowSession(this@RecordingImageCaptureActivity)
                         check(!MediaProjectionCaptureRuntime.isActive) { "Finish the current screen capture first." }
                         consent.launch(MediaProjectionConsent.createRequestIntent(this@RecordingImageCaptureActivity, fullDisplay = true))
                     }.onFailure {

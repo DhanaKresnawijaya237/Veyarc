@@ -406,6 +406,7 @@ object ReplayFloatingController {
             .edit()
             .putBoolean(PREF_ENABLED, enabled)
             .apply()
+        if (!enabled) MediaProjectionCaptureService.endWorkflowSession(appContext)
         ReplayWorkflowCatalog.load(appContext)
         runOnMain {
             expanded = false
@@ -449,6 +450,7 @@ object ReplayFloatingController {
 
     internal fun detach(accessibilityService: AccessibilityService) {
         if (service !== accessibilityService) return
+        MediaProjectionCaptureService.endWorkflowSession(accessibilityService, "Screen capture ended because Accessibility disconnected.")
         runOnMain {
             if (service !== accessibilityService) return@runOnMain
             removeOverlayOrMakePassThrough()
@@ -460,6 +462,7 @@ object ReplayFloatingController {
     /** Removes all controller state during an accessibility-service interruption. */
     internal fun onServiceInterrupted(accessibilityService: AccessibilityService) {
         if (service !== accessibilityService) return
+        MediaProjectionCaptureService.endWorkflowSession(accessibilityService, "Screen capture ended because Accessibility was interrupted.")
         runOnMain {
             if (service !== accessibilityService) return@runOnMain
             removeOverlayOrMakePassThrough()

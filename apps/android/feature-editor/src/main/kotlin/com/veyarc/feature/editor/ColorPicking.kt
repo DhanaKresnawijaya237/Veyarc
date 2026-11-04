@@ -222,7 +222,10 @@ internal fun ColorSampleTools(
             Icon(Icons.Outlined.Colorize, null, Modifier.size(18.dp))
             Text(" From image")
         }
-        OutlinedButton(onClick = { if (MediaProjectionCaptureRuntime.isActive) error = "Finish the current screen capture first." else explainCapture = true }, enabled = !busy, modifier = Modifier.weight(1f)) {
+        OutlinedButton(onClick = {
+            MediaProjectionCaptureService.stopIdleWorkflowSession(context)
+            if (MediaProjectionCaptureRuntime.isActive) error = "Finish the current screen capture first." else explainCapture = true
+        }, enabled = !busy, modifier = Modifier.weight(1f)) {
             Icon(Icons.Outlined.Screenshot, null, Modifier.size(18.dp))
             Text(" Screen")
         }

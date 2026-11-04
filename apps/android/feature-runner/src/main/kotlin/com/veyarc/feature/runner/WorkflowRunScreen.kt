@@ -10,6 +10,7 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.ActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -48,15 +49,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.currentStateAsState
-import com.veyarc.automation.android.MediaProjectionConsent
+import com.veyarc.automation.android.AndroidUnsafeDeviceState
 import com.veyarc.automation.android.ReplayFloatingController
 import com.veyarc.data.storage.StoredRunEvent
 import com.veyarc.data.storage.StoredRunRecord
@@ -67,7 +71,10 @@ import com.veyarc.feature.editor.WorkflowDraft
 import com.veyarc.feature.editor.issueDisplay
 import com.veyarc.model.bundle.WorkflowBundle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 
 @Composable
 fun WorkflowRunScreen(
@@ -96,6 +103,8 @@ fun WorkflowRunScreen(
     }
     var permissionRequestPending by remember { mutableStateOf(false) }
     var projectionRequestPending by remember { mutableStateOf(false) }
+    var projectionResult by rememberSaveable(controller) { mutableStateOf<ActivityResult?>(null) }
+    val windowInfo = LocalWindowInfo.current
     lateinit var requestStart: () -> Unit
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -107,13 +116,30 @@ fun WorkflowRunScreen(
     val projectionConsentLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
+        projectionResult = result
+    }
+
+    LaunchedEffect(controller, projectionResult) {
+        val result = projectionResult ?: return@LaunchedEffect
+        try {
+            // Android can deliver the result before its dialog has released focus and window metadata.
+            withTimeout(5_000) {
+                snapshotFlow {
+                    lifecycleState.isAtLeast(Lifecycle.State.RESUMED) && windowInfo.isWindowFocused &&
+                        state.review.capabilities.unsafeDeviceState != AndroidUnsafeDeviceState.SYSTEM_WINDOW_ACTIVE
+                }.first { it }
+            }
+            controller.startAfterMediaProjectionConsent(result.resultCode, result.data)
+        } catch (_: TimeoutCancellationException) {
+            controller.reportMediaProjectionFailure("Android's sharing dialog has not closed. Try starting again.")
+        }
         projectionRequestPending = false
-        controller.startAfterMediaProjectionConsent(result.resultCode, result.data)
+        projectionResult = null
     }
 
     requestStart = startRequest@{
         val current = controller.state.value
-        if (!canStart || !current.startingValuesValid || current.phase != WorkflowRunPhase.REVIEW || permissionRequestPending || projectionRequestPending) return@startRequest
+        if (!canStart || !current.startingValuesValid || current.phase != WorkflowRunPhase.REVIEW || permissionRequestPending || projectionRequestPending || projectionResult != null) return@startRequest
         onAutoStartConsumed()
         if (!current.notificationReady) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -127,7 +153,7 @@ fun WorkflowRunScreen(
             return@startRequest
         }
         if (controller.requiresMediaProjectionConsent()) {
-            runCatching { MediaProjectionConsent.createRequestIntent(context) }
+            runCatching { controller.createScreenCaptureRequest() }
                 .onSuccess { intent ->
                     projectionRequestPending = true
                     projectionConsentLauncher.launch(intent)
@@ -169,7 +195,7 @@ fun WorkflowRunScreen(
             requiresMediaProjectionConsent = controller.requiresMediaProjectionConsent(),
             pendingMessage = when {
                 permissionRequestPending -> "Waiting for notification permission…"
-                projectionRequestPending -> "Waiting for screen-capture consent…"
+                projectionRequestPending || projectionResult != null -> "Waiting for screen-capture consent…"
                 else -> null
             },
             modifier = modifier,

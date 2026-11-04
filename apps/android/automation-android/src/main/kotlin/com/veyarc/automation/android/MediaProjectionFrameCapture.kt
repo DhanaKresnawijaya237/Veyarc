@@ -236,6 +236,10 @@ internal interface MediaProjectionSession : Closeable {
     fun captureLatestFrame(): EphemeralScreenFrame?
 
     fun captureLatestFrame(area: ScreenCaptureArea): EphemeralScreenFrame? = captureLatestFrame()
+
+    fun resume(displaySpec: MediaProjectionDisplaySpec) {}
+
+    fun pause() {}
 }
 
 /** Builds the one-shot consent request required for each capture session. */
@@ -250,8 +254,8 @@ object MediaProjectionConsent {
 }
 
 /**
- * Owns one MediaProjection virtual display and never writes frames to disk. A new instance is
- * required for every workflow run so consent and cleanup cannot leak across runs.
+ * Owns one consented virtual display. Runs replace its surface without reusing consent tokens.
+ * Idle sessions keep no image reader or copied pixels; frames are never written to disk.
  */
 class MediaProjectionFrameCapture(
     context: Context,
@@ -265,6 +269,7 @@ class MediaProjectionFrameCapture(
     private var projectionCallback: MediaProjection.Callback? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var frames: ProjectionFrames? = null
+    private var displaySpec: MediaProjectionDisplaySpec? = null
     private var state = State.NEW
 
     override val isActive: Boolean
@@ -316,6 +321,7 @@ class MediaProjectionFrameCapture(
                 projectionCallback = callback
                 virtualDisplay = display
                 frames = ProjectionFrames(reader)
+                this.displaySpec = displaySpec
                 state = State.ACTIVE
             } catch (error: Throwable) {
                 runCatching { mediaProjection.unregisterCallback(callback) }
@@ -336,6 +342,33 @@ class MediaProjectionFrameCapture(
     override fun captureLatestFrame(area: ScreenCaptureArea): EphemeralScreenFrame? = synchronized(lock) {
         check(state == State.ACTIVE) { "MediaProjection capture is not active" }
         checkNotNull(frames).capture(area)
+    }
+
+    override fun resume(displaySpec: MediaProjectionDisplaySpec) = synchronized(lock) {
+        check(state == State.ACTIVE) { "MediaProjection capture is not active" }
+        if (frames != null && this.displaySpec == displaySpec) return@synchronized
+        pause()
+        val reader = ImageReader.newInstance(displaySpec.widthPx, displaySpec.heightPx, PixelFormat.RGBA_8888, ProjectionFrames.MAX_IMAGES)
+        try {
+            val display = checkNotNull(virtualDisplay)
+            display.resize(displaySpec.widthPx, displaySpec.heightPx, displaySpec.densityDpi)
+            display.surface = reader.surface
+            frames = ProjectionFrames(reader)
+            this.displaySpec = displaySpec
+        } catch (error: Throwable) {
+            reader.close()
+            throw error
+        }
+    }
+
+    override fun pause() = synchronized(lock) {
+        try {
+            virtualDisplay?.surface = null
+        } finally {
+            val previous = frames
+            frames = null
+            previous?.close()
+        }
     }
 
     override fun close() {

@@ -593,6 +593,7 @@ class CoordinateRecordingController(
         captureOwner = owner
         captureJob = captureScope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
+                MediaProjectionCaptureService.stopIdleWorkflowSession(appContext)
                 check(!MediaProjectionCaptureRuntime.isActive) { "Finish the current screen capture first." }
                 check(isCurrentSessionRotation()) { "Rotate back to the recording orientation and try again." }
                 check(ReplayFloatingController.hideForRecordingScreenshot(owner)) { "Pause recording before taking a screenshot." }

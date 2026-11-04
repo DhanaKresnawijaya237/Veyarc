@@ -136,7 +136,10 @@ class WorkflowRunController(
     private val _state = MutableStateFlow(initialState())
     private var runJob: Job? = null
     private var control: MutableExecutionControl? = null
-    private var mediaProjectionOwned = false
+
+    @Volatile private var mediaProjectionOwner: Any? = null
+    private var consentOwner: Any? = null
+    private var newCaptureOwner: Any? = null
     private var mediaProjectionListener: Closeable? = null
     private val savedEvents = ArrayDeque<RedactedRunEvent>()
     private var savedEventCharacters = 0
@@ -206,10 +209,18 @@ class WorkflowRunController(
         }
     }
 
-    fun requiresMediaProjectionConsent(): Boolean = document.usesVisualConditions(entrySectionId)
+    fun requiresMediaProjectionConsent(): Boolean = document.usesVisualConditions(entrySectionId) && !MediaProjectionCaptureRuntime.workflowCaptureAvailable
+
+    fun createScreenCaptureRequest(): Intent {
+        check(ReplayFloatingController.isEnabled(appContext)) { "Turn on the edge latch before running." }
+        consentOwner = MediaProjectionCaptureRuntime.workflowConsentOwner()
+        return MediaProjectionConsent.createRequestIntent(appContext, fullDisplay = true)
+    }
 
     /** Handles the one-shot ActivityResult returned by Android's screen-capture consent dialog. */
     fun startAfterMediaProjectionConsent(resultCode: Int, data: Intent?) {
+        val owner = consentOwner
+        consentOwner = null
         if (closed) return
         refreshReview()
         if (!MediaProjectionConsent.wasGranted(resultCode, data)) {
@@ -218,10 +229,18 @@ class WorkflowRunController(
             }
             return
         }
+        if (owner == null || !MediaProjectionCaptureRuntime.isCurrentWorkflowOwner(owner)) {
+            _state.update { it.copy(message = "The edge latch session ended. Start the run again.") }
+            return
+        }
         if (closed || !isStartReady()) {
             if (!closed) {
                 _state.update { it.copy(message = "The workflow is no longer ready to start. Refresh the run checks.") }
             }
+            return
+        }
+        if (MediaProjectionCaptureRuntime.workflowCaptureAvailable) {
+            start()
             return
         }
         try {
@@ -230,25 +249,30 @@ class WorkflowRunController(
                 resultCode = resultCode,
                 resultData = requireNotNull(data),
                 displaySpec = MediaProjectionDisplaySpec.fromContext(appContext),
+                owner = owner,
+                workflowSession = true,
             )
-            mediaProjectionOwned = true
+            newCaptureOwner = owner
             start()
             // Consent can return after navigation, capability loss, or notification changes.
             // If start() rejected the request, do not leave a projection service running.
             if (_state.value.phase == WorkflowRunPhase.REVIEW) {
-                stopOwnedMediaProjection()
+                MediaProjectionCaptureService.stop(appContext, owner = owner)
             }
         } catch (error: Exception) {
-            stopOwnedMediaProjection()
+            if (newCaptureOwner === owner) MediaProjectionCaptureService.stop(appContext, owner = owner)
             _state.update {
                 it.copy(
                     message = "Screen capture could not start: ${error.message ?: error.javaClass.simpleName}",
                 )
             }
+        } finally {
+            newCaptureOwner = null
         }
     }
 
     fun reportMediaProjectionFailure(reason: String) {
+        consentOwner = null
         _state.update { it.copy(message = "Screen capture could not start: $reason") }
     }
 
@@ -272,14 +296,18 @@ class WorkflowRunController(
             }
             return
         }
-        if (requiresMediaProjectionConsent() && !mediaProjectionOwned) {
-            _state.update { it.copy(message = "Screen-capture consent is required before this workflow can start.") }
-            return
-        }
         if (runJob?.isActive == true) return
+        if (document.usesVisualConditions(entrySectionId) && mediaProjectionOwner == null) {
+            mediaProjectionOwner = MediaProjectionCaptureRuntime.reserveWorkflowCapture(this, allowPending = newCaptureOwner != null)
+            if (mediaProjectionOwner == null) {
+                _state.update { it.copy(message = if (MediaProjectionCaptureRuntime.workflowCaptureAvailable) "The previous run is still stopping. Try again in a moment." else "Screen-capture consent is required before this workflow can start.") }
+                return
+            }
+        }
 
         ReplayFloatingController.setReplayActions(floatingControllerActions)
         if (!ReplayFloatingController.showReplay()) {
+            releaseMediaProjection()
             _state.update { it.copy(message = "Veyarc edge-latch controller could not be created safely. Run was not started.") }
             return
         }
@@ -305,6 +333,8 @@ class WorkflowRunController(
         }
         runJob = scope.launch {
             execute(executionControl, runDocument)
+        }.also { job ->
+            job.invokeOnCompletion { releaseMediaProjection() }
         }
     }
 
@@ -335,7 +365,6 @@ class WorkflowRunController(
     fun stop() {
         control?.cancel()
         AccessibilityGestureDispatcher.cancelActiveGesture()
-        stopOwnedMediaProjection()
         _state.update { state ->
             if (
                 state.phase == WorkflowRunPhase.PREPARING ||
@@ -360,7 +389,8 @@ class WorkflowRunController(
         ReplayFloatingController.showIdle()
         WorkflowRunRuntime.unregister(this)
         notifications.dismiss()
-        stopOwnedMediaProjection()
+        consentOwner = null
+        if (runJob?.isCompleted != false) releaseMediaProjection()
         mediaProjectionListener?.close()
         mediaProjectionListener = null
         scope.cancel()
@@ -379,10 +409,11 @@ class WorkflowRunController(
                 compilation.errors.joinToString(separator = "; ") { "${it.path}: ${it.message}" },
             )
             val requirements = plan.referencedImageAssets()
-            if (requiresMediaProjectionConsent()) {
+            if (document.usesVisualConditions(entrySectionId)) {
                 check(MediaProjectionCaptureRuntime.awaitActive(MEDIA_PROJECTION_START_TIMEOUT_MILLIS)) {
                     "MediaProjection capture did not become ready before the workflow started"
                 }
+                MediaProjectionCaptureRuntime.resumeWorkflowCapture(this, MediaProjectionDisplaySpec.fromContext(appContext))
             }
             if (requirements.isNotEmpty()) {
                 val memoryBudget = runTemplateMemoryBudgetBytes()
@@ -531,7 +562,7 @@ class WorkflowRunController(
             ReplayFloatingController.clearReplayActions()
             ReplayFloatingController.showIdle()
             WorkflowRunRuntime.unregister(this)
-            stopOwnedMediaProjection()
+            releaseMediaProjection()
             templateSource?.close()
             if (!closed) {
                 notifications.showTerminal(_state.value.message ?: "Workflow finished")
@@ -541,7 +572,8 @@ class WorkflowRunController(
     }
 
     private fun onMediaProjectionTerminated(reason: String) {
-        mediaProjectionOwned = false
+        mediaProjectionOwner = null
+        if (control != null) AccessibilityGestureDispatcher.cancelActiveGesture()
         control?.cancel()
         _state.update { state ->
             if (state.phase == WorkflowRunPhase.PREPARING ||
@@ -555,10 +587,17 @@ class WorkflowRunController(
         }
     }
 
-    private fun stopOwnedMediaProjection() {
-        if (!mediaProjectionOwned) return
-        mediaProjectionOwned = false
-        MediaProjectionCaptureService.stop(appContext)
+    private fun releaseMediaProjection() {
+        val owner = mediaProjectionOwner ?: return
+        mediaProjectionOwner = null
+        try {
+            if (MediaProjectionCaptureRuntime.releaseWorkflowCapture(this) && !MediaProjectionCaptureRuntime.isActive) {
+                MediaProjectionCaptureService.stop(appContext, owner = owner)
+            }
+        } catch (error: Exception) {
+            MediaProjectionCaptureService.stop(appContext, owner = owner)
+            Log.e(TAG, "Screen-capture cleanup failed", error)
+        }
     }
 
     private fun updateTerminal(phase: WorkflowRunPhase, message: String?) {

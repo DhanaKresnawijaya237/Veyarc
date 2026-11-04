@@ -8,32 +8,54 @@ import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
 import java.io.Closeable
+import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Keeps one consented MediaProjection session alive while a workflow evaluates visual conditions.
+ * Keeps one consented MediaProjection session alive until its latch session ends.
  * The service owns only the temporary frame source; it never encodes video or writes screenshots.
  */
 class MediaProjectionCaptureService : Service() {
     private var capture: MediaProjectionFrameCapture? = null
+    private var requestToken: String? = null
+    private val screenOff = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent?) {
+            stop(context, "Screen capture ended because the screen turned off.")
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
         createChannel(this)
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(screenOff, IntentFilter(Intent.ACTION_SCREEN_OFF), RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(screenOff, IntentFilter(Intent.ACTION_SCREEN_OFF))
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (capture?.isActive == true) return START_NOT_STICKY
+        capture?.close()
+        capture = null
+        val token = intent?.getStringExtra(EXTRA_REQUEST_TOKEN)
+        if (token == null || !MediaProjectionCaptureRuntime.isPrepared(token)) {
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         var startedSession: MediaProjectionFrameCapture? = null
         var runtimeAttached = false
         return try {
-            val notification = buildNotification(this)
+            val notification = buildNotification(this, intent.getBooleanExtra(EXTRA_WORKFLOW_SESSION, false))
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
                     NOTIFICATION_ID,
@@ -53,15 +75,17 @@ class MediaProjectionCaptureService : Service() {
             require(resultData != null) { "MediaProjection consent data is missing" }
             require(displaySpec != null) { "MediaProjection display dimensions are missing" }
             val session = MediaProjectionFrameCapture(this) { reason ->
-                MediaProjectionCaptureRuntime.notifyTerminated(reason)
-                expectedStop.set(true)
-                stopSelf()
+                if (MediaProjectionCaptureRuntime.notifyTerminated(reason, token = token)) {
+                    expectedStop.set(true)
+                    stopSelf(startId)
+                }
             }
             startedSession = session
             session.start(resultCode, resultData, displaySpec)
-            MediaProjectionCaptureRuntime.attach(session)
+            check(MediaProjectionCaptureRuntime.attach(session, token)) { "The screen-capture request ended before startup finished" }
             runtimeAttached = true
             capture = session
+            requestToken = token
             serviceRunning.set(true)
             START_NOT_STICKY
         } catch (error: Throwable) {
@@ -69,9 +93,9 @@ class MediaProjectionCaptureService : Service() {
             val reason = error.message ?: error.javaClass.simpleName
             expectedStop.set(true)
             if (runtimeAttached || !MediaProjectionCaptureRuntime.isActive) {
-                MediaProjectionCaptureRuntime.notifyTerminated("MediaProjection capture could not start: $reason")
+                MediaProjectionCaptureRuntime.notifyTerminated("MediaProjection capture could not start: $reason", token = token)
             }
-            stopSelf()
+            stopSelf(startId)
             START_NOT_STICKY
         }
     }
@@ -79,6 +103,7 @@ class MediaProjectionCaptureService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        runCatching { unregisterReceiver(screenOff) }
         val expected = expectedStop.compareAndSet(true, false)
         val wasRunning = serviceRunning.getAndSet(false)
         val session = capture
@@ -86,9 +111,10 @@ class MediaProjectionCaptureService : Service() {
         if (session != null) MediaProjectionCaptureRuntime.detach(session)
         session?.close()
         getSystemService(NotificationManager::class.java)?.cancel(NOTIFICATION_ID)
-        if (wasRunning && !expected) {
+        if (wasRunning && !expected && requestToken != null) {
             MediaProjectionCaptureRuntime.notifyTerminated(
                 "MediaProjection capture stopped unexpectedly. The workflow must stop safely.",
+                token = requestToken,
             )
         }
         super.onDestroy()
@@ -111,6 +137,8 @@ class MediaProjectionCaptureService : Service() {
         private const val EXTRA_WIDTH_PX = "widthPx"
         private const val EXTRA_HEIGHT_PX = "heightPx"
         private const val EXTRA_DENSITY_DPI = "densityDpi"
+        private const val EXTRA_REQUEST_TOKEN = "requestToken"
+        private const val EXTRA_WORKFLOW_SESSION = "workflowSession"
         private val serviceRunning = AtomicBoolean(false)
         private val expectedStop = AtomicBoolean(false)
 
@@ -120,6 +148,7 @@ class MediaProjectionCaptureService : Service() {
             resultData: Intent,
             displaySpec: MediaProjectionDisplaySpec = MediaProjectionDisplaySpec.fromContext(context),
             owner: Any? = null,
+            workflowSession: Boolean = false,
         ) {
             require(MediaProjectionConsent.wasGranted(resultCode, resultData)) {
                 "MediaProjection consent was not granted"
@@ -130,7 +159,8 @@ class MediaProjectionCaptureService : Service() {
             notificationUnavailableReason(context)?.let { reason ->
                 throw MediaProjectionCaptureException(reason)
             }
-            MediaProjectionCaptureRuntime.prepare(owner)
+            if (workflowSession) check(ReplayFloatingController.isEnabled(context)) { "Turn on the edge latch before sharing the screen." }
+            val token = MediaProjectionCaptureRuntime.prepare(owner, workflowSession)
             createChannel(context)
             expectedStop.set(false)
             val intent = Intent(context, MediaProjectionCaptureService::class.java)
@@ -139,11 +169,27 @@ class MediaProjectionCaptureService : Service() {
                 .putExtra(EXTRA_WIDTH_PX, displaySpec.widthPx)
                 .putExtra(EXTRA_HEIGHT_PX, displaySpec.heightPx)
                 .putExtra(EXTRA_DENSITY_DPI, displaySpec.densityDpi)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+                .putExtra(EXTRA_REQUEST_TOKEN, token)
+                .putExtra(EXTRA_WORKFLOW_SESSION, workflowSession)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (error: Throwable) {
+                MediaProjectionCaptureRuntime.notifyTerminated("Screen capture could not start.", token = token)
+                throw error
             }
+        }
+
+        fun endWorkflowSession(context: Context, reason: String = "Screen capture ended with the edge latch.") {
+            stop(context, reason, owner = MediaProjectionCaptureRuntime.invalidateWorkflowSession())
+        }
+
+        /** A deliberate editor capture can replace an idle workflow session, never an active run. */
+        fun stopIdleWorkflowSession(context: Context) {
+            MediaProjectionCaptureRuntime.idleWorkflowOwner()?.let { stop(context, "Starting a separate screen capture.", owner = it) }
         }
 
         fun stop(context: Context, reason: String = "MediaProjection capture stopped.", owner: Any? = null) {
@@ -196,7 +242,7 @@ class MediaProjectionCaptureService : Service() {
             )
         }
 
-        private fun buildNotification(context: Context): Notification {
+        private fun buildNotification(context: Context, workflowSession: Boolean): Notification {
             val stopIntent = Intent(context, MediaProjectionStopReceiver::class.java)
             val stopPendingIntent = PendingIntent.getBroadcast(
                 context,
@@ -212,7 +258,7 @@ class MediaProjectionCaptureService : Service() {
             return builder
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
                 .setContentTitle("Veyarc screen capture active")
-                .setContentText("Temporary frames are available to this workflow")
+                .setContentText(if (workflowSession) "Shared across runs until the edge latch or screen sharing is turned off" else "Capturing a temporary screenshot")
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setCategory(Notification.CATEGORY_SERVICE)
@@ -236,6 +282,54 @@ object MediaProjectionCaptureRuntime {
     private var lastTerminationReason: String? = null
     private var activeSignal = CountDownLatch(1)
     private var captureOwner: Any? = null
+    private var requestToken: String? = null
+    private var workflowRequest = false
+    private var workflowOwner = Any()
+    private var workflowBorrower: Any? = null
+
+    fun workflowConsentOwner(): Any = synchronized(lock) { workflowOwner }
+
+    fun isCurrentWorkflowOwner(owner: Any): Boolean = synchronized(lock) { workflowOwner === owner }
+
+    val workflowCaptureAvailable: Boolean
+        get() = synchronized(lock) { workflowRequest && captureOwner === workflowOwner && activeCapture?.isActive == true }
+
+    internal fun idleWorkflowOwner(): Any? = synchronized(lock) {
+        if (!workflowRequest || captureOwner !== workflowOwner || workflowBorrower != null) return@synchronized null
+        workflowOwner.also { workflowOwner = Any() }
+    }
+
+    internal fun invalidateWorkflowSession(): Any = synchronized(lock) {
+        val previous = workflowOwner
+        workflowOwner = Any()
+        previous
+    }
+
+    fun reserveWorkflowCapture(borrower: Any, allowPending: Boolean = false): Any? = synchronized(lock) {
+        if (!workflowRequest || captureOwner !== workflowOwner || (activeCapture?.isActive != true && !allowPending) ||
+            (workflowBorrower != null && workflowBorrower !== borrower)
+        ) {
+            return@synchronized null
+        }
+        workflowBorrower = borrower
+        workflowOwner
+    }
+
+    fun resumeWorkflowCapture(borrower: Any, displaySpec: MediaProjectionDisplaySpec) = synchronized(lock) {
+        check(workflowBorrower === borrower && captureOwner === workflowOwner) { "This run no longer owns screen capture." }
+        checkNotNull(activeCapture).resume(displaySpec)
+    }
+
+    fun releaseWorkflowCapture(borrower: Any): Boolean = synchronized(lock) {
+        if (workflowBorrower !== borrower) return@synchronized false
+        activeCapture?.pause()
+        workflowBorrower = null
+        true
+    }
+
+    internal fun isPrepared(token: String): Boolean = synchronized(lock) {
+        requestToken == token && (!workflowRequest || captureOwner === workflowOwner)
+    }
 
     internal fun isOwnedBy(owner: Any): Boolean = synchronized(lock) { captureOwner === owner }
 
@@ -276,12 +370,14 @@ object MediaProjectionCaptureRuntime {
         }
     }
 
-    internal fun attach(capture: MediaProjectionSession) {
+    internal fun attach(capture: MediaProjectionSession, token: String? = null): Boolean {
         synchronized(lock) {
+            if (token != null && !isPrepared(token)) return false
             check(activeCapture == null) { "Another MediaProjection capture is already active" }
             activeCapture = capture
             lastTerminationReason = null
             activeSignal.countDown()
+            return true
         }
     }
 
@@ -292,12 +388,17 @@ object MediaProjectionCaptureRuntime {
         }
     }
 
-    internal fun notifyTerminated(reason: String, owner: Any? = null): Boolean {
+    internal fun notifyTerminated(reason: String, owner: Any? = null, token: String? = null): Boolean {
         val (capture, listener) = synchronized(lock) {
             if (owner != null && captureOwner !== owner) return false
+            if (token != null && requestToken != token) return false
             val currentCapture = activeCapture
             activeCapture = null
             captureOwner = null
+            requestToken = null
+            if (workflowRequest) workflowOwner = Any()
+            workflowRequest = false
+            workflowBorrower = null
             lastTerminationReason = reason
             currentCapture to terminationListener
         }
@@ -307,12 +408,15 @@ object MediaProjectionCaptureRuntime {
         return true
     }
 
-    internal fun prepare(owner: Any? = null) {
+    internal fun prepare(owner: Any? = null, workflowSession: Boolean = false): String {
         synchronized(lock) {
-            check(activeCapture == null && captureOwner == null) { "Another MediaProjection capture is already active" }
+            check(activeCapture == null && captureOwner == null && requestToken == null) { "Another MediaProjection capture is already active" }
+            check(!workflowSession || owner === workflowOwner) { "The edge latch session ended. Start the run again." }
             activeSignal = CountDownLatch(1)
             captureOwner = owner
+            workflowRequest = workflowSession
             lastTerminationReason = null
+            return UUID.randomUUID().toString().also { requestToken = it }
         }
     }
 }
